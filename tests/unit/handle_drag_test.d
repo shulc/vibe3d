@@ -10,7 +10,7 @@
 module tests.unit.handle_drag_test;
 
 import std.algorithm : canFind, sort;
-import std.array : array;
+import std.array : array, join;
 import std.file : dirEntries, readText, SpanMode;
 import std.math : abs, round;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, containsWord,
@@ -252,21 +252,22 @@ unittest {
     // Every handle press is a button-down path; `armAxisLeg` is also the Ctrl
     // hand-over, the axis leg's own press (nothing moved before it). The base
     // drag's corner is a handle too (task 9473): box, radial, torus presses;
-    // and the vertex tool's press, carried by its drag (task 9499).
+    // and the vertex tool's press, carried by its drag (task 9499); a falloff
+    // handle's press, called only from the gizmo's button-down (task 9527).
     // The topology pen's grab (task 9510) re-presses a local value per
     // evaluation at the ARM-TIME anchor and the press pixel's origin, which is
     // the gesture's press restated: nothing it returns is written back.
     assert(sites == ["ArrayTool.onMouseButtonDown",
                      "BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonDown",
                      "BoxTool.onMouseButtonDown", "BoxTool.onMouseButtonDown",
-                     "CloneTool.onMouseButtonDown",
+                     "CloneTool.onMouseButtonDown", "FalloffEndpointHandle.grabAt",
                      "HandledCreateTool.tryGrabHandles", "MirrorTool.onMouseButtonDown",
                      "MoveTool.armAxisLeg",
                      "PrimitiveCreateTool.tryGrabMover", "RadialSweepTool.onMouseButtonDown",
                      "SizedRadialCreateTool.onMouseButtonDown",
                      "TopologyPenTool.grabOffset", "TorusTool.onMouseButtonDown",
                      "VertexTool.onMouseButtonDown"],
-        "a HandleDrag press outside the named press sites");
+        "a HandleDrag press outside the named press sites: " ~ sites.join(", "));
 }
 
 private string[] remove(string[] a, string key) {

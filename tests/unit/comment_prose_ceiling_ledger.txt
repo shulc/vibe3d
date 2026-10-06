@@ -366,7 +366,7 @@ allow source/toolpipe/stages/symmetry.d 17
 allow source/toolpipe/stages/workplane.d 12
 allow source/toolpipe/subject.d 3
 allow source/tools/alignment/align_kernels.d 6
-allow source/tools/alignment/array_tool.d 8
+allow source/tools/alignment/array_tool.d 7
 allow source/tools/alignment/linear_align_tool.d 5
 allow source/tools/alignment/mirror.d 20
 allow source/tools/alignment/radial_align_tool.d 5

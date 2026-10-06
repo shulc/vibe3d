@@ -200,3 +200,58 @@ unittest { // radial RMB anchor follows normal camera-focus displacement
         ~ "the rounded focus shift %.4f; baseline=%.4f shifted=%.4f delta=%.4f",
         want, baseline, shifted, anchorShift));
 }
+
+unittest { // a falloff handle's centre box is a free handle, the DQ form from the
+    // press (K-FH C-FO, fixtures K-FH.json KFH_FO_RAD_A2 / KFH_FO_LIN_A2): top
+    // ortho at 440 px/m, q 0.005, the radial centre / the linear start typed at
+    // the off-lattice (0.1014, 0, 0.0513), a (58, 23) px haul of its box writes
+    // H + q(H + T) - q(H) = (0.2364, 0, 0.1063). ABSOLUTE misses by 0.0014, RAW
+    // by 0.003. The Move selection is a quad far from the handle.
+    import std.format : format;
+    import std.string : split;
+    import core.thread : Thread;
+    import core.time : dur;
+    import http_client : getJson, postJson;
+    import pen_rig_helpers : penCameraAt, worldPixel;
+    void cell(string type, string handleAttr, string setup) {
+        auto r = postJson("/api/command", commandBody("scene.loadMesh",
+            `{"vertices":[[-0.6,0,0.4],[-0.4,0,0.4],[-0.4,0,0.6],[-0.6,0,0.6]],"faces":[[0,1,2,3]]}`));
+        assert(r["status"].str == "ok", "load failed: " ~ r.toString);
+        r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
+        assert(r["status"].str == "ok", "select failed: " ~ r.toString);
+        r = postJson("/api/command", "viewport.view Top");
+        assert(r["status"].str == "ok", "view failed: " ~ r.toString);
+        penCameraAt(Vec3(0, 0, 0), 440.0);
+        assert(getJson("/api/camera")["projKind"].str == "Ortho",
+            "rig: the top view must be orthographic");
+        auto s = parseJSON(cast(string)post(testBaseUrl() ~ "/api/script",
+            "tool.set move\ntool.pipe.attr falloff type " ~ type ~ "\n" ~ setup));
+        assert(s["status"].str == "ok", "falloff setup failed: " ~ s.toString);
+        Thread.sleep(dur!"msecs"(300));
+        double[3] handle() {
+            foreach (st; getJson("/api/toolpipe")["stages"].array) {
+                if (st["task"].str != "WGHT") continue;
+                auto p = st["attrs"][handleAttr].str.split(",");
+                return [p[0].to!double, p[1].to!double, p[2].to!double];
+            }
+            assert(false, "falloff stage not found");
+        }
+        immutable double[3] h0 = handle();
+        assert(approx(h0[0], 0.1014, 1e-6) && approx(h0[2], 0.0513, 1e-6),
+            format("rig: the %s %s must start at the typed (0.1014, 0, 0.0513), got %s",
+                   type, handleAttr, h0));
+        immutable int[2] p = worldPixel(Vec3(0.1014f, 0, 0.0513f));
+        auto cam = fetchCamera();
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+            p[0], p[1], p[0] + 58, p[1] + 23, 12));
+        Thread.sleep(dur!"msecs"(200));
+        immutable double[3] h = handle();
+        assert(approx(h[0], 0.2364, 1e-4) && approx(h[1], 0, 1e-4) && approx(h[2], 0.1063, 1e-4),
+            format("falloff-handle C-FO %s %s: expected (0.2364, 0, 0.1063), got %s",
+                   type, handleAttr, h));
+    }
+    cell("radial", "center", `tool.pipe.attr falloff center "0.1014,0,0.0513"` ~ "\n"
+        ~ `tool.pipe.attr falloff size "0.3,0.3,0.3"` ~ "\n");
+    cell("linear", "start", `tool.pipe.attr falloff start "0.1014,0,0.0513"` ~ "\n"
+        ~ `tool.pipe.attr falloff end "-0.4,0,-0.35"` ~ "\n");
+}

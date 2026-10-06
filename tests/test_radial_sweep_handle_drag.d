@@ -222,49 +222,49 @@ unittest { // dragging the Start Angle handle moves `startAngle` off zero
       ~ "(task 1903 §5.8).");
 }
 
-unittest { // the axis ends are free handles, quantised — extrapolated from K-H3
-    // H3_NT (linear generator); this generator is uncaptured, see C-RS / C-NT-off. Front ortho
-    // view at 440 px/m (T = pixels / 440), q 0.005, axis (0, 0.5, 0) so the ends
-    // S, E = (0, -/+0.5, 0) sit on the lattice. Hauling E by (70, -42) px writes
-    // E' = E + q(E + T) - q(E) = (0.16, 0.595, 0), S planted; then S by (-70, 42)
-    // writes S' = (-0.16, -0.595, 0), E' planted. RAW is 0.159091 / 0.595455.
+unittest { // an axis end writes only the axis, by the free DQ form (K-FH C-RS,
+    // fixtures K-FH.json KFH_RS_TOP2 / KFH_RS_BOT2 / KFH_RS_OFF2). Front ortho at
+    // 440 px/m, q 0.005, centre 0, each end hauled (70, -42) px: end 1 (centre +
+    // axis) P = H + q(H + T) - q(H), axis = P - centre; end 0 (centre - axis)
+    // axis = centre - P; the centre never moves. PLANTED (9506) misses by 0.08;
+    // ABSOLUTE by 0.0021 and RAW by 0.0044 on the off-lattice end.
     import core.thread : Thread;
     import core.time : dur;
     import std.format : format;
     import pen_rig_helpers : penCameraAt, worldPixel;
-    auto r = postJson("/api/command", commandBody("scene.reset"));
-    assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
-    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
-    assert(r["status"].str == "ok", "select failed: " ~ r.toString);
-    cmd("viewport.view Front");
-    penCameraAt(Vec3(0, 0, 0), 440.0);
-    assert(getJson("/api/camera")["projKind"].str == "Ortho",
-        "rig: the front view must be orthographic");
-    cmd("tool.set " ~ TOOL ~ " on");
-    cmd("tool.attr " ~ TOOL ~ " axis {0,0.5,0}");
-    Thread.sleep(dur!"msecs"(300));
-    double[3] vec(string name) {
-        auto q = postJson("/api/command", "tool.attr " ~ TOOL ~ " " ~ name ~ " ?");
-        assert(q["status"].str == "ok", "query " ~ name ~ " failed: " ~ q.toString);
-        auto a = q["value"].array;
-        return [a[0].get!double, a[1].get!double, a[2].get!double];
-    }
-    void haul(Vec3 from, int dx, int dy, double[3] wantS, double[3] wantE, string leg) {
-        immutable int[2] p = worldPixel(from);
+    void cell(string name, string axis0, Vec3 grabbed, double[3] want) {
+        auto r = postJson("/api/command", commandBody("scene.reset"));
+        assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+        r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
+        assert(r["status"].str == "ok", "select failed: " ~ r.toString);
+        cmd("viewport.view Front");
+        penCameraAt(Vec3(0, 0, 0), 440.0);
+        assert(getJson("/api/camera")["projKind"].str == "Ortho",
+            "rig: the front view must be orthographic");
+        cmd("tool.set " ~ TOOL ~ " on");
+        cmd("tool.attr " ~ TOOL ~ " center {0,0,0}");
+        cmd("tool.attr " ~ TOOL ~ " axis " ~ axis0);
+        Thread.sleep(dur!"msecs"(300));
+        double[3] vec(string attr) {
+            auto q = postJson("/api/command", "tool.attr " ~ TOOL ~ " " ~ attr ~ " ?");
+            assert(q["status"].str == "ok", "query " ~ attr ~ " failed: " ~ q.toString);
+            auto a = q["value"].array;
+            return [a[0].get!double, a[1].get!double, a[2].get!double];
+        }
+        immutable int[2] p = worldPixel(grabbed);
         auto cam = fetchCamera(BASE);
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-            p[0], p[1], p[0] + dx, p[1] + dy, 12), BASE);
+            p[0], p[1], p[0] + 70, p[1] - 42, 12), BASE);
         Thread.sleep(dur!"msecs"(200));
         immutable double[3] c = vec("center"), a = vec("axis");
-        immutable double[3] s = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-        immutable double[3] e = [c[0] + a[0], c[1] + a[1], c[2] + a[2]];
         foreach (k; 0 .. 3)
-            assert(abs(s[k] - wantS[k]) <= 1e-4 && abs(e[k] - wantE[k]) <= 1e-4,
-                format("radial-sweep-ends-quantised (%s): start %s end %s expected, "
-                    ~ "got start (%.6f, %.6f, %.6f) end (%.6f, %.6f, %.6f)",
-                    leg, wantS, wantE, s[0], s[1], s[2], e[0], e[1], e[2]));
+            assert(abs(c[k]) <= 1e-6 && abs(a[k] - want[k]) <= 1e-4,
+                format("radial-sweep-end %s: centre 0, axis %s expected, got centre "
+                    ~ "(%.6f, %.6f, %.6f) axis (%.6f, %.6f, %.6f)",
+                    name, want, c[0], c[1], c[2], a[0], a[1], a[2]));
+        cmd("tool.set " ~ TOOL ~ " off");
     }
-    haul(Vec3(0, 0.5f, 0), 70, -42, [0, -0.5, 0], [0.16, 0.595, 0], "end");
-    haul(Vec3(0, -0.5f, 0), -70, 42, [-0.16, -0.595, 0], [0.16, 0.595, 0], "start");
-    cmd("tool.set " ~ TOOL ~ " off");
+    cell("RS_TOP", "{0,0.5,0}", Vec3(0, 0.5f, 0), [0.16, 0.595, 0]);
+    cell("RS_BOT", "{0,0.5,0}", Vec3(0, -0.5f, 0), [-0.16, 0.405, 0]);
+    cell("RS_OFF", "{-0.0018,0.5021,0}", Vec3(-0.0018f, 0.5021f, 0), [0.1532, 0.6021, 0]);
 }

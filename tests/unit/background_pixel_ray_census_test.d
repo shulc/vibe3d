@@ -303,14 +303,13 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
     assert(syncSites == ["input_router.d:InputRouter.toolEventVts", "tool.d:Tool"],
         format("syncEventViewport must be the router's one call and its declaration: %s", syncSites));
     // A tool declaring its own `cachedVp` HIDES the synced base field (D allows
-    // it silently), so the router sync never reaches it. Exact roster, measured
-    // (3 files); it may only shrink, as each tool drops its field.
-    sort(ownViewport);
-    assert(ownViewport == [
-        "tools/alignment/array_tool.d", "tools/alignment/clone_tool.d",
-        "tools/alignment/radial_sweep_tool.d"],
-        format("tools declaring their own cachedVp (hiding the router-synced one) must be exactly the "
-               ~ "recorded 3, which may only shrink: %s", ownViewport));
+    // it silently), so the router sync never reaches it. None is left (tasks
+    // 9524, 9527); the base's own declaration is the pattern's positive control.
+    assert(ownViewport.length == 0,
+        format("tools declaring their own cachedVp (hiding the router-synced one): %s", ownViewport));
+    assert(matchAll(blankNonCode(readText(buildPath(root, "source", "tool.d"))),
+                    regex(`\bViewport\s+cachedVp\s*;`)).array.length == 1,
+        "positive control: tool.d declares the synced cachedVp exactly once");
     immutable vertexTool = blankNonCode(readText(buildPath(root, "source", "tools/create/vertex_place.d")));
     assert(tokenAt(vertexTool, "kGuideTypes").length == 0,
         "the vertex tool passes no guide mask: after the guide-block deletion it has no candidate to strip");

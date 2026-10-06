@@ -22,7 +22,8 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
-import drag : HandleDrag, DragFrame, DragKind;
+import drag : HandleDrag, DragFrame, DragKind, automaticPlanePressHit;
+import viewgrid : vectorSnap, viewVectorQuantum;
 import overlay_space : OverlaySpace;
 import params : Param, IntEnumEntry;
 import shader : Shader;
@@ -71,10 +72,9 @@ import core.stdc.string : memcmp;
 // in-plane axes (confirmed live: a pure horizontal screen drag moved BOTH
 // Offset X and Offset Y, Offset Z untouched — an oblique combination the
 // toolcard itself flags as camera/Work-Plane-position-dependent, not a
-// fixed rule). The haul is a free handle (`HandleDrag`, view plane) like
-// CloneTool's — extrapolated from K-H3 H3_NT (linear generator); this
-// generator is uncaptured, see C-NT-off — and folds the FULL world delta into
-// all three Offset X/Y/Z params. An
+// fixed rule). The haul is a free handle (`HandleDrag`, view plane) pressed
+// at the snapped press hit less the offset copy's centroid (K-FH C-NT-off),
+// and folds the FULL world delta into all three Offset X/Y/Z params. An
 // axis whose Count is 1 (e.g. the captured default Count Y=1) never shows
 // visible new geometry from its own offset regardless, same as the
 // reference.
@@ -201,13 +201,12 @@ private:
     bool         dragging;     // between LMB-down and LMB-up
     MeshSnapshot before;       // source cage of the current array operation
 
-    // The selection centroid at the press, lifted through the item matrix
-    // (task 0645), + travel. The item space is FROZEN with it: the drag's
-    // answer converts back to layer coordinates through the same matrix.
+    // The press handle (onMouseButtonDown) + travel. The item space (task
+    // 0645) is FROZEN at the press: the drag's answer converts back to layer
+    // coordinates through the same matrix.
     HandleDrag grab;
     OverlaySpace dragSpace;
     Vec3 dragBaseOffset;       // Offset X/Y/Z at drag start
-    Viewport cachedVp;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
@@ -399,10 +398,14 @@ public:
 
         if (mesh.faces.length == 0) return false;
 
+        Vec3 p0;   // the press hit, snapped to the view quantum
+        if (!automaticPlanePressHit(e.x, e.y, cachedVp, p0)) return false;
+        p0 = vectorSnap(p0, viewVectorQuantum(cachedVp));
         sessionStepBegins();
         dragSpace      = OverlaySpace.ofPrimary();
-        grab.press(dragSpace.pos(mesh.selectionCentroidFaces()), e.x, e.y);
         dragBaseOffset = offsetVec();
+        // K-FH C-NT-off: H = P0 - (c + off0), offset = off0 + the DQ travel from H.
+        grab.press(p0 - dragSpace.pos(mesh.selectionCentroidFaces() + dragBaseOffset), e.x, e.y);
         dragging       = true;
         return true;
     }
@@ -418,8 +421,6 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || !dragging) return false;
-        // A free handle, the centroid's residual kept: extrapolated from K-H3
-        // H3_NT (linear generator); this generator is uncaptured, see C-NT-off.
         bool skip;
         immutable Vec3 c = grab.client(e.x, e.y, DragFrame(DragKind.viewPlane), cachedVp, skip);
         if (!skip) {

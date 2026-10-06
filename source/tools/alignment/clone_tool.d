@@ -17,7 +17,8 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
-import drag : HandleDrag, DragFrame, DragKind;
+import drag : HandleDrag, DragFrame, DragKind, automaticPlanePressHit;
+import viewgrid : vectorSnap, viewVectorQuantum;
 import overlay_space : OverlaySpace;
 import params : Param, IntEnumEntry;
 import shader : Shader;
@@ -75,10 +76,9 @@ private:
 
     bool active, built, dragging;
     MeshSnapshot before;
-    HandleDrag grab;   // the selection centroid at the press + travel
+    HandleDrag grab;   // the snapped press hit + travel
     Vec3 dragBaseOffset;
     OverlaySpace dragSpace;
-    Viewport cachedVp;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
@@ -197,10 +197,15 @@ public:
         if (e.button != SDL_BUTTON_LEFT) return false;
         if (SDL_GetModState() & (KMOD_ALT | KMOD_SHIFT)) return false;
         if (*editMode != EditMode.Polygons || !mesh.hasAnySelectedFaces()) return false;
+        Vec3 p0;   // the press hit, snapped to the view quantum
+        if (!automaticPlanePressHit(e.x, e.y, cachedVp, p0)) return false;
+        p0 = vectorSnap(p0, viewVectorQuantum(cachedVp));
         sessionStepBegins();
         dragSpace = OverlaySpace.ofPrimary();
-        grab.press(dragSpace.pos(mesh.selectionCentroidFaces()), e.x, e.y);
-        dragBaseOffset = offsetVec();
+        // K-FH C-NT-off: offset = (P - P0) + (c - P0), P the DQ travel from P0;
+        // the press moves the base point from the centroid c to P0.
+        grab.press(p0, e.x, e.y);
+        dragBaseOffset = dragSpace.toLocalDelta(dragSpace.pos(mesh.selectionCentroidFaces()) - p0);
         dragging = true;
         return true;
     }
@@ -213,11 +218,8 @@ public:
     }
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || !dragging) return false;
-        // A free handle: the centroid's residual is kept (K-H3 H3_NT).
         bool skip;
-        DragFrame f;
-        f.kind = DragKind.viewPlane;
-        immutable Vec3 c = grab.client(e.x, e.y, f, cachedVp, skip);
+        immutable Vec3 c = grab.client(e.x, e.y, DragFrame(DragKind.viewPlane), cachedVp, skip);
         if (!skip) {
             Vec3 local = dragSpace.toLocalDelta(c - grab.point);
             offX_ = dragBaseOffset.x + local.x;

@@ -328,19 +328,15 @@ private:
     // drag / param edit / headless attr write).
     bool engaged;
 
-    // ----- Handles: 0 = axis start point, 1 = axis end point (drag either
-    // to reposition/reorient the free 3D axis line — the OTHER endpoint
-    // stays planted, standard two-endpoint line-edit UX; the reference
-    // toolcard itself notes the drag law is "a direct 1:1 numeric mapping,
-    // not a bespoke formula requiring its own discriminating capture"), 2 =
-    // start-angle handle, 3 = end-angle handle.
+    // ----- Handles: 0 = axis start point (center - axis), 1 = axis end point
+    // (center + axis), 2 = start-angle handle, 3 = end-angle handle. An end
+    // writes only the axis, axis = +/-(P - center); the center stays and the
+    // other end mirrors (K-FH C-RS).
     BoxHandler  axisStartH, axisEndH, startAngleH, endAngleH;
     ToolHandles toolHandles;
     int         dragPart = -1;
     int         lastMX, lastMY;
     HandleDrag  grab;      // an axis end: the end at the press + travel
-    Vec3        planted;   // the other axis end, frozen at the press
-    Viewport    cachedVp;
 
     version(unittest) MeshSnapshot lastPreparedCommitImage_;
     version(unittest) ulong lastPreparedMutationVersion_, lastPreparedTopologyVersion_;
@@ -980,7 +976,6 @@ public:
         lastMX   = e.x;
         lastMY   = e.y;
         grab.press(params_.center + (hit == 0 ? -params_.axis : params_.axis), e.x, e.y);
-        planted = params_.center + (hit == 0 ? params_.axis : -params_.axis);
         return true;
     }
 
@@ -996,15 +991,12 @@ public:
         if (dragPart < 0) return false;
 
         if (dragPart == 0 || dragPart == 1) {
-            // Axis endpoint drag: the DRAGGED end is a free handle, its
-            // residual kept (extrapolated from K-H3 H3_NT, linear generator;
-            // this generator is uncaptured, see C-RS / C-NT-off); the OTHER
-            // end stays planted (see the field-block comment on axisStartH).
+            // Axis end drag: the grabbed end is a free handle (free DQ form,
+            // K-FH C-RS); only the axis moves (field-block comment above).
             bool skip;
             immutable Vec3 c = grab.client(e.x, e.y, DragFrame(DragKind.viewPlane), cachedVp, skip);
             if (!skip) {
-                params_.center = (c + planted) * 0.5f;
-                params_.axis   = (dragPart == 0 ? planted - c : c - planted) * 0.5f;
+                params_.axis = dragPart == 0 ? params_.center - c : c - params_.center;
                 params_.axisPreset = 3;   // handle drag -> Custom
                 engaged = true;
                 evaluate();

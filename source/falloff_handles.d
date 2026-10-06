@@ -6,7 +6,7 @@ import handler : Arrow, BoxHandler, Handler, ToolHandles, gizmoSize;
 import math   : Vec3, Viewport, projectToWindowFull, closestOnSegment2D, dot;
 import viewport_scheme : axisColor, schemeColor, SchemeColor;
 import shader : Shader;
-import drag   : screenAxisDelta, planeDragDelta, haulWorldPerPixel;
+import drag   : screenAxisDelta, haulWorldPerPixel, HandleDrag, DragFrame, DragKind;
 import toolpipe.packets  : FalloffPacket, FalloffType;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
@@ -62,6 +62,7 @@ class FalloffEndpointHandle {
     BoxHandler centerBox;
     int        dragAxis = -1;   // -1 idle, 0 X, 1 Y, 2 Z, 3 centerBox
     int        lastMX, lastMY;
+    HandleDrag grab;            // the handle at the press + travel (centerBox)
 
     enum float SCALE   = 0.4f;  // mini — 40% of main MoveHandler size
 
@@ -166,25 +167,22 @@ class FalloffEndpointHandle {
         return -1;
     }
 
-    // Pick a delta for the current drag axis. Returns Vec3(0,0,0) and
-    // sets skip when the drag math degenerates (axis projects to a
-    // point on screen, etc.).
-    Vec3 dragDelta(int mx, int my, const ref Viewport vp, out bool skip) {
-        skip = false;
-        if (dragAxis == 0)
-            return screenAxisDelta(mx, my, lastMX, lastMY,
-                                   pos, Vec3(1, 0, 0), vp, skip);
-        if (dragAxis == 1)
-            return screenAxisDelta(mx, my, lastMX, lastMY,
-                                   pos, Vec3(0, 1, 0), vp, skip);
-        if (dragAxis == 2)
-            return screenAxisDelta(mx, my, lastMX, lastMY,
-                                   pos, Vec3(0, 0, 1), vp, skip);
+    void grabAt(int hit, int mx, int my) {
+        dragAxis = hit; lastMX = mx; lastMY = my;
+        grab.press(pos, mx, my);
+    }
+
+    // The dragged handle's new position; `skip` when the drag math
+    // degenerates (an axis projecting to a point on screen, etc.). The
+    // centre box is a free handle, the DQ form from the press (K-FH C-FO);
+    // an arrow adds a per-event increment along its axis.
+    Vec3 dragTo(int mx, int my, const ref Viewport vp, out bool skip) {
+        static immutable Vec3[3] AXES = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)];
+        scope (exit) { lastMX = mx; lastMY = my; }
         if (dragAxis == 3)
-            return planeDragDelta(mx, my, lastMX, lastMY,
-                                  /*plane=most-facing*/0, pos, vp, skip);
-        skip = true;
-        return Vec3(0, 0, 0);
+            return grab.client(mx, my, DragFrame(DragKind.viewPlane), vp, skip);
+        skip = dragAxis < 0 || dragAxis > 2;
+        return skip ? pos : pos + screenAxisDelta(mx, my, lastMX, lastMY, pos, AXES[dragAxis], vp, skip);
     }
 }
 
@@ -295,14 +293,12 @@ public:
             // start-then-end order is fine.
             int hit = startHandle.hitTest(e.x, e.y, vp);
             if (hit >= 0) {
-                activeLinear = 0; startHandle.dragAxis = hit;
-                startHandle.lastMX = e.x; startHandle.lastMY = e.y;
+                activeLinear = 0; startHandle.grabAt(hit, e.x, e.y);
                 return true;
             }
             hit = endHandle.hitTest(e.x, e.y, vp);
             if (hit >= 0) {
-                activeLinear = 1; endHandle.dragAxis = hit;
-                endHandle.lastMX = e.x; endHandle.lastMY = e.y;
+                activeLinear = 1; endHandle.grabAt(hit, e.x, e.y);
                 return true;
             }
             return false;
@@ -313,8 +309,7 @@ public:
             // boxes on the surface.
             int hit = centerHandle.hitTest(e.x, e.y, vp);
             if (hit >= 0) {
-                activeRadial = 0; centerHandle.dragAxis = hit;
-                centerHandle.lastMX = e.x; centerHandle.lastMY = e.y;
+                activeRadial = 0; centerHandle.grabAt(hit, e.x, e.y);
                 return true;
             }
             foreach (i; 0 .. 6) {
@@ -336,45 +331,20 @@ public:
         if (activeLinear < 0 && activeRadial < 0) return false;
         if (g_pipeCtx is null) return true;
 
-        if (activeLinear >= 0) {
-            FalloffEndpointHandle h = (activeLinear == 0) ? startHandle : endHandle;
+        // A linear endpoint or the radial centre, into FalloffStage's
+        // `start` / `end` / `center` attribute.
+        if (activeLinear >= 0 || activeRadial == 0) {
+            FalloffEndpointHandle h = activeLinear == 0 ? startHandle
+                                    : activeLinear == 1 ? endHandle : centerHandle;
             bool skip;
-            Vec3 delta = h.dragDelta(e.x, e.y, vp, skip);
-            h.lastMX = e.x; h.lastMY = e.y;
+            immutable Vec3 p = h.dragTo(e.x, e.y, vp, skip);
             if (skip) return true;
-            Vec3 newPos = Vec3(h.pos.x + delta.x,
-                               h.pos.y + delta.y,
-                               h.pos.z + delta.z);
-            // Eagerly update local pos so a second motion event in the
-            // same frame computes its incremental delta against the
-            // post-event-1 position. Without this, h.pos stays stuck on
-            // its pre-drag value (refreshed from cfg only in draw())
-            // and every subsequent setAttr in the same frame overwrites
-            // the previous one — gizmo doesn't follow the mouse past
-            // the first step.
-            h.pos = newPos;
-            string attr = (activeLinear == 0) ? "start" : "end";
+            // Eager, so a second motion in the same frame steps an arrow
+            // from here, not from the pre-drag pos (draw() refreshes it).
+            h.pos = p;
             if (auto fs = primaryFalloffStage())
-                fs.setAttr(attr,
-                    format("%g,%g,%g", newPos.x, newPos.y, newPos.z));
-            return true;
-        }
-
-        // Radial.
-        if (activeRadial == 0) {
-            // Center drag — same dispatch as Linear endpoints, into
-            // FalloffStage's `center` attribute.
-            bool skip;
-            Vec3 delta = centerHandle.dragDelta(e.x, e.y, vp, skip);
-            centerHandle.lastMX = e.x; centerHandle.lastMY = e.y;
-            if (skip) return true;
-            Vec3 newCenter = Vec3(centerHandle.pos.x + delta.x,
-                                  centerHandle.pos.y + delta.y,
-                                  centerHandle.pos.z + delta.z);
-            centerHandle.pos = newCenter;
-            if (auto fs = primaryFalloffStage())
-                fs.setAttr("center",
-                    format("%g,%g,%g", newCenter.x, newCenter.y, newCenter.z));
+                fs.setAttr(activeLinear == 0 ? "start" : activeLinear == 1 ? "end" : "center",
+                           format("%g,%g,%g", p.x, p.y, p.z));
             return true;
         }
         // Size handle 1..6 → index 0..5 in RAD_AXES.

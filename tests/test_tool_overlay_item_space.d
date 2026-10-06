@@ -674,12 +674,15 @@ unittest {
 unittest {
     enum string TOOL = "mesh.arrayTool";
 
-    // The DELTA the drag added, not the absolute offset: `offX/offY/offZ`
-    // default to (1,1,1), a layer-space baseline the drag never touches and
-    // which must not be run through the item matrix along with the drag.
+    // The DELTA the drag added, not the absolute offset. The baseline is
+    // zeroed on both stands: the press handle is P0 - (c + off0) (K-FH
+    // C-NT-off), so the default layer-space (1,1,1) would put the two stands'
+    // handles at different world points and the same picture would not be
+    // the same drag (task 9527).
     double[3] offsetOf(bool transformed) {
         buildStand(transformed);
         cmd("tool.set " ~ TOOL ~ " on");
+        foreach (a; ["offX", "offY", "offZ"]) cmd("tool.attr " ~ TOOL ~ " " ~ a ~ " 0");
         settle();
         double[3] pre = [attr(TOOL, "offX"), attr(TOOL, "offY"), attr(TOOL, "offZ")];
         auto cam = fetchCamera();
