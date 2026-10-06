@@ -648,7 +648,7 @@ unittest {
         } else {
             foreach(i,ref p;m.vertices)if(i!=compatibility) {
                 float x,y,z;assert(projectToWindowFull(p,vp,x,y,z));
-                p=point(307.5f+(x-307.5f)/60,300.5f+(y-300.5f)/60,vp);
+                p=point(307.5f+(x-307.5f)/120,300.5f+(y-300.5f)/120,vp);
             }
             const base=cast(uint)m.vertices.length;
             m.vertices~=[point(306.5f,270.5f,vp),point(306.5f,330.5f,vp)];m.edges~=[base,base+1];
@@ -661,6 +661,13 @@ unittest {
         ToolPressPolicy policy;policy.sources=[primary];policy.facing=false;policy.facesDrawn=edge;policy.legacySource=primary;
         policy.legacy=(const(bool)[] v,const(bool)[] e,const(bool)[] f)=>old;
         const incumbent=toolPressAt(300,300,vp,[primary],false,edge,false);
+        if(!edge) {
+            float x,y,z;assert(projectToWindowFull(incumbent.pointWorld,vp,x,y,z));float[2] p=[x,y];
+            const d=pickDistances(300,300,&p,null,false);
+            assert(d.vertex>old.distances.edgeMid && old.distances.vertex<old.distances.edgeMid,
+                "MIXED_DISTANCE_PREMISE_V: actual incumbent/replacement straddle supplied midpoint");
+            writefln("DISTANCE-DATUM-V ordinary_distance=%s replacement=%s midpoint=%s",d.vertex,old.distances.vertex,old.distances.edgeMid);
+        }
         const hit=toolPressAt(300,300,vp,policy);
         writefln("DISTANCE-DATUM class=%s ordinary_class=%s ordinary_index=%s compatibility=%s/%s/%s final=%s/%s",edge?"E":"V",
             incumbent.kind,incumbent.index,old.distances.vertex,old.distances.edge,old.distances.edgeMid,hit.kind,hit.index);
