@@ -175,7 +175,9 @@ unittest {
     ConstrainHitPacket miss;
     assert(resolveHoverTarget(miss,vp,8,[BackgroundSource(&edge,space,20)],300,300,false).kind == HoverTargetKind.None,
         "background hover surface miss cannot acquire a target");
-    edge.resizeEdgeSelection(); edge.setEdgeHidden(0,true);
+    edge.buildLoops(); edge.resizeVertexSelection(); edge.resizeEdgeSelection();
+    assert(edge.setVertexHidden(0,true), "hidden edge fixture must admit its loose endpoint hide");
+    edge.refreshHiddenDerived();
     assert(hoverRecordAtPixel(300,300,vp,sources,false,false).kind == -1,
         "hover excludes a hidden loose edge");
     Mesh point; point.vertices = [Vec3(0,0,0)]; point.resizeVertexSelection(); point.setVertexHidden(0,true);

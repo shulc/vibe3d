@@ -228,7 +228,7 @@ allow source/handles/gizmo_metrics.d 22
 allow source/handles/gl_util.d 6
 allow source/handles/shapes.d 37
 allow source/history_macro_registration.d 1
-allow source/hover_state.d 4
+allow source/hover_state.d 5
 allow source/http_command_adapter.d 3
 allow source/http_json.d 8
 allow source/http_providers.d 69
@@ -336,7 +336,7 @@ allow source/seltype.d 3
 allow source/session_owner.d 2
 allow source/shader.d 14
 allow source/shortcuts.d 3
-allow source/snap.d 68
+allow source/snap.d 69
 allow source/snap_election.d 11
 allow source/snap_render.d 3
 allow source/snapshot.d 12
