@@ -733,7 +733,7 @@ unittest { // the THREE measured numbers, and the two refutations behind them
 /// `HoverTargetKind.None`; a hit that is behind the camera when projected
 /// (should not normally happen — the hit itself came from a ray through
 /// the same viewport) also degrades to `None` rather than asserting.
-HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
+version(unittest) HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
                                const ref Viewport vp, float thPx)
 {
     HoverTarget r;                      // {None, -1, -1}
@@ -767,6 +767,29 @@ HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
         default: break;
     }
     return r;                           // Face
+}
+
+/// Production hover query: source ownership and pixel/display admission are
+/// supplied by the caller; the hit packet never substitutes a primary mesh.
+HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
+        const ref Viewport vp, float thPx, const(BackgroundSource)[] sources,
+        int mx, int my, bool occlusion) {
+    import hover_state : hoverRecordAtPixel, ToolPressSource,
+        kCascadeVertex, kCascadeEdge, kCascadePolygon;
+    HoverTarget result;
+    if (!h.hit) return result;
+    ToolPressSource[] querySources;
+    foreach (source; sources)
+        querySources ~= ToolPressSource(source.mesh, source.space, source.layerIndex);
+    const target = hoverRecordAtPixel(mx, my, vp, querySources, occlusion, true, thPx);
+    result.layer = target.owner.layer;
+    switch (target.kind) {
+        case kCascadeVertex: result.kind = HoverTargetKind.Vertex; result.vert = target.index; break;
+        case kCascadeEdge: result.kind = HoverTargetKind.Edge; result.edge = target.index; break;
+        case kCascadePolygon: result.kind = HoverTargetKind.Face; break;
+        default: result.kind = HoverTargetKind.Face; result.layer = h.layer; break;
+    }
+    return result;
 }
 
 // ---------------------------------------------------------------------------

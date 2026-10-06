@@ -245,7 +245,7 @@ bool toolPressVertexAdmitted(const ref Mesh m, uint vi, ModelSpace space,
     return !m.isVertexHidden(vi) && s.vertices[vi] && (!facing || s.vertexFront[vi] || s.vertexBorder[vi]);
 }
 
-enum ToolQueryIntent { pressQuery, legacyHover }
+enum ToolQueryIntent { pressQuery, legacyHover, hoverQuery }
 struct LegacyPressGather {
     PickGather distances;
     ToolPressTarget vertex, edge, polygon;
@@ -287,7 +287,9 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp, ToolPressPoli
             if (src.mesh is null || !src.space.invertible) continue;
             const m = src.mesh;
             foreach (fi, f; m.faces) {
-                if (!support[si].faces[fi] || !toolPressFaceAdmitted(*m, cast(uint)fi, src.space, vp, facing)) continue;
+                if (policy.intent == ToolQueryIntent.pressQuery && !support[si].faces[fi]) continue;
+                if (!toolPressFaceAdmitted(*m, cast(uint)fi, src.space, vp,
+                        policy.intent == ToolQueryIntent.pressQuery && facing)) continue;
                 const a = src.space.toWorldPoint(m.vertices[f[0]]);
                 foreach (i; 1 .. f.length - 1) {
                     float t, u, v;
@@ -314,13 +316,14 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp, ToolPressPoli
     }
     ToolPressTarget vertex, edge, polygon;
     PickGather g;
-    if (policy.intent == ToolQueryIntent.pressQuery) foreach (si, src; sources) {
+    if (policy.intent != ToolQueryIntent.legacyHover) foreach (si, src; sources) {
         if (src.mesh is null || !src.space.invertible) continue;
         const m = src.mesh;
-        const s = support[si];
+        const s = policy.intent == ToolQueryIntent.pressQuery ? support[si] : ToolPressSupport.init;
         const aim = aimSpace(vp, src.space);
         foreach (vi, v; m.vertices) {
-            if (!s.vertices[vi] || m.isVertexHidden(vi) || (facing && !s.vertexFront[vi] && !s.vertexBorder[vi])) continue;
+            if (m.isVertexHidden(vi) || (policy.intent == ToolQueryIntent.pressQuery
+                    && (!s.vertices[vi] || (facing && !s.vertexFront[vi] && !s.vertexBorder[vi])))) continue;
             const p = src.space.toWorldPoint(v);
             float x, y, z;
             if (!projectToWindowFull(p, vp, x, y, z)) continue;
@@ -337,7 +340,8 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp, ToolPressPoli
             }
         }
         foreach (ei, e; m.edges) {
-            if (!s.edges[ei] || m.isEdgeHidden(ei) || (facing && s.edgeFaces[ei] != 1 && !s.edgeFront[ei])) continue;
+            if (m.isEdgeHidden(ei) || (policy.intent == ToolQueryIntent.pressQuery
+                    && (!s.edges[ei] || (facing && s.edgeFaces[ei] != 1 && !s.edgeFront[ei])))) continue;
             const a = src.space.toWorldPoint(m.vertices[e[0]]), b = src.space.toWorldPoint(m.vertices[e[1]]);
             float ax, ay, az, bx, by, bz, u;
             if (!projectToWindowFull(a, vp, ax, ay, az) || !projectToWindowFull(b, vp, bx, by, bz)) continue;
@@ -356,7 +360,7 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp, ToolPressPoli
             }
         }
     }
-    if (policy.intent == ToolQueryIntent.pressQuery && facesDrawn) {
+    if (policy.intent != ToolQueryIntent.legacyHover && facesDrawn) {
         int si, fi;
         const t = nearestSurface(org, dir, si, fi);
         if (si >= 0) {
@@ -383,4 +387,17 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp, ToolPressPoli
         case kCascadePolygon: return polygon;
         default: return ToolPressTarget.init;
     }
+}
+
+/// Read-only pixel election with explicit source spaces and display admission
+/// (task 9507; doc/tool_shared_layer_followups_amendment_2026-10-06.md).
+/// Facing/border admission belongs to pressQuery; hover never acquires it.
+ToolPressTarget hoverRecordAtPixel(int mx, int my, const ref Viewport vp,
+        const(ToolPressSource)[] sources, bool occlusion, bool facesDrawn,
+        float reach = kElementPickRadiusPx) {
+    ToolPressPolicy policy;
+    policy.sources = sources; policy.occlusion = occlusion;
+    policy.facesDrawn = facesDrawn; policy.reach = reach;
+    policy.intent = ToolQueryIntent.hoverQuery;
+    return toolPressAt(mx, my, vp, policy);
 }

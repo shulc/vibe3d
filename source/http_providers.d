@@ -1647,6 +1647,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             import toolpipe.packets  : ConstrainHitPacket, HoverTargetKind;
             import toolpipe.subject  : SubjectSource, evaluateSubject;
             import constraint        : resolveHoverTarget, topoPenPressPickPx;
+            import snap : backgroundSourcesFull;
 
             auto src = SubjectSource(&mesh(), editMode,
                                       currentSelType(selTypeOrder),
@@ -1664,7 +1665,8 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 return `{"hit":false,"targetKind":"none","targetVert":-1,"targetEdge":-1}`;
 
             float th = (thresholdPx > 0.0f) ? thresholdPx : topoPenPressPickPx(subj.viewport);
-            auto tgt = resolveHoverTarget(*hp, subj.viewport, th);
+            auto tgt = resolveHoverTarget(*hp, subj.viewport, th,
+                backgroundSourcesFull(), x, y, subj.pickOcclusion);
             string kindToken;
             final switch (tgt.kind) {
                 case HoverTargetKind.None:   kindToken = "none";   break;
@@ -1676,14 +1678,14 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             return format(
                 `{"hit":%s,"point":[%s,%s,%s],"normal":[%s,%s,%s],`
               ~ `"layer":%d,"face":%d,"nearestVert":%d,"nearestEdge":%d,`
-              ~ `"targetKind":"%s","targetVert":%d,"targetEdge":%d}`,
+              ~ `"targetKind":"%s","targetVert":%d,"targetEdge":%d,"targetLayer":%d}`,
                 hp.hit ? "true" : "false",
                 jsonNum(hp.point.x, "%.6f"), jsonNum(hp.point.y, "%.6f"),
                 jsonNum(hp.point.z, "%.6f"),
                 jsonNum(hp.normal.x, "%.6f"), jsonNum(hp.normal.y, "%.6f"),
                 jsonNum(hp.normal.z, "%.6f"),
                 hp.layer, hp.face, hp.nearestVert, hp.nearestEdge,
-                kindToken, tgt.vert, tgt.edge);
+                kindToken, tgt.vert, tgt.edge, tgt.layer);
         });
 
         // POST /api/camera — set live View. Accepts azimuth, elevation,

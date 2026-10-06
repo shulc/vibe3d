@@ -1173,7 +1173,10 @@ private:
         if (auto p = vts.get!ConstrainHitPacket()) {
             lastHit_ = *p;
             Viewport vp = viewportOf(vts);
-            lastTarget_ = resolveHoverTarget(lastHit_, vp, topoPenPressPickPx(vp));
+            if (auto subject = vts.get!SubjectPacket())
+                if (subject.cursorValid)
+                    lastTarget_ = resolveHoverTarget(lastHit_, vp, topoPenPressPickPx(vp),
+                        backgroundSourcesFull(), subject.cursorX, subject.cursorY, subject.pickOcclusion);
             if (auto subject = vts.get!SubjectPacket())
                 if (subject.cursorValid && !moveArmed_)
                     placementSnap_ = placementElection(lastHit_.point, subject.cursorX, subject.cursorY,
@@ -1995,8 +1998,11 @@ public:
         if (auto packet = vts.get!ConstrainHitPacket()) {
             image.hasPacket = true; image.nextHit = *packet;
             Viewport vp = viewportOf(vts);
-            image.nextTarget = resolveHoverTarget(image.nextHit, vp,
-                topoPenPressPickPx(vp));
+            if (auto subject = vts.get!SubjectPacket())
+                if (subject.cursorValid)
+                    image.nextTarget = resolveHoverTarget(image.nextHit, vp,
+                        topoPenPressPickPx(vp), backgroundSourcesFull(),
+                        subject.cursorX, subject.cursorY, subject.pickOcclusion);
             if (auto subject = vts.get!SubjectPacket())
                 if (subject.cursorValid && !moveArmed_)
                     image.nextPlacementSnap = placementElection(image.nextHit.point,

@@ -886,6 +886,7 @@ struct HoverTarget {
     HoverTargetKind kind = HoverTargetKind.None;
     int             vert = -1;
     int             edge = -1;
+    int             layer = -1; // winning source ownership, independent of the hit face
 }
 
 /// Geometry-snap candidate-type bitmask. Multiple types can be enabled

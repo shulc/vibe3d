@@ -93,9 +93,8 @@ unittest { // production-text census
     // pen's press pick (Duplicate and Remove press through it too) and its
     // background hover readout (task 9501).
     electSites.sort();
-    assert(electSites.length == 4, format("element-pick census: %d call sites", electSites.length));
-    assert(electSites == ["InputFrameState.publishHover", "PenTool.hoverHoldsEdge",
-                          "resolveHoverTarget", "toolPressAt"],
+    assert(electSites.length == 3, format("element-pick census: %d call sites", electSites.length));
+    assert(electSites == ["InputFrameState.publishHover", "resolveHoverTarget", "toolPressAt"],
            format("element-pick census: call-site roster changed: %s", electSites));
 
     // The pickers carry no reach of their own: two instantiations, no literal.

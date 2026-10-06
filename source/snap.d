@@ -63,6 +63,19 @@ struct SnapResult {
     SnapType constraintType = SnapType.None;
 }
 
+// Shared post-placement merge reach (task 9507; pen_merge.json cells_k_b3).
+// Bracket midpoints: snapped-edge ends (15.4, 19.5], other vertices (2.2, 3.5].
+enum float kMergeSnappedEdgeEndPx = 17.5f;
+enum float kMergeAfterSnapPx = 2.85f;
+
+/// An edited-mesh discrete element placed the point, independently of a guide.
+bool elementPlaced(in SnapResult s) pure nothrow @nogc @safe {
+    enum uint elementBits = SnapType.Vertex | SnapType.Edge | SnapType.EdgeCenter |
+        SnapType.Polygon | SnapType.PolyCenter;
+    return s.snapped && s.constraintType == SnapType.None && s.targetSource == 0 &&
+        (s.targetType & elementBits) != 0;
+}
+
 /// Config-equality for two SnapPackets — compares only the user-facing CONFIG
 /// fields (the ones SnapStage.snapshotConfigToPacket round-trips), NOT the
 /// derived workplane cache / gridStep (evaluate() re-derives those each frame

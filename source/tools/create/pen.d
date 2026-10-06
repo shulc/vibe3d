@@ -3,7 +3,7 @@ import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import display_state : DrawPlan;
 
 import bindbc.opengl;
-import operator : VectorStack;
+import operator : VectorStack, pickOcclusionOf;
 import bindbc.sdl;
 
 import tool;
@@ -46,7 +46,8 @@ import symmetry : mirrorPosition, symmetryMirrorsEqual, symmetryPacketsEqual;
 import editmode : EditMode;
 import seltype : SelType;
 import snap : SnapResult, snapCursor, cascadeClassWins, kAbsentClassDist,
-    kCascadeVertex, kCascadeEdge, kCandidateToleranceBasePx, kVertexToleranceScale;
+    kCascadeVertex, kCascadeEdge, kCandidateToleranceBasePx, kVertexToleranceScale,
+    elementPlaced, kMergeSnappedEdgeEndPx, kMergeAfterSnapPx;
 import document : primaryModelSpace;
 import snap_render : publishLastSnap, clearLastSnap;
 import viewgrid : viewWorldPerPixel, viewVectorQuantum, vectorSnap, withAxisComp, axisComp;
@@ -65,19 +66,10 @@ private bool sameSliceBytes(T)(const(T)[] a, const(T)[] b) nothrow @nogc {
         memcmp(a.ptr, b.ptr, a.length * T.sizeof) == 0);
 }
 
-// Merge after an ELEMENT snap (wave plan S5 A3, fixture pen_merge.json
-// `cells_k_b3`): screen radii, bracket midpoints — the snapped edge's own ends
-// link within (15.4, 19.5] px, any other vertex within (2.2, 3.5] px. Any
-// other placement merges within `SnapPacket.init.innerRangePx` (24 px).
-private enum float kMergeSnappedEdgeEndPx = 17.5f;
-private enum float kMergeAfterSnapPx = 2.85f;
 // A projection this far below a pixel boundary is ON it. At 440 px/m the
 // 0.005 m quantum is 2.2 px, so placed points sit on a 0.2 px pattern; only an
 // exact boundary hit, pushed below it by float32 rounding, comes this close.
 private enum float kPixelEps = 1e-3f;
-private enum uint kElementSnapBits = SnapType.Vertex | SnapType.Edge |
-    SnapType.EdgeCenter | SnapType.Polygon | SnapType.PolyCenter;
-
 version(unittest) unittest {
     import record_observer_hub : RecordObserverHub;
     import snap_render : g_lastSnap;
@@ -1340,7 +1332,7 @@ public:
             latchMirror(vts);
             Vec3 hit;
             int link;
-            if (!resolvePenPoint(e.x, e.y, hit, link)) return true;
+            if (!resolvePenPoint(e.x, e.y, hit, link, pickOcclusionOf(vts))) return true;
             appendVertex(hit, link);
             params_.currentPoint = cast(int)vertices_.length - 1;
             syncPosFromCurrent();
@@ -1366,7 +1358,7 @@ public:
         // Click on empty plane.
         Vec3 hit;
         int link;
-        if (!resolvePenPoint(e.x, e.y, hit, link)) return true;
+        if (!resolvePenPoint(e.x, e.y, hit, link, pickOcclusionOf(vts))) return true;
 
         // The press adding the 3rd point decides the facing, once, from
         // (p0, p1, this click) in every arm below (wave plan §9.4); a wall
@@ -1449,7 +1441,7 @@ public:
                 if (state == PenState.Idle) choosePlane(cachedVp);
                 Vec3 ignored;
                 int ignoredLink;
-                resolvePenPoint(e.x, e.y, ignored, ignoredLink);
+                resolvePenPoint(e.x, e.y, ignored, ignoredLink, pickOcclusionOf(vts));
             }
         }
 
@@ -1462,7 +1454,7 @@ public:
             return true;
         Vec3 hit;
         int link;
-        if (resolvePenPoint(e.x, e.y, hit, link, &dragAnchor)) {
+        if (resolvePenPoint(e.x, e.y, hit, link, pickOcclusionOf(vts), &dragAnchor)) {
             vertices_[dragVertIdx] = hit;
             refreshLinks();
             // A cross mirror link stays with the dragged point (A7: the weld
@@ -1605,7 +1597,7 @@ private:
     // surface placed the point, B6), the merge — on every event, but not on a
     // drag the vertex snap placed (pen_merge_drag.json S_V1, a copied
     // reference defect); `link` is the edited-mesh vertex the point shares, or -1.
-    bool resolvePenPoint(int x, int y, out Vec3 local, out int link, const(Vec3)* drag = null) {
+    bool resolvePenPoint(int x, int y, out Vec3 local, out int link, bool occlusion, const(Vec3)* drag = null) {
         link = -1;
         immutable float q = viewVectorQuantum(cachedVp);
         if (vertices_.length == 0) {   // a drag always has its point
@@ -1629,16 +1621,9 @@ private:
         if (element && s.targetType == SnapType.Edge)
             local = toLocalP(pointOnEdgeUnder(toWorldP(placed), s.targetIndex));
         if (params_.merge && !(drag !is null && element && s.targetType == SnapType.Vertex))
-            link = mergeTarget(local, s, x, y, drag !is null);
+            link = mergeTarget(local, s, x, y, drag !is null, occlusion);
         publishLastSnap(s);
         return true;
-    }
-
-    // An element of the edited mesh (a discrete target, not a constraint)
-    // placed the point: the merge's small radii.
-    static bool elementPlaced(in SnapResult s) {
-        return s.snapped && s.constraintType == SnapType.None &&
-            s.targetSource == 0 && (s.targetType & kElementSnapBits) != 0;
     }
 
     // The merge (wave plan S5; fixture pen_merge.json): ONE search from the
@@ -1659,12 +1644,12 @@ private:
     // `snapCursor` takes an integer pixel, so it is the broad phase (r + 1)
     // and the float distance decides.
     static immutable SnapType[2] kMergeTypes = [SnapType.Vertex, SnapType.Edge];
-    int mergeTarget(ref Vec3 local, in SnapResult s, int x, int y, bool drag) {
+    int mergeTarget(ref Vec3 local, in SnapResult s, int x, int y, bool drag, bool occlusion) {
         immutable Vec3 placed = toWorldP(local);
         float fx, fy, ndcZ;
         if (!projectToWindowFull(placed, cachedVp, fx, fy, ndcZ)) return -1;
         if (vertices_.length < 2 && floor(fx + kPixelEps) == x &&
-            floor(fy + kPixelEps) == y && hoverHoldsEdge(placed, x, y))
+            floor(fy + kPixelEps) == y && hoverHoldsEdge(x, y, occlusion))
             return -1;
         float pxFrom(Vec3 w) {
             float x, y, z;
@@ -1723,27 +1708,11 @@ private:
                           liveSnapGuides(SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned)));
     }
 
-    // The view's hover record at pointer pixel (x, y) holds an edge: the
-    // element-pick law (`electElement`) over the edited mesh's nearest vertex
-    // and edge within its 8 px reach, the analogue of the HOV3 hover (K-PM2
-    // rule 2; the reference's reach is 6.2-8.9 px).
-    bool hoverHoldsEdge(Vec3 placed, int x, int y) {
-        import hover_state : electElement, kElementPickRadiusPx, pickDistances;
-        immutable ms = primaryModelSpace();
-        float[2] at(uint v) {
-            float wx, wy, wz;
-            projectToWindowFull(ms.toWorldPoint(mesh.vertices[v]), cachedVp, wx, wy, wz);
-            return [wx, wy];
-        }
-        SnapResult[2] hit;
-        foreach (i, t; kMergeTypes)
-            hit[i] = nearestOf(t, placed, x, y, kElementPickRadiusPx);
-        float[2] v = hit[0].snapped ? at(hit[0].targetIndex) : [0f, 0f];
-        float[2][2] e;
-        if (hit[1].snapped)
-            e = [at(mesh.edges[hit[1].targetIndex][0]), at(mesh.edges[hit[1].targetIndex][1])];
-        return electElement(pickDistances(x, y, hit[0].snapped ? &v : null,
-                                          hit[1].snapped ? &e : null, false)) == kCascadeEdge;
+    // Read-only edited-source hover; the polygon pen still requests no highlight.
+    bool hoverHoldsEdge(int x, int y, bool occlusion) {
+        import hover_state : hoverRecordAtPixel, ToolPressSource;
+        ToolPressSource[1] sources = [ToolPressSource(mesh, primaryModelSpace())];
+        return hoverRecordAtPixel(x, y, cachedVp, sources, occlusion, false).kind == kCascadeEdge;
     }
 
     // The stroke point whose mirror image lies within `r` px of world point
