@@ -213,20 +213,18 @@ private enum int MOVE_BASE = 0, ROT_BASE = 10, SCALE_BASE = 20;
 // overlap).
 private enum int HANDLES_PER_BANK = 10;
 
-private enum LatchedHandleBank { None, Move, Rotate, Scale }
-
 private struct LatchedHandlePart {
-    LatchedHandleBank bank = LatchedHandleBank.None;
+    DragBank bank = DragBank.None;
     int localPart = -1;
 }
 
 private LatchedHandlePart latchedHandlePart(int hitPart) pure nothrow @safe @nogc {
     if (hitPart >= MOVE_BASE && hitPart < MOVE_BASE + HANDLES_PER_BANK)
-        return LatchedHandlePart(LatchedHandleBank.Move, hitPart - MOVE_BASE);
+        return LatchedHandlePart(DragBank.Move, hitPart - MOVE_BASE);
     if (hitPart >= ROT_BASE && hitPart < ROT_BASE + HANDLES_PER_BANK)
-        return LatchedHandlePart(LatchedHandleBank.Rotate, hitPart - ROT_BASE);
+        return LatchedHandlePart(DragBank.Rotate, hitPart - ROT_BASE);
     if (hitPart >= SCALE_BASE && hitPart < SCALE_BASE + HANDLES_PER_BANK)
-        return LatchedHandlePart(LatchedHandleBank.Scale, hitPart - SCALE_BASE);
+        return LatchedHandlePart(DragBank.Scale, hitPart - SCALE_BASE);
     return LatchedHandlePart();
 }
 
@@ -297,15 +295,15 @@ unittest { // restoreBaselinePrefix: a length mismatch copies the shared prefix
 }
 
 unittest { // shared handle winner maps to the exact subtool latch part
-    assert(latchedHandlePart(-1).bank == LatchedHandleBank.None);
+    assert(latchedHandlePart(-1).bank == DragBank.None);
     auto move = latchedHandlePart(MOVE_BASE + 6);
-    assert(move.bank == LatchedHandleBank.Move);
+    assert(move.bank == DragBank.Move);
     assert(move.localPart == 6);
     auto rot = latchedHandlePart(ROT_BASE + 3);
-    assert(rot.bank == LatchedHandleBank.Rotate);
+    assert(rot.bank == DragBank.Rotate);
     assert(rot.localPart == 3);
     auto scale = latchedHandlePart(SCALE_BASE + 4);
-    assert(scale.bank == LatchedHandleBank.Scale);
+    assert(scale.bank == DragBank.Scale);
     assert(scale.localPart == 4);
 }
 
@@ -986,7 +984,7 @@ public:
         toolHandles = new ToolHandles();
         toolHandles.setAiHoverPreviewEnabled(true);
         toolHandles.setAiHoverPreviewPredicate(
-            (int part) const => latchedHandlePart(part).bank != LatchedHandleBank.None);
+            (int part) const => latchedHandlePart(part).bank != DragBank.None);
     }
 
     override string name() const { return "Transform"; }
@@ -3044,6 +3042,27 @@ public:
         }
     }
 
+    /// The shared arbiter's press test over every enabled bank's registered
+    /// handles: the global hit part, -1 for none. `vp` is the owner cell's
+    /// viewport — the geometry is refreshed from it first (task 0212: a
+    /// press can land while the handlers still hold a foreign cell's draw).
+    final int pressHitPart(int x, int y, const ref Viewport vp) {
+        toolHandles.begin();
+        registerGizmoHandles(toolHandles);
+        refreshBankGeometry(vp);
+        int hitPart = toolHandles.test(x, y, vp, AiInteractionPhase.mouseDown);
+        if (compactPresentation() && flagS && hitPart < 0)
+            hitPart = compactScaleHeadFallbackHitPart(compactPresentation(), flagS, hitPart,
+                                                      scaleSub.hitTestAxisHeads(x, y));
+        return hitPart;
+    }
+
+    /// The bank `pressHitPart` answers — for a host that drives the banks
+    /// directly (Edge Extend) and so takes the wrapper's bank priority.
+    final DragBank pressHitBank(int x, int y, const ref Viewport vp) {
+        return latchedHandlePart(pressHitPart(x, y, vp)).bank;
+    }
+
     /// The banks' half of `syncInputViewport`, for a host that drives the
     /// banks directly and draws nothing before its first press (Edge Extend,
     /// task 7118, gap 217): the banks' viewport cache is otherwise written
@@ -3079,24 +3098,8 @@ public:
         // element-pick gate below: a click on a transform handle is an
         // on-handle drag, NEVER an element pick/relocate.
         int hitPart = -1;
-        if (e.button == SDL_BUTTON_LEFT && !reopenedFromForeignEdit) {
-            toolHandles.begin();
-            registerGizmoHandles(toolHandles);
-            // Task 0212: same owner-geometry refresh as the draw arbiter
-            // block (refreshBankGeometry's doc comment) — closes the
-            // analogous latent CLICK miss: a mouse-down can land while the
-            // shared handler geometry still reflects a non-owner cell's
-            // last draw. `cachedVp` here is the owner cell's pinned vp
-            // (synced by syncInputViewport above).
-            refreshBankGeometry(cachedVp);
-            hitPart = toolHandles.test(e.x, e.y, cachedVp,
-                                       AiInteractionPhase.mouseDown);
-            if (compactPresentation() && flagS && hitPart < 0) {
-                int scaleHeadAxis = scaleSub.hitTestAxisHeads(e.x, e.y);
-                hitPart = compactScaleHeadFallbackHitPart(
-                    compactPresentation(), flagS, hitPart, scaleHeadAxis);
-            }
-        }
+        if (e.button == SDL_BUTTON_LEFT && !reopenedFromForeignEdit)
+            hitPart = pressHitPart(e.x, e.y, cachedVp);
 
         // Element-falloff click-pick PRE-step: when falloff.element
         // is active and the user clicks any element (vert/edge/face)

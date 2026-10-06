@@ -200,7 +200,7 @@ mixin template XfrmHandlesImpl() {
         auto latchedPart = latchedHandlePart(hitPart);
 
         if (flagT && allowMoveDispatch) {
-            int resolvedMoveAxis = latchedPart.bank == LatchedHandleBank.Move
+            int resolvedMoveAxis = latchedPart.bank == DragBank.Move
                                  ? latchedPart.localPart : -1;
             void commitBeforeMoveRelocate() {
                 if (editIsOpen())
@@ -284,7 +284,7 @@ mixin template XfrmHandlesImpl() {
         }
 tryRotateBank:
         if (flagR && allowRotDispatch) {
-            int resolvedRotateAxis = latchedPart.bank == LatchedHandleBank.Rotate
+            int resolvedRotateAxis = latchedPart.bank == DragBank.Rotate
                                    ? latchedPart.localPart : -1;
             void commitBeforeRotateRelocate() {
                 if (editIsOpen())
@@ -384,7 +384,7 @@ tryRotateBank:
 tryScaleBank:
         if (flagS && allowScaleDispatch) {
             scaleSub.setInputOptions(negScale);
-            int resolvedScaleAxis = latchedPart.bank == LatchedHandleBank.Scale
+            int resolvedScaleAxis = latchedPart.bank == DragBank.Scale
                                   ? latchedPart.localPart : -1;
             void commitBeforeScaleRelocate() {
                 if (editIsOpen())

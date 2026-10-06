@@ -210,11 +210,13 @@ class SymmetryStage : Stage, Operator {
     /// evaluation; its pair table is the stage's cache).
     const(SymmetryPacket)* publishedPacket() const nothrow @nogc { return &_publishedPacket; }
 
-    /// The published authoring side (+1 / -1).
-    int authoringSide() const nothrow @nogc {
+    /// The published authoring side (+1 / -1). `throughPin` false tests the
+    /// base against the plane as if no work plane were pinned — Edge Extend's
+    /// press side (capture K-EX rule 2).
+    int authoringSide(bool throughPin = true) const nothrow @nogc {
         if (!authoringBasePlaced_) return -1;
         Vec3 pp, pn;
-        currentPlane(pp, pn);
+        currentPlane(pp, pn, throughPin);
         return sideOfBase(pp, pn);
     }
 
@@ -377,8 +379,8 @@ public:
     /// `evaluate`. A workplane plane maps through the last evaluated pinned
     /// work-plane basis (the world identity before the first, and for an auto
     /// plane). Read by `authoringSide()`.
-    public void currentPlane(out Vec3 planePt, out Vec3 planeN) const nothrow @nogc {
-        const b = useWorkplane ? appliedBasis_ : kWorldBasis;
+    public void currentPlane(out Vec3 planePt, out Vec3 planeN, bool throughPin = true) const nothrow @nogc {
+        const b = useWorkplane && throughPin ? appliedBasis_ : kWorldBasis;
         workplaneSymmetryPlane(b[0], b[1], b[2], b[3], axisIndex, offset, planePt, planeN);
     }
 

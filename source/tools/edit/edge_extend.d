@@ -868,7 +868,7 @@ public:
     // 245).
     override void update(ref VectorStack vts) {
         if (!active) return;
-        if (dragBank == DragBank.None) readSymmetry(vts);
+        if (dragBank == DragBank.None) symMirror_ = liveMirror();
         xfrm.update(vts);
     }
 
@@ -935,10 +935,10 @@ public:
                    ? dragPivotOverride_.value : Vec3(0, 0, 0);
         dragPivotOverride_.active = false;   // one-shot: never leak into a later apply
         // `ToolDoApplyCommand` wraps this call with a MeshSnapshot pair, so
-        // the batch is unrecorded. No symmetry mirror here (an open finding,
-        // wave plan §4).
+        // the batch is unrecorded. It mirrors like a gesture; with no press
+        // the side is −X (capture K-EX EX_S / EX_S1).
         auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
-        const n = operation(ed, pivot, ExtendOffsetMirror.init);
+        const n = operation(ed, pivot, liveMirror());
         ed.close();
         if (n == 0) return false;
         gpu.upload(*mesh);
@@ -948,15 +948,13 @@ public:
     // -----------------------------------------------------------------------
     // Interactive drag — driven by the three embedded gizmo banks (§4.1/§4.2/
     // §4.3, option (b)). The host forwards the down/motion/up events to the bank
-    // its own probe picked and drains that bank's pending gesture scalar into the
+    // the press picked and drains that bank's pending gesture scalar into the
     // matching Extend op param, then re-runs the kernel.
     //
-    // Bank selection is NOT the arbiter: try Move, then the principal Rotate
-    // rings, then Scale; the first bank whose own hit test (its `handleParts`)
-    // grabs a REAL handle (dragAxis>=0) owns the drag. It differs from the
-    // arbiter's T→R→S registration where the view ring overlaps a scale part
-    // (the arbiter answers the ring, this probe falls through to Scale); that
-    // order waits for the hit-order capture.
+    // Bank selection is the wrapper's: the shared arbiter (`pressHitBank`)
+    // names the bank whose handle is under the press and only that bank is
+    // offered it; on an arbiter miss Move, Rotate, Scale are offered in turn,
+    // and the first that grabs a REAL handle (dragAxis>=0) owns the drag.
     // On a total miss, the Move bank begins a HAUL (screen-plane Offset drag).
     //   - Move   → Offset (world-axis, pivot-agnostic; haul + on-arrow share it).
     //   - Rotate → rotateDeg component (principal ring axis → X/Y/Z), about the
@@ -1057,6 +1055,12 @@ public:
         // fewer clicks than it used to — a switched-off bank is never asked.
         DragBank picked = DragBank.None;
         bool totalMiss = false;
+        // The wrapper's bank priority: the shared arbiter names the bank whose
+        // handle is under the press and only that bank is offered it; a miss
+        // offers every bank (capture K-EX EX_R: with Move and Rotate on, a
+        // ring press rotates — Move's off-handle haul does not take it).
+        immutable DragBank hitBank = first ? DragBank.None : xfrm.pressHitBank(e.x, e.y, pvp);
+        bool offered(DragBank b) { return hitBank == DragBank.None || hitBank == b; }
         if (first) {
             // No handle is drawn before the operation opens (gap 217), so the
             // bank does not hit-test it (`TransformTool.handleHittable`, H8).
@@ -1064,15 +1068,17 @@ public:
                 picked = DragBank.Move;
             else
                 totalMiss = true;
-        } else if (moveHandle_ && mv.onMouseButtonDown(le, vts) && mv.dragAxisPublic() >= 0) {
+        } else if (moveHandle_ && offered(DragBank.Move) && mv.onMouseButtonDown(le, vts)
+                   && mv.dragAxisPublic() >= 0) {
             picked = DragBank.Move;
-        } else if (rotateHandle_ && rt.onMouseButtonDown(le, vts)
+        } else if (rotateHandle_ && offered(DragBank.Rotate) && rt.onMouseButtonDown(le, vts)
                    && rt.dragAxisPublic() >= 0 && rt.dragAxisPublic() <= 2) {
             // Principal rings only (0/1/2 → X/Y/Z Euler component). The view-ring
             // (3) maps to no single rotateDeg component; defer it (the command's
             // rotateDeg has no arbitrary-axis slot). Leave it unowned.
             picked = DragBank.Rotate;
-        } else if (scaleHandle_ && sc.onMouseButtonDown(le, vts) && sc.dragAxisPublic() >= 0) {
+        } else if (scaleHandle_ && offered(DragBank.Scale) && sc.onMouseButtonDown(le, vts)
+                   && sc.dragAxisPublic() >= 0) {
             picked = DragBank.Scale;
         } else {
             totalMiss = true;
@@ -1103,7 +1109,7 @@ public:
         // authoring side A the transform tools read too (C-latch-x X-shared;
         // no gate on symmetry being on — a placement made with symmetry off
         // still latches). `symMirror_.pressSide` is only a COPY of A.
-        readSymmetry(vts);
+        symMirror_ = liveMirror();
         if (offHandlePress) {
             if (auto ac = liveAcenStage()) ac.notePlacementAt(pressPoint_);
             immutable int side = liveAuthoringSide();
@@ -1287,28 +1293,28 @@ private:
         return mesh.selectionBBoxCenterEdges();
     }
 
-    // The symmetry plane; under work-plane symmetry the stage's plane mapped
-    // by the work plane once more, W twice like the pen (capture
-    // K-D D4: the offset mirrors about R²·eₓ).
-    void readSymmetry(ref VectorStack vts) {
-        symMirror_.enabled = false;
-        if (auto sp = vts.get!SymmetryPacket()) {
-            symMirror_.enabled     = sp.enabled;
-            symMirror_.planePoint  = sp.planePoint;
-            symMirror_.planeNormal = sp.planeNormal;
-            if (sp.useWorkplane) {
-                import tools.create.create_common : primitivePlacementFrame;
-                import toolpipe.stages.symmetry : mapByWorkplaneOnceMore;
-                mapByWorkplaneOnceMore(primitivePlacementFrame().toWorld,
-                                       symMirror_.planePoint, symMirror_.planeNormal);
-            }
+    // The mirror, from the live symmetry stage — the gesture and the scripted
+    // apply read the same one (a scripted apply mirrors, capture K-EX rule 3).
+    // The VERTEX plane is the stage's plane mapped by the work plane once
+    // more, W twice like the pen (K-D D4: the offset mirrors about R²·eₓ).
+    ExtendOffsetMirror liveMirror() {
+        import toolpipe.stages.symmetry : liveSymmetryStage, mapByWorkplaneOnceMore;
+        ExtendOffsetMirror m;
+        m.pressSide = liveAuthoringSide();
+        auto sy = liveSymmetryStage();
+        if (sy is null) return m;
+        m.enabled = sy.enabled;
+        sy.currentPlane(m.planePoint, m.planeNormal);
+        if (sy.useWorkplane) {
+            import tools.create.create_common : primitivePlacementFrame;
+            mapByWorkplaneOnceMore(primitivePlacementFrame().toWorld, m.planePoint, m.planeNormal);
         }
-        symMirror_.pressSide = liveAuthoringSide();
+        return m;
     }
 
     /// The live authoring side A (task 7144) — the one value every tool
     /// reads; −1 with no symmetry stage. `symMirror_.pressSide` is its copy,
-    /// refreshed before each read (`readSymmetry`, `rebuildPreview`).
+    /// refreshed before each read (`liveMirror`, `rebuildPreview`).
     private static auto liveAcenStage() {
         import toolpipe.pipeline : g_pipeCtx;
         import toolpipe.stage : TaskCode;
@@ -1317,10 +1323,13 @@ private:
         return cast(ActionCenterStage) g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
     }
 
+    // The PRESS side is tested against the plane with no pin, while the
+    // vertices use the twice-mapped one (K-EX rule 2: two planes, a probable
+    // reference defect, copied).
     private int liveAuthoringSide() {
         import toolpipe.stages.symmetry : liveSymmetryStage;
         auto sy = liveSymmetryStage();
-        return sy is null ? -1 : sy.authoringSide();
+        return sy is null ? -1 : sy.authoringSide(/*throughPin=*/false);
     }
 
     // Pivot fed to the kernel for every INTERACTIVE evaluation — a bank drag

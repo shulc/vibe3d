@@ -103,7 +103,7 @@ unittest { // (c2) ONE side test
     // Edge Extend: the handle base and the ring offset read the side test, and
     // keep no `dot(` of their own beyond the offset's two normal components.
     const ee = codeOf("source/tools/edit/edge_extend.d");
-    foreach (fn; ["Vec3 extendHandleBase(", "void readSymmetry(", "private int liveAuthoringSide("]) {
+    foreach (fn; ["Vec3 extendHandleBase(", "ExtendOffsetMirror liveMirror(", "private int liveAuthoringSide("]) {
         const body_ = bodyAfter(ee, fn);
         assert(body_.length > 40, "(c2) body not found: " ~ fn);
         assert(countOccurrences(body_, "dot(") == 0, "(c2) " ~ fn ~ " keeps its own dot( sign test");
@@ -133,7 +133,7 @@ unittest { // (c4) ONE work-plane symmetry plane function, ONE call
     assert(countOccurrences(pen, "workplaneSymmetryPlane(") == 1 &&
            countOccurrences(bodyAfter(pen, "void latchMirror("), "mapByWorkplaneOnceMore(") == 1,
            "(c4) the pen does not read the stage's plane once, mapped by W once more");
-    const ee = bodyAfter(codeOf("source/tools/edit/edge_extend.d"), "void readSymmetry(");
+    const ee = bodyAfter(codeOf("source/tools/edit/edge_extend.d"), "ExtendOffsetMirror liveMirror(");
     assert(countOccurrences(ee, "mapByWorkplaneOnceMore(") == 1,
            "(c4) Edge Extend does not map the stage's plane by W once more");
     foreach (body_; [bodyAfter(pen, "void latchMirror("), ee])
