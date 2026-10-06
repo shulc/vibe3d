@@ -572,4 +572,16 @@ unittest { // Task 20261040: private radialAlignStart, original first equal-key 
     foreach (q; p) radius += (q-center).len;
     radius /= p.length;
     assert(start == 0, format("original-start expected=0 actual=%s", start));
+
+    // Captured small-N fallback initializer, independently of target geometry.
+    D3[] anti = [D3(-.5,-.5,-.5), D3(.7071067690849304,-.5,0),
+        D3(.5,-.5,.5), D3(-.5,-.5,.5)];
+    D3 antiCenter;
+    foreach(q;anti) antiCenter=antiCenter+q;
+    antiCenter=antiCenter*(1.0/anti.length);
+    const antiNormal=ringNormal(anti,antiCenter);
+    assert(anti.length==4 && antiNormal.x==0 && antiNormal.y==-1 && antiNormal.z==0,
+        "small-N negative-Y fallback population");
+    const fallbackStart=radialAlignStart(anti,antiCenter,antiNormal);
+    assert(fallbackStart==3,format("fallback-start expected=3 actual=%s",fallbackStart));
 }

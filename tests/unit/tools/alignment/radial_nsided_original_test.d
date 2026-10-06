@@ -90,6 +90,7 @@ unittest {
     else version (RadialFiveResidual) score(1, 0, 0, "cast-target N5/0/0 positive residual index0.x");
     else version (RadialInterior) score(0, 1, 0, "cast-target N6/0/0 index1.x");
     else version (RadialEarlyCast) score(1, 3, 0, "cast-target N5/0/0 index3.x");
+    else version (RadialKnots) score(1, 4, 0, "cast-target N5/0/0 knot4.x");
     else version (RadialRemainder) score(1, 1, 0, "cast-target N5/0/0 index1.x");
     else version (RadialClosing) score(2, 0, 0, "cast-target N5/1/0 index0.x");
     else version (RadialRotate) score(2, 1, 0, "cast-target N5/1/0 index1.x");

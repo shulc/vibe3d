@@ -1,5 +1,7 @@
 // Task 20261040: both registered product doors, full original mesh.
-import http_client : getJson, postJson;
+import http_client : getJson, postJson, testBaseUrl;
+import std.net.curl : get;
+import std.array : replace;
 import http_command_helpers : commandBody;
 import std.file : readText;
 import std.json : JSONValue, JSONType, parseJSON;
@@ -19,8 +21,11 @@ private void cmd(string s) {
 }
 private JSONValue model() {
     auto m=getJson("/api/model");
-    // The existing plane dump preserves all binary32 bits; model is six decimals.
-    m["vertices"]=getJson("/api/mesh/planes")["vertices"];
+    // Plane dump uses nine digits. Preserve its signed zero before JSON parses
+    // the integer token -0; all finite floats can then be scored by their bits.
+    auto raw=cast(string)get(testBaseUrl()~"/api/mesh/planes");
+    auto planes=parseJSON(raw.replace("-0,","-0.0,").replace("-0]","-0.0]"));
+    m["vertices"]=planes["vertices"];
     return m;
 }
 private JSONValue loadOriginal(JSONValue f) {
@@ -33,10 +38,8 @@ private JSONValue loadOriginal(JSONValue f) {
     auto before=model();
     assert(before["vertexCount"].integer==90 && before["edgeCount"].integer==162 &&
         before["faceCount"].integer==74,"full original product population");
-    // JSON integer zero loses a sign; input checks numerical float equality.
-    // All scored shipping targets and weighted outputs below remain bit exact.
     foreach(i,v;before["vertices"].array) foreach(a;0..3)
-        assert(cast(float)number(v[a])==cast(float)number(f["model"]["vertices"][i][a]),format("original product input vertex%s.%s expected=%08x actual=%08x",i,"xyz"[a],bits(f["model"]["vertices"][i][a]),bits(v[a])));
+        assert(bits(v[a])==bits(f["model"]["vertices"][i][a]),format("original product input vertex%s.%s expected=%08x actual=%08x",i,"xyz"[a],bits(f["model"]["vertices"][i][a]),bits(v[a])));
     foreach(k;["faces","isSubpatch","faceHidden","vertexHidden","edgeHidden",
             "surfaces","faceMaterial","facePart","selectionSets"])
         assert(before[k]==f["model"][k],"original represented metadata "~k);
@@ -66,7 +69,10 @@ private void score(JSONValue f, JSONValue before, size_t cellIndex, string door)
 }
 private void restored(JSONValue before) {
     auto got=model();
-    foreach(k;["vertices","faces","edges","faceHidden","vertexHidden","edgeHidden",
+    assert(got["vertices"].array.length==90,"Undo full vertex population");
+    foreach(i,v;got["vertices"].array) foreach(a;0..3)
+        assert(bits(v[a])==bits(before["vertices"][i][a]),"actual Undo restores input bits");
+    foreach(k;["faces","edges","faceHidden","vertexHidden","edgeHidden",
             "isSubpatch","surfaces","faceMaterial","facePart","selectionSets"])
         assert(got[k]==before[k],"actual Undo restores full input "~k);
     assert(getJson("/api/selection")["selectedFaces"].array.length==1 &&
