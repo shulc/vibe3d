@@ -1279,9 +1279,13 @@ unittest { // private inputMoving/needsApply/captureLastSeen/cacheAppliedState
     auto saved = g; scope(exit) g = saved;
     g = PanelState.init;
     Mesh m; auto v = new View(0,0,650,544);
+    g.scene = new Scene;g.sceneLightId=1;g.fbW=650;g.fbH=544;
+    assert(updateSceneFromVibe3D(&m,v),"IPR_LENS_DESCRIPTOR_DEFAULT_APPLIES");
+    assert(g.scene.camera.desc.fovRadiansVertical==45.0f*cast(float)(PI/180.0),"IPR_LENS_DESCRIPTOR_DEFAULT_EXACT");
     cacheAppliedState(&m,v);
     assert(!inputMoving(&m,v) && !needsApply(&m,v),"IPR_LENS_SETTLED_A");
     v.setFovY(.9026584025557545);
+    assert(updateSceneFromVibe3D(&m,v)&&g.scene.camera.desc.fovRadiansVertical==v.fovY,"IPR_LENS_ACTUAL_DESCRIPTOR");
     assert(inputMoving(&m,v),"IPR_LENS_SEEN_CHANGE");
     captureLastSeen(&m,v);
     assert(!inputMoving(&m,v),"IPR_LENS_SEEN_STAMP");
@@ -1294,4 +1298,6 @@ unittest { // private inputMoving/needsApply/captureLastSeen/cacheAppliedState
     v.setFovY(.9026584025557545);v.setFovY(View.defaultFovY);
     assert(!inputMoving(&m,v) && !needsApply(&m,v),"IPR_LENS_UNCONSUMED_ABA");
     v.setFovY(v.fovY);assert(!inputMoving(&m,v)&&!needsApply(&m,v),"IPR_LENS_SAME_VALUE");
+    v.projKind=ProjKind.Ortho;v.setFovY(.9026584025557545);
+    assert(updateSceneFromVibe3D(&m,v)&&g.scene.camera.desc.fovRadiansVertical==View.defaultFovY,"IPR_LENS_ORTHO_DESCRIPTOR_HISTORICAL");
 }
