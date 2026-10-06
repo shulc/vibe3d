@@ -214,8 +214,12 @@ private TimeoutCadenceSample runTimeoutCadence(Duration cadence) {
     auto server = new HttpServer(port);
     server.setSelectionBridgeMaxItersForTest(kRigMaxIters);
     server.suppressSelectionOwnedCompletionNotifyForTest(true);
+    // The pause between counting a read and returning it stands in for a
+    // stalled waiter: a step must be judged by the waiter's decision, never
+    // by the read alone.
     server.setSelectionOwnedClockForTest(() {
         atomicOp!"+="(clockReads, 1);
+        Thread.sleep(2.msecs);
         return base + atomicLoad(fakeHnsecs).hnsecs;
     });
     server.setSelectionDataProvider(() {
