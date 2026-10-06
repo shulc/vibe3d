@@ -174,6 +174,35 @@ unittest { // CD_Q_BV / CD_S_BV: Polygon mode, the quad selected, an off-handle 
     }
 }
 
+unittest { // Ours: redo after the drop's undo replays the session; the drop row never returns
+    rig("vertex");
+    ui("tool.set TransformMove on");
+    const armed = depth();
+    dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
+    const edited = verts();
+    keyQ();
+    undo();
+    assert(quadAtStart() && tool() == "TransformMove", "redo rig: the drop's undo reverted the session");
+    key(122, 29, 65);
+    const redoLen = getJson("/api/history")["redo"].array.length;
+    assert(quadGap(verts(), edited) <= 1e-6 && tool() == "TransformMove" && depth() == armed + 1
+            && redoLen == 0,
+        format("redo: the drag comes back, the tool stays armed, nothing left to redo (depth %s, redo %s)",
+            depth(), redoLen));
+    key(122, 29, 65);
+    assert(quadGap(verts(), edited) <= 1e-6 && depth() == armed + 1 && tool() == "TransformMove",
+        "a second redo changes nothing (the drop row is not on the redo stack)");
+    // The History panel's jump to a row between the drop row and the session's
+    // rows: the drop's undo takes the session, the walk redoes it back.
+    keyQ();
+    auto r = postJson("/api/history/jump", format(`{"target":%s}`, armed + 1));
+    quiesce();
+    assert(r["status"].str == "ok" && depth() == armed + 1 && quadGap(verts(), edited) <= 1e-6
+            && tool() == "TransformMove",
+        format("jump below the drop row: the edit stands, the tool is re-armed (%s, depth %s, tool '%s')",
+            r, depth(), tool()));
+}
+
 unittest { // CD_Q2_TM / CD_Q2_TM_z2: two drags, Q; Ctrl+Z 1 takes BOTH back
     rig("vertex");
     key(119, 26);
@@ -229,6 +258,22 @@ unittest { // Ours, uncaptured (gap row): what forgets the latent tool, and whic
     cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));   // a new row
     dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
     assert(quadAtStart() && tool() == "", "a recorded command forgets the latent tool");
+    latentRig();
+    cmd("history.clear");   // a cleared history has moved too
+    dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
+    assert(quadAtStart() && tool() == "", "a history clear forgets the latent tool");
+    // A foreign row below the arming, undone and redone: the history moved.
+    rig("vertex");
+    cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));
+    key(119, 26);
+    dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
+    undo();
+    undo();
+    undo();
+    key(122, 29, 65);
+    assert(depth() == 1 && tool() == "", "foreign-row rig: the select row is back, no tool");
+    dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
+    assert(quadAtStart() && tool() == "", "an undo and redo of a foreign row forget the latent tool");
     latentRig();
     auto c = fetchCamera();
     const p = worldPixel(Vec3(0.15f, 0, 0.15f));

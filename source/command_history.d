@@ -564,6 +564,10 @@ final class CommandHistory {
     // Purpose: gives the exploration controller a reliable undo signal that is
     // immune to consolidate/coalesce/replace side-effects on stack length.
     private ulong _undoEpoch = 0;
+    // Bumped by every record, undo, redo, clear and prepared install: "has the
+    // history moved?" for a reader that keeps no row reference (K-RD rule 3).
+    private ulong _generation = 0;
+    ulong generation() const nothrow @nogc { return _generation; }
 
     // Undo/redo step UI, Model and ToolLifecycle records in strict LIFO order:
     // one record transfers between the stacks and calls revert()/apply(). A
@@ -998,6 +1002,7 @@ final class CommandHistory {
     void installPreparedImage(ref PreparedHistoryImage p) nothrow @nogc {
         undoStack = p.undoStack; redoStack = p.redoStack;
         maxDepth = p.maxDepth; _state = p.state; _undoEpoch = p.undoEpoch;
+        ++_generation;
         _lockout = p.lockout; _coalesceBarrier = p.coalesceBarrier;
         refireOpen = p.refireOpen; liveCmd = p.liveCmd;
         blockDepth = p.blockDepth; blockChildren = p.blockChildren;
@@ -1171,6 +1176,7 @@ final class CommandHistory {
                            runId: runId,
                            tweakGeneration: tweakGen };
         undoStack ~= e;
+        ++_generation;
         if (undoStack.length > maxDepth)
             undoStack = undoStack[$ - maxDepth .. $];
         // Any new action invalidates the redo timeline.
@@ -1961,12 +1967,13 @@ final class CommandHistory {
                 redoStack.length = 0;
             else
                 redoStack = [entry] ~ redoStack;
-            if (first && armPolicy !is null && armPolicy.revertsSession())
+            if (armPolicy !is null && armPolicy.revertsSession())
                 session = armPolicy.previousToken();
             if (session == 0) break;
         }
 
         ++_undoEpoch;  // bump exactly once per successful undo
+        ++_generation;
         g_perf.count(Cat.undoApply, 1);  // task 0200 F-I7 (no-op in default build)
         return true;
     }
@@ -1986,8 +1993,8 @@ final class CommandHistory {
         if (_lockout) return false;
         if (redoStack.length == 0) return false;
 
-        // Undo transfers exactly one record to the redo head, so redo applies
-        // and transfers exactly that one record.
+        // Undo moves one record to the redo head (a drop row's undo moves its
+        // session's rows instead); redo applies and transfers the head alone.
         auto entry = redoStack[0];
 
         auto prev = _state;
@@ -1998,6 +2005,7 @@ final class CommandHistory {
 
         redoStack = redoStack[1 .. $];
         undoStack ~= entry;
+        ++_generation;
 
         return true;
     }
@@ -2075,6 +2083,7 @@ final class CommandHistory {
         // must go together so the jump range stays well-formed after a clear.
         undoStack.length = 0;
         redoStack.length = 0;
+        ++_generation;
     }
 
     /// Multi-step history jump (Phase 2 of the history-panel design
