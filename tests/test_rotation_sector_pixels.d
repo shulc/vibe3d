@@ -20,6 +20,7 @@ import std.string : strip;
 void main() {}
 
 version (linux) {
+import core.sys.posix.unistd : getpid;
 private alias Rgb = int[3];
 private string evidence;
 private enum width = 1280, height = 960;
@@ -102,10 +103,10 @@ unittest {
     evidence = "";
     auto port = allocatePort();
     const root = buildPath(environment.get("TMPDIR", "/var/tmp"),
-        "rotation-sector-gui-" ~ port.to!string);
+        "rotation-sector-gui-" ~ port.to!string ~ "-" ~ getpid().to!string);
     mkdirRecurse(root);
     const retain = environment.get("VIBE3D_OVERLAY_CAPTURE_DIR", "");
-    scope(exit) if (!retain.length) rmdirRecurse(root);
+    scope(exit) rmdirRecurse(root);
     auto env = environment.toAA;
     env.remove("WAYLAND_DISPLAY");
     env["SDL_VIDEODRIVER"] = "x11";
@@ -117,7 +118,8 @@ unittest {
     auto displayFile = File(displayPath, "wb");
     auto x = spawnProcess(["Xvfb", "-displayfd", "1", "-screen", "0", "1280x960x24"],
         stdin, displayFile, xlog, env);
-    scope(exit) { stop(x); writefln("[sector-pixels] CLEANUP xPid=%d terminal", x.processID); }
+    const xId = x.processID;
+    scope(exit) { stop(x); writefln("[sector-pixels] CLEANUP xPid=%d terminal", xId); }
     import std.file : readText;
     string display;
     foreach (_; 0 .. 120) {
@@ -132,13 +134,14 @@ unittest {
     auto app = spawnProcess([buildPath(getcwd(), "vibe3d"), "--http-port",
         port.to!string, "--window", "1280x960"], stdin, log, log, env,
         Config.none, getcwd());
+    const appId = app.processID;
     scope(exit) {
         stop(app);
         auto socket = new TcpSocket;
         socket.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
         socket.bind(new InternetAddress("127.0.0.1", port));
         socket.close();
-        writefln("[sector-pixels] CLEANUP appPid=%d port=%d bindable", app.processID, port);
+        writefln("[sector-pixels] CLEANUP appPid=%d port=%d bindable", appId, port);
     }
     const savedPort = environment.get("VIBE3D_TEST_PORT", "");
     const hadPort = "VIBE3D_TEST_PORT" in environment;
@@ -186,8 +189,8 @@ unittest {
         // Opaque guide and quarter-alpha fill are independently captured values.
         // The active ring retains its existing 0.95 GL alpha over the grey face.
         auto fill = drag.at(cx+45, cy-15);
-        const guideCount = population(drag, cx, cy, 116, [204,153,255], 8);
-        const activeCount = population(drag, cx, cy, 123, [245,221,101], 5);
+        const guideCount = population(drag, cx, cy, 116, [204,153,255], 0);
+        const activeCount = population(drag, cx, cy, 123, [245,221,101], 0);
         size_t changed;
         foreach (y; cy-60 .. cy-2) foreach (px; cx+5 .. cx+100)
             if (drag.at(px,y) != idle.at(px,y)) ++changed;
@@ -195,7 +198,7 @@ unittest {
         auto measured = format("[sector-pixels] %s measured fill=%s guide=%d active=%d changed=%d",
             axis, fill, guideCount, activeCount, changed);
         evidence ~= measured ~ "\n"; writefln("%s", measured);
-        check(axis, "fill", { assert(near(fill, [95,83,108]),
+        check(axis, "fill", { assert(near(fill, [95,83,108], 0),
             format("%s sector quarter-alpha fill: expected [95, 83, 108], got %s", axis, fill)); }, first);
         check(axis, "outline", { assert(guideCount >= 20,
             format("%s sector opaque guide outline: expected >=20 purple pixels, got %d", axis, guideCount)); }, first);
