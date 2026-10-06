@@ -204,7 +204,7 @@ unittest {
 }
 
 unittest {
-    import constraint : surfaceComponentMask;
+    import constraint : surfaceComponentMask, guideComponentEqual;
     assert(surfaceComponentMask(Vec3(0.4f, 0, 0.2f), Vec3(0.4f, -0.2f, 0.2f), 1) == 2,
            "surface-guide: a depth-only hit accepts the view-normal component");
     assert(surfaceComponentMask(Vec3(0.4f, 0, 0.2f), Vec3(0.5f, -0.2f, 0.2f), 1) == 7,
@@ -215,6 +215,7 @@ unittest {
     setBackgroundSnapSources([cast(const(Mesh)*)&background], [ModelSpace.world()]);
     scope(exit) setBackgroundSnapSources(null, null);
     auto vp = orthoRig();
+    vp.focus = Vec3(0, 0, 0);
     auto cs = new ConstrainStage();
     cs.enabled = true;
     const incoming = Vec3(0.4f, 0.2f, 0.3f);
@@ -230,4 +231,27 @@ unittest {
     cs.enabled = true;
     assert(cs.componentGuide(Vec3(4, 4, 0.3f), vp).acceptedMask == 0,
            "surface-guide: remote background misses despite nonempty inventory");
+}
+
+unittest {
+    import constraint : guideComponentEqual, surfaceComponentMask;
+    assert(guideComponentEqual(0, 0.9e-10), "guide-compare: absolute floor admits a smaller residual");
+    assert(!guideComponentEqual(0, 1e-10) && !guideComponentEqual(0, -1e-10),
+           "guide-compare: absolute floor boundary is strict on both sides");
+    assert(guideComponentEqual(3360000, 3360000.9), "guide-compare: relative tolerance admits a smaller residual");
+    assert(!guideComponentEqual(3360000, 3360001.1), "guide-compare: relative tolerance rejects a larger residual");
+    assert(surfaceComponentMask(Vec3(0.43f, 0, 0.2f), Vec3(0.43000006f, -0.2f, 0.2f), 1) == 2,
+           "guide-compare: representable X residual preserves a depth-only mask");
+    size_t n;
+    foreach (axis; 0 .. 3) {
+        const input = Vec3(0.4f, 0.3f, 0.2f);
+        Vec3 resolved = input;
+        if (axis == 0) resolved.x = -0.2f;
+        else if (axis == 1) resolved.y = -0.2f;
+        else resolved.z = -0.2f;
+        assert(surfaceComponentMask(input, resolved, axis) == (1 << axis),
+               "guide-mask: only the view-normal channel is replaced");
+        ++n;
+    }
+    assert(n == 3, "guide-mask: all three axes exercised");
 }

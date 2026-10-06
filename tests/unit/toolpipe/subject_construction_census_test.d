@@ -486,8 +486,8 @@ unittest {
 private enum censusRepoRoot = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));
 
 private static immutable LedgerRow[] kAssignmentLedger = [
-    LedgerRow("fillSubject|assignment", 10,
-        "the eight always-set fields (task 9441: pickOcclusion) plus two opt-in morph fields"),
+    LedgerRow("fillSubject|assignment", 12,
+        "the ten always-set fields (tool-press visibility included) plus two opt-in morph fields"),
 ];
 
 private static immutable LedgerRow[] kEvaluateLedger = [
@@ -550,12 +550,12 @@ unittest {
                ~ "the tree it claims to be guarding", filesScanned));
 
     string assignmentProblems = reconcile(kAssignmentLedger, assignmentHits);
-    if (assignmentHits.length != 10)
-        assignmentProblems ~= format("\n    assignment population — recorded 10, "
+    if (assignmentHits.length != 12)
+        assignmentProblems ~= format("\n    assignment population — recorded 12, "
                                    ~ "scanner found %d", assignmentHits.length);
     assert(assignmentProblems.length == 0,
         "a SubjectPacket field assignment moved outside the declaring "
-      ~ "fillSubject symbol, or that symbol's ten-field contract changed. "
+      ~ "fillSubject symbol, or that symbol's twelve-field contract changed. "
       ~ "Task 1904 made fillSubject/evaluateSubject the single place that "
       ~ "decides what the subject is; reuse that funnel instead."
       ~ assignmentProblems);

@@ -150,13 +150,17 @@ public:
     /// Accepted surface components for a free orthographic handle client.
     auto componentGuide(Vec3 incoming, const ref Viewport vp) {
         import drag : ComponentGuide;
-        import math : lockedViewAxis, eyeVectorAt, dot;
+        import math : lockedViewAxis, eyeVectorAt;
         import constraint : surfaceComponentMask;
         ComponentGuide result;
         const axis = lockedViewAxis(vp);
         if (axis < 0) return result;
         const dir = eyeVectorAt(vp, incoming);
-        const org = incoming + dir * dot(vp.eye - incoming, dir);
+        Vec3 org = incoming;
+        immutable float sign = axis == 0 ? -dir.x : axis == 1 ? -dir.y : -dir.z;
+        if (axis == 0) org.x = vp.focus.x + sign * 10000.0f;
+        else if (axis == 1) org.y = vp.focus.y + sign * 10000.0f;
+        else org.z = vp.focus.z + sign * 10000.0f;
         SurfaceHit hit;
         if (!surfaceOnRay(org, dir, hit)) return result;
         result.valuesWorld = offsetPoint(hit.point, hit.normal);

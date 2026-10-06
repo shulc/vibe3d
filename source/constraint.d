@@ -1076,6 +1076,13 @@ unittest { // resolveHoverTarget — stale candidate reset to -1 by the
     assert(t.vert == -1 && t.edge == -1);
 }
 
+bool guideComponentEqual(double a, double b) pure nothrow @nogc @safe {
+    import std.math : fabs;
+    import std.algorithm : max;
+    const tolerance = max(max(fabs(a), fabs(b)) / 3360000.0, 1e-10);
+    return fabs(a - b) < tolerance;
+}
+
 /// A surface guide accepts the view-normal component when its remaining
 /// channels represent the incoming point; otherwise it accepts the whole point.
 ubyte surfaceComponentMask(Vec3 incoming, Vec3 resolved, int axis) pure nothrow @nogc @safe {
@@ -1084,5 +1091,7 @@ ubyte surfaceComponentMask(Vec3 incoming, Vec3 resolved, int axis) pure nothrow 
     if (axis == 0) restored.x = incoming.x;
     else if (axis == 1) restored.y = incoming.y;
     else restored.z = incoming.z;
-    return restored == incoming ? cast(ubyte)(1 << axis) : cast(ubyte)7;
+    return guideComponentEqual(restored.x, incoming.x)
+        && guideComponentEqual(restored.y, incoming.y)
+        && guideComponentEqual(restored.z, incoming.z) ? cast(ubyte)(1 << axis) : cast(ubyte)7;
 }
