@@ -68,7 +68,7 @@ private double[3] itemPos() {
 }
 /// Largest coordinate gap over the first four vertices (the quad).
 private double quadGap(const double[3][] a, const double[3][] b) {
-    assert(a.length >= 4 && b.length >= 4, "population: the quad's four vertices");
+    assert(a.length >= 4 && b.length >= 4, format("population: the quad has %s versus %s vertices", a.length, b.length));
     double m = 0;
     foreach (i; 0 .. 4) foreach (k; 0 .. 3) m = abs(a[i][k] - b[i][k]) > m ? abs(a[i][k] - b[i][k]) : m;
     return m;
@@ -403,6 +403,7 @@ unittest { // Two remaining presses: extent is shared, retention is preset data.
         dragPx(p, 0, 44);
         const last = verts();
         assert(quadGap(last, first) > 0.05 && depth() < 40, "two-press floor: second press and history headroom");
+        const tokenBefore = getJson("/api/tool/state")["session"]["token"].integer;
         keyQ();
         const dropped = depth();
         if (door == "navigation") undo();
@@ -411,7 +412,7 @@ unittest { // Two remaining presses: extent is shared, retention is preset data.
         assert(tool() == id && quadGap(verts(), first) <= 1e-6 && depth() == dropped - 2,
             format("%s %s drop must revert only the newest press: %s", id, door, getJson("/api/history")));
         const token = getJson("/api/tool/state")["session"]["token"].integer;
-        assert(token > 0, "drop completion must adopt a restored session token");
+        assert(tokenBefore > 0 && token == tokenBefore, "drop completion must adopt the original session token");
         if (id == "mesh.dragWeld") {
             key(122, 29, 65);
             assert(tool() == id && quadGap(verts(), last) <= 1e-6,
@@ -444,7 +445,7 @@ unittest { // A restored tool uses the final mesh as its next press basis at eve
         else if (door == "panel") { auto r = postJson("/api/history/jump", format(`{"target":%s}`, depth() - 2)); assert(r["status"].str == "ok"); quiesce(); }
         else cmd("history.undo");
         assert(quadGap(verts(), first) <= 1e-6 && tool() == id, "next-press floor: newest press reverted");
-        dragPx(worldPixel(atFirst), 44, 0);
+        dragPx(worldPixel(atFirst), -44, 0);
         const continued = verts();
         assert(quadGap(continued, first) > 0.05, "next press must apply from restored geometry");
         // A fresh arm on that same final mesh is an independent basis oracle.
@@ -458,7 +459,7 @@ unittest { // A restored tool uses the final mesh as its next press basis at eve
         cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));
         ui("tool.set " ~ id ~ " on");
         if (id == "mesh.topoPen") cmd("tool.attr " ~ id ~ " mode 0");
-        dragPx(worldPixel(atFirst), 44, 0);
+        dragPx(worldPixel(atFirst), -44, 0);
         assert(quadGap(continued, verts()) <= 1e-6,
             format("%s %s restored next press must match a fresh arm's basis", id, door));
     }
