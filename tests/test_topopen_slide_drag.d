@@ -55,7 +55,9 @@ import std.stdio  : writefln;
 
 void main() {}
 
-enum uint LCTRL = 0x0040;   // KMOD_LCTRL — the Slide gesture's own modifier
+// The Edge Slide option drives the rail slide; Ctrl+LMB with no background is the
+// one-axis move (K-FH, task 9528; test_topopen_ctrl_axis_move).
+enum uint LCTRL = 0;
 
 double perpDistToLine(Vec3 p, Vec3 a, Vec3 b) {
     Vec3 ab = b - a;
@@ -107,6 +109,7 @@ unittest {
     foreach (v; readVerticesLayer(0)) pre ~= toVec3(v);
 
     cmd("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen slide true");
 
     // --- Two-sided colinear slide: grab edge 3-0 (both endpoints valence-2:
     // vertex 3's other edge is 2-3, vertex 0's other edge is 0-1). ---

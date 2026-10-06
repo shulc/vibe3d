@@ -38,7 +38,9 @@ import std.format : format;
 
 void main() {}
 
-enum uint LCTRL = 0x0040;   // KMOD_LCTRL — the Slide gesture's own modifier
+// The Edge Slide option drives the rail slide; Ctrl+LMB with no background is the
+// one-axis move (K-FH, task 9528; test_topopen_ctrl_axis_move).
+enum uint LCTRL = 0;
 
 // The tool's own screen-space PRESS-PICK reach (`topoPenPressPickPx`),
 // mirrored so the "far from every edge" precondition is stated in the same
@@ -121,6 +123,7 @@ unittest {
     }
 
     cmd("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen slide true");
 
     // --- BASELINE: a freshly activated pen has no decline to explain.
     auto s0 = getJson("/api/tool/state");
@@ -149,7 +152,7 @@ unittest {
 
     auto s1 = getJson("/api/tool/state");
     assert(s1["slideDeclineReason"].str == "no_edge",
-        "a Ctrl+LMB press with no edge in range must report \"no_edge\"; got "
+        "an Edge Slide press with no edge in range must report \"no_edge\"; got "
       ~ s1["slideDeclineReason"].str);
     assert(cast(int)s1["slideDeclineSeed"].integer == -1,
         "a pick miss resolved no edge, so it must report no declined seed");
@@ -170,7 +173,7 @@ unittest {
 
     auto s2 = getJson("/api/tool/state");
     assert(s2["slideDeclineReason"].str == "no_continuation",
-        "a Ctrl+LMB press on the ambiguous interior edge must report "
+        "an Edge Slide press on the ambiguous interior edge must report "
       ~ "\"no_continuation\", NOT a pick miss; got " ~ s2["slideDeclineReason"].str);
     assert(cast(int)s2["slideDeclineSeed"].integer == e12,
         format("the declined seed must name the edge that WAS resolved (1-2, index %d); got %d "

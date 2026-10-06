@@ -207,8 +207,10 @@ unittest {
         "plain RMB runs the DROPDOWN's mode — it is not an absolute move-loop");
     assert(kChordOv[TopoPenChord.ShiftLmb].mode  == ModeOv.Duplicate);
     assert(kChordOv[TopoPenChord.ShiftRmb].mode  == ModeOv.Duplicate);
-    assert(kChordOv[TopoPenChord.CtrlLmb].slide  == FlagOv.ForceOn,
-        "Ctrl+LMB forces Edge Slide");
+    assert(kChordOv[TopoPenChord.CtrlLmb].slide  == FlagOv.FromUser && kChordOv[TopoPenChord.CtrlLmb].axis,
+        "Ctrl+LMB holds the move to one world axis and does not force Edge Slide (K-FH)");
+    foreach (i, ov; kChordOv)
+        assert(ov.axis == (i == TopoPenChord.CtrlLmb), "only Ctrl+LMB holds an axis");
     assert(kChordOv[TopoPenChord.Rmb].slide      == FlagOv.FromUser,
         "and Ctrl+RMB was measured NOT forcing slide, so the rule is not 'Ctrl forces slide'");
 
@@ -7615,9 +7617,12 @@ unittest {
     assert(press(TopoPenChord.Lmb, PenMode.Move, /*loop=*/true)  == PenGesture.MoveLoop,
         "the base slot honours Edge Loop — that is what FlagOv.FromUser means");
 
-    // --- Ctrl+LMB forces Edge Slide; plain LMB honours the user's flag.
-    assert(press(TopoPenChord.CtrlLmb, PenMode.Move) == PenGesture.Slide,
-        "Ctrl+LMB forces Edge Slide on top of the dropdown's mode");
+    // --- Ctrl+LMB is the axis-held Move (K-FH), the user's Edge Slide still
+    //     wins; plain LMB honours the user's flag.
+    assert(press(TopoPenChord.CtrlLmb, PenMode.Move) == PenGesture.PlaceOrMove,
+        "Ctrl+LMB with no background is a Move held to one axis, not a slide");
+    assert(press(TopoPenChord.CtrlLmb, PenMode.Move, false, /*slide=*/true) == PenGesture.Slide,
+        "with the user's Edge Slide on, Ctrl+LMB slides");
     assert(press(TopoPenChord.Lmb, PenMode.Move, false, /*slide=*/true) == PenGesture.Slide,
         "and the user's own Edge Slide reaches the base slot");
 
@@ -7703,7 +7708,7 @@ unittest {
     immutable Slot[] grid = [
         Slot(TopoPenChord.Lmb,          PenGesture.PlaceOrMove, "plain LMB"),
         Slot(TopoPenChord.ShiftLmb,     PenGesture.Build,       "Shift+LMB = Duplicate, loop from the user (off)"),
-        Slot(TopoPenChord.CtrlLmb,      PenGesture.Slide,       "Ctrl+LMB forces Edge Slide"),
+        Slot(TopoPenChord.CtrlLmb,      PenGesture.PlaceOrMove, "Ctrl+LMB = the axis-held Move (K-FH)"),
         Slot(TopoPenChord.ShiftCtrlLmb, PenGesture.Smooth,      "Shift+Ctrl+LMB = Smoothing, no loop"),
         Slot(TopoPenChord.Mmb,          PenGesture.Split,       "plain MMB = Split"),
         Slot(TopoPenChord.ShiftMmb,     PenGesture.AddLoop,     "Shift+MMB = Add Loop"),
@@ -9850,6 +9855,70 @@ unittest {
     assert(abs(dot(ma - mean, n)) < 1e-4f && (ma - off).length < 0.02f * (b - a).length,
         format("on a moved layer a polygon press anchors on its local plane under the press (%s); got %s "
                ~ "(%.6f off the plane)", off, ma, dot(ma - mean, n)));
+}
+
+// ---------------------------------------------------------------------------
+// The axis-held Move (task 9528, K-FH rule 5): the grab point H the capture
+// read, its drag path, top ortho at the capture's 0.002275172049 m/px (q
+// 0.005). The axis is elected ONCE, at the first evaluation past the click
+// gate, from the quantised offset, a tie going to the HIGHER axis; the offset
+// is `q(H+T) - q(H)` on it. Rows: KFH_TS_V / _E (square, round 1: the first
+// (5,-3) step is a 0.01 / -0.01 tie -> Z, kept although the total is
+// X-dominant) and KFH_TS_VSK / _ESK (skewed, round 2: the first (6,-1) -> X).
+// A last synthetic row (ours, from the static read): a (2,-2) first step is a
+// click and elects nothing; the (6,-1) after it elects X.
+// ---------------------------------------------------------------------------
+unittest {
+    import math : lookAt, orthographicMatrix;
+    import viewgrid : viewVectorQuantum;
+    import std.format : format;
+    import std.math : abs;
+    enum double ps = 0.002275172049;
+    Viewport vp;
+    vp.eye    = Vec3(0, 5, 0);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 0, -1));
+    vp.proj   = orthographicMatrix(cast(float)(300 * ps), 800.0f / 600.0f, 0.01f, 100.0f);
+    vp.width  = 800;
+    vp.height = 600;
+    vp.focus  = Vec3(0, 0, 0);
+    assert(abs(viewVectorQuantum(vp) - 0.005f) < 1e-7f, "rig premise: the view quantum is 0.005");
+
+    int[2][] r1, r2 = [[6, -1], [4, -5]], r3 = [[2, -2], [6, -1]];
+    foreach (i; 0 .. 14) r1 ~= [5, -3];
+    foreach (i; 0 .. 12) { r2 ~= [5, -3]; r3 ~= [5, -3]; }
+    static struct Row { string cell; Vec3[] base; Vec3 h; int[2][] path; Vec3 off; int axis; }
+    const Vec3 v0 = Vec3(0.2977f, 0, 0.1979f), v3 = Vec3(0.2977f, 0, 0.3979f), w3 = Vec3(0.2477f, 0, 0.3979f);
+    Row[] rows = [
+        Row("KFH_TS_V",   [v0],     v0,                                    r1, Vec3(0, 0, -0.1f),  2),
+        Row("KFH_TS_E",   [v0, v3], Vec3(0.297699988f, 0, 0.298047538f),   r1, Vec3(0, 0, -0.1f),  2),
+        Row("KFH_TS_VSK", [v0],     v0,                                    r2, Vec3(0.155f, 0, 0), 0),
+        Row("KFH_TS_ESK", [v0, w3], Vec3(0.272684142f, 0, 0.297963412f),   r2, Vec3(0.155f, 0, 0), 0),
+        Row("click-first", [v0],    v0,                                    r3, Vec3(0.15f, 0, 0),  0),
+    ];
+    assert(rows.length == 5);
+    foreach (r; rows) {
+        auto t = new TopologyPenTool();
+        Mesh m;
+        t.meshSrc_ = () => &m;
+        t.moveBase_    = r.base.dup;
+        t.moveAnchor_  = r.h;
+        t.moveStartX_  = 400;
+        t.moveStartY_  = 300;
+        t.moveAxisLock_ = true;
+        int x = 400, y = 300;
+        Vec3[] got;
+        foreach (k, st; r.path) {
+            x += st[0]; y += st[1];
+            got = t.moveTargets(x, y, vp);
+            if (k == 0)
+                assert(t.moveAxis_ == (r.cell == "click-first" ? -1 : r.axis),
+                    format("%s: the first motion elects axis %s; got %s", r.cell, r.axis, t.moveAxis_));
+        }
+        assert(t.moveAxis_ == r.axis, format("%s: axis %s, got %s", r.cell, r.axis, t.moveAxis_));
+        foreach (i, b; r.base)
+            assert((got[i] - (b + r.off)).length < 2e-6f,
+                format("%s: corner %s lands %s, captured %s (offset %s)", r.cell, i, got[i], b + r.off, r.off));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -12381,8 +12450,8 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 190 && histBlocks == 83 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (190), %d read "
+    assert(blocks.length == 191 && histBlocks == 83 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (191), %d read "
              ~ "history (83), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));

@@ -696,9 +696,8 @@ private:
     // either.
     //
     // `edgeSlide_` ("Edge Slide") restricts a move to the neighbouring edge
-    // rails — the reference documents it as doing exactly what holding Ctrl
-    // in Move mode does, so it routes to the SAME `onCtrlLmbDown` the Ctrl
-    // chord does. It applies to the Move family only (Move mode, and Point
+    // rails (`onCtrlLmbDown`). Ctrl+LMB with no background is NOT this: it
+    // is the Move held to one world axis (K-FH rule 5, gap rows 627/628). It applies to the Move family only (Move mode, and Point
     // mode's move half, which the reference defines as "works as in the Move
     // mode"); `edgeLoop_` wins when both are on (there is no slide-a-whole-
     // loop gesture in this tool, so a loop press is the only one of the two
@@ -4102,7 +4101,7 @@ public:
     // evaluation past the click gate elects the world axis of the offset's
     // largest |component|, a tie going to the HIGHER axis (`edgeSlideAxis`);
     // every evaluation then keeps that one world channel of `offLocal`. False
-    // while nothing is elected (a zero offset: ours, gap row 437).
+    // while nothing is elected (a zero offset: ours, gap row 628).
     private bool axisHeld(ref Vec3 offLocal) {
         const ms = primaryModelSpace();
         const Vec3 aW = ms.toWorldPoint(moveAnchor_);
