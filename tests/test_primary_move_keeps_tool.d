@@ -35,6 +35,7 @@ private void key(int sym, int scan, int mod = 0) {
     quiesce();
 }
 private void keyW()  { key(119, 26); }      // arm move
+private void keyQ()  { key(113, 20); }      // drop the tool (tool.release)
 private void undo()  { key(122, 29, 64); }  // Ctrl+Z through the navigate chokepoint
 private void redo()  { key(122, 29, 65); }  // Ctrl+Shift+Z through the same chokepoint
 
@@ -133,6 +134,31 @@ unittest {
     assert(moved(0, a0).length == 0, "A's selected vertex must not move");
     assert(moved(1, b0) == [2], "only B's own selected vertex moves, moved "
         ~ moved(1, b0).to!string);
+}
+
+// Rule 2, both meshes selected: undoing the click restores A's selection and
+// leaves the incoming B's own selection alone (K-CD4 "undoing the click
+// restores both"). B is read back by selecting it with no tool armed.
+unittest {
+    rig();
+    cmd(commandBody("layer.select", `{"index":1,"mode":"set"}`));
+    cmd(commandBody("select.typeFrom", `{"_positional":["vertex"]}`));
+    cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[2]}`));
+    cmd(commandBody("layer.select", `{"index":0,"mode":"set"}`));
+    cmd(commandBody("select.typeFrom", `{"_positional":["vertex"]}`));
+    assert(selectedVerts() == [0], "rig: A keeps v0");
+    keyW();
+    click(1);
+    assert(selectedVerts() == [2], "rig: B keeps its own v2 after the click");
+    undo();
+    assert(primary() == 0 && selectedVerts() == [0],
+        "undoing the click restores A's selection, got " ~ selectedVerts().to!string);
+    keyQ();
+    assert(!armed(), "rig: Q dropped the tool, got " ~ tool());
+    click(1);
+    assert(primary() == 1 && selectedVerts() == [2],
+        "undoing the click must leave B's own selection, got "
+        ~ selectedVerts().to!string);
 }
 
 // CD4back + rule 2: the click clears the outgoing mesh's selection; undoing

@@ -909,72 +909,71 @@ private void nearestVertexPx(out int vi, out int wx, out int wy) {
 }
 
 unittest {
-    foreach (route; ["door"]) {
-        // ---- the CONTROL, measured here: from a clean start a click at P
-        //      selects exactly one vertex, and this is which one.
-        freshCube();
-        int vi, px, py;
-        nearestVertexPx(vi, px, py);
-        auto c = cell();
-        assert(px - c.vx >= 4 && py - c.vy >= 4
-            && px - c.vx < c.vw - 4 && py - c.vy < c.vh - 4,
-            format("rig: the nearest corner projects to window (%d, %d), not "
-                   ~ "comfortably inside the %dx%d cell at (%d, %d)",
-                   px, py, c.vw, c.vh, c.vx, c.vy));
-        clickAt(c, px, py);
-        auto control = selectedVertices();
-        assert(control == [vi],
-            format("control (%s): a click at the nearest corner must select "
-                   ~ "vertex %d — it selected %s", route, vi, control));
+    enum string route = "door";
+    // ---- the CONTROL, measured here: from a clean start a click at P
+    //      selects exactly one vertex, and this is which one.
+    freshCube();
+    int vi, px, py;
+    nearestVertexPx(vi, px, py);
+    auto c = cell();
+    assert(px - c.vx >= 4 && py - c.vy >= 4
+        && px - c.vx < c.vw - 4 && py - c.vy < c.vh - 4,
+        format("rig: the nearest corner projects to window (%d, %d), not "
+               ~ "comfortably inside the %dx%d cell at (%d, %d)",
+               px, py, c.vw, c.vh, c.vx, c.vy));
+    clickAt(c, px, py);
+    auto control = selectedVertices();
+    assert(control == [vi],
+        format("control (%s): a click at the nearest corner must select "
+               ~ "vertex %d — it selected %s", route, vi, control));
 
-        // ---- the PAIR: enter the item type, then take exactly the reset the
-        //      runner takes between test binaries, then repeat that click.
-        freshCube();
-        cmd("select.typeFrom item");
-        settle();
-        assert(selType() == "item",
-            format("%s: this route must make the item type current — it is %s",
-                   route, selType()));
-        // THE BLIND SPOT, as a value. This is the exact tuple a baseline check
-        // written against `mode` reads, and every field of it says "clean"
-        // while the gate says otherwise. Asserted here rather than described,
-        // because it is the reason the reset below has a job to do.
-        assert(editModeName() == "vertices" && selectedVertices().length == 0,
-            format("%s: the item type must leave the derived view reading "
-                   ~ `"vertices" with an empty geometry selection — it reads `
-                   ~ "%s / %s, and if it did not, a `mode`-only baseline check "
-                   ~ "would already be able to see this state",
-                   route, editModeName(), selectedVertices()));
+    // ---- the PAIR: enter the item type, then take exactly the reset the
+    //      runner takes between test binaries, then repeat that click.
+    freshCube();
+    cmd("select.typeFrom item");
+    settle();
+    assert(selType() == "item",
+        format("%s: this route must make the item type current — it is %s",
+               route, selType()));
+    // THE BLIND SPOT, as a value. This is the exact tuple a baseline check
+    // written against `mode` reads, and every field of it says "clean"
+    // while the gate says otherwise. Asserted here rather than described,
+    // because it is the reason the reset below has a job to do.
+    assert(editModeName() == "vertices" && selectedVertices().length == 0,
+        format("%s: the item type must leave the derived view reading "
+               ~ `"vertices" with an empty geometry selection — it reads `
+               ~ "%s / %s, and if it did not, a `mode`-only baseline check "
+               ~ "would already be able to see this state",
+               route, editModeName(), selectedVertices()));
 
-        auto r = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
-        assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
-        settle();
+    auto r = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
+    assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
+    settle();
 
-        // (a) the gate's own input.
-        assert(selType() == "vertex",
-            format("%s: the reset must return the ordering front to a geometry "
-                   ~ "type — it is %s, and every pick site in whatever runs "
-                   ~ "next would decline", route, selType()));
-        // (b) …and why (a) has to be spelled out at all: the field a `mode`-only
-        //     baseline check reads is "vertices" in BOTH states.
-        assert(editModeName() == "vertices",
-            format("%s: the derived geometry view reads %s — it reads "
-                   ~ `"vertices" under the item type too, which is exactly why `
-                   ~ "the assertion above is about selType and not about it",
-                   route, editModeName()));
+    // (a) the gate's own input.
+    assert(selType() == "vertex",
+        format("%s: the reset must return the ordering front to a geometry "
+               ~ "type — it is %s, and every pick site in whatever runs "
+               ~ "next would decline", route, selType()));
+    // (b) …and why (a) has to be spelled out at all: the field a `mode`-only
+    //     baseline check reads is "vertices" in BOTH states.
+    assert(editModeName() == "vertices",
+        format("%s: the derived geometry view reads %s — it reads "
+               ~ `"vertices" under the item type too, which is exactly why `
+               ~ "the assertion above is about selType and not about it",
+               route, editModeName()));
 
-        // (c) the gate itself. The reset restores the camera, so the same pixel
-        //     is the same click — asserted, not assumed.
-        int vi2, px2, py2;
-        nearestVertexPx(vi2, px2, py2);
-        assert(vi2 == vi && px2 == px && py2 == py,
-            format("%s: the reset must restore the camera or the two clicks are "
-                   ~ "not the same click — corner %d at (%d, %d) became corner "
-                   ~ "%d at (%d, %d)", route, vi, px, py, vi2, px2, py2));
-        clickAt(cell(), px, py);
-        assert(selectedVertices() == control,
-            format("%s: after the reset the next click must pick exactly what "
-                   ~ "it picks from a clean start — expected %s, got %s",
-                   route, control, selectedVertices()));
-    }
+    // (c) the gate itself. The reset restores the camera, so the same pixel
+    //     is the same click — asserted, not assumed.
+    int vi2, px2, py2;
+    nearestVertexPx(vi2, px2, py2);
+    assert(vi2 == vi && px2 == px && py2 == py,
+        format("%s: the reset must restore the camera or the two clicks are "
+               ~ "not the same click — corner %d at (%d, %d) became corner "
+               ~ "%d at (%d, %d)", route, vi, px, py, vi2, px2, py2));
+    clickAt(cell(), px, py);
+    assert(selectedVertices() == control,
+        format("%s: after the reset the next click must pick exactly what "
+               ~ "it picks from a clean start — expected %s, got %s",
+               route, control, selectedVertices()));
 }

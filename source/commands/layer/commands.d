@@ -864,9 +864,11 @@ final class LayerSelect : LayerCommandBase {
     /// `wasForeground` is null on revert and for `kind:`, which the reference
     /// sends as another command.
     private void finishSelect(Layer before, size_t beforeIndex, bool[] wasForeground) {
-        if (wasForeground !is null && droppedTool.length) {
+        if (wasForeground !is null) {
             leaving = null;
             leavingSel = null;
+        }
+        if (wasForeground !is null && droppedTool.length) {
             foreach (i, l; doc.layers)
                 if (wasForeground[i] && !doc.foreground(l)) {
                     leaving ~= l;
