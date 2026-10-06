@@ -88,9 +88,8 @@ private size_t population(const ref Frame frame, int cx, int cy, int r,
         if (near(frame.at(x,y), color, tolerance)) ++count;
     return count;
 }
-private void check(string axis, string cell, scope void delegate() test,
-                   ref string first) {
-    auto wanted = environment.get("VIBE3D_CELL", "");
+private void check(string axis, string cell, string wanted,
+                   scope void delegate() test, ref string first) {
     if (wanted.length && wanted != axis ~ "-" ~ cell) return;
     try { test(); auto line = format("[sector-pixels] %s-%s PASS", axis, cell); evidence ~= line ~ "\n"; writefln("%s", line); }
     catch (AssertError failure) {
@@ -101,6 +100,12 @@ private void check(string axis, string cell, scope void delegate() test,
 }
 unittest {
     evidence = "";
+    const wanted = environment.get("VIBE3D_CELL", "");
+    assert(wanted == "" || wanted == "X-fill" || wanted == "X-outline" ||
+        wanted == "X-active-ring" || wanted == "Z-fill" ||
+        wanted == "Z-outline" || wanted == "Z-active-ring",
+        "sector pixel selected domain: unknown VIBE3D_CELL=" ~ wanted);
+    size_t executed;
     auto port = allocatePort();
     const root = buildPath(environment.get("TMPDIR", "/var/tmp"),
         "rotation-sector-gui-" ~ port.to!string ~ "-" ~ getpid().to!string);
@@ -200,11 +205,11 @@ unittest {
         auto measured = format("[sector-pixels] %s measured fill=%s guide=%d active=%d changed=%d",
             axis, fill, guideCount, activeCount, changed);
         evidence ~= measured ~ "\n"; writefln("%s", measured);
-        check(axis, "fill", { assert(near(fill, [95,83,108], 0),
+        check(axis, "fill", wanted, { ++executed; assert(near(fill, [95,83,108], 0),
             format("%s sector quarter-alpha fill: expected [95, 83, 108], got %s", axis, fill)); }, first);
-        check(axis, "outline", { assert(guideCount >= 20 && near(edge, [204,153,255], 0),
+        check(axis, "outline", wanted, { ++executed; assert(guideCount >= 20 && near(edge, [204,153,255], 0),
             format("%s sector opaque guide outline: expected >=20 purple pixels and radial edge [204, 153, 255], got %d and %s", axis, guideCount, edge)); }, first);
-        check(axis, "active-ring", { assert(activeCount >= 40,
+        check(axis, "active-ring", wanted, { ++executed; assert(activeCount >= 40,
             format("%s dragged ring handleActive: expected >=40 active pixels, got %d", axis, activeCount)); }, first);
         input(env, ["mouseup", "1"]);
         cmd("tool.set rotate off");
@@ -217,6 +222,11 @@ unittest {
         foreach (entry; dirEntries(root, SpanMode.shallow))
             if (entry.isFile) copy(entry.name, buildPath(retain, entry.name[ root.length+1 .. $]));
     }
+    const expected = wanted.length ? 1 : 6;
+    auto populationLine = format("[sector-pixels] selected domain=%s executed=%d expected=%d",
+        wanted.length ? wanted : "all", executed, expected);
+    writefln("%s", populationLine);
+    assert(executed == expected, "sector pixel executed delegate population: " ~ populationLine);
     assert(!first.length, first);
 }
 }
