@@ -198,9 +198,9 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         return true;
     }
 
-    // submitOwned's only clock. Task 9529: a unittest may replace it so the
-    // fixed-deadline cell is a function of submitted time, not of scheduler
-    // or GC-pause jitter; evidence in request_result_ownership_test.d.
+    // submitOwned's only clock. A unittest may replace it so the fixed-deadline
+    // cell is a function of submitted time, not of scheduler or GC-pause
+    // jitter; evidence in request_result_ownership_test.d.
     private MonoTime ownedNow() {
         version(unittest) {
             if (ownedClockForTest_ !is null) return ownedClockForTest_();
