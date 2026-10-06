@@ -195,9 +195,9 @@ class FormsPanel {
         // rebuilds its list on every call, so snapshotting once here means the
         // whole form's controls share one rebuild rather than one-per-control.
         Param[] snapshot = provider.params();
-        // A tool's widgets range over its captured bounds (tool_attr_bounds); the
-        // write itself goes through `tool.attr`, which clamps.
-        foreach (ref p; snapshot) applyToolAttrBound(activeToolId, p);
+        // Tool and stage widgets use the shared bounds; their attribute doors
+        // clamp the dispatched writes.
+        foreach (ref p; snapshot) applyToolAttrBound(stageId.length ? stageId : activeToolId, p);
 
         if (form.showLabel && form.label.length)
             ImGui.SeparatorText(form.label);

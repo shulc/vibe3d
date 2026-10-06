@@ -309,3 +309,26 @@ unittest {
                                       failed.length, failed));
     writeln("PASS tool.set writes, 7");
 }
+
+
+unittest { // pipe writes clamp even a hidden config row; other stages stay free
+    if (!cell("stage")) return;
+    ok("scene.reset");
+    ok("tool.pipe.attr constrain enabled false");
+    ok("tool.pipe.attr constrain offset -0.1");
+    ok("tool.pipe.attr constrain enabled true");
+    assert(num(cmd("tool.pipe.attr constrain offset ?")["value"]) == 0,
+           "hidden constraint offset did not clamp to 0");
+    ok("tool.pipe.attr constrain offset 1000000");
+    assert(num(cmd("tool.pipe.attr constrain offset ?")["value"]) == 1000000,
+           "constraint offset acquired an upper bound");
+    auto bad = cmd("tool.pipe.attr constrain offset nan");
+    assert(bad["status"].str == "error"
+        && num(cmd("tool.pipe.attr constrain offset ?")["value"]) == 1000000,
+           "a refused offset write changed the live stage");
+    ok("tool.pipe.attr symmetry enabled true");
+    ok("tool.pipe.attr symmetry offset -0.2");
+    assert(abs(num(cmd("tool.pipe.attr symmetry offset ?")["value"]) + 0.2) < 1e-6,
+           "control: an unrelated stage offset acquired the constraint bound");
+    writeln("PASS pipe stage bound and unbounded control");
+}

@@ -156,13 +156,11 @@ unittest {
            format("publish, Screen, offset 0: the near quad's hit %s; got hit %s at %s",
                   want.point, screen0.hit, screen0.point));
 
-    // (9b) The offset never goes below 0 (K-SC scr_neg): a -0.1 write is
-    // accepted, stored as 0, and the publish is the offset-0 one bit for bit.
-    assert(cs.setAttr("offset", "-0.1") && cs.offset == 0.0f,
-           format("offset -0.1: accepted and stored as 0; got %s", cs.offset));
-    const screenNeg = publish(200, 100);
-    assert(screenNeg.point == screen0.point,
-           format("offset -0.1: the offset-0 publish %s; got %s", screen0.point, screenNeg.point));
+    // (9b) Internal/composition writes preserve stored values. Interactive
+    // doors own the bound; notifying restores do not clamp (PRM4).
+    assert(cs.setAttr("offset", "-0.1") && cs.offset == -0.1f,
+           format("internal offset -0.1 must stand; got %s", cs.offset));
+    cs.offset = 0;
 
     // (9c) The Screen re-cast takes the NEAREST hit on the view line, either
     // direction (K-SC ovh_lo, ovh_flank): from z -0.4 the near quad 0.4 back

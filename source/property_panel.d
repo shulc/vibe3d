@@ -169,7 +169,7 @@ public:
     /// The session
     /// receives one ValueWritten phase per mutation and one BatchComplete.
     /// `toolId` names the tool whose captured attribute bounds apply
-    /// (tool_attr_bounds); a stage passes none.
+    /// (tool_attr_bounds); a stage supplies its own id.
     void drawProvider(ParamProvider p, EditSession session, string toolId = null) {
         if (p is null) return;
         assert(session !is null,
@@ -200,7 +200,7 @@ public:
                 ? AttrImage.init : t.captureAttrImage();
             // One group per row, so a multi-widget row (a Vec3) reads as held
             // while ANY of its widgets is active.
-            const bounded = applyToolAttrBound(toolId, par);
+            const bounded = applyToolAttrBound(stage is null ? toolId : stage.id(), par);
             ImGui.BeginGroup();
             bool changed = drawParamWidget(par);
             ImGui.EndGroup();

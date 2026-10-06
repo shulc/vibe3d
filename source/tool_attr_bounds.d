@@ -2,12 +2,12 @@ module tool_attr_bounds;
 
 import params : Param, ParamFlags, paramGateFloat, paramGateInt;
 
-// The bound every interactive door clamps a tool attribute write to (task
-// 9492, capture K-A3, findings_K-A3.md table b). The rows are the EXECUTED
+// The bound every interactive door clamps a tool or stage attribute write to (task
+// 9492 / 9519, captures K-A3 table b and K-SC scr_neg). The rows are the EXECUTED
 // write column — the value an out-of-range write actually stores — not the
 // declared hints: several attributes clamp with nothing declared. Every row
 // has a min; an absent max is unbounded (the write is stored as given). Read
-// by the `tool.attr` door, `tool.set` arguments, the scripted one-shot
+// by `tool.attr`, `tool.pipe.attr`, `tool.set` arguments, the scripted one-shot
 // (`prim.cube` …), the property panel, the forms panel and the registry; the
 // restore paths (presets, the attribute cache, remembered defaults, undo) never
 // consult it, so each kernel keeps its own `MAX_` cap.
@@ -71,6 +71,7 @@ static immutable ToolAttrBound[] kToolAttrBounds = [
     {"xfrm.smooth", "iter", 1, none}, {"xfrm.smooth", "strn", 0, 1},
     {"xfrm.smooth", "sharpThreshold", 0, 180},
     {"mesh.topoPen", "smoothStrength", 0, none},
+    {"constrain", "offset", 0, none},
 ];
 
 /// Replace `p`'s numeric bound hints with its captured row and arm the clamp.

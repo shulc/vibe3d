@@ -16,6 +16,8 @@ import forms_render    : FormsPanel;
 import params          : Param;
 import property_panel  : PropertyPanel;
 import tool            : Tool;
+import toolpipe.stages.constrain;
+import std.json;
 import tests.unit.ui.headless_panel : openPanel;
 
 private final class WidthTool : Tool {
@@ -76,4 +78,64 @@ unittest { // the forms drag stops at the row's max; with no row it does not
     assert(draggedSides("prim.sphere") == 1024,
            "the forms drag passed the row's max: " ~ draggedSides("prim.sphere").to!string);
     assert(draggedSides("") > 1024, "control: with no row the drag runs past 1024");
+}
+
+
+private float typedOffset() {
+    import toolpipe.stages.constrain : ConstrainStage;
+    auto stage = new ConstrainStage;
+    stage.enabled = true;
+    auto session = new EditSession(() => cast(Tool)null, new CommandHistory(), () {});
+    auto panel = new PropertyPanel;
+    auto ui = openPanel(() { panel.drawProvider(stage, session); });
+    scope (exit) ui.close();
+    ui.frame();
+    ui.editRow(2, "-5");
+    return stage.offset;
+}
+
+unittest {
+    assert(typedOffset() == 0, "the stage panel left -5 below the offset bound");
+}
+
+// A deliberately narrower hint distinguishes the shared row's unbounded
+// upper side from a declared widget range. The live stage has no upper hint.
+private final class OffsetHints : toolpipe.stages.constrain.ConstrainStage {
+    override Param[] params() {
+        auto p = fullParams()[2];
+        return [p.min(-2.0f).max(1.0f)];
+    }
+}
+
+private double draggedOffset(string stageId) {
+    auto stage = new OffsetHints;
+    Form form;
+    form.showLabel = false;
+    form.rows = [Row.makeControl("tool.pipe.attr constrain offset ?", "Offset", "offset")];
+    auto panel = new FormsPanel;
+    double sent = -1;
+    ImVec2 lo, hi;
+    auto ui = openPanel(() {
+        panel.draw(form, stage, null, (string id, string json) {
+            auto v = parseJSON(json)["_positional"].array[2];
+            sent = v.type == std.json.JSONType.integer ? v.integer : v.floating;
+        }, "", stageId);
+        lo = ImGui.GetItemRectMin();
+        hi = ImGui.GetItemRectMax();
+    });
+    scope (exit) ui.close();
+    ui.frame();
+    assert(hi.x > lo.x, "the forms panel drew no Offset widget");
+    const at = ImVec2((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f);
+    ui.pressAt(at);
+    foreach (i; 1 .. 5) ui.hoverAt(ImVec2(at.x + 10_000.0f * i, at.y));
+    ui.release();
+    return sent;
+}
+
+unittest {
+    const control = draggedOffset("");
+    assert(control == 1, "control: declared max did not cap the stage form: " ~ control.to!string);
+    assert(draggedOffset("constrain") > 1,
+           "the stage form kept the declared max instead of the shared bound");
 }

@@ -8,7 +8,8 @@ import commands.tool.host : ToolHost;
 
 import toolpipe.pipeline : g_pipeCtx, noteUserStageChoice;
 import toolpipe.stage    : Stage;
-import params : Param, paramToJson, wireArgs;
+import params : Param, paramToJson, parseInto, stringifyParam, wireArgs;
+import tool_attr_bounds : applyToolAttrBound;
 
 import std.json : JSONValue;
 
@@ -112,6 +113,18 @@ class ToolPipeAttrCommand : Command {
                 "' on stage '" ~ stageId_ ~ "'");
         }
 
+        // Normalize only a captured numeric row before the stage's own setter.
+        // Detached storage keeps rejected parses from changing live fields;
+        // internal/restore callers of setAttr never consult tool_attr_bounds.
+        foreach (p; matched.fullParams()) {
+            if (p.name != attrName_ || !applyToolAttrBound(matched.id(), p)) continue;
+            Param.DefaultValue storage; // all numeric kinds share this union
+            p.iptr = &storage.i;
+            if (!parseInto(p, attrValue_))
+                throw new Exception("tool.pipe.attr: invalid bounded value '" ~ attrValue_ ~ "'");
+            attrValue_ = stringifyParam(p);
+            break;
+        }
         if (!matched.setAttr(attrName_, attrValue_))
             throw new Exception(
                 "tool.pipe.attr: stage '" ~ stageId_ ~ "' rejected attr '"

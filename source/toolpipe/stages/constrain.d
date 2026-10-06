@@ -383,9 +383,6 @@ public:
     // Deliberately does NOT touch `userLocked` (review fix SF): it fires for a
     // tool's own composition too; the lock lives at the command doors above.
     override void onParamChanged(string name) {
-        // The offset never goes below 0, whichever door wrote it: a negative
-        // write is accepted and stored as 0 (K-SC scr_neg).
-        if (offset < 0) offset = 0;
         publishState();
     }
 

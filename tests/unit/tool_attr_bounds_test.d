@@ -6,9 +6,10 @@ module tests.unit.tool_attr_bounds_test;
 
 import params : Param, ParamFlags;
 import tool_attr_bounds : applyToolAttrBound, clampStoredToBounds, kToolAttrBounds;
+import toolpipe.stages.constrain;
 
 unittest { // population floor: the table's row count, measured
-    assert(kToolAttrBounds.length == 64, "rows: measured 64");
+    assert(kToolAttrBounds.length == 65, "rows: measured 65");
 }
 
 unittest { // an axis row takes the number and clamps it; unarmed, the number is refused
@@ -97,8 +98,64 @@ unittest { // the doors that read the table — and nothing else (a restore
     assert(uses.get("tool_attr_bounds.d", 0) == 1, "definition not seen");
     uses.remove("tool_attr_bounds.d");
     // Each door imports the name once and calls it once.
-    size_t[string] want = ["commands/tool/attr.d": 2, "commands/tool/headless.d": 2,
+    size_t[string] want = ["commands/tool/attr.d": 2, "commands/tool/headless.d": 2, "commands/tool/pipe.d": 2,
                            "forms_render.d": 2, "prepared_tool_transition.d": 2,
                            "property_panel.d": 2, "registry.d": 2];
     assert(uses == want, "applyToolAttrBound readers changed");
+}
+
+
+unittest { // a stage row uses the same table; stored paths keep their values
+    import params : parseInto;
+    import toolpipe.stages.constrain : ConstrainStage;
+    import toolpipe.attr_cache : recallNodeAttrs;
+    auto cs = new ConstrainStage;
+    cs.enabled = true;
+    auto p = cs.fullParams()[2];
+    assert(applyToolAttrBound(cs.id(), p), "constraint offset has no shared bound row");
+    assert(parseInto(p, "-0.1") && cs.offset == 0,
+           "constraint offset did not clamp at the shared bound");
+    assert(parseInto(p, "1000000") && cs.offset == 1000000,
+           "constraint offset acquired an upper bound");
+    assert(cs.setAttr("offset", "-0.1") && cs.offset == -0.1f,
+           "internal stage writes must preserve a stored negative offset");
+    auto changed = recallNodeAttrs(cs, ["offset": "-0.2"], true);
+    assert(changed == ["offset"] && cs.offset == -0.2f,
+           "notifying stage recall clamped a stored negative offset");
+}
+
+private final class RefusingOffset : toolpipe.stages.constrain.ConstrainStage {
+    string received;
+    override bool setAttrImpl(string name, string value) {
+        if (name != "offset") return super.setAttrImpl(name, value);
+        received = value;
+        return false;
+    }
+}
+
+unittest { // normalization respects a stage override's refusal boundary
+    import commands.tool.pipe : ToolPipeAttrCommand;
+    import commands.tool.host : ToolHost;
+    import editmode : EditMode;
+    import mesh : makeCube;
+    import view : View;
+    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import std.exception : assertThrown;
+    import std.conv : to;
+    auto saved = g_pipeCtx;
+    scope(exit) g_pipeCtx = saved;
+    g_pipeCtx = new ToolPipeContext;
+    auto stage = new RefusingOffset;
+    stage.offset = 0.75f;
+    g_pipeCtx.pipeline.add(stage);
+    auto mesh = makeCube();
+    auto view = new View(0, 0, 800, 600);
+    auto command = new ToolPipeAttrCommand(&mesh, view, EditMode.Vertices, ToolHost.init);
+    command.setStageId("constrain");
+    command.setAttrName("offset");
+    command.setAttrValue("-0.1");
+    assertThrown!Exception(command.apply(), "the stage override's refusal was bypassed");
+    assert(stage.received.length && stage.received.to!float == 0,
+           "the stage setter did not receive the normalized offset");
+    assert(stage.offset == 0.75f, "normalizing a refused write changed the live stage");
 }
