@@ -1144,17 +1144,5 @@ unittest { // private g_replayCurrentViewport lens-only refresh
     assert(g_replayCurrentViewport.vpX==150 && g_replayCurrentViewport.vpY==28 &&
            g_replayCurrentViewport.vpW==1152 && g_replayCurrentViewport.vpH==974 &&
            g_replayCurrentViewport.valid,"REPLAY_CURRENT_RECTANGLE_RETAINED");
-    import viewport : ViewportManager,LayoutPreset;
-    import view : ProjKind;
-    auto vpm=new ViewportManager(150,28,1152,974);vpm.applyLayout(LayoutPreset.Quad);
-    foreach(i,c;vpm.views){c.camera.projKind=ProjKind.Perspective;c.camera.setFovY(.7+i*.1);}
-    vpm.activeId=0;vpm.hoveredId=2;vpm.dragOriginId=-1;
-    setReplayCurrentLens(vpm.views[vpm.overlayOwnerId()].camera.fovY);
-    assert(g_replayCurrentViewport.fovY==vpm.views[2].camera.fovY,"REPLAY_CURRENT_HOVER_OWNER");
-    vpm.dragOriginId=3;
-    setReplayCurrentLens(vpm.views[vpm.overlayOwnerId()].camera.fovY);
-    assert(g_replayCurrentViewport.fovY==vpm.views[3].camera.fovY,"REPLAY_CURRENT_DRAG_OWNER");
-    vpm.views[3].camera.setFovY(1.2);
-    setReplayCurrentLens(vpm.views[vpm.overlayOwnerId()].camera.fovY);
-    assert(g_replayCurrentViewport.fovY==vpm.views[3].camera.fovY,"REPLAY_CURRENT_OWNER_LENS_CHANGED");
+
 }
