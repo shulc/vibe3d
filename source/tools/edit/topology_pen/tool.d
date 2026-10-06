@@ -4194,7 +4194,10 @@ public:
         Vec3 toW = grab.client(dx, dy, DragFrame(DragKind.viewPlane), vp, skip, guide);
         if (skip) return false;
         acceptedPerspective = acceptedGuide && !isOrtho(vp);
-        if (!guidedRoute || (!isOrtho(vp) && !acceptedGuide)) {
+        // 9504: inventory does not compose a constraint. Free movement presets
+        // retain element depth; an explicit enabled handle constraint still applies.
+        if ((!guidedRoute || (!isOrtho(vp) && !acceptedGuide))
+            && (!hasFlag(ToolFlag.NoBackgroundConstraint) || (cs !is null && cs.enabled && cs.handle))) {
             float qx, qy, qz;
             Vec3 hitW;
             if (projectToWindowFull(toW, vp, qx, qy, qz) && backgroundRayHit(qx, qy, vp, hitW)) toW = hitW;
