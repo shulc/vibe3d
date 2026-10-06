@@ -127,7 +127,6 @@ unittest { // a stage row uses the same table; stored paths keep their values
 private final class RefusingOffset : toolpipe.stages.constrain.ConstrainStage {
     string received;
     override bool setAttrImpl(string name, string value) {
-        if (name != "offset") return super.setAttrImpl(name, value);
         received = value;
         return false;
     }
@@ -146,8 +145,8 @@ unittest { // normalization respects a stage override's refusal boundary
     scope(exit) g_pipeCtx = saved;
     g_pipeCtx = new ToolPipeContext;
     auto stage = new RefusingOffset;
-    stage.offset = 0.75f;
     g_pipeCtx.pipeline.add(stage);
+    stage.offset = 0.75f;
     auto mesh = makeCube();
     auto view = new View(0, 0, 800, 600);
     auto command = new ToolPipeAttrCommand(&mesh, view, EditMode.Vertices, ToolHost.init);
