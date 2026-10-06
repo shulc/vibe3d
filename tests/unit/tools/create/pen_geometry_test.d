@@ -17,7 +17,7 @@ import tools.create.pen_geometry;
 // Composition pins: a field added to the stroke or a kind added to the
 // prepared param enum must be added here, with its cases.
 static assert([__traits(allMembers, PenStroke)] ==
-    ["points", "links", "toWorld", "flip", "quads", "mirror", "type", "close",
+    ["points", "links", "order", "sources", "toWorld", "flip", "quads", "mirror", "type", "close",
      "selectNew", "selMode", "wall", "offset", "wallNormal", "of"]);
 static assert([__traits(allMembers, PenBuildPurpose)] == ["Preview", "Commit"]);
 static assert([__traits(allMembers, PreparedPenParamKind)] ==
@@ -41,6 +41,44 @@ private immutable Vec3[] kPent = [Vec3(0,0,0), Vec3(2,0,0), Vec3(3,1,0),
 // the corner c0 + (c2 - c1), click c3, its corner a + (c3 - c2).
 private immutable Vec3[] kStrip6 = [Vec3(0,1,0), Vec3(0,0,0), Vec3(1,0,0),
                                     Vec3(1,1,0), Vec3(2,0,0), Vec3(2,1,0)];
+
+unittest // exact rebuilt geometry and connectivity, including repeated corners
+{
+    import std.json : parseJSON, JSONValue, JSONType;
+    double num(JSONValue v) { return v.type == JSONType.integer ? v.integer : v.floating; }
+    Vec3 point(JSONValue v) {
+        return Vec3(cast(float)num(v[0]), cast(float)num(v[1]), cast(float)num(v[2]));
+    }
+    import std.file : readText;
+    const fx = parseJSON(readText("tests/fixtures/pen_rebuild_merge.json"));
+    assert(fx["rows"].array.length == 7, "rebuild mesh table lost a row");
+    foreach (c; fx["rows"].array) {
+        Vec3[] pts, want;
+        uint[][] faces;
+        foreach (v; c["points"].array) pts ~= point(v);
+        foreach (v; c["vertices"].array) want ~= point(v);
+        foreach (f; c["faces"].array) {
+            uint[] ring; foreach (i; f.array) ring ~= cast(uint)i.integer;
+            faces ~= ring;
+        }
+        PenParams p; p.flip = true;
+        const sources = num(c["merge"]) != 0
+            ? penMergeSources(pts, kIdentity, cast(float)num(fx["distance"])) : null;
+        foreach (purpose; [PenBuildPurpose.Preview, PenBuildPurpose.Commit]) {
+            Mesh m;
+            appendPenGeometry(m, PenStroke.of(pts, kIdentity, p, sources: sources), purpose);
+            assert(m.vertices == want, format("%s %s: vertices %s expected %s",
+                c["id"].str, purpose, m.vertices, want));
+            assert(m.faces == faces, format("%s %s: faces %s expected %s",
+                c["id"].str, purpose, m.faces, faces));
+        }
+    }
+    // Box law on every world axis, including the stroke's off-plane axis.
+    const pts = [Vec3(0,0,0), Vec3(.005,.005,.005), Vec3(.02,0,0),
+                 Vec3(0,.02,0), Vec3(0,0,.02), Vec3(.01,.01,.01)];
+    assert(penMergeSources(pts, kShift, .0068) == [0u,0,2,3,4,5],
+        "world box: all three axes must admit or refuse independently");
+}
 
 unittest // Make Quads facing: under the decided flip every quad faces the eye
 {

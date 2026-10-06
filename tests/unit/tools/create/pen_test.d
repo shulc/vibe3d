@@ -151,7 +151,9 @@ unittest {
         assert(!isUserSet(p), "pen: attribute '" ~ p.name ~ "' starts off its declared default");
         ++n;
     }
-    assert(n == 16, format("pen: %s attributes enumerated, pinned 16", n));
+    assert(pen.sessionPolicy().imageAttrs[$-2 .. $] == ["sources", "order"],
+        "pen frozen topology must be in the session image");
+    assert(n == 18, format("pen: %s attributes enumerated, pinned 18", n));
 }
 
 // Source census: the pen's "a discrete target placed the point" test has ONE

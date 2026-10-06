@@ -186,6 +186,6 @@ unittest // the facing is decided at one site; the builder orders every ring ali
         ~ "non-wall shapes, S9: argument + parameter; the sub-minimum Commit "
         ~ "face)", purposeReads));
     // The ring routine is the builder's: one definition, one call.
-    assert(countIdent(gcode, "penRingOrder") == 2, format("pen_geometry.d names "
-        ~ "penRingOrder %s times; expected 2", countIdent(gcode, "penRingOrder")));
+    assert(countIdent(gcode, "penRingOrder") == 3, format("pen_geometry.d names "
+        ~ "penRingOrder %s times; expected 3 (definition, click order, uncaptured-mode fallback)", countIdent(gcode, "penRingOrder")));
 }

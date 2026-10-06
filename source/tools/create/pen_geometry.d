@@ -64,6 +64,8 @@ struct PenStroke {
     // image of point j = -2 - link (S6; j = itself: the point is its own
     // mirror). Empty = all own.
     const(int)[]  links;
+    const(uint)[] order;    // click-built corner order; moves keep connectivity
+    const(uint)[] sources;  // point → lower-index stroke vertex, frozen on rebuild
     float[16]     toWorld;  // workplane local → world
     bool          flip;
     bool          quads;
@@ -83,16 +85,53 @@ struct PenStroke {
 
     static PenStroke of(const(Vec3)[] pts, in float[16] toWorld, in PenParams p,
             const(int)[] links = null, in SymmetryPacket mirror = SymmetryPacket.init,
-            SelType selMode = SelType.Vertex, Vec3 wallNormal = Vec3(0, 0, 0))
+            SelType selMode = SelType.Vertex, Vec3 wallNormal = Vec3(0, 0, 0),
+            const(uint)[] sources = null, const(uint)[] order = null)
             nothrow @nogc {
         PenStroke s;
-        s.points = pts; s.links = links; s.toWorld = toWorld;
+        s.points = pts; s.links = links; s.sources = sources; s.order = order; s.toWorld = toWorld;
         s.flip = p.flip; s.quads = p.makeQuads; s.mirror = penMirror(mirror);
         s.type = p.type; s.close = p.close; s.selectNew = p.selectNew;
         s.selMode = selMode; s.wall = p.wall; s.offset = p.offset;
         s.wallNormal = wallNormal;
         return s;
     }
+}
+
+// Rebuild-only merge (pen_rebuild_merge.json): each point shares
+// the first existing vertex in a world-axis box. Surviving points keep their
+// positions. The caller freezes this map; moving or ending a stroke never
+// runs this search. Boundary inclusivity is not captured.
+uint[] penMergeSources(const(Vec3)[] points, in float[16] toWorld, float dist) {
+    uint[] sources;
+    Vec3[] world;
+    foreach (i, p; points) {
+        const w = transformPoint(toWorld, p);
+        uint source = cast(uint)i;
+        foreach (j, q; world) {
+            const d = w - q;
+            if (sources[j] == j && abs(d.x) < dist && abs(d.y) < dist && abs(d.z) < dist) {
+                source = cast(uint)j; break;
+            }
+        }
+        sources ~= source; world ~= w;
+    }
+    return sources;
+}
+
+uint[] penPolygonOrder(const(Vec3)[] points, in float[16] toWorld,
+                       const(uint)[] sources, bool flip) {
+    Vec3[] world;
+    uint[] corners;
+    foreach (i, p; points) {
+        const source = i < sources.length ? sources[i] : cast(uint)i;
+        if (corners.length && (source == corners[$ - 1] || source == corners[0])) continue;
+        corners ~= source; world ~= transformPoint(toWorld, points[source]);
+    }
+    const ring = penRingOrder(world, flip);
+    uint[] order;
+    foreach (i; ring) order ~= corners[i];
+    return order;
 }
 
 /// A symmetry packet's config and plane, without its per-vertex pairing: the
@@ -302,8 +341,8 @@ void appendPenWall(ref Mesh dst, in PenStroke s) {
 ///
 /// A polygon point linking the vertex its predecessor (click order) links adds
 /// no corner: [V, V, F] commits [V, F] (fixture `cells_k_b10`). The closing
-/// pair (last = first), quads strips and a ring left below 2 corners (no face)
-/// are not captured — gap rows 545, 549, 550.
+/// pair (last = first) also skips the repeated first corner (pen_rebuild_merge.json).
+/// Quads strips and a ring left below 2 corners (no face) remain uncaptured.
 ///
 /// Types (wave plan S8, fixture pen_types.json): lines emit the two-point
 /// polygons [i, i + 1] in click order (+ [n - 1, 0] under `close` from 3
@@ -365,7 +404,10 @@ private void appendPenShapes(ref Mesh dst, in PenStroke s, PenBuildPurpose purpo
     }
     auto idx = new uint[2 * n];     // slot → mesh vertex
     foreach (k; 0 .. slots) {
-        if (k < s.links.length && s.links[k] >= 0) idx[k] = cast(uint)s.links[k];
+        if (k < s.sources.length && s.sources[k] < k) {
+            idx[k] = idx[s.sources[k]]; world[k] = world[s.sources[k]];
+        }
+        else if (k < s.links.length && s.links[k] >= 0) idx[k] = cast(uint)s.links[k];
         else if (sharedWith[k] >= 0) idx[k] = idx[sharedWith[k]];
         else { idx[k] = cast(uint)dst.vertices.length; dst.addVertex(pos[k]); }
     }
@@ -384,9 +426,16 @@ private void appendPenShapes(ref Mesh dst, in PenStroke s, PenBuildPurpose purpo
                 dst.addFace(q[]);
             }
         } else if (closed || purpose == PenBuildPurpose.Commit) {
+            if (s.order.length) {
+                uint[] face;
+                foreach (i; s.order) face ~= ix[i];
+                if (reverse) revKeepFirst(face);
+                if (face.length >= 2) dst.addFace(face);
+                return;
+            }
             size_t m;
             foreach (i; 0 .. n)
-                if (i == 0 || ix[i] != ix[i - 1]) {
+                if (i == 0 || (ix[i] != ix[i - 1] && ix[i] != ix[0])) {
                     w[m] = w[i]; ix[m] = ix[i]; ++m;
                 }
             if (m < 2) return;

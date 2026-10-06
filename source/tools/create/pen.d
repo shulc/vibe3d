@@ -547,6 +547,39 @@ version(unittest) unittest {
     assert(offLink == -1 && onLink == -2, format("pen S6: a point on x = 0 self-welds "
         ~ "%s with symmetry off, %s on; expected -1, -2", offLink, onLink));
 
+    // 9518: prepared images consume the click's map and order, and reject
+    // either changing after preparation. These need private stroke state.
+    auto weldPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+    weldPen.state = PenState.Drawing; weldPen.frame.toWorld = commitPen.frame.toWorld;
+    weldPen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0), Vec3(.005,0,0)];
+    weldPen.links_ = [-1,-1,-1,-1]; weldPen.sources_ = [0,1,2,0];
+    weldPen.order_ = [0,1,2];
+    auto weldDrop = weldPen.buildPreparedDeactivateState();
+    assert(weldPen.preparedDeactivateStateMatches(weldDrop), "frozen drop control");
+    weldPen.sources_[3] = 3;
+    assert(!weldPen.preparedDeactivateStateMatches(weldDrop), "frozen drop source changed");
+    weldPen.sources_[3] = 0; weldPen.order_ = [0,2,1];
+    assert(!weldPen.preparedDeactivateStateMatches(weldDrop), "frozen drop order changed");
+    weldPen.order_ = [0,1,2];
+    auto weldParam = weldPen.buildPreparedParamImage("flip");
+    assert(weldPen.preparedParamMatches(weldParam) &&
+        weldParam.nextPreview.vertices.length == 3 &&
+        weldParam.nextPreview.faces == [[0u,1,2]], "frozen param control");
+    weldPen.sources_[3] = 3;
+    assert(!weldPen.preparedParamMatches(weldParam), "frozen param source changed");
+    weldPen.sources_[3] = 0; weldPen.order_ = [0,2,1];
+    assert(!weldPen.preparedParamMatches(weldParam), "frozen param order changed");
+
+    weldPen.sources_[3] = 0; weldPen.order_ = [0,1,2];
+    weldPen.previewGpu.suppressCageUpload = true;
+    foreach (v; weldPen.vertices_) weldPen.vertHandlers ~= weldPen.vertMarker(v);
+    weldPen.onParamChanged("flip");
+    assert(weldPen.previewMesh.vertices.length == 3 &&
+        weldPen.previewMesh.faces == [[0u,1,2]], "frozen live preview control");
+    weldPen.clearStroke();
+    assert(weldPen.sources_.length == 0 && weldPen.order_.length == 0,
+        "frozen topology survived stroke clear");
+
     // S8: the commit minimums per type (Enter / drop): polygons 3 / 2,
     // lines 2 / 2, vertices 1 / 1, subdiv 3 / 2.
     auto minPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
@@ -632,6 +665,7 @@ struct PreparedPenDeactivateImage {
     PenParams params;
     Vec3[] vertices;
     int[] links;
+    uint[] sources, order;
     SessionMeshKey[] linkKey;   // the mesh `links` index; read at the candidate build
     SymmetryPacket mirror;
     SelType selMode;            // read at the candidate build (selectNew)
@@ -641,7 +675,7 @@ struct PreparedPenDeactivateImage {
     size_t expectedHandlerCount;
     bool expectedMeshChanged;
     void clear() nothrow @nogc {
-        vertices = null; links = null; linkKey = null; previewClear = Mesh.init;
+        vertices = null; links = null; sources = order = null; linkKey = null; previewClear = Mesh.init;
         this = PreparedPenDeactivateImage.init;
     }
 }
@@ -653,6 +687,7 @@ struct PreparedPenParamImage {
     PenParams expectedParams, nextParams;
     Vec3[] expectedVertices, nextVertices;
     int[] expectedLinks, nextLinks;
+    uint[] expectedSources, expectedOrder;
     BoxHandler[] expectedHandlers;
     Vec3[] expectedHandlerPositions, nextHandlerPositions;
     float[16] expectedToWorld;
@@ -662,7 +697,7 @@ struct PreparedPenParamImage {
     Mesh nextPreview;
     void clear() nothrow @nogc {
         expectedVertices = nextVertices = null;
-        expectedLinks = nextLinks = null;
+        expectedLinks = nextLinks = null; expectedSources = expectedOrder = null;
         expectedHandlers = null;
         expectedHandlerPositions = nextHandlerPositions = null;
         expectedPreview = MeshSnapshot.init; nextPreview = Mesh.init;
@@ -691,6 +726,8 @@ private:
     // `links_`, so a session restore brings back the key its links were made
     // under; links are read only while it matches (`liveLinks`, below).
     SessionMeshKey[] strokeKey_;
+    uint[]           order_;        // last click's polygon topology
+    uint[]           sources_;      // last polygon rebuild; moves/end only consume
     BoxHandler[]     vertHandlers;  // one cyan marker per in-progress vertex (handler.pos in WORLD)
     ToolHandles      toolHandles;   // single-source hover arbiter (Test pass)
 
@@ -793,6 +830,8 @@ public:
             Param.podArray_("points", "Points", &vertices_),
             Param.podArray_("link", "Links", &links_),
             Param.podArray_("linkKey", "Link Key", &strokeKey_),
+            Param.podArray_("sources", "Sources", &sources_),
+            Param.podArray_("order", "Order", &order_),
         ];
     }
 
@@ -850,6 +889,7 @@ public:
         image.expectedVertices = vertices_.dup;
         image.nextVertices = vertices_.dup;
         image.expectedLinks = links_.dup; image.nextLinks = links_.dup;
+        image.expectedSources = sources_.dup; image.expectedOrder = order_.dup;
         image.expectedHandlers.length = vertHandlers.length;
         image.expectedHandlerPositions.length = vertHandlers.length;
         image.nextHandlerPositions.length = vertHandlers.length;
@@ -895,7 +935,7 @@ public:
         auto shadow = beginPreparedShadow(image.nextPreview);
         appendPenGeometry(image.nextPreview, PenStroke.of(image.nextVertices,
             frame.toWorld, image.nextParams, withoutSceneLinks(image.nextLinks),
-            mirror_, wallNormal: wallNormal), PenBuildPurpose.Preview);
+            mirror_, wallNormal: wallNormal, sources: sources_, order: order_), PenBuildPurpose.Preview);
         foreach (i, v; image.nextVertices)
             if (i < image.nextHandlerPositions.length)
                 image.nextHandlerPositions[i] = transformPoint(frame.toWorld, v);
@@ -910,6 +950,8 @@ public:
             !sameValueBytes(params_, image.expectedParams) ||
             !sameSliceBytes(vertices_, image.expectedVertices) ||
             !sameSliceBytes(links_, image.expectedLinks) ||
+            !sameSliceBytes(sources_, image.expectedSources) ||
+            !sameSliceBytes(order_, image.expectedOrder) ||
             !sameValueBytes(frame.toWorld, image.expectedToWorld) ||
             !sameValueBytes(wallNormal, image.expectedWallNormal) ||
             !symmetryMirrorsEqual(mirror_, image.expectedMirror) ||
@@ -1000,6 +1042,7 @@ public:
         image.valid = true; image.expectedState = cast(ubyte)state;
         image.params = params_; image.vertices = vertices_.dup;
         image.links = links_.dup; image.linkKey = strokeKey_.dup;
+        image.sources = sources_.dup; image.order = order_.dup;
         image.toWorld = frame.toWorld; image.mirror = penMirror(mirror_);
         image.wallNormal = wallNormal; image.selMode = selMode();
         image.expectedHandlerCount = vertHandlers.length;
@@ -1012,7 +1055,7 @@ public:
             in PreparedPenDeactivateImage image) const nothrow @nogc {
         return image.valid && cast(ubyte)state == image.expectedState &&
             params_ == image.params && vertices_ == image.vertices &&
-            links_ == image.links && symmetryMirrorsEqual(mirror_, image.mirror) &&
+            links_ == image.links && sources_ == image.sources && order_ == image.order && symmetryMirrorsEqual(mirror_, image.mirror) &&
             vertHandlers.length == image.expectedHandlerCount &&
             meshChanged == image.expectedMeshChanged &&
             (!image.willCommit || (frame.toWorld == image.toWorld &&
@@ -1051,7 +1094,7 @@ public:
         appendPenGeometry(candidate, PenStroke.of(image.vertices,
             image.toWorld, image.params,
             linksUnder(image.linkKey, image.links, *mesh), image.mirror,
-            image.selMode, image.wallNormal), PenBuildPurpose.Commit);
+            image.selMode, image.wallNormal, image.sources, image.order), PenBuildPurpose.Commit);
         candidate.declareCornerAppend(); candidate.buildLoops();
         candidate.syncSelection();
         drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
@@ -1239,6 +1282,14 @@ public:
             appendVertex(hit, link);
             params_.currentPoint = cast(int)vertices_.length - 1;
         }
+        // Polygon rebuild (9518): clicks search at 3 world pixels and freeze
+        // their corners. Drag/Return/drop only move or consume this topology.
+        if (params_.type == PenType.polygons && !params_.makeQuads &&
+            params_.wall == PenWall.off && !mirror_.enabled) {
+            sources_ = params_.merge ? penMergeSources(vertices_, frame.toWorld,
+                3 * viewWorldPerPixel(cachedVp)) : null;
+            order_ = penPolygonOrder(vertices_, frame.toWorld, sources_, false);
+        }
         syncPosFromCurrent();
         uploadPreview();
         armDrag(e.x, e.y);
@@ -1305,24 +1356,6 @@ public:
             endDragGuide();
         }
 
-        if (!dragInitiated) {
-            // Press-without-drag: vertex stays selected (currentPoint already
-            // updated in onMouseButtonDown). Nothing more to do.
-            return true;
-        }
-
-        // Drag completed — check if the dragged vertex was dropped onto
-        // *another* in-progress vertex; if so, weld (drop the dragged one
-        // from the boundary list, the target stays put).
-        int target = findHoveredVertExcept(e.x, e.y, dragVertIdx);
-        if (target >= 0) {
-            weldVertex(dragVertIdx, target);
-            // After weld, currentPoint should refer to the target (post-shift).
-            int newCur = (target > dragVertIdx) ? (target - 1) : target;
-            params_.currentPoint = newCur;
-            syncPosFromCurrent();
-            uploadPreview();
-        }
         return true;
     }
 
@@ -1645,7 +1678,7 @@ private:
 
     // Empties every per-point stroke array together (the one reset site: an
     // array added beside `vertices_` / `links_` is cleared here once).
-    void clearStroke() nothrow @nogc { vertices_.length = 0; links_.length = 0; }
+    void clearStroke() nothrow @nogc { vertices_.length = 0; links_.length = 0; sources_.length = 0; order_.length = 0; }
 
     // One cyan marker for a LOCAL stroke point (markers render in WORLD).
     BoxHandler vertMarker(Vec3 pos) {
@@ -1696,7 +1729,7 @@ private:
             rollovers: Rollover.target, sessionSteps: true,
             imageAttrs: ["type", "currentPoint", "posX", "posY", "posZ", "flip",
                          "makeQuads", "merge", "close", "selectNew", "raycast",
-                         "wall", "offset", "points", "link", "linkKey"] };
+                         "wall", "offset", "points", "link", "linkKey", "sources", "order"] };
         return policy;
     }
     // In-stroke undo / redo (fixture pen_instroke_undo.json): the
@@ -1847,35 +1880,13 @@ private:
         return best;
     }
 
-    int findHoveredVertExcept(int mx, int my, int exclude) {
-        foreach (i, h; vertHandlers) {
-            if (cast(int)i == exclude) continue;
-            if (h.hitTest(mx, my, cachedVp)) return cast(int)i;
-        }
-        return -1;
-    }
-
-    // Weld the dragged vertex (dragIdx) onto target. The dragged vertex
-    // drops out of the boundary list entirely; the target's position stays
-    // put (the user might have positioned it earlier and the weld shouldn't
-    // teleport it). Boundary indices after dragIdx shift left by one.
-    void weldVertex(int dragIdx, int targetIdx) {
-        if (dragIdx < 0 || dragIdx >= cast(int)vertices_.length) return;
-        if (targetIdx == dragIdx) return;
-        vertHandlers[dragIdx].destroy();
-        vertices_    = vertices_[0 .. dragIdx]    ~ vertices_[dragIdx + 1 .. $];
-        links_       = links_[0 .. dragIdx]       ~ links_[dragIdx + 1 .. $];
-        vertHandlers = vertHandlers[0 .. dragIdx] ~ vertHandlers[dragIdx + 1 .. $];
-        foreach (ref l; links_) l = shiftedLink(l, dragIdx, -1);
-    }
-
     void uploadPreview() {
         assert(vertHandlers.length == vertices_.length &&
             links_.length == vertices_.length,
             "pen: one marker and one link per stroke point");
         previewMesh.clear();
         appendPenGeometry(previewMesh, PenStroke.of(vertices_, frame.toWorld,
-            params_, withoutSceneLinks(links_), mirror_, wallNormal: wallNormal),
+            params_, withoutSceneLinks(links_), mirror_, wallNormal: wallNormal, sources: sources_, order: order_),
             PenBuildPurpose.Preview);
         previewGpu.upload(previewMesh);
         // Keep marker positions in sync (vertices_ may have been mutated by
@@ -1921,7 +1932,7 @@ private:
         // A pure tail append into the live scene mesh, declared as such for
         // the corner-append cross-check.
         appendPenGeometry(*mesh, PenStroke.of(vertices_, frame.toWorld,
-            params_, liveLinks(), mirror_, selMode(), wallNormal), PenBuildPurpose.Commit);
+            params_, liveLinks(), mirror_, selMode(), wallNormal, sources_, order_), PenBuildPurpose.Commit);
         mesh.declareCornerAppend();
         mesh.buildLoops();
         gpu.upload(*mesh);

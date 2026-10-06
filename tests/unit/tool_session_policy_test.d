@@ -534,7 +534,7 @@ private immutable StepRow[] kStepTable = [
     StepRow("pen", OpensAt.firstPress, false,
             ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads",
              "merge", "close", "selectNew", "raycast", "wall", "offset", "points",
-             "link", "linkKey"]),
+             "link", "linkKey", "sources", "order"]),
     // Plan 8646 (S5): every published pen attribute is an image attribute (D15,
     // captured R-all); S7a adds the operation context (offsets + descriptor).
     StepRow("mesh.topoPen", OpensAt.firstPress, false,
