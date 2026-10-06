@@ -137,6 +137,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         private shared long ownedConditionWaitsForTest_ = 0;
         private shared long ownedConditionReturnsForTest_ = 0;
         private shared bool suppressOwnedCompletionNotifyForTest_ = false;
+        private MonoTime delegate() ownedClockForTest_ = null;
         private shared bool holdClaimEnqueuedForTest_ = false;
         private shared bool claimEnqueuedReachedForTest_ = false;
         private shared bool holdClaimExtractedForTest_ = false;
@@ -197,6 +198,16 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         return true;
     }
 
+    // submitOwned's only clock. Task 9529: a unittest may replace it so the
+    // fixed-deadline cell is a function of submitted time, not of scheduler
+    // or GC-pause jitter; evidence in request_result_ownership_test.d.
+    private MonoTime ownedNow() {
+        version(unittest) {
+            if (ownedClockForTest_ !is null) return ownedClockForTest_();
+        }
+        return MonoTime.currTime;
+    }
+
     // Tasks 5730/5780 invariant: one waiter mutex covers the finished check,
     // wait, finished publication and notify around the submit-time deadline.
     // Lock order is waiter mutex -> this monitor, never the reverse: synthetic
@@ -208,7 +219,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
     OwnedResult submitOwned(Req request, Resp initialResult,
                             Resp timeoutResult, Resp stoppingResult,
                             Duration budget) {
-        immutable submittedAt = MonoTime.currTime;
+        immutable submittedAt = ownedNow();
         immutable requestIdentity = nextIdentity();
         auto call = new OwnedCall(request, initialResult,
                                   submittedAt + budget,
@@ -266,7 +277,7 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
                 if (atomicLoad(ownedStopping))
                     return syntheticOwnedResult(call, stoppingResult,
                                                 BridgeResultKind.stopping);
-                immutable now = MonoTime.currTime;
+                immutable now = ownedNow();
                 if (now >= call.deadline)
                     return syntheticOwnedResult(call, timeoutResult,
                                                 BridgeResultKind.timedOut);
@@ -373,6 +384,11 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
 
         void suppressOwnedCompletionNotifyForTest(bool suppress) {
             atomicStore(suppressOwnedCompletionNotifyForTest_, suppress);
+        }
+
+        // Set before the server starts; read only by submitOwned.
+        void setOwnedClockForTest(MonoTime delegate() clock) {
+            ownedClockForTest_ = clock;
         }
 
         bool legacyPendingForTest() {
@@ -2429,6 +2445,10 @@ class HttpServer {
 
         public void suppressSelectionOwnedCompletionNotifyForTest(bool suppress) {
             selectionBridge.suppressOwnedCompletionNotifyForTest(suppress);
+        }
+
+        public void setSelectionOwnedClockForTest(MonoTime delegate() clock) {
+            selectionBridge.setOwnedClockForTest(clock);
         }
 
         public size_t toolHandlesBridgeTickIndexForTest() const {

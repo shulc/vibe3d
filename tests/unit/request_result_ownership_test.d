@@ -4,7 +4,7 @@ import tests.unit.http_test_client : receiveUntilClosed;
 
 import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.thread : Thread;
-import core.time : Duration, MonoTime, msecs, seconds;
+import core.time : Duration, MonoTime, hnsecs, msecs, seconds;
 import http_server : BridgeResultKind, HttpServer;
 import std.algorithm : canFind, count, min;
 import std.conv : to;
@@ -189,23 +189,35 @@ private final class HardFailSocket {
 }
 
 private struct TimeoutCadenceSample {
-    bool completed;
-    Duration elapsed;
+    Duration timedOutAt = Duration.max;  // injected time since submit
+    int steps;
     long waits;
     long returns;
     int providerCalls;
+    bool replied;
     string wire;
     string failure;
 }
 
-private TimeoutCadenceSample runTimeoutCadence(Duration wakeCadence) {
-    enum int kRigMaxIters = 150;
+// The waiter reads an injected clock (task 9529): each step advances it by
+// one cadence, wakes the waiter and waits until the waiter has judged the new
+// time. Wall time bounds only liveness, so scheduler or GC pauses cannot move
+// the observed timeout; a wake-dependent deadline still moves it.
+private TimeoutCadenceSample runTimeoutCadence(Duration cadence) {
+    enum int kRigMaxIters = 150;  // 150 x 2 ms = the 300 ms budget
+    enum Duration kLiveness = 10.seconds;
+    shared long fakeHnsecs = 0;
+    shared long clockReads = 0;
+    immutable base = MonoTime.currTime;
     shared int providerCalls = 0;
-    shared bool keepWaking = true;
     immutable port = freePort();
     auto server = new HttpServer(port);
     server.setSelectionBridgeMaxItersForTest(kRigMaxIters);
     server.suppressSelectionOwnedCompletionNotifyForTest(true);
+    server.setSelectionOwnedClockForTest(() {
+        atomicOp!"+="(clockReads, 1);
+        return base + atomicLoad(fakeHnsecs).hnsecs;
+    });
     server.setSelectionDataProvider(() {
         atomicOp!"+="(providerCalls, 1);
         return `{"payload":"must-not-run"}`;
@@ -215,37 +227,48 @@ private TimeoutCadenceSample runTimeoutCadence(Duration wakeCadence) {
     server.start();
 
     auto reply = new AsyncHttpReply();
-    immutable started = MonoTime.currTime;
     auto client = startHttpGet(port, "/api/selection", reply);
-    Thread waker = null;
     scope(exit) {
-        atomicStore(keepWaking, false);
-        if (waker !is null && waker.isRunning) waker.join();
         if (server.running) server.stop();
         if (client.isRunning) client.join();
     }
 
     assert(waitUntil(() => server.selectionOwnedPendingForTest() == 1,
-                     2.seconds),
+                     kLiveness),
         "5780 deadline setup: request did not reach the owned queue");
     assert(waitUntil(() => server.selectionOwnedConditionWaitsForTest() >= 1,
-                     2.seconds),
+                     kLiveness),
         "5780 deadline setup: waiter never blocked on the condition");
 
-    waker = new Thread({
-        while (atomicLoad(keepWaking) && !atomicLoad(reply.done)) {
-            Thread.sleep(wakeCadence);
-            server.wakeSelectionOwnedWaiterForTest();
-        }
-    });
-    waker.start();
+    bool timedOut() {
+        foreach (entry; server.selectionOwnedTraceForTest())
+            if (entry.kind == BridgeResultKind.timedOut) return true;
+        return false;
+    }
 
     TimeoutCadenceSample sample;
-    sample.completed = waitUntil(() => atomicLoad(reply.done), 900.msecs);
-    sample.elapsed = MonoTime.currTime - started;
-    atomicStore(keepWaking, false);
-    waker.join();
-    if (sample.completed) client.join();
+    // One clock read at submit, then one per loop pass; a pass that does not
+    // time out counts one condition wait after its read.
+    bool judged(long readsBefore) {
+        if (timedOut()) return true;
+        immutable reads = atomicLoad(clockReads);
+        return reads > readsBefore
+            && server.selectionOwnedConditionWaitsForTest() == reads - 1;
+    }
+    while (sample.steps < 1000) {
+        ++sample.steps;
+        atomicOp!"+="(fakeHnsecs, cadence.total!"hnsecs");
+        immutable readsBefore = atomicLoad(clockReads);
+        server.wakeSelectionOwnedWaiterForTest();
+        assert(waitUntil(() => judged(readsBefore), kLiveness),
+            "5780 deadline step: waiter did not judge the advanced clock");
+        if (timedOut()) {
+            sample.timedOutAt = atomicLoad(fakeHnsecs).hnsecs;
+            break;
+        }
+    }
+    sample.replied = waitUntil(() => atomicLoad(reply.done), kLiveness);
+    if (sample.replied) client.join();
     sample.waits = server.selectionOwnedConditionWaitsForTest();
     sample.returns = server.selectionOwnedConditionReturnsForTest();
     sample.providerCalls = atomicLoad(providerCalls);
@@ -298,6 +321,10 @@ unittest {
     immutable ownedTickBody = source[tickStart .. tickEnd];
     assert(!submitBody.canFind("Thread.sleep(2.msecs)"),
         "5780 production wiring: submitOwned must not retain the 2 ms poll");
+    assert(occurrences(submitBody, "ownedNow()") == 2
+        && !submitBody.canFind("MonoTime.currTime"),
+        "9529 clock wiring: submitOwned must read submit time and every "
+        ~ "deadline check through the one injectable ownedNow clock");
     assert(submitBody.canFind("ownedWaitCondition.wait(call.deadline - now)")
         && submitBody.canFind("for (;;)"),
         "5780 predicate wiring: submitOwned must wait in a deadline predicate loop");
@@ -458,23 +485,22 @@ unittest {
 unittest {
     auto fastWake = runTimeoutCadence(1.msecs);
     auto coarseWake = runTimeoutCadence(17.msecs);
-    immutable delta = fastWake.elapsed >= coarseWake.elapsed
-        ? fastWake.elapsed - coarseWake.elapsed
-        : coarseWake.elapsed - fastWake.elapsed;
 
     assert(fastWake.providerCalls == 0 && coarseWake.providerCalls == 0,
         "5780 deadline service floor: both expired requests must remain unserviced");
-    assert(fastWake.waits >= 2 && coarseWake.waits >= 2
-        && fastWake.returns >= 1 && coarseWake.returns >= 1,
-        "5780 deadline wake floor: both cadence controls must really wake the waiter");
-    assert(fastWake.completed && coarseWake.completed,
+    assert(fastWake.steps == 300 && coarseWake.steps == 18
+        && fastWake.waits >= 300 && coarseWake.waits >= 18
+        && fastWake.returns >= 300 && coarseWake.returns >= 18,
+        "5780 deadline wake floor: every cadence step must really wake the waiter");
+    assert(fastWake.timedOutAt != Duration.max
+        && coarseWake.timedOutAt != Duration.max,
         "5780 fixed deadline: repeated wakes must not extend the submit-time deadline");
-    assert(fastWake.elapsed >= 250.msecs && coarseWake.elapsed >= 250.msecs
-        && fastWake.elapsed < 700.msecs && coarseWake.elapsed < 700.msecs
-        && delta < 200.msecs,
+    // First step at or past the 300 ms budget: 300 x 1 ms and 18 x 17 ms.
+    assert(fastWake.timedOutAt == 300.msecs && coarseWake.timedOutAt == 306.msecs,
         "5780 fixed deadline: 1 ms versus 17 ms wake cadence changed the "
         ~ "same 300 ms timeout");
-    assert(fastWake.failure.length == 0 && coarseWake.failure.length == 0
+    assert(fastWake.replied && coarseWake.replied
+        && fastWake.failure.length == 0 && coarseWake.failure.length == 0
         && responseBody(fastWake.wire).canFind(
             `"message": "timeout waiting for main thread"`)
         && responseBody(coarseWake.wire).canFind(
