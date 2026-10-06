@@ -35,11 +35,14 @@ Vec3[] dummyQ;
 /// `quad`: also load an EDITED quad whose corner `v` sits 15 px (-12,-9) from the
 /// press and whose two sides leave `v` away from it (K-PS KPS_2).
 void setupRig(out int px, out int py, out Vec3 pressW, out Vec3 mW, float k = 1.0f,
-              bool quad = false, ref Vec3[] q = dummyQ) {
+              bool quad = false, ref Vec3[] q = dummyQ, bool missRig = false) {
     postJson("/api/command", commandBody("scene.reset"));
     enum string camBody =
         `{"azimuth":0.0,"elevation":0.0,"distance":4.0,"focus":{"x":0.0,"y":0.0,"z":0.0}}`;
-    postJson("/api/camera", camBody);
+    const rigCamera = missRig
+        ? `{"azimuth":0.0,"elevation":0.0,"distance":4.0,"focus":{"x":2.0,"y":0.0,"z":0.0}}`
+        : camBody;
+    postJson("/api/camera", rigCamera);
     auto c  = fetchCamera();
     auto vp = viewportFromCamera(c);
     px = c.vpX + c.width / 2;
@@ -66,7 +69,7 @@ void setupRig(out int px, out int py, out Vec3 pressW, out Vec3 mW, float k = 1.
     foreach (p; v) va ~= JSONValue([p.x, p.y, p.z]);
     JSONValue body = JSONValue.emptyObject;
     body["vertices"] = JSONValue(va);
-    body["faces"]    = parseJSON(`[[0,1,2,3],[0,5,6,4],[4,6,7,1]]`);
+    body["faces"]    = parseJSON(missRig ? `[[0,1,2,3]]` : `[[0,1,2,3],[0,5,6,4],[4,6,7,1]]`);
     auto lr = postJson("/api/command", commandBody("scene.loadMesh", body.toString));
     assert(lr["status"].str == "ok", "load-mesh failed: " ~ lr.toString);
     cmd("layer.add name:Edit");
@@ -82,7 +85,7 @@ void setupRig(out int px, out int py, out Vec3 pressW, out Vec3 mW, float k = 1.
         auto ql = postJson("/api/command", commandBody("scene.loadMesh", qb.toString));
         assert(ql["status"].str == "ok", "load-mesh (edited quad) failed: " ~ ql.toString);
     }
-    postJson("/api/camera", camBody);   // a load restores its own camera
+    postJson("/api/camera", rigCamera);   // a load restores its own camera
     auto c2 = fetchCamera();
     assert(c2.eye.z == c.eye.z && c2.width == c.width, "setup: the camera must be the rig's");
     assert(vertexCountLayer(1) == (quad ? 4 : 0), "setup: the primary layer's start");
@@ -237,4 +240,58 @@ unittest { // KPS_2: a Point 15 px off an edited quad's corner V adds a vertex a
     foreach (i; 0 .. 4)
         assert(dist(vertexOf(1, i), q[i]) < 1e-5f, format("KPS_2: quad vertex %d moved", i));
     assert(hasExactFace(1, [0, 1, 2, 3]), "KPS_2: the quad polygon must be untouched");
+}
+
+// 9512 review correction: observe the completed production foreground draw,
+// not the election readout or the cell FBO (which excludes ImGui overlays).
+private size_t cyanMarkerPixels(Vec3 world) {
+    import http_client : quiesce;
+    import std.math : round;
+    auto vp = viewportFromCamera(fetchCamera());
+    float x, y;
+    assert(projectToWindow(world, vp, x, y), "marker observation must project the source vertex");
+    string points;
+    foreach (dy; -1 .. 2) foreach (dx; -1 .. 2) {
+        if (points.length) points ~= ";";
+        points ~= format("%d,%d", cast(int)round(x) + dx, cast(int)round(y) + dy);
+    }
+    quiesce(); // provider reads the last COMPLETED ImGui submission
+    auto probe = getJson("/api/viewport/probe?target=frame&points=" ~ points);
+    assert("error" !in probe && probe["target"].str == "frame"
+        && probe["w"].integer > 0 && probe["h"].integer > 0
+        && probe["points"].array.length == 9, "marker frame probe must return all nine samples");
+    size_t cyan;
+    foreach (p; probe["points"].array) {
+        assert("error" !in p, "marker frame sample must lie inside the completed framebuffer");
+        if (p["r"].integer < 80 && p["g"].integer > 150 && p["b"].integer > 180) ++cyan;
+    }
+    return cyan;
+}
+
+unittest { // actual cyan output survives a constraint-ray miss
+    int px, py; Vec3 pressW, mW;
+    setupRig(px, py, pressW, mW, 1.0f, false, dummyQ, true);
+    cmd("tool.pipe.attr constrain enabled true");
+    cmd("tool.pipe.attr constrain handle false");
+    cmd("tool.pipe.attr snap types vertex");
+    // Below the sole polygon, 9.4 px from its loose T-vertex M: within snap reach.
+    // This also separates the elected M from the hover/source-coordinate point.
+    cmd("tool.pipe.attr snap enabled false");
+    hoverAt(px + 2, py + 12);
+    assert(!getJson("/api/tool/state")["hit"].boolean, "Snap OFF control must miss every constraint polygon");
+    const offPixels = cyanMarkerPixels(mW);
+    assert(offPixels == 0, "Snap OFF must emit no cyan marker at background M");
+
+    cmd("tool.pipe.attr snap enabled true");
+    auto hover = hoverAt(px + 2, py + 12);
+    assert(!getJson("/api/tool/state")["hit"].boolean, "positive marker witness must remain a constraint-ray miss");
+    assert(hover["targetSource"].integer == 1 && hover["targetVert"].integer == 4
+        && hover["targetKind"].str == "vertex", "miss election must name actual background M, not hit-face A: " ~ hover.toString);
+    const onPixels = cyanMarkerPixels(mW);
+    import std.stdio : writeln;
+    writeln(format("MISS-MARKER output off=%s on=%s source=1 vertex=4 hit=false world=%s", offPixels, onPixels, mW));
+    assert(onPixels >= 5,
+        "MISS MARKER ACTUAL OUTPUT: elected background M must reach the completed foreground framebuffer");
+    assert(cyanMarkerPixels(hitAt(px + 2, py + 12)) == 0,
+        "miss marker must not be drawn at the cursor/source-coordinate point");
 }
