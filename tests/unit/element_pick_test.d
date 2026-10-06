@@ -89,7 +89,7 @@ unittest { // production-text census
            format("element-pick census: comparator defined in %s", cmpDefs));
 
     // The comparator's call-site roster: the active-tool hover publish, the
-    // polygon pen's hover-record stand-in (its merge, task 9503), the topology
+    // source-aware pixel query (also used by the polygon pen), the topology
     // pen's press pick (Duplicate and Remove press through it too) and its
     // background hover readout (task 9501).
     electSites.sort();
