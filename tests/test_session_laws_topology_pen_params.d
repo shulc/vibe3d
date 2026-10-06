@@ -1149,9 +1149,9 @@ unittest {
     at("fold-on-drop", "exit", w1, false, r.hp + 5);
     z("fold-on-drop z1");
     z("fold-on-drop z2");
-    at("fold-on-drop", "z2 (drop row)", w1, true, r.hp + 3);
+    at("fold-on-drop", "z2 (drop plus press and field)", r.a0, true, r.hp + 1);
     z("fold-on-drop z3");
-    at("fold-on-drop", "z3 (g1 and the row as one)", r.a0, true, r.hp + 1);
+    at("fold-on-drop", "z3 (activation)", r.a0, false, r.hp);
     writeln("PASS fold-on-drop");
 }
 

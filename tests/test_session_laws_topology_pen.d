@@ -853,11 +853,11 @@ unittest {
                   ~ "drop row: armed %s, mesh %s the held one, history %s", penArmed(),
                   penMesh() == held ? "==" : "!=", labels));
     penCtrlZ("drop-mid-drag z1");
-    assert(penMesh() == held && penArmed() && penHistoryLen() == r.hp + 2,
+    assert(penMesh() == r.a0 && penArmed() && penHistoryLen() == r.hp + 1,
            format("drop-mid-drag z1: mesh %s the held one, armed %s (expected re-armed), history %s",
                   penMesh() == held ? "==" : "!=", penArmed(), penHistoryLabels()));
     penCtrlZ("drop-mid-drag z2");
-    assert(penMesh() == r.a0 && penArmed() && penHistoryLen() == r.hp + 1,
+    assert(penMesh() == r.a0 && !penArmed() && penHistoryLen() == r.hp,
            format("drop-mid-drag z2: mesh %s (expected a0), armed %s, history %s",
                   penMesh().toString, penArmed(), penHistoryLabels()));
     writeln("PASS drop-mid-drag");

@@ -1978,6 +1978,8 @@ final class CommandHistory {
             auto prev = _state;
             _state = UndoState.Suspend;
             scope(exit) _state = prev;
+            if (dropping && lifecycle.dropUndoPolicy().redo == DropRedoPopulation.editRows)
+                redoStack.length = 0;
             foreach (i; 0 .. selected) {
                 auto entry = undoStack[$ - 1];
                 undoStack.length -= 1;

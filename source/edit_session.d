@@ -1003,9 +1003,10 @@ private struct ToolSession {
                                boundModel_() && postmodeArmed_);
         const armRow = latentArmRow_();
         const id = armedId_;
+        const completionBefore = completedDropUndo_;
         const r = undoImpl_();
         if (r) openBlock_ = null;
-        if (r && history_.undoEntries().length != navBefore_.depth)
+        if (r && completedDropUndo_ == completionBefore && history_.undoEntries().length != navBefore_.depth)
             settleAfterNavigation_(true);
         // K-RD rule 3: the undo that removed the activation row left the tool latent.
         if (r && armRow != size_t.max && history_.undoEntries().length <= armRow) {
@@ -1525,6 +1526,10 @@ private struct ToolSession {
         openBlock_ = null;
         auto t = tool_();
         if (t !is null) rebaseAfterTail_(t);
+        auto mesh = liveStepMesh_(t);
+        baseImage_ = mesh is null ? MeshSnapshot.init : MeshSnapshot.capture(*mesh);
+        operationOpen_ = false;
+        postmodeArmed_ = false;
         ++completedDropUndo_;
     }
     private ulong completedDropUndo_;

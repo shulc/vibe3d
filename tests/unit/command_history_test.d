@@ -309,3 +309,84 @@ unittest { // task 9508: a suspended re-grade can remove the matching tail witho
     assert(h.undoEntries().length == 0, "generation suspended-tail floor: tail removed");
     assert(h.generation() > before, "a removed re-grade tail advances history generation");
 }
+
+unittest {
+    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, AttrImage, StepOrigin;
+    import commands.tool.lifecycle : ToolActivationCommand;
+    import commands.mesh.session_edit : MeshSessionEdit;
+    import mesh : Mesh, makeCube;
+    import view : View;
+    import editmode : EditMode;
+    import snapshot : MeshSnapshot;
+    Mesh m = makeCube();
+    View v = new View(0, 0, 800, 600);
+    MeshSessionEdit press(ulong token) {
+        auto p = new MeshSessionEdit(&m, v, EditMode.Vertices, "test.press", "Press");
+        const image = MeshSnapshot.capture(m);
+        p.setSnapshots(image, image);
+        p.markSession(token);
+        p.setTopologyStep(AttrImage.init, AttrImage.init, image, image, true, 1, StepOrigin.opens, 1);
+        return p;
+    }
+    foreach (population; [DropRedoPopulation.discard, DropRedoPopulation.editRows, DropRedoPopulation.selectedSuffix]) {
+        auto h = new CommandHistory();
+        auto activation = new ToolActivationCommand(&m, v, EditMode.Vertices, "pen", "", false, false, false, 7);
+        auto first = press(7), last = press(7);
+        auto field = new _SessionRowCmd(7);
+        auto drop = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "pen", false, false, false, 0, 7, true, false, false, true);
+        drop.setDropUndoPolicy(DropUndoPolicy(DropUndoExtent.newestPressBlock, population));
+        assert(drop.carriesRedoAfterUndo() == (population == DropRedoPopulation.selectedSuffix),
+            "drop lifecycle redo admission follows the retained population");
+        size_t completions;
+        bool armed;
+        const before = h.generation();
+        drop.onActivate = (string id) { armed = id == "pen"; };
+        drop.onDeactivate = () { armed = false; };
+        drop.onCompleteDropUndo = (string id, ulong token) {
+            ++completions;
+            assert(armed && id == "pen" && token == 7, "drop completion restored identity and token");
+            assert(h.state() != UndoState.Suspend, "drop completion must run outside Suspend");
+            assert(h.undoEntries().length == 2 && h.undoEntries()[$ - 1].cmd is first,
+                "completion must see the final selected suffix");
+        };
+        foreach (Command c; [cast(Command) activation, first, last, field, drop]) h.pushEntryForTest(c);
+        h.markEntryFold(field, HistoryFlags.JoinsBelow);
+        const generation = h.generation();
+        assert(h.undo() && completions == 1 && h.generation() == generation + 1,
+            "one completion and one generation update per drop undo");
+        assert(h.undoEntries().length == 2 && h.undoEntries()[0].cmd is activation && h.undoEntries()[1].cmd is first,
+            "newest press selection retains the older press and original activation");
+        const expected = population == DropRedoPopulation.discard ? 0 : population == DropRedoPopulation.editRows ? 2 : 3;
+        assert(h.redoEntries().length == expected, "drop redo population");
+        if (expected) {
+            assert(h.redoEntries()[0].cmd is last && h.redoEntries()[1].cmd is field,
+                "press and folded fields retain chronological redo identity");
+            assert(h.redo() && armed, "redo first restores the press while armed");
+            assert(h.redo() && armed, "redo second restores its folded field while armed");
+            if (population == DropRedoPopulation.selectedSuffix) {
+                assert(h.redoEntries()[0].cmd is drop, "lifecycle drop is last in retained suffix");
+                assert(h.redo() && !armed, "retained lifecycle drop must replay deactivation");
+            }
+        }
+    }
+    // An immediate foreign row, a non-press base and an empty session cannot
+    // make the bounded selection search reach an older eligible press.
+    foreach (barrier; [cast(Command)new _SessionRowCmd(9), new _SessionRowCmd(7),
+            new ToolActivationCommand(&m, v, EditMode.Vertices, "other", "pen", false, false, false, 7)]) {
+        auto h = new CommandHistory();
+        auto older = press(7);
+        auto drop = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "pen", false, false, false, 0, 7, true, false, false, true);
+        drop.setDropUndoPolicy(DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard));
+        foreach (Command c; [cast(Command)older, barrier, drop]) h.pushEntryForTest(c);
+        assert(h.undo() && h.undoEntries().length == 2 && h.undoEntries()[$ - 1].cmd is barrier,
+            "newest press cannot cross a foreign, lifecycle or non-press base");
+    }
+    auto empty = new CommandHistory();
+    auto d = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "pen", false, false, false, 0, 7, true, false, false, true);
+    d.setDropUndoPolicy(DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard));
+    size_t called;
+    d.onCompleteDropUndo = (string id, ulong token) { ++called; assert(empty.state() != UndoState.Suspend); };
+    empty.pushEntryForTest(d);
+    assert(empty.undo() && called == 1 && empty.undoEntries().length == 0 && empty.redoEntries().length == 0,
+        "zero-block drop still completes once and discards redo");
+}

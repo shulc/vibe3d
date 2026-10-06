@@ -388,3 +388,42 @@ unittest { // Design cell (uncaptured, gap row): a primary move between the
     undo();
     assert(aV0() == `[-0.5,-0.5,-0.5]`, "design cell Ctrl+Z 2: A's drag is undone");
 }
+
+unittest { // Two remaining presses: extent is shared, retention is preset data.
+    foreach (id; ["mesh.topoPen", "mesh.dragWeld"])
+    foreach (door; ["navigation", "api", "command"]) {
+        rig("vertex");
+        ui("tool.set " ~ id ~ " on");
+        if (id == "mesh.topoPen") cmd("tool.attr " ~ id ~ " mode 0");
+        auto p = worldPixel(Vec3(0, 0, 0));
+        dragPx(p, 44, 0);
+        const first = verts();
+        assert(quadGap(first, kQuad) > 0.05, "two-press floor: first press moved geometry");
+        p = worldPixel(Vec3(cast(float)first[0][0], cast(float)first[0][1], cast(float)first[0][2]));
+        dragPx(p, 0, 44);
+        const last = verts();
+        assert(quadGap(last, first) > 0.05 && depth() < 40, "two-press floor: second press and history headroom");
+        keyQ();
+        const dropped = depth();
+        if (door == "navigation") undo();
+        else if (door == "api") { auto r = postJson("/api/undo", "{}"); assert(r["status"].str == "ok"); quiesce(); }
+        else cmd("history.undo");
+        assert(tool() == id && quadGap(verts(), first) <= 1e-6 && depth() == dropped - 2,
+            format("%s %s drop must revert only the newest press: %s", id, door, getJson("/api/history")));
+        const token = getJson("/api/tool/state")["session"]["token"].integer;
+        assert(token > 0, "drop completion must adopt a restored session token");
+        if (id == "mesh.dragWeld") {
+            key(122, 29, 65);
+            assert(tool() == id && quadGap(verts(), last) <= 1e-6,
+                "preset redo1 restores its newest press while armed");
+            key(122, 29, 65);
+            assert(tool() == "" && quadGap(verts(), last) <= 1e-6,
+                "preset redo2 replays lifecycle drop without changing geometry");
+        } else {
+            assert(getJson("/api/history")["redo"].array.length == 0, "plain drop discards complete redo population");
+            key(122, 29, 65);
+            assert(tool() == id && quadGap(verts(), first) <= 1e-6,
+                "plain drop redo cannot restore the discarded press");
+        }
+    }
+}

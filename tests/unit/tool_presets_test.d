@@ -70,3 +70,48 @@ unittest {
     assert(msg !is null && msg.canFind("noBackgroundConstraint on base 'move'"),
            "the flag on a non-pen base must be refused at load: " ~ msg);
 }
+
+unittest {
+    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
+    import tools.edit.topology_pen : TopologyPenTool;
+    import registry : typedToolFactory;
+    import mesh_gpu : GpuMesh;
+    import editmode : EditMode;
+    import mesh : Mesh;
+    import shader : Shader;
+    import std.file : write, remove;
+    import std.conv : to;
+    import std.process : thisProcessID;
+    import std.exception : collectExceptionMsg;
+    auto presets = loadToolPresets("config/tool_presets.yaml");
+    Registry reg;
+    Mesh m;
+    GpuMesh gpu;
+    EditMode mode;
+    reg.registerTool("mesh.topoPen", typedToolFactory!TopologyPenTool(() =>
+        new TopologyPenTool(() => &m, &gpu)));
+    ToolPreset[] selected;
+    foreach (p; presets) if (p.id == "mesh.dragWeld") selected ~= p;
+    assert(selected.length == 1, "one shipped weld preset");
+    registerToolPresets(reg, selected); // The real loader and factory, including its override.
+    const policy = DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.selectedSuffix);
+    foreach (_; 0 .. 3) {
+        auto candidate = reg.toolFactory("mesh.dragWeld")();
+        assert(candidate.resolvedDropUndoPolicy() == policy, "preset factory must publish its resolved policy");
+        assert(reg.toolFactory("mesh.topoPen")().resolvedDropUndoPolicy() ==
+            DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard),
+            "preset retention must not change the base factory");
+    }
+    const path = "/var/tmp/vibe3d-drop-policy-" ~ to!string(thisProcessID) ~ ".yaml";
+    scope(exit) remove(path);
+    write(path, "presets:\n  - id: alias\n    alias: canonical\n  - id: canonical\n    base: mesh.topoPen\n    dropUndo: {extent: newestPressBlock, redo: selectedSuffix}\n");
+    auto aliases = loadToolPresets(path);
+    assert(aliases.length == 2 && aliases[0].hasDropUndo && aliases[1].hasDropUndo &&
+        aliases[0].dropUndo == policy && aliases[1].dropUndo == policy, "alias inherits policy and presence");
+    foreach (config; ["{extent: wrong}", "{redo: wrong}", "{unexpected: discard}"]) {
+        write(path, "presets:\n  - id: bad\n    base: mesh.topoPen\n    dropUndo: " ~ config ~ "\n");
+        assert(collectExceptionMsg(loadToolPresets(path)) !is null, "invalid drop policy must refuse");
+    }
+    write(path, "presets:\n  - id: bad\n    alias: canonical\n    dropUndo: {extent: none}\n");
+    assert(collectExceptionMsg(loadToolPresets(path)) !is null, "alias may not override policy");
+}

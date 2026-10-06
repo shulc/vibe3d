@@ -1391,7 +1391,7 @@ unittest { // (4h)
                   ~ "zeroes a model tool's attributes, N1a/N1b)",
                   identSites(es, "resyncSession", false)));
     assert(identSites(es, "rebaseAfterTail_", false)
-           == ["<decl>:1", "ToolSession.redoImpl_:1", "ToolSession.undoImpl_:1"],
+           == ["<decl>:1", "ToolSession.completeDropUndo:1", "ToolSession.redoImpl_:1", "ToolSession.undoImpl_:1"],
            format("S7 (6) needle: rebaseAfterTail_ is called at %s, expected the undo and the "
                   ~ "redo tail once each", identSites(es, "rebaseAfterTail_", false)));
     const helper = squeeze(bodyAt(ts, "private void rebaseAfterTail_(Tool t)"));
@@ -2277,7 +2277,8 @@ static assert(ToolSessionPolicy.init.toolSetDropRow == false);
 static assert(ToolSessionPolicy.init.armUndoLeavesToolLatent == false);
 
 unittest { // (10b)
-    string[] dropRow, latent;
+    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
+    string[] dropRow, latent, extents;
     size_t scanned;
     foreach (m; ModuleInfo) {
         if (m is null || !m.name.startsWith("tools.")) continue;
@@ -2288,8 +2289,19 @@ unittest { // (10b)
             const pol = blit(c).sessionPolicy();
             if (pol.toolSetDropRow) dropRow ~= c.name;
             if (pol.armUndoLeavesToolLatent) latent ~= c.name;
+            if (pol.dropUndo.extent != DropUndoExtent.none) extents ~= c.name;
+            if (c.name == "tools.edit.topology_pen.tool.TopologyPenTool")
+                assert(pol.dropUndo == DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard),
+                    "plain pen must discard redo of its newest press");
+            else if (pol.toolSetDropRow)
+                assert(pol.dropUndo == DropUndoPolicy(DropUndoExtent.wholeSession, DropRedoPopulation.editRows),
+                    "whole-session declarers preserve edit-row redo");
+            else assert(pol.dropUndo == DropUndoPolicy.init, "other concrete classes retain default drop extent");
         }
     }
+    extents.sort();
+    assert(extents == ["tools.edit.poly_bevel.PolyBevelTool", "tools.edit.topology_pen.tool.TopologyPenTool",
+        "tools.transform.xfrm_transform.XfrmTransformTool"], "drop extent declaration population");
     assert(scanned == 47, format("9508 policy classes: scanned %s, measured 47", scanned));
     dropRow.sort();
     assert(dropRow == ["tools.edit.poly_bevel.PolyBevelTool",
