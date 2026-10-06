@@ -1134,7 +1134,7 @@ unittest { // private g_replayCurrentViewport lens-only refresh
     scope(exit)remove(path);
     foreach(lens;[.7853982f,.902658403f,1.0f,2.0f,1e-28f]) {
         EventLogger logger;logger.open(path);logger.writeViewportMeta(150,28,1152,974,lens);logger.close();
-        const decoded=parseEventLog(readText(path));
+        const decoded=parseEventLog(readText(path)~`{"t":1,"type":"SDL_QUIT"}`~"\n");
         assert(decoded.accepted&&decoded.log.viewport.fovY==lens,"REPLAY_METADATA_LENS_BIT_EXACT");
     }
     const old=g_replayCurrentViewport;scope(exit)g_replayCurrentViewport=old;

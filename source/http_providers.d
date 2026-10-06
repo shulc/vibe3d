@@ -2772,8 +2772,9 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
 
 unittest { // private cameraLensParam preflight numeric representations
     import std.exception : assertThrown;
-    foreach(n;[JSONValue(cast(long)1),JSONValue(cast(ulong)2),JSONValue(.9026584025557545)]) {
-        assert(cameraLensParam(n)>0&&cameraLensParam(n)<3.141592653589793,"HTTP_TYPED_NUMERIC_LENS");
+    foreach(i,n;[JSONValue(cast(long)1),JSONValue(cast(ulong)2),JSONValue(.9026584025557545)]) {
+        const double[3] expected=[1,2,.9026584025557545];
+        assert(cameraLensParam(n)==expected[i],"HTTP_TYPED_NUMERIC_LENS");
     }
     foreach(n;[JSONValue(cast(long)0),JSONValue(cast(ulong)0),JSONValue(double.nan),JSONValue(double.infinity),
                JSONValue(true),JSONValue("1"),JSONValue(null),JSONValue(1e-29)]) {
