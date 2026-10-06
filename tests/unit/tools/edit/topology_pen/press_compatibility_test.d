@@ -26,6 +26,63 @@ private void projected(Vec3 p, float x, float y, const ref Viewport vp) {
 }
 
 version (PerspectivePenFocused) {} else unittest {
+    import operator : VectorStack;
+    import toolpipe.packets : SubjectPacket;
+    import bindbc.sdl;
+    import command_history : CommandHistory;
+    import commands.mesh.session_edit : MeshSessionEdit;
+    import change_bus : MeshEditScope;
+    import edit_session : EditSession;
+    import editmode : EditMode;
+    import view : View;
+    import tool : Tool;
+    import snapshot : MeshSnapshot, SelectionSnapshot;
+    import display_sync : activeMeshResolver;
+    Mesh offscreen;const savedDisplay=activeMeshResolver;scope(exit)activeMeshResolver=savedDisplay;
+    activeMeshResolver=()=>&offscreen;
+    Mesh primary, secondary;
+    secondary.vertices=[Vec3(-.4,2,-.4),Vec3(.4,2,-.4),Vec3(.4,2,.4),Vec3(-.4,2,.4)];
+    secondary.faces=[[0u,3u,2u,1u]];
+    secondary.rebuildEdgesFromFaces();secondary.buildLoops();
+    auto pen=new TopologyPenTool();pen.meshSrc_=()=>&primary;pen.penMode_=PenMode.Point;
+    auto h=new CommandHistory();auto view=new View(0,0,600,600);
+    pen.placeEditFactory_=()=>new MeshSessionEdit(pen.meshSrc_(),view,EditMode.Vertices,
+        "mesh.topoPen_place","Topology Place",MeshEditScope.Geometry);
+    pen.moveEditFactory_=()=>new MeshSessionEdit(pen.meshSrc_(),view,EditMode.Vertices,
+        "mesh.topoPen_move","Topology Move",MeshEditScope.Position);
+    pen.history_=h;Tool active=pen;
+    auto session=new EditSession(()=>active,h,(){active=null;});
+    session.noteArm("mesh.topoPen",session.issueToken());
+    const saved=toolPressSourcesResolver;scope(exit)toolPressSourcesResolver=saved;
+    toolPressSourcesResolver=()=>[ToolPressSource(&primary,ModelSpace.world(),11),ToolPressSource(&secondary,ModelSpace.world(),22)];
+    const vp=viewport();SubjectPacket subject;subject.mesh=&primary;subject.viewport=vp;
+    subject.pickFacing=true;subject.pickFacesDrawn=true;VectorStack vts;vts.put(&subject);
+    const pBefore=MeshSnapshot.capture(primary),sBefore=MeshSnapshot.capture(secondary);
+    const psBefore=SelectionSnapshot.capture(primary),ssBefore=SelectionSnapshot.capture(secondary);
+    const query=pen.queryPressTarget(300,300,vp,false,&subject);
+    assert(query.source==1 && query.owner.mesh is &secondary && query.kind>=0,format("SECONDARY_UNIT_QUERY: populated secondary is reachable, kind=%s source=%s normal=%s",query.kind,query.source,secondary.faceNormal(0)));
+    loadSDL();const mods=SDL_GetModState();scope(exit)SDL_SetModState(mods);SDL_SetModState(cast(SDL_Keymod)0);
+    SDL_MouseButtonEvent e;e.button=SDL_BUTTON_LEFT;e.x=300;e.y=300;
+    assert(pen.onMouseButtonDown(e,vts) && !pen.moveArmed_ && !pen.placeArmed_,"SECONDARY_UNIT_UNARMED: bound empty primary refuses payload");
+    assert(pen.onMouseButtonUp(e,vts) && !pen.moveArmed_ && !pen.placeArmed_,"SECONDARY_UNIT_RELEASE: refusal remains unarmed");
+    foreach(i;0..2) {
+        const after=MeshSnapshot.capture(i==0?primary:secondary);const before=i==0?pBefore:sBefore;
+        assert(after.vertices==before.vertices && after.faces==before.faces && after.edges==before.edges,"SECONDARY_UNIT_GEOMETRY: both complete meshes remain unchanged");
+        const sel=SelectionSnapshot.capture(i==0?primary:secondary);const old=i==0?psBefore:ssBefore;
+        assert(sel==old,"SECONDARY_UNIT_SELECTION: both complete selections remain unchanged");
+    }
+    assert(h.undoEntries().length==1 && h.undoEntries()[0].cmd.name()=="mesh.topoPen_place"
+        && h.undoEntries()[0].cmd.label()=="Topology Place","SECONDARY_UNIT_L5: one established refused press row");
+    pen.meshSrc_=()=>&secondary;subject.mesh=&secondary;
+    assert(pen.onMouseButtonDown(e,vts) && pen.moveArmed_ && pen.moveElem_==MoveElem.Face,"SECONDARY_UNIT_REBIND: same populated source positively authors after rebinding");
+    SDL_MouseMotionEvent motion;motion.x=320;motion.y=300;motion.xrel=20;motion.state=1;
+    assert(pen.onMouseMotion(motion,vts));e.x=320;assert(pen.onMouseButtonUp(e,vts));
+    foreach(i,v;secondary.vertices)assert((v-sBefore.vertices[i]-Vec3(.1,0,0)).length<1e-4,"SECONDARY_UNIT_REBOUND_GEOMETRY: exact bound face moves");
+    assert(primary.vertices==pBefore.vertices && h.undoEntries().length==2
+        && h.undoEntries()[1].cmd.label()=="Topology Move","SECONDARY_UNIT_REBOUND_ROW: accepted move retains primary and adds one row");
+}
+
+version (PerspectivePenFocused) {} else unittest {
     import toolpipe.packets : SubjectPacket;
     import std.algorithm : reverse;
     const vp=viewport();auto m=makeGridPlane(2);auto t=new TopologyPenTool();t.meshSrc_=()=>&m;

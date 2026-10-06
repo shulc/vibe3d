@@ -365,7 +365,13 @@ unittest {
         cs.handle=false;assert(cs.componentGuide(u,vp).acceptedMask==0,"ORBIT_HANDLE_OFF: same hittable guide declines");
         cs.handle=true;cs.enabled=false;assert(cs.componentGuide(u,vp).acceptedMask==0,"ORBIT_DISABLED: same hittable guide declines");
     }
-    cs.enabled=true;assert(cs.componentGuide(Vec3(20,20,.71f),vp).acceptedMask==0,"ORBIT_MISS: real miss never accepts mask7");
+    cs.enabled=true;
+    import math : projectToWindowFull, screenPointToRay;
+    const missInput=Vec3(2,0,0);float mx,my,mz;
+    assert(projectToWindowFull(missInput,vp,mx,my,mz),"ORBIT_MISS_PREMISE: visible input reaches the provider");
+    Vec3 missOrg,missDir;screenPointToRay(mx,my,vp,missOrg,missDir);SurfaceHit missHit;
+    assert(!cs.surfaceOnRay(missOrg,missDir,missHit),"ORBIT_MISS_PREMISE: populated original background really misses");
+    assert(cs.componentGuide(missInput,vp).acceptedMask==0,"ORBIT_MISS: real miss never accepts mask7");
     import math : translationMatrix;
     const shift=Vec3(2,-3,4);auto local=background;
     local.vertices=background.vertices.dup;foreach(ref v;local.vertices)v=v-shift;
