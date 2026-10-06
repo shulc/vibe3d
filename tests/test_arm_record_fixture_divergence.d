@@ -175,8 +175,9 @@ unittest {
  panelUndo();
  assert(itemRot()==resetArmed["item_rot"],
      "reset door did not return the panel item edit to RY=0 in one undo");
- assert(resetHistory==["layer.xform.edit"],
-     format("panel-edit reset history did not collapse to one edit step: %s",resetHistory));
+ // The drop writes ONE row over the edit (findings_K-RD CD_Q_ROT, task 9508).
+ assert(resetHistory==["layer.xform.edit","tool.activate"],
+     format("panel-edit reset history did not collapse to one edit step under the drop row: %s",resetHistory));
 
  // --- law 1: the edit survives the SWITCH and owns its own step ----------
  panelBaseline();

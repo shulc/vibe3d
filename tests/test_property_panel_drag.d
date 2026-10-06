@@ -166,9 +166,9 @@ unittest { // a 20-step move-tool drag produces ONE undo entry
     postJson("/api/script", "tool.set move off");
 
     long stackAfter = undoCount();
-    assert(stackAfter == stackBefore + 1,
+    assert(stackAfter == stackBefore + 2,
         "a single move-tool drag should produce exactly 1 history " ~
-        "entry; before=" ~ stackBefore.to!string ~
+        "entry and the drop row (findings_K-RD CD_Q_TM, task 9508); before=" ~ stackBefore.to!string ~
         " after=" ~ stackAfter.to!string);
 
     // Sanity: undo of that one entry restores v6 to its pre-drag position.
@@ -262,9 +262,9 @@ unittest { // 2 separate move-tool drags in one tool session = 1 entry
     postJson("/api/script", "tool.set move off");
 
     long stackAfter = undoCount();
-    assert(stackAfter == stackBefore + 1,
+    assert(stackAfter == stackBefore + 2,
         "2 consecutive ON-HANDLE drags in one tool session should " ~
-        "coalesce to 1 history entry; got " ~
+        "coalesce to 1 history entry under the drop row (K-RD CD_Q_TM); got " ~
         (stackAfter - stackBefore).to!string ~ " entries instead");
 
     // One Ctrl+Z reverts BOTH drags (single run) — geometry back to cube.

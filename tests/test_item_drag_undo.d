@@ -128,10 +128,12 @@ unittest {
 
     auto h = history();
     long undoCountAfter = h["undo"].array.length;
-    assert(undoCountAfter == undoCountBefore + 2,
-        format("one arm plus one drag must surface exactly TWO undo rows, before=%d after=%d",
+    assert(undoCountAfter == undoCountBefore + 3,
+        format("one arm plus one drag plus the drop row (findings_K-RD CD_Q_ITEMA, "
+             ~ "task 9508) must surface exactly THREE undo rows, before=%d after=%d",
                undoCountBefore, undoCountAfter));
-    auto topEntry = h["undo"].array[$ - 1];
+    assert(h["undo"].array[$ - 1]["label"].str == "Tool Drop", "the top row is the drop row");
+    auto topEntry = h["undo"].array[$ - 2];
     assert(topEntry["inSession"].type == JSONType.FALSE,
         "the surviving entry must NOT be flagged inSession after the boundary — "
         ~ topEntry.toString);
@@ -175,9 +177,10 @@ unittest {
 
     auto h = history();
     long undoCountAfter = h["undo"].array.length;
-    assert(undoCountAfter == undoCountBefore + 2,
+    assert(undoCountAfter == undoCountBefore + 3,
         format("two consecutive drags in one activation must surface the arm plus "
-             ~ "ONE consolidated edit, before=%d after=%d", undoCountBefore, undoCountAfter));
+             ~ "ONE consolidated edit plus the drop row (K-RD CD_Q_ITEMA), before=%d after=%d",
+               undoCountBefore, undoCountAfter));
 
     doUndo();
     auto reverted = layerXform(0);
@@ -289,9 +292,9 @@ unittest {
 
     auto h = history();
     long undoCountAfter = h["undo"].array.length;
-    assert(undoCountAfter == undoCountBefore + 1,
-        format("a panel rotate edit must surface exactly ONE edit "
-             ~ "(the blocker regression added no edit) — before=%d after=%d",
+    assert(undoCountAfter == undoCountBefore + 2,
+        format("a panel rotate edit must surface exactly ONE edit and the drop row "
+             ~ "(the blocker regression added no edit; K-RD CD_Q_ROT) — before=%d after=%d",
                undoCountBefore, undoCountAfter));
 
     doUndo();

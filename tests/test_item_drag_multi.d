@@ -614,14 +614,15 @@ unittest {
 
     auto h = parseJSON(cast(string)get(BASE ~ "/api/history"));
     long undoAfter = h["undo"].array.length;
-    assert(undoAfter == undoBefore + 2,
+    assert(undoAfter == undoBefore + 3,
         format("one arm plus ONE gesture over a TWO-item selection must surface "
-             ~ "exactly TWO rows (one lifecycle row and one LayerXformEdit "
-             ~ "carrying both targets), not one edit per target — before=%d after=%d",
+             ~ "exactly THREE rows (the lifecycle row, one LayerXformEdit "
+             ~ "carrying both targets, the drop row — findings_K-RD CD_Q_ITEMA, "
+             ~ "task 9508), not one edit per target — before=%d after=%d",
                undoBefore, undoAfter));
-    assert(h["undo"].array[$ - 1]["inSession"].type == JSONType.FALSE,
+    assert(h["undo"].array[$ - 2]["inSession"].type == JSONType.FALSE,
         "the surviving entry must not still be flagged inSession after the "
-        ~ "tool-drop boundary — " ~ h["undo"].array[$ - 1].toString);
+        ~ "tool-drop boundary — " ~ h["undo"].array[$ - 2].toString);
 
     auto r = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo")));
     assert(r["status"].str == "ok", "/api/undo failed: " ~ r.toString);

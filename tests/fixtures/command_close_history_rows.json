@@ -11,7 +11,8 @@
         "rerecorded_m4": "slice M4 (task M4, 2026-09-25, rebased on main ccc329ca after M3b): ONLY the four edge.extend cells, re-recorded on the M4 tree after the fixture verified on its base. Each gains the script-door activation row 'Activate Tool' at the head of its undo rows (Edge Extend's arm now writes its row, H1 + gap 218; a script arm keeps it as its own step, C-H1-door-es-api). tool / verts / panel unchanged; the eight other cells as recorded before.",
         "updated_8261": "Only TransformMove x off/subdivide third undo row now carries ClosedRun (flags 2065, runId 1), measured in the 2026-09-29 suite on task 8261; remaining ten cells unchanged.",
         "updated_9476": "Only the four TransformMove cells: verts digest (and the select / subpatch_toggle panel pivot) re-recorded by VIBE3D_RECORD_GOLDEN=1 on task 9476, whose unpinned perspective off-handle relocate now lands q-snapped (capture K-W3); every undo row is unchanged.",
-        "updated_9471": "TransformMove x {off, select, subdivide, subpatch_toggle} and edge.extend x the same four: the Move free drag now rounds its travel by the free-drag quantum (start + q(start + T) - q(start); task 9471, captures K-C3 / K-G3), re-recorded on the 9471 branch; the four poly.bevel cells unchanged."
+        "updated_9471": "TransformMove x {off, select, subdivide, subpatch_toggle} and edge.extend x the same four: the Move free drag now rounds its travel by the free-drag quantum (start + q(start + T) - q(start); task 9471, captures K-C3 / K-G3), re-recorded on the 9471 branch; the four poly.bevel cells unchanged.",
+        "updated_9508": "Only TransformMove x off and poly.bevel x off: each gains the drop row 'Tool Drop' on top (the tool.set off door over a session with rows writes one drop row; findings_K-RD rule 2, CD_Q_TM / CD_Q_BV; task 9508), re-recorded by VIBE3D_RECORD_GOLDEN=1; the other ten cells are byte-identical."
     },
     "TransformMove x off": {
         "panel": {},
@@ -51,6 +52,18 @@
                 "refire": false,
                 "runId": 1,
                 "tweakGen": 1,
+                "ui": false
+            },
+            {
+                "args": "",
+                "command": "tool.activate",
+                "flags": 1041,
+                "inSession": false,
+                "label": "Tool Drop",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
                 "ui": false
             }
         ],
@@ -405,6 +418,18 @@
                 "flags": 17,
                 "inSession": false,
                 "label": "Poly Bevel",
+                "opInverse": false,
+                "refire": false,
+                "runId": 0,
+                "tweakGen": 0,
+                "ui": false
+            },
+            {
+                "args": "",
+                "command": "tool.activate",
+                "flags": 1041,
+                "inSession": false,
+                "label": "Tool Drop",
                 "opInverse": false,
                 "refire": false,
                 "runId": 0,

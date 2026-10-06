@@ -386,8 +386,9 @@ unittest {
                posX(0), meshBefore, posX(1), planeBefore));
 
     long undoAfter = history()["undo"].array.length;
-    assert(undoAfter == undoBefore + 2,
-        format("T-X3: one arm plus one gesture over TWO targets is TWO surfaced rows — "
+    assert(undoAfter == undoBefore + 3,
+        format("T-X3: one arm plus one gesture over TWO targets plus the drop row "
+             ~ "(findings_K-RD CD_Q_ITEMA, task 9508) is THREE surfaced rows — "
              ~ "before=%d after=%d", undoBefore, undoAfter));
 
     doUndo();

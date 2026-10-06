@@ -249,8 +249,9 @@ unittest {
     immutable double afterDrag = xformPosX(0);
     assert(!approx(afterDrag, 0),
         "fixture: the drag must have moved pos.x, got " ~ afterDrag.to!string);
-    assert(undoDepth() == depth0 + 2,
-        format("one arm plus ONE gesture must surface exactly TWO undo rows: depth went %s -> %s",
+    assert(undoDepth() == depth0 + 3,
+        format("one arm plus ONE gesture plus the drop row (findings_K-RD CD_Q_ITEMA, "
+               ~ "task 9508) must surface exactly THREE undo rows: depth went %s -> %s",
                depth0, undoDepth()));
 
     cmd(`{"id":"history.undo"}`);
