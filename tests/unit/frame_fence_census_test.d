@@ -171,7 +171,10 @@ unittest
     assert(readers.length == 15,
         format("9526 floor: %s suite files read a frame-published key, expected 15: %s",
             readers.length, readers));
-    assert(readers == [
+    assert(rawFiles.length >= 30,
+        format("9526 floor: only %s files read /api/changes raw; the needle desynced?",
+            rawFiles.length));
+    assert(offenders.length == 0 && readers == [
         "test_axis_slice.d",
         "test_bus_layer_scale_rebuild_rate.d",
         "test_change_bus.d",
@@ -187,14 +190,10 @@ unittest
         "test_reduce.d",
         "test_retopology_lines_dots.d",
         "test_seltype_order.d",
-    ], format("9526 reader inventory changed: %s", readers));
-    assert(rawFiles.length >= 30,
-        format("9526 floor: only %s files read /api/changes raw; the needle desynced?",
-            rawFiles.length));
-    assert(offenders.length == 0,
+    ],
         format("9526: a file that reads a frame-published /api/changes key must read "
             ~ "it through http_client.settledChanges (frame fence first), not a raw "
-            ~ "read: %s", offenders));
+            ~ "read: %s; reader inventory: %s", offenders, readers));
     assert(rawHelpers == ["composite_sampling_characterization_helpers.d"],
         format("9526: the raw-read helper modules changed: %s; a helper that hands "
             ~ "raw /api/changes JSON to a frame-published reader evades the needle",

@@ -38,6 +38,7 @@ unittest {
     import std.file : tempDir, remove;
     import std.process : thisProcessID;
     import std.conv : to;
+    import std.stdio : File;
     const path = buildPath(tempDir(), "camera_lens_owner_" ~ thisProcessID().to!string ~ ".jsonl");
     scope(exit) remove(path);
     auto vpm = new ViewportManager(150, 28, 1152, 974);
@@ -49,7 +50,10 @@ unittest {
     assert(vpm.views.length == 4, "REPLAY_METADATA_OWNER_POPULATION");
     float recordedLens() {
         EventLogger logger;
-        logger.open(path);
+        // Open owns the SDL clock; this fixture exercises the real metadata
+        // producer using its public file/active state without an SDL session.
+        logger.file = File(path, "w");
+        logger.active = true;
         logger.writeViewportMeta(150, 28, 1152, 974,
             vpm.views[vpm.overlayOwnerId()].camera.fovY);
         logger.close();
