@@ -1,0 +1,16 @@
+{
+  "task":10820,
+  "axes":["X","Z"],
+  "guide_rgb":[204,153,255],
+  "fill_alpha":0.25,
+  "outline_alpha":1.0,
+  "face_rgb":[59,59,59],
+  "fill_over_face_rgb":[95,83,108],
+  "ring_role":"handleActive",
+  "ring_existing_alpha":0.95,
+  "ring_over_face_rgb":[245,221,101],
+  "outline_population_min":20,
+  "active_ring_population_min":40,
+  "changed_interior_population_min":100,
+  "pixel_source":"owned normal product GUI, xwd root framebuffer after production ImGui submit; not cell FBO"
+}
