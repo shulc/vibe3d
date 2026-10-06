@@ -60,8 +60,8 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     private bool dormantTopology_;
     // Wave plan 8640 S6: a DROP row (armed = none), written by a user drop of
     // a tool whose policy says `dropWritesRow` (`ToolSession.finishClose`).
-    // Stored, never derived from `armedId == ""`: its undo empties the redo
-    // stack (L32, `carriesRedoAfterUndo`), so its redo is unreachable.
+    // Stored, never derived from `armedId == ""`: immutable policy data
+    // decides whether this lifecycle row is retained for redo.
     private bool dropRow_;
     private bool flipsSelType_;
     private SelType selBefore_;
@@ -109,8 +109,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     // session's first gesture is NOT re-applied here: the session replays it
     // after this redo (ToolSession.redo, task 7137, §22), so the raw redo doors
     // re-arm bare.
-    // A drop row (S6) is never redone: its undo empties the redo stack (L32),
-    // so it has no arm to re-apply (wave plan 8640 [A6-n7]).
+    // A retained drop row replays the drop without recording another row.
     protected override bool applyImpl() {
         if (dropRow_) {
             if (onDeactivate !is null) onDeactivate();
@@ -142,8 +141,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     string armedId() const { return armedId_; }
     string previousId() const { return previousId_; }
     bool carriesRedoAfterUndo() const {
-        // L32 (captured X-bare-redo, X-sel-redo): undoing a drop row empties
-        // the redo stack, before every other term (wave plan 8640 [A6-1]).
+        // Drop retention is captured by the row before its tool is destroyed.
         if (dropRow_) return dropUndoPolicy_.redo == DropRedoPopulation.selectedSuffix;
         return dormantTopology_ || previousHistoryTopology_ ||
             (sessionSteps_ && !historyRecordedSteps_ && !previousClassified_);

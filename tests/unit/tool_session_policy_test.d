@@ -801,7 +801,7 @@ unittest { // (4b)
                   ~ "one call in each of ToolSession.undo / ToolSession.redo",
                   identSites(es, "settleAfterNavigation_", false)));
     assert(identSites(es, "postmodeArmed_", true)
-           == ["<decl>:1", "ToolSession.endPendingOperation_:1", "ToolSession.noteArm:1",
+           == ["<decl>:1", "ToolSession.completeDropUndo:1", "ToolSession.endPendingOperation_:1", "ToolSession.noteArm:1",
                "ToolSession.notePointerDown:1", "ToolSession.recordBeginRow_:1",
                "ToolSession.settleAfterNavigation_:1"],
            format("S2a needle: postmodeArmed_ is written at %s, expected the field initializer "
@@ -949,10 +949,10 @@ unittest { // (4c)
         foreach (site; identSites(es, f, true)) needle ~= f ~ "=" ~ site;
     sort(needle);
     enum string[] kNeedle = [
-        "operationOpen_=<decl>:1", "operationOpen_=ToolSession.endPendingOperation_:1",
+        "operationOpen_=<decl>:1", "operationOpen_=ToolSession.completeDropUndo:1", "operationOpen_=ToolSession.endPendingOperation_:1",
         "operationOpen_=ToolSession.noteArm:1",
         "operationOpen_=ToolSession.settleAfterNavigation_:1", "operationOpen_=ToolSession.stepEnds:1",
-        "postmodeArmed_=<decl>:1", "postmodeArmed_=ToolSession.endPendingOperation_:1",
+        "postmodeArmed_=<decl>:1", "postmodeArmed_=ToolSession.completeDropUndo:1", "postmodeArmed_=ToolSession.endPendingOperation_:1",
         "postmodeArmed_=ToolSession.noteArm:1", "postmodeArmed_=ToolSession.notePointerDown:1",
         "postmodeArmed_=ToolSession.recordBeginRow_:1",
         "postmodeArmed_=ToolSession.settleAfterNavigation_:1",

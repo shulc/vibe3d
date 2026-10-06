@@ -371,7 +371,7 @@ unittest {
     }
     // An immediate foreign row, a non-press base and an empty session cannot
     // make the bounded selection search reach an older eligible press.
-    foreach (barrier; [cast(Command)new _SessionRowCmd(9), new _SessionRowCmd(7),
+    foreach (barrier; [cast(Command)press(9), new _SessionRowCmd(7),
             new ToolActivationCommand(&m, v, EditMode.Vertices, "other", "pen", false, false, false, 7)]) {
         auto h = new CommandHistory();
         auto older = press(7);
@@ -380,6 +380,17 @@ unittest {
         foreach (Command c; [cast(Command)older, barrier, drop]) h.pushEntryForTest(c);
         assert(h.undo() && h.undoEntries().length == 2 && h.undoEntries()[$ - 1].cmd is barrier,
             "newest press cannot cross a foreign, lifecycle or non-press base");
+    }
+    {
+        auto h = new CommandHistory();
+        auto older = press(7);
+        auto foreignField = new _SessionRowCmd(9);
+        auto drop = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "pen", false, false, false, 0, 7, true, false, false, true);
+        drop.setDropUndoPolicy(DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard));
+        foreach (Command c; [cast(Command)older, foreignField, drop]) h.pushEntryForTest(c);
+        h.markEntryFold(foreignField, HistoryFlags.JoinsBelow);
+        assert(h.undo() && h.undoEntries().length == 2 && h.undoEntries()[$ - 1].cmd is foreignField,
+            "foreign folded parameter row must stop newest press selection");
     }
     auto empty = new CommandHistory();
     auto d = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "pen", false, false, false, 0, 7, true, false, false, true);

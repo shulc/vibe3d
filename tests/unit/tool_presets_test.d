@@ -115,3 +115,6 @@ unittest {
     write(path, "presets:\n  - id: bad\n    alias: canonical\n    dropUndo: {extent: none}\n");
     assert(collectExceptionMsg(loadToolPresets(path)) !is null, "alias may not override policy");
 }
+
+static assert(!__traits(isVirtualMethod, Tool.setDropUndoOverride));
+static assert(!__traits(isVirtualMethod, Tool.resolvedDropUndoPolicy));

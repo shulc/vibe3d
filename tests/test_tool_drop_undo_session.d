@@ -406,7 +406,7 @@ unittest { // Two remaining presses: extent is shared, retention is preset data.
         keyQ();
         const dropped = depth();
         if (door == "navigation") undo();
-        else if (door == "panel") { auto r = postJson("/api/history/jump", format(`{"target":%s}`, depth() - 1)); assert(r["status"].str == "ok"); quiesce(); }
+        else if (door == "panel") { auto r = postJson("/api/history/jump", format(`{"target":%s}`, depth() - 2)); assert(r["status"].str == "ok"); quiesce(); }
         else cmd("history.undo");
         assert(tool() == id && quadGap(verts(), first) <= 1e-6 && depth() == dropped - 2,
             format("%s %s drop must revert only the newest press: %s", id, door, getJson("/api/history")));
@@ -441,7 +441,7 @@ unittest { // A restored tool uses the final mesh as its next press basis at eve
         assert(quadGap(verts(), first) > 0.05, "next-press floor: second gesture moved geometry");
         keyQ();
         if (door == "navigation") undo();
-        else if (door == "panel") { auto r = postJson("/api/history/jump", format(`{"target":%s}`, depth() - 1)); assert(r["status"].str == "ok"); quiesce(); }
+        else if (door == "panel") { auto r = postJson("/api/history/jump", format(`{"target":%s}`, depth() - 2)); assert(r["status"].str == "ok"); quiesce(); }
         else cmd("history.undo");
         assert(quadGap(verts(), first) <= 1e-6 && tool() == id, "next-press floor: newest press reverted");
         dragPx(worldPixel(atFirst), 44, 0);
