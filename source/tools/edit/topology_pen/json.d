@@ -108,9 +108,15 @@ mixin template PenStateJsonOps() {
         hv["hit"]    = JSONValue(lastHit_.hit);
         hv["point"]  = vec3Json(lastHit_.point);
         hv["normal"] = vec3Json(lastHit_.normal);
-        hv["targetKind"] = JSONValue(hoverTargetKindTag(lastTarget_.kind));
-        hv["targetVert"] = JSONValue(lastTarget_.vert);
-        hv["targetEdge"] = JSONValue(lastTarget_.edge);
+        const elected = placementSnap_.snapped && placementSnap_.constraintType == SnapType.None
+            && placementSnap_.targetIndex >= 0;
+        const vertex = elected && (placementSnap_.targetType & SnapType.Vertex) != 0;
+        const edge = elected && (placementSnap_.targetType & (SnapType.Edge | SnapType.EdgeCenter)) != 0;
+        hv["targetKind"] = JSONValue(vertex ? "vertex" : edge ? "edge" : lastHit_.hit ? "face" : "none");
+        hv["targetVert"] = JSONValue(vertex ? placementSnap_.targetIndex : -1);
+        hv["targetEdge"] = JSONValue(edge ? placementSnap_.targetIndex : -1);
+        hv["targetSource"] = JSONValue(elected ? placementSnap_.targetSource : -1);
+        hv["targetPoint"] = vec3Json(placementSnap_.worldPos);
         root["hover"] = hv;
 
         // P3 (doc/topopen_p3_plan.md): the armed drag-build state, for

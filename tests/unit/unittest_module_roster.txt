@@ -566,6 +566,7 @@ tests.unit.tools.transform.item_xform_kernels_test
 tests.unit.tools.transform.rotate_test
 tests.unit.tools.transform.transform_test
 tests.unit.tools.transform.xform_kernels_test
+tests.unit.topology_pen_election_consumers_test
 tests.unit.topology_pen_factory_bundle_test
 tests.unit.topology_pen_move_commit_guard_test
 tests.unit.topology_r_history_probe_test

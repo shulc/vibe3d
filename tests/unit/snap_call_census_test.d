@@ -352,7 +352,7 @@ unittest { // explicit policies at actual production seams, not helper-only rigs
     assert(body(pen, "int resolveSplitTargetVert(").canFind(
         "SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned)"),
         "Split must declare query-owned weld admission");
-    assert(body(pen, "Vec3 placeSnapped(").canFind(
+    assert(body(pen, "SnapResult placementElection(").canFind(
         "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)"),
         "Point must declare registered placement admission");
     assert(body("source/tools/create/pen.d", "SnapResult nearestOf(").canFind(

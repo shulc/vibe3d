@@ -148,9 +148,8 @@ mixin template PenRenderOps() {
         drawFillRingPreview(dl, vp);
         drawFillRadiusOverlay(dl);
 
-        if (!lastHit_.hit) return;
-
         drawSnapTargetMarker(dl, vp);
+        if (!lastHit_.hit) return;
         drawBuildGhost(dl, vp);
         drawMoveGhost(dl, vp);
     }
@@ -610,15 +609,11 @@ mixin template PenRenderOps() {
         }
     }
 
-    // The CONS-hit marker and the resolved snap-target highlight. Called
-    // only when `lastHit_.hit` (the dispatcher early-returns otherwise).
+    // The CONS-hit marker and the elected snap-target highlight.
+    // The elected target can exist even when the constraint ray misses.
     //
-    // Re-resolve for THIS cell's camera — a multi-viewport draw may
-    // run once per eligible cell, each with its own `vp`; the cached
-    // `lastTarget_` (motion-time) stays what toolStateJson() reports.
+    // Project the event's elected world point into each draw cell (9512).
     private void drawSnapTargetMarker(ImDrawList* dl, const ref Viewport vp) {
-        auto ht = resolveHoverTarget(lastHit_, vp, topoPenPressPickPx(vp));
-
         enum uint markerCol = IM_COL32(255, 150, 0, 230);   // pen orange
         enum uint cyan      = IM_COL32(0, 220, 255, 230);   // snap highlight
 
@@ -630,7 +625,7 @@ mixin template PenRenderOps() {
         // the canonical `projectWorldPt` block and it proves the
         // two-destination split is real rather than decorative.
         ImVec2 hitPt;
-        bool   hitPtOk = projectWorldPt(lastHit_.point, vp, hitPt);
+        bool   hitPtOk = lastHit_.hit && projectWorldPt(lastHit_.point, vp, hitPt);
         if (hitPtOk) {
             // Hover marker: filled dot + ring ("free place-point" cursor).
             dl.AddCircleFilled(hitPt, 4.0f, markerCol, 16);
@@ -642,23 +637,15 @@ mixin template PenRenderOps() {
                 dl.AddLine(hitPt, tip, markerCol, 2.0f);
         }
 
-        final switch (ht.kind) {
-            case HoverTargetKind.Vertex: {
-                ImVec2 vpt;
-                if (projectWorldPt(lastHit_.nearestVertPos, vp, vpt))
-                    dl.AddCircleFilled(vpt, 5.0f, cyan, 16);
-                break;
-            }
-            case HoverTargetKind.Edge: {
-                ImVec2 a, b;
-                if (projectWorldPt(lastHit_.nearestEdgeA, vp, a)
-                 && projectWorldPt(lastHit_.nearestEdgeB, vp, b))
-                    dl.AddLine(a, b, cyan, 2.5f);
-                break;
-            }
-            case HoverTargetKind.Face:
-            case HoverTargetKind.None:
-                break;   // marker only — no element to highlight
+        import snap_render : snapHighlightPixels;
+        ImVec2[] targetPixels;
+        auto m = mesh;
+        if (m !is null && placementSnap_.snapped && placementSnap_.constraintType == SnapType.None
+            && snapHighlightPixels(placementSnap_, vp, *m, targetPixels)) {
+            if (targetPixels.length == 1)
+                dl.AddCircleFilled(targetPixels[0], 5.0f, cyan, 16);
+            else foreach (i; 0 .. targetPixels.length - 1)
+                dl.AddLine(targetPixels[i], targetPixels[i + 1], cyan, 2.5f);
         }
     }
 

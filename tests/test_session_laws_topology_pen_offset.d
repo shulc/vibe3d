@@ -256,6 +256,8 @@ unittest {
     if (!cell("offset-reapply")) return;
     const r = rig();
     penArmUi(r);
+    // Measure the continuous offset/geometry law with global placement disabled.
+    assert(penPost("/api/command", "tool.pipe.attr snap enabled false")["status"].str == "ok");
     const u5 = r.a0.pos[5];
     penGesture(penVertexPx(5, "offset-reapply v5"), 20 / kSp, 12 / kSp, 1, 0, "offset-reapply g1");
     const g1 = penMesh();
@@ -480,6 +482,8 @@ unittest {
     if (!cell("offset-script-door")) return;
     const r = rig();
     penArmUi(r);
+    // Keep the interactive/script contrast independent of global placement.
+    assert(penPost("/api/command", "tool.pipe.attr snap enabled false")["status"].str == "ok");
     penGesture(penVertexPx(5, "offset-script-door v5"), 20 / kSp, 12 / kSp, 1, 0, "offset-script-door g1");
     const g1 = penMesh();
     sw("offsetX", "0.1");
@@ -686,6 +690,8 @@ unittest {
     if (!cell("offset-zero-exact")) return;
     const r = rig();
     penArmUi(r);
+    // Keep the zero-offset geometry oracle independent of global placement.
+    assert(penPost("/api/command", "tool.pipe.attr snap enabled false")["status"].str == "ok");
     const u5 = r.a0.pos[5];
     penGesture(penVertexPx(5, "offset-zero-exact v5"), 20 / kSp, 12 / kSp, 1, 0, "offset-zero-exact g1");
     const o1 = offs();

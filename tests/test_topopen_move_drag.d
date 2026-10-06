@@ -41,6 +41,8 @@ unittest {
         "the drag-destination pixel's camera-ray must hit the sphere");
 
     cmd("tool.set mesh.topoPen on");
+    // This cell measures continuous surface motion; global placement is covered separately.
+    cmd("tool.pipe.attr snap enabled false");
     // Mode dropdown (task 0483): this test drives PLAIN-LMB presses and
     // expects the place-on-empty/grab-move gesture, which is `point` —
     // the default is now `move`, which places nothing on empty space.

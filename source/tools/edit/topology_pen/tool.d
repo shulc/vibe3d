@@ -47,7 +47,7 @@ import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes, constrainPoint, BackgroundSource;
 import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf, editedVertexAt,
-                               snapCursor;
+                               snapCursor, SnapResult;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import tools.edit.topology_pen.render : PenRenderOps;
 import tools.edit.topology_pen.snap_guide : PenSnapGuide;
@@ -88,11 +88,12 @@ struct PreparedTopologyPenActivationImage {
     bool valid;
     ConstrainHitPacket expectedHit;
     HoverTarget expectedTarget;
+    SnapResult expectedPlacementSnap;
     SlideDecline expectedDecline;
     int expectedDeclineSeed;
     void clear() nothrow @nogc {
         valid = false; expectedHit = ConstrainHitPacket.init;
-        expectedTarget = HoverTarget.init;
+        expectedTarget = HoverTarget.init; expectedPlacementSnap = SnapResult.init;
         expectedDecline = SlideDecline.None; expectedDeclineSeed = -1;
     }
 }
@@ -101,6 +102,7 @@ struct PreparedTopologyPenUpdateImage {
     bool valid, hasPacket;
     ConstrainHitPacket expectedHit, nextHit;
     HoverTarget expectedTarget, nextTarget;
+    SnapResult expectedPlacementSnap, nextPlacementSnap;
     void clear() nothrow @nogc { this = PreparedTopologyPenUpdateImage.init; }
 }
 
@@ -108,6 +110,7 @@ struct PreparedTopologyPenDeactivateImage {
     bool valid;
     ConstrainHitPacket expectedHit;
     HoverTarget expectedTarget;
+    SnapResult expectedPlacementSnap;
     SlideDecline expectedDecline;
     int expectedDeclineSeed;
     SnapPacket expectedDragSnap;
@@ -120,7 +123,7 @@ struct PreparedTopologyPenDeactivateImage {
     void clear() nothrow @nogc {
         valid = false;
         expectedHit = ConstrainHitPacket.init;
-        expectedTarget = HoverTarget.init;
+        expectedTarget = HoverTarget.init; expectedPlacementSnap = SnapResult.init;
         expectedDecline = SlideDecline.None; expectedDeclineSeed = 0;
         expectedDragSnap = SnapPacket.init;
         expectedMoveArmed.armed = false; expectedGrabbedVert = 0;
@@ -227,6 +230,7 @@ class TopologyPenTool : Tool, InputBindable, PreparedToolDoorClient,
 private:
     ConstrainHitPacket lastHit_;
     HoverTarget         lastTarget_;
+    SnapResult          placementSnap_;
 
     // --- P2 placement deps (doc/topopen_p2_plan.md) — wired by
     // registration.d, mirroring the ctor/binding shape VertexTool had
@@ -1170,6 +1174,10 @@ private:
             lastHit_ = *p;
             Viewport vp = viewportOf(vts);
             lastTarget_ = resolveHoverTarget(lastHit_, vp, topoPenPressPickPx(vp));
+            if (auto subject = vts.get!SubjectPacket())
+                if (subject.cursorValid && !moveArmed_)
+                    placementSnap_ = placementElection(lastHit_.point, subject.cursorX, subject.cursorY,
+                        vp, snapPacketOf(vts));
         }
         // else: leave lastHit_/lastTarget_ unchanged — see class doc (the
         // per-frame render-loop's vts never carries the packet; only a
@@ -1531,7 +1539,7 @@ public:
 
     override void activate() {
         lastHit_    = ConstrainHitPacket.init;
-        lastTarget_ = HoverTarget.init;
+        lastTarget_ = HoverTarget.init; placementSnap_ = SnapResult.init;
         // Slide decline diagnostics are a per-press RECORD, so they must not
         // survive into a fresh activation — a stale "no_continuation" from a
         // previous session would be read as this session's own outcome (the
@@ -1562,7 +1570,7 @@ public:
     final PreparedTopologyPenActivationImage buildPreparedActivation()
             const nothrow @nogc {
         PreparedTopologyPenActivationImage image;
-        image.expectedHit = lastHit_; image.expectedTarget = lastTarget_;
+        image.expectedHit = lastHit_; image.expectedTarget = lastTarget_; image.expectedPlacementSnap = placementSnap_;
         image.expectedDecline = slideDecline_;
         image.expectedDeclineSeed = slideDeclineSeed_;
         image.valid = true; return image;
@@ -1573,13 +1581,13 @@ public:
     final bool preparedActivationLocalMatches(
             in PreparedTopologyPenActivationImage image) const nothrow @nogc {
         return image.valid && lastHit_ == image.expectedHit &&
-            lastTarget_ == image.expectedTarget &&
+            lastTarget_ == image.expectedTarget && placementSnap_ == image.expectedPlacementSnap &&
             slideDecline_ == image.expectedDecline &&
             slideDeclineSeed_ == image.expectedDeclineSeed;
     }
     final void installPreparedActivation(
             ref PreparedTopologyPenActivationImage image) nothrow @nogc {
-        lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init;
+        lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init; placementSnap_ = SnapResult.init;
         slideDecline_ = SlideDecline.None; slideDeclineSeed_ = -1;
         image.valid = false;
     }
@@ -1618,7 +1626,7 @@ public:
     final PreparedTopologyPenDeactivateImage buildPreparedDeactivate(
             PreparedRecordContext context) {
         PreparedTopologyPenDeactivateImage image;
-        image.expectedHit = lastHit_; image.expectedTarget = lastTarget_;
+        image.expectedHit = lastHit_; image.expectedTarget = lastTarget_; image.expectedPlacementSnap = placementSnap_;
         image.expectedDecline = slideDecline_;
         image.expectedDeclineSeed = slideDeclineSeed_;
         image.expectedDragSnap = dragSnap_;
@@ -1638,7 +1646,7 @@ public:
             ref const PreparedTopologyPenDeactivateImage image) const
             nothrow @nogc {
         return image.valid && lastHit_ == image.expectedHit &&
-            lastTarget_ == image.expectedTarget &&
+            lastTarget_ == image.expectedTarget && placementSnap_ == image.expectedPlacementSnap &&
             slideDecline_ == image.expectedDecline &&
             slideDeclineSeed_ == image.expectedDeclineSeed &&
             dragSnap_ == image.expectedDragSnap &&
@@ -1654,7 +1662,7 @@ public:
     final void installPreparedDeactivate(
             ref PreparedTopologyPenDeactivateImage image) nothrow @nogc {
         if (!image.valid) return;
-        lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init;
+        lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init; placementSnap_ = SnapResult.init;
         slideDecline_ = SlideDecline.None; slideDeclineSeed_ = -1;
         dragSnap_ = SnapPacket.init;
         moveArmed_.armed = false; grabbedVert_ = -1;
@@ -1691,7 +1699,7 @@ public:
         heldMask_ = inertButtons_ = 0;
         resetAllGestureArms();
         lastHit_    = ConstrainHitPacket.init;
-        lastTarget_ = HoverTarget.init;
+        lastTarget_ = HoverTarget.init; placementSnap_ = SnapResult.init;
         slideDecline_     = SlideDecline.None;
         slideDeclineSeed_ = -1;
         // Per-gesture snap snapshot — a tool switch mid-drag ends the gesture,
@@ -1982,25 +1990,30 @@ public:
     final PreparedTopologyPenUpdateImage buildPreparedUpdate(ref VectorStack vts) {
         PreparedTopologyPenUpdateImage image;
         image.valid = true; image.expectedHit = lastHit_;
-        image.expectedTarget = lastTarget_; image.nextHit = lastHit_;
-        image.nextTarget = lastTarget_;
+        image.expectedTarget = lastTarget_; image.expectedPlacementSnap = placementSnap_; image.nextHit = lastHit_;
+        image.nextTarget = lastTarget_; image.nextPlacementSnap = placementSnap_;
         if (auto packet = vts.get!ConstrainHitPacket()) {
             image.hasPacket = true; image.nextHit = *packet;
             Viewport vp = viewportOf(vts);
             image.nextTarget = resolveHoverTarget(image.nextHit, vp,
                 topoPenPressPickPx(vp));
+            if (auto subject = vts.get!SubjectPacket())
+                if (subject.cursorValid && !moveArmed_)
+                    image.nextPlacementSnap = placementElection(image.nextHit.point,
+                        subject.cursorX, subject.cursorY, vp, snapPacketOf(vts));
         }
         return image;
     }
     final bool preparedUpdateMatches(in PreparedTopologyPenUpdateImage image)
             const nothrow @nogc {
         return image.valid && lastHit_ == image.expectedHit &&
-            lastTarget_ == image.expectedTarget;
+            lastTarget_ == image.expectedTarget && placementSnap_ == image.expectedPlacementSnap;
     }
     final void installPreparedUpdate(ref PreparedTopologyPenUpdateImage image)
             nothrow @nogc {
         if (!image.valid) return;
-        lastHit_ = image.nextHit; lastTarget_ = image.nextTarget; image.clear();
+        lastHit_ = image.nextHit; lastTarget_ = image.nextTarget;
+        placementSnap_ = image.nextPlacementSnap; image.clear();
     }
     final PreparedTopologyPenUpdateEffect prepareUpdate(ref VectorStack vts,
             PreparedRecordContext context) {
@@ -4110,12 +4123,23 @@ public:
     package Vec3[] moveTargets(int px, int py, const ref Viewport vp) {
         immutable int dx = px - moveStartX_, dy = py - moveStartY_;
         moveOffset_ = Vec3(0, 0, 0);
+        placementSnap_ = SnapResult.init;
         Vec3 off;
         if (releaseIsClick(dx, dy) || !grabOffset(moveAnchor_, dx, dy, vp, off, movePerspectiveGuideAccepted_, true))
             return moveBase_.dup;
         if (moveAxisLock_) off = onElectedAxis(off);
         moveOffset_ = off;
-        return carriedTargets(moveBase_, off);
+        auto targets = carriedTargets(moveBase_, off);
+        if (!moveAxisLock_ && moveElem_ == MoveElem.Vertex && targets.length == 1) {
+            uint[] exclude = moveVerts_.dup;
+            placementSnap_ = placementElection(primaryModelSpace().toWorldPoint(targets[0]),
+                px, py, vp, dragSnap_, exclude);
+            // Ordinary placement is source-aware; Ctrl keeps its component guide
+            // and axis/geometry order. Welding remains a separate edited-mesh client.
+            if (placementSnap_.snapped)
+                targets[0] = primaryModelSpace().toLocalPoint(placementSnap_.worldPos);
+        }
+        return targets;
     }
 
     // The axis move (K-FH rule 5, cells KFH_TS_V/E/VSK/ESK): the first
@@ -4292,6 +4316,9 @@ public:
         if (moveDirty_ && weldMovedVertices(moveVerts_, vp, targets, vts.get!SymmetryPacket())) {
             moveWelded_ = true;
             afterWeld();
+            // Compaction changes element indices; feedback names the surviving target.
+            if (placementSnap_.snapped)
+                placementSnap_ = placementElection(placementSnap_.worldPos, px, py, vp, dragSnap_);
         }
         // The descriptor of this press (S7a), before the resync below clears
         // the arm. A weld compacted the indices and absorbed the grabbed
@@ -5927,13 +5954,17 @@ public:
     // the weld guide does not constrain background placement. An
     // edited vertex is a target too: the point lands on it as a new coincident
     // vertex, no weld (K-PS KPS_1/KPS_2).
-    private Vec3 placeSnapped(int mx, int my, ref VectorStack vts) {
+    private SnapResult placementElection(Vec3 world, int mx, int my, Viewport vp,
+                                         SnapPacket cfg, const(uint)[] exclude = null) {
         auto m = mesh;
-        if (m is null) return lastHit_.point;
-        Viewport vp = viewportOf(vts);
-        const sr = snapCursor(lastHit_.point, mx, my, vp, *m, primaryModelSpace(), dragSnap_, null, null,
+        if (m is null) { SnapResult empty; empty.worldPos = world; return empty; }
+        return snapCursor(world, mx, my, vp, *m, primaryModelSpace(), cfg, exclude, null,
             liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
-        return sr.snapped ? sr.worldPos : lastHit_.point;
+    }
+
+    private Vec3 placeSnapped(int mx, int my, ref VectorStack vts) {
+        placementSnap_ = placementElection(lastHit_.point, mx, my, viewportOf(vts), dragSnap_);
+        return placementSnap_.worldPos;
     }
 
     // P3: commits the armed drag-build, if any, at the RELEASE event's own

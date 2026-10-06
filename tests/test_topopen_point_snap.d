@@ -24,6 +24,7 @@ import std.json;
 import std.format : format;
 import std.math   : abs;
 
+
 void main() {}
 
 Vec3[] dummyQ;
@@ -101,6 +102,16 @@ Vec3 placeAndRead(int px, int py) {
     return Vec3(cast(float)v[0], cast(float)v[1], cast(float)v[2]);
 }
 
+JSONValue hoverAt(int px, int py) {
+    auto c = fetchCamera();
+    const motion = viewportLog(c.vpX, c.vpY, c.width, c.height) ~ "\n"
+        ~ format(`{"t":10.0,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n", px, py);
+    auto reply = postJson("/api/play-events", motion);
+    assert("error" !in reply, "hover playback must run");
+    waitPlayerIdle();
+    return getJson("/api/tool/state")["hover"];
+}
+
 float dist(Vec3 a, Vec3 b) { Vec3 d = a - b; return dot(d, d) ^^ 0.5f; }
 
 unittest { // P8: snapping on (vertex) — the point lands exactly on M.
@@ -108,7 +119,15 @@ unittest { // P8: snapping on (vertex) — the point lands exactly on M.
     setupRig(px, py, pressW, mW);
     cmd("tool.pipe.attr snap enabled true");
     cmd("tool.pipe.attr snap types vertex");
+    auto before = hoverAt(px, py);
+    assert(before["targetKind"].str == "vertex" && before["targetVert"].integer == 4
+        && before["targetSource"].integer == 1,
+        "idle election must report background M, not hit-face A: " ~ before.toString);
     immutable Vec3 got = placeAndRead(px, py);
+    auto hover = getJson("/api/tool/state")["hover"];
+    assert(hover["targetKind"].str == "vertex" && hover["targetVert"].integer == 4
+        && hover["targetSource"].integer == 1,
+        "election marker/readout must report background M, not hit-face A: " ~ hover.toString);
     assert(dist(got, mW) < 1e-5f,
         format("with vertex snapping on the placed point must be the background T-vertex M %s "
              ~ "(the nearest vertex of ANY polygon); got %s, press hit %s", mW, got, pressW));
@@ -118,7 +137,15 @@ unittest { // P8c: snapping off — the point lands on the press's surface hit.
     int px, py; Vec3 pressW, mW;
     setupRig(px, py, pressW, mW);
     cmd("tool.pipe.attr snap enabled false");
+    auto before = hoverAt(px, py);
+    assert(before["targetKind"].str == "face" && before["targetVert"].integer == -1
+        && before["targetSource"].integer == -1,
+        "disabled idle snapping must have no election target: " ~ before.toString);
     immutable Vec3 got = placeAndRead(px, py);
+    auto hover = getJson("/api/tool/state")["hover"];
+    assert(hover["targetKind"].str == "face" && hover["targetVert"].integer == -1
+        && hover["targetSource"].integer == -1,
+        "disabled snapping must have no election marker/readout: " ~ hover.toString);
     assert(dist(got, pressW) < 1e-4f,
         format("with snapping off the placed point must be the press hit %s; got %s (M %s)",
                pressW, got, mW));

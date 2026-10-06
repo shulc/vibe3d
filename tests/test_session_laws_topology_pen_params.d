@@ -161,6 +161,8 @@ unittest {
     if (!cell("offsets-live")) return;
     const r = rig();
     penArmUi(r);
+    // Measure the continuous offset/geometry law with global placement disabled.
+    assert(penPost("/api/command", "tool.pipe.attr snap enabled false")["status"].str == "ok");
     const from = penVertexPx(5, "offsets-live v5");
     const sp = penSpacingPx() / kSp;
     string log = penMotion(20, from[0], from[1], 0, 0) ~ "\n"
