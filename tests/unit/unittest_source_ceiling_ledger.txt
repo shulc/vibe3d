@@ -14,7 +14,7 @@
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
 source-files 574
-unittest-blocks 661
+unittest-blocks 662
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -151,6 +151,7 @@ block source/tools/edit/edge_extrude.d 1
 block source/tools/edit/poly_bevel.d 1
 block source/tools/edit/poly_extrude.d 2
 block source/tools/edit/tack.d 1
+block source/tools/slice/slice_tool.d 1
 block source/tools/transform/arcball.d 6
 block source/tools/transform/item_xform_kernels.d 11
 block source/tools/transform/morph_route.d 2

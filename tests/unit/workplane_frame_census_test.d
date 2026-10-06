@@ -97,8 +97,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     }
 
     // STRUCTURAL: the index → unit-axis construction lives in `axisUnit` (the
-    // pen's copies folded at P1 / P3, tasks 9415 / 9417) and in
-    // overlay_space.d (outside this lane: a follow-up, pinned so it cannot grow). Basis tables (a normal plus two
+    // pen's copies folded at P1 / P3, tasks 9415 / 9417). Basis tables (a normal plus two
     // in-plane axes per case) are a different construction and not counted.
     // State: the switch row is RED before W1 (vertex_place.d); the ternary row
     // is GREEN before (create_common.d's sat in `screenToPlacementLocal`) and
@@ -110,8 +109,18 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     }
     ternFiles.sort();
     assert(switchFiles.length == 0, format("axis-unit switch in %s", switchFiles));
-    assert(ternFiles == ["create_common.d", "overlay_space.d"],
+    assert(ternFiles == ["create_common.d"],
            format("axis-unit ternary in %s", ternFiles));
+
+    // Task 9418: the two create-tool copies now use the same principal-axis reader.
+    auto principalCopy = ctRegex!(`mostFacingAxis\s*\(\s*camBack\s*,\s*Vec3\(\s*1\s*,\s*0\s*,\s*0\s*\)`);
+    assert(!matchAll("mostFacingAxis(camBack, Vec3(1, 0, 0),", principalCopy).empty,
+           "principal-axis copy needle is blind");
+    string[] principalCopies;
+    foreach (src; prod)
+        foreach (_; matchAll(src.code, principalCopy)) principalCopies ~= src.rel;
+    assert(principalCopies.length == 0,
+           format("inline principal-axis copies in %s", principalCopies));
 
     // PIN: the call-site rosters (definition + import + calls per file).
     // Polarity: each row is RED before W1 (the name did not exist, or had a
@@ -121,17 +130,17 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     // (task 9404: + the free point's no-surface fallback, `backgroundPoint`).
     const string[string] want = [
         // the grid sub-step is read through `viewVectorQuantum` everywhere but
-        // its home (app.d: an import); task 9415: the pen joins (P1); drag.d: the handle drag's quantum forms
-        "viewGridSubStep": "app.d:1 viewgrid.d:2",
+        // its home; task 9415: the pen joins (P1); drag.d: the handle drag's quantum forms
+        "viewGridSubStep": "viewgrid.d:2",
         // create_common.d: + the free point's q of its plane point (task 9499);
         // array_tool.d: the snapped press hit P0 of the offset haul (task 9527)
         "viewVectorQuantum": "array_tool.d:2 create_common.d:4 drag.d:2 http_providers.d:2 pen.d:2 "
             ~ "poly_extrude.d:2 transform.d:2 viewgrid.d:2",
-        "viewPrincipalAxis": "create_common.d:2 pen.d:2",
+        "viewPrincipalAxis": "box.d:2 create_common.d:2 pen.d:2 primitive_create_tool.d:2",
         // radial_array_tool.d: its own unrelated `axisUnit()` member (5); create_common.d: + the
         // centre box's locked axis in `snapMoverCentre` (task 9472)
         // vertex_place.d: the drag plane's normal (task 9499)
-        "axisUnit": "create_common.d:3 pen.d:4 radial_array_tool.d:5 vertex_place.d:2",
+        "axisUnit": "create_common.d:3 overlay_space.d:2 pen.d:4 radial_array_tool.d:5 vertex_place.d:2",
         // edge_extend.d: the work-plane symmetry plane mapped once more (task 9452)
         "primitivePlacementFrame": "arc.d:3 box.d:4 create_common.d:2 edge_extend.d:2 pen.d:2 "
             ~ "poly_extrude.d:2 primitive_create_tool.d:4 slice_tool.d:4 sphere.d:2 transform.d:2 "

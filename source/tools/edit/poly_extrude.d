@@ -892,4 +892,20 @@ unittest { // free drag press prepares Jacobian from captured upstream-snapped B
         Vec3(0,0,0), Vec3(0,.105f,-.120f));
     expectCapturedCap(defaultVp, 900, 250, 935, 225,
         Vec3(0,0,0), Vec3(-.095f,.085f,0), true);
+
+    // exercise the production press's extent-frame wiring under a pinned plane.
+    import toolpipe.pipeline : ToolPipeContext;
+    import toolpipe.stages.workplane : WorkplaneStage;
+    auto ctx = new ToolPipeContext();
+    auto stage = new WorkplaneStage(); ctx.pipeline.add(stage); g_pipeCtx = ctx;
+    const angles = Vec3(55, 20, 15);
+    stage.edit(2, -1, 3, angles.x, angles.y, angles.z);
+    assert(tool.prepareFreeDrag(900, 250, Vec3(0,0,0)));
+    assert(near(tool.extentFrameX, rotateZXY(Vec3(1,0,0), angles)) &&
+           near(tool.extentFrameY, rotateZXY(Vec3(0,1,0), angles)) &&
+           near(tool.extentFrameZ, rotateZXY(Vec3(0,0,1), angles)),
+           "pinned Polygon press lost its production extent frame");
+    const extentProbe = Vec3(.2f, -.3f, .4f);
+    assert(near(tool.extentToMesh(extentProbe), rotateZXY(extentProbe, angles)),
+           "pinned Polygon extent was read in world channels");
 }

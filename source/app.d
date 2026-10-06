@@ -111,7 +111,7 @@ import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot, 
 import io.assimp_runtime : initAssimp, shutdownAssimp;
 import bvh_pick : BvhPick;
 import item_pick : ItemHit;   // ItemRayPicker: constructed by InputFrameState now (task 0781)
-import viewgrid : g_viewGrid, viewGridSize, viewGridSubStep, viewWorldPerPixel,
+import viewgrid : g_viewGrid, viewGridSize, viewWorldPerPixel,
                   kGridMaskMin, kGridMaskMax, kGridHalfCells, gridRungs,
                   viewGridFadeRadius;
 

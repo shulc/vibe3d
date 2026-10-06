@@ -313,3 +313,31 @@ unittest { // Tess: sizeX=0 no longer collapses reflected verts
     assert(!hasCoincidentVerts(m["vertices"]),
         "Tess sizeX=0: expected no coincident vertices after degenerate-radius guard");
 }
+
+
+unittest { // Task 9418: the actual headless build reads the pinned parameter frame.
+    resetEmpty();
+    auto command(string text) {
+        auto r = postJson("/api/command", text);
+        assert(r["status"].str == "ok", r.toString);
+    }
+    command("history.clear");
+    command("workplane.reset");
+    immutable params = "method:globe sides:6 segments:4 cenX:0.2 cenY:-0.3 cenZ:0.4 sizeX:1 sizeY:2 sizeZ:3";
+    auto r = primSphereArg(params); assert(r["status"].str == "ok", r.toString);
+    auto baseline = getModel()["vertices"].array;
+    assert(baseline.length == 20, "rig: expected twenty small-Globe vertices");
+    resetEmpty(); command("history.clear");
+    command("workplane.edit cenX:2 cenY:-1 cenZ:3 rotX:90 rotY:0 rotZ:0");
+    r = primSphereArg(params); assert(r["status"].str == "ok", r.toString);
+    auto pinned = getModel()["vertices"].array;
+    assert(pinned.length == 20, "pinned headless sphere changed topology");
+    foreach (i, v; baseline) {
+        const x = v.array[0].floating, y = v.array[1].floating, z = v.array[2].floating;
+        assert(fabs(pinned[i].array[0].floating - (2 + x)) < 1e-5 &&
+               fabs(pinned[i].array[1].floating - (-1 - z)) < 1e-5 &&
+               fabs(pinned[i].array[2].floating - (3 + y)) < 1e-5,
+               "headless sphere lost the pinned placement frame at vertex " ~ i.to!string);
+    }
+    command("workplane.reset");
+}

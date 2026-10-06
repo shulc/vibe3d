@@ -4,6 +4,7 @@ import std.math : sqrt, isNaN;
 
 import math     : Vec3, ModelSpace;
 import document : primaryModelSpace;
+import tools.create.create_common : axisUnit;
 
 // ---------------------------------------------------------------------------
 // THE TOOL-OVERLAY SPACE SEAM (task 0645)
@@ -193,7 +194,7 @@ struct OverlaySpace {
         if (!active) return 1.0f;
         float g = 0.0f;
         foreach (i; 0 .. 3) {
-            Vec3 u = Vec3(i == 0 ? 1 : 0, i == 1 ? 1 : 0, i == 2 ? 1 : 0);
+            Vec3 u = axisUnit(i);
             Vec3 w = ms.toWorldDir(u);
             g += sqrt(w.x*w.x + w.y*w.y + w.z*w.z);
         }

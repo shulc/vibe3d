@@ -94,7 +94,7 @@ int viewPrincipalAxis(in WorkplaneFrame f, const ref Viewport vp) {
 }
 
 /// The unit local axis `k` (0 = X, 1 = Y, 2 = Z).
-Vec3 axisUnit(int k) {
+Vec3 axisUnit(int k) @safe pure nothrow @nogc {
     return Vec3(k == 0 ? 1 : 0, k == 1 ? 1 : 0, k == 2 ? 1 : 0);
 }
 

@@ -84,7 +84,7 @@ import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import tools.create.create_common : WorkplaneFrame,
                               primitivePlacementFrame, screenToPlacementLocal,
                               planeLocalViewport,
-                              mostFacingAxis, transformPoint, transformDir, snapLocalHit,
+                              viewPrincipalAxis, transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding, baseDragPoint,
                               workplaneCursorPlaneHit, moverDrag, snapMoverCentre, heightDragNormal;
 import editmode : EditMode;
@@ -539,10 +539,7 @@ protected:
         // 7139): the channels are local, so the principal plane is too.
         placementFrame = primitivePlacementFrame();
         frame = placementFrame;
-        Viewport lvp = planeLocalViewport(vp, placementFrame);
-        Vec3 camBack = Vec3(lvp.view[2], lvp.view[6], lvp.view[10]);
-        final switch (mostFacingAxis(camBack, Vec3(1, 0, 0),
-                                     Vec3(0, 1, 0), Vec3(0, 0, 1))) {
+        final switch (viewPrincipalAxis(placementFrame, vp)) {
             case 0:
                 planeNormal = Vec3(1, 0, 0);
                 planeAxis1  = Vec3(0, 1, 0);

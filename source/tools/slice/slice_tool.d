@@ -2417,3 +2417,32 @@ public:
         foreach (fi; 0 .. mesh.faces.length) mesh.deselectFace(cast(int)fi);
     }
 }
+
+
+unittest { // default zero-width viewport reaches both private frame fallbacks.
+    import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
+    import toolpipe.stages.workplane : WorkplaneStage;
+    auto saved = g_pipeCtx;
+    scope(exit) g_pipeCtx = saved;
+    Mesh mesh; GpuMesh gpu; EditMode mode = EditMode.Polygons;
+    auto slice = new SliceTool(() => &mesh, &gpu, &mode, LitShader.init);
+    assert(slice.vpWorld_.width == 0, "rig: no viewport has been cached");
+    g_pipeCtx = null;
+    Vec3 x, z;
+    assert(slice.cachedWorkplaneNormal() == Vec3(0,1,0),
+           "zero-width Slice normal must use the parameter frame");
+    slice.cachedWorkplaneAxes(x, z);
+    assert(x == Vec3(1,0,0) && z == Vec3(0,0,1),
+           "zero-width Slice angle basis must use the parameter frame");
+    auto ctx = new ToolPipeContext();
+    auto stage = new WorkplaneStage(); ctx.pipeline.add(stage); g_pipeCtx = ctx;
+    stage.edit(2, -1, 3, 30, 40, 15);
+    const frame = primitivePlacementFrame();
+    assert((frame.normal - Vec3(0,1,0)).length > 0.5f,
+           "rig: the pinned frame differs from the default");
+    assert((slice.cachedWorkplaneNormal() - frame.normal).length < 1e-6f,
+           "zero-width Slice normal lost the pinned frame");
+    slice.cachedWorkplaneAxes(x, z);
+    assert((x - frame.axis1).length < 1e-6f && (z - frame.axis2).length < 1e-6f,
+           "zero-width Slice angle basis lost the pinned frame");
+}

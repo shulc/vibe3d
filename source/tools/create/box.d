@@ -33,7 +33,7 @@ import snapshot : MeshSnapshot;
 import tools.create.create_common : WorkplaneFrame,
                               primitivePlacementFrame, screenToPlacementLocal,
                               planeLocalViewport,
-                              mostFacingAxis,
+                              viewPrincipalAxis,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
                               workplaneCursorPlaneHit, moverDrag, snapMoverCentre, heightDragNormal, baseDragPoint;
@@ -1379,8 +1379,7 @@ private:
         frame = placementFrame;
         Viewport lvp = planeLocalViewport(vp, placementFrame);
         Vec3 camBack = Vec3(lvp.view[2], lvp.view[6], lvp.view[10]);
-        final switch (mostFacingAxis(camBack, Vec3(1, 0, 0),
-                                     Vec3(0, 1, 0), Vec3(0, 0, 1))) {
+        final switch (viewPrincipalAxis(placementFrame, vp)) {
         case 0: {
             float s = camBack.x >= 0.0f ? 1.0f : -1.0f;
             planeNormal = Vec3(s, 0, 0);
@@ -1568,6 +1567,31 @@ private:
 }
 
 version(unittest) unittest {
+    import std.format : format;
+    // Production choosePlane reads the pinned basis; Box retains its signed normal.
+    import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
+    import toolpipe.stages.workplane : WorkplaneStage;
+    auto savedAxisPipe = g_pipeCtx;
+    scope(exit) g_pipeCtx = savedAxisPipe;
+    auto axisCtx = new ToolPipeContext();
+    auto axisStage = new WorkplaneStage(); axisCtx.pipeline.add(axisStage); g_pipeCtx = axisCtx;
+    axisStage.edit(2, -1, 3, 30, 40, 15);
+    Mesh axisMesh; GpuMesh axisGpu;
+    auto axisTool = new BoxTool(() => &axisMesh, &axisGpu, LitShader.init);
+    const axisFrame = primitivePlacementFrame();
+    foreach (k; 0 .. 3) foreach (sign; [-1.0f, 1.0f]) {
+        Viewport axisVp; axisVp.view[] = 0;
+        const world = k == 0 ? axisFrame.axis1 : k == 1 ? axisFrame.normal : axisFrame.axis2;
+        axisVp.view[2] = sign * world.x;
+        axisVp.view[6] = sign * world.y;
+        axisVp.view[10] = sign * world.z;
+        axisTool.choosePlane(axisVp);
+        const expected = Vec3(k == 0 ? 1 : 0, k == 1 ? 1 : 0, k == 2 ? 1 : 0) * sign;
+        assert((axisTool.planeNormal - expected).length < 1e-6f,
+               format("production choosePlane lost the pinned principal axis or its sign: k=%s sign=%s got=%s expected=%s", k, sign, axisTool.planeNormal, expected));
+    }
+    g_pipeCtx = savedAxisPipe;
+
     import record_observer_hub : RecordObserverHub;
     import snap_render : g_lastSnap;
 

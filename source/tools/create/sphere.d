@@ -530,6 +530,7 @@ private:
 
 public:
     version (unittest) {
+        Vec3 chosenPlaneForTest(const ref Viewport vp) { choosePlane(vp); return planeNormal; }
         void p1SetParams(SphereParams value) { params_ = value; }
         SphereParams p1Params() const { return params_; }
         void seedPreparedDeactivateForTest() {
@@ -859,6 +860,30 @@ private:
 }
 
 unittest {
+    // The base choosePlane reads the pinned basis and keeps its unsigned normal.
+    import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
+    import toolpipe.stages.workplane : WorkplaneStage;
+    auto savedAxisPipe = g_pipeCtx;
+    scope(exit) g_pipeCtx = savedAxisPipe;
+    auto axisCtx = new ToolPipeContext();
+    auto axisStage = new WorkplaneStage(); axisCtx.pipeline.add(axisStage); g_pipeCtx = axisCtx;
+    axisStage.edit(2, -1, 3, 30, 40, 15);
+    Mesh axisMesh; GpuMesh axisGpu;
+    auto axisTool = new SphereTool(() => &axisMesh, &axisGpu, LitShader.init);
+    const axisFrame = primitivePlacementFrame();
+    foreach (k; 0 .. 3) foreach (sign; [-1.0f, 1.0f]) {
+        Viewport axisVp; axisVp.view[] = 0;
+        const world = k == 0 ? axisFrame.axis1 : k == 1 ? axisFrame.normal : axisFrame.axis2;
+        axisVp.view[2] = sign * world.x;
+        axisVp.view[6] = sign * world.y;
+        axisVp.view[10] = sign * world.z;
+        const chosen = axisTool.chosenPlaneForTest(axisVp);
+        const expected = Vec3(k == 0 ? 1 : 0, k == 1 ? 1 : 0, k == 2 ? 1 : 0);
+        assert((chosen - expected).length < 1e-6f,
+               "production choosePlane lost the pinned principal axis or its sign");
+    }
+    g_pipeCtx = savedAxisPipe;
+
     Mesh owned;
     auto tool = new SphereTool(() => &owned, null, LitShader.init);
     SphereParams seed;
