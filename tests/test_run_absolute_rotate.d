@@ -404,8 +404,8 @@ unittest {
         ~ publishedR(2).to!string);
 
     cmd("tool.set TransformRotate off");
-    assert(undoCount() == undoBefore + 1,
-        "live-session attr edits coalesce to ONE undo entry");
+    assert(undoCount() == undoBefore + 2,
+        "live-session attr edits coalesce to ONE undo entry under the drop row (K-RD CD_Q_ROT)");
     postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(vertNear(vert(6), baseV6),

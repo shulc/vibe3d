@@ -292,8 +292,8 @@ unittest {
         "second live attr write is ABSOLUTE (x3, not x6): 0.5*3");
 
     cmd("tool.set TransformScale off");
-    assert(undoCount() == undoBefore + 1,
-        "live-session attr edits coalesce to ONE undo entry; before="
+    assert(undoCount() == undoBefore + 2,
+        "live-session attr edits coalesce to ONE undo entry under the drop row (K-RD CD_Q_SCL); before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
     auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);

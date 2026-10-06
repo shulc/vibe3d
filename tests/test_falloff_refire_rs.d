@@ -392,8 +392,8 @@ unittest {
 
     cmd("tool.set TransformRotate off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop leaves ONE entry (the surviving rotate gesture) (D); floor="
+    assert(undoCount() == floor + 2,
+        "(+ the drop row, K-RD CD_Q_ROT) drop leaves ONE entry (the surviving rotate gesture) (D); floor="
         ~ floor.to!string ~ " now=" ~ undoCount().to!string);
 
     postJson("/api/command", commandBody("history.undo"));
@@ -443,8 +443,8 @@ unittest {
 
     cmd("tool.set TransformScale off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop leaves ONE entry (the surviving scale gesture) (D); now="
+    assert(undoCount() == floor + 2,
+        "(+ the drop row, K-RD CD_Q_SCL) drop leaves ONE entry (the surviving scale gesture) (D); now="
         ~ undoCount().to!string);
 
     playAndWait(ctrlZ(50.0));
@@ -505,8 +505,8 @@ unittest {
 
     cmd("tool.set TransformRotate off");
     settle();
-    assert(undoCount() == floor + 3,
-        "drop retains gesture + both discrete re-grades for grouped navigation; now="
+    assert(undoCount() == floor + 4,
+        "(+ the drop row, K-RD CD_Q_ROT) drop retains gesture + both discrete re-grades for grouped navigation; now="
         ~ undoCount().to!string);
 
     playAndWait(ctrlZ(50.0));
@@ -1033,8 +1033,8 @@ unittest {
 
     cmd("tool.set TransformRotate off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop leaves ONE consolidated entry (the surviving g1) (D); now="
+    assert(undoCount() == floor + 2,
+        "(+ the drop row, K-RD CD_Q_ROT) drop leaves ONE consolidated entry (the surviving g1) (D); now="
         ~ undoCount().to!string);
     // n==1 consolidate strips BOTH the inSession AND the refire bits.
     assert(inSessionCount() == 0,
@@ -1119,17 +1119,20 @@ unittest {
 
     cmd("tool.set Transform off");
     settle();
-    // 8560 retains all three completed commands; raw History navigation peels
-    // the regrade, its Rotate gesture, then the earlier Move gesture.
+    // 8560 retains all three completed commands under the drop row. The drop's
+    // undo reverts the whole session (K-RD CD_Q2_TM, task 9508); the redo then
+    // replays the Move gesture alone, then its Rotate gesture.
     postJson("/api/command", commandBody("history.undo"));
     settle();
-    assert(vertNear(vert(6), v6AfterRot), "retained regrade Undo restores the Rotate gesture");
-    postJson("/api/command", commandBody("history.undo"));
+    assertVertex(6, 0.5, 0.5, 0.5, "the drop's Undo reverts the whole session to the cube");
+    assert(getJson("/api/input/context")["tool"].toString == `"Transform"`,
+        "the drop's Undo re-arms the preset (K-RD CD_Q2_TM)");
+    postJson("/api/command", commandBody("history.redo"));
     settle();
-    assert(vertNear(vert(6), v6AfterMove), "retained Rotate Undo preserves earlier Move");
-    postJson("/api/command", commandBody("history.undo"));
+    assert(vertNear(vert(6), v6AfterMove), "the first redo replays the Move gesture alone");
+    postJson("/api/command", commandBody("history.redo"));
     settle();
-    assertVertex(6, 0.5, 0.5, 0.5, "retained Move Undo restores the cube");
+    assert(vertNear(vert(6), v6AfterRot), "the second redo replays the Rotate gesture");
     cmd("tool.pipe.attr falloff type none");
     drainHistory();
 }
@@ -1360,8 +1363,8 @@ unittest {
     // in-session Ctrl+Z first, so the refire entry survives into the merge.
     cmd("tool.set move off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop consolidates the run to ONE entry (D); floor=" ~ floor.to!string
+    assert(undoCount() == floor + 2,
+        "(+ the drop row, K-RD CD_Q_TM) drop consolidates the run to ONE entry (D); floor=" ~ floor.to!string
         ~ " now=" ~ undoCount().to!string);
 
     // ONE post-drop Ctrl+Z: P-A BLOCKER — the merged first.revert (gesture)
@@ -1402,8 +1405,8 @@ unittest {
 
     cmd("tool.set TransformRotate off");
     settle();
-    assert(undoCount() == floor + 2,
-        "drop retains the rotation gesture and config re-grade; now="
+    assert(undoCount() == floor + 3,
+        "(+ the drop row, K-RD CD_Q_ROT) drop retains the rotation gesture and config re-grade; now="
         ~ undoCount().to!string);
 
     playAndWait(ctrlZ(50.0));
@@ -1442,8 +1445,8 @@ unittest {
 
     cmd("tool.set TransformScale off");
     settle();
-    assert(undoCount() == floor + 2,
-        "drop retains the scale gesture and config re-grade; now="
+    assert(undoCount() == floor + 3,
+        "(+ the drop row, K-RD CD_Q_SCL) drop retains the scale gesture and config re-grade; now="
         ~ undoCount().to!string);
 
     playAndWait(ctrlZ(50.0));
@@ -1587,16 +1590,15 @@ unittest {
 
     cmd("tool.set move off");
     settle();
-    // Two surviving runs ⇒ two post-drop undo steps to unwind both.
-    assert(undoCount() == floor + 2,
-        "the drop leaves the two consolidated runs (boundary kept them separate);"
-        ~ " got " ~ undoCount().to!string);
-    postJson("/api/command", commandBody("history.undo"));
-    settle();
+    // Two surviving runs under ONE drop row (K-RD CD_Q_TM, task 9508).
+    assert(undoCount() == floor + 3,
+        "the drop leaves the two consolidated runs (boundary kept them separate)"
+        ~ " and its drop row; got " ~ undoCount().to!string);
+    // The drop's undo unwinds BOTH runs of the session (K-RD CD_Q2_TM).
     postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(undoCount() == floor,
-        "two post-drop undos unwind BOTH runs back to the select floor; got "
+        "the post-drop undo unwinds BOTH runs back to the select floor; got "
         ~ undoCount().to!string);
     assertVertex(6, 0.5, 0.5, 0.5,
         "after unwinding both runs the cube is restored");

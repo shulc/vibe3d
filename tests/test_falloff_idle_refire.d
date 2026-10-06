@@ -148,6 +148,8 @@ string ctrlZ(double t) {
 // ===========================================================================
 unittest {
     postJson("/api/command", commandBody("scene.reset"));
+    // a reset keeps the history: start under the 50-row cap (drop rows, task 9508)
+    postJson("/api/command", commandBody("history.clear"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type cylinder");
     cmd("tool.pipe.attr falloff shape linear");
@@ -181,6 +183,8 @@ unittest {
 // ===========================================================================
 unittest {
     postJson("/api/command", commandBody("scene.reset"));
+    // a reset keeps the history: start under the 50-row cap (drop rows, task 9508)
+    postJson("/api/command", commandBody("history.clear"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -216,6 +220,8 @@ unittest {
 // ===========================================================================
 unittest {
     postJson("/api/command", commandBody("scene.reset"));
+    // a reset keeps the history: start under the 50-row cap (drop rows, task 9508)
+    postJson("/api/command", commandBody("history.clear"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -250,6 +256,8 @@ unittest {
 // ===========================================================================
 unittest {
     postJson("/api/command", commandBody("scene.reset"));
+    // a reset keeps the history: start under the 50-row cap (drop rows, task 9508)
+    postJson("/api/command", commandBody("history.clear"));
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:3 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:1 segmentsY:1 segmentsZ:1 radius:0");   // append -> verts 8..15
@@ -317,6 +325,8 @@ unittest {
 // ===========================================================================
 unittest {
     postJson("/api/command", commandBody("scene.reset"));
+    // a reset keeps the history: start under the 50-row cap (drop rows, task 9508)
+    postJson("/api/command", commandBody("history.clear"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -366,6 +376,8 @@ unittest {
 // ===========================================================================
 unittest {
     postJson("/api/command", commandBody("scene.reset"));
+    // a reset keeps the history: start under the 50-row cap (drop rows, task 9508)
+    postJson("/api/command", commandBody("history.clear"));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type element");
     cmd("tool.pipe.attr falloff shape linear");
@@ -405,6 +417,8 @@ unittest {
 // ===========================================================================
 unittest {
     postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
+    // a reset keeps the history: start under the 50-row cap (drop rows, task 9508)
+    postJson("/api/command", commandBody("history.clear"));
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:4 segmentsY:4 segmentsZ:4 radius:0");
@@ -441,6 +455,8 @@ unittest {
 // ===========================================================================
 unittest {
     postJson("/api/command", commandBody("scene.reset"));
+    // a reset keeps the history: start under the 50-row cap (drop rows, task 9508)
+    postJson("/api/command", commandBody("history.clear"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     postJson("/api/command", `{"id":"mesh.weightmap.create","params":{"name":"wmA"}}`);
     postJson("/api/command", `{"id":"mesh.weightmap.set","params":{"name":"wmA","vert":0,"weight":1.0}}`);
@@ -483,6 +499,8 @@ unittest {
 // ===========================================================================
 unittest {
     postJson("/api/command", commandBody("scene.reset"));
+    // a reset keeps the history: start under the 50-row cap (drop rows, task 9508)
+    postJson("/api/command", commandBody("history.clear"));
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     postJson("/api/command", `{"id":"mesh.weightmap.create","params":{"name":"wmA"}}`);
     postJson("/api/command", `{"id":"mesh.weightmap.set","params":{"name":"wmA","vert":0,"weight":1.0}}`);

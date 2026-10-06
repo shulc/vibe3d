@@ -288,8 +288,8 @@ unittest {
 
     cmd("tool.set TransformRotate off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop leaves ONE entry (the surviving rotate gesture); now="
+    assert(undoCount() == floor + 2,
+        "(+ the drop row, K-RD CD_Q_ROT) drop leaves ONE entry (the surviving rotate gesture); now="
         ~ undoCount().to!string);
 
     postJson("/api/command", commandBody("history.undo"));

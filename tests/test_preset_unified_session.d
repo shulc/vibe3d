@@ -75,7 +75,8 @@ unittest {
         navigate(false); check("undo2", 1, 2, true);
         navigate(true); check("redo1", 2, 1, true);
         navigate(true); check("redo2", 3, 0, true);
-        invoke("tool.set Transform off"); check("close", 3, 0, false);
+        // the drop writes ONE row (K-RD CD_Q_TM, task 9508)
+        invoke("tool.set Transform off"); check("close", 4, 0, false);
         navigate(false); check("outside_undo", 1, 2, true);
         if (branch == "R") {
             navigate(true); check("outside_redo", 3, 0, true);
@@ -137,7 +138,8 @@ unittest { // All visible banks share the preset session's recorded navigation.
             "mixed bank boundary did not advance history run exactly once");
     foreach (i; 1 .. 6) { navigate(false); check(format("undo%s", i), 6 - i, i); }
     foreach (i; 1 .. 6) { navigate(true); check(format("redo%s", i), 1 + i, 5 - i); }
-    invoke("tool.set Transform off"); check("close", 6, 0);
+    // the drop writes ONE row (K-RD CD_Q_TM, task 9508)
+    invoke("tool.set Transform off"); check("close", 7, 0);
     navigate(false); check("outside_undo", 1, 5);
     if (branch == "R") {
         navigate(true); check("outside_redo", 6, 0);

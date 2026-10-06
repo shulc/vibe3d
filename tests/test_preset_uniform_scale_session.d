@@ -74,7 +74,8 @@ unittest {
         navigate(false); check("undo2", 1, 2, true);
         navigate(true); check("redo1", 2, 1, true);
         navigate(true); check("redo2", 3, 0, true);
-        invoke("tool.set xfrm.scaleUniform off"); check("close", 3, 0, false);
+        // the drop writes ONE row (K-RD CD_Q_SCL, task 9508)
+        invoke("tool.set xfrm.scaleUniform off"); check("close", 4, 0, false);
         navigate(false); check("outside_undo", 1, 2, true);
         if (branch == "R") {
             navigate(true); check("outside_redo", 3, 0, true);
