@@ -24,7 +24,7 @@
 // assert checks that this frame reproduces the fixture's own `centre_before`.
 
 import http_client : getJson, postJson;
-import drag_helpers : viewportFromCameraMatrices, projectToWindow, DV = Vec3, playAndWait;
+import drag_helpers : viewportFromCameraMatrices, projectToWindow, DV = Vec3, playAndWait, pixelRay;
 import std.file : readText;
 import std.format : format;
 import std.json;
@@ -98,7 +98,7 @@ double pixelSize() {
     return 2.0 / (num(c["projMatrix"].array[5]) * cast(double) c["height"].integer);
 }
 
-void runCell(string name, JSONValue fx, ref int judged) {
+void runCell(string name, JSONValue fx, ref int judged, ref int quantumJudged) {
     auto c = fx["cells"][name];
     auto pp = c["pinned_plane"].array;
     immutable V3 o = [num(pp[0]), num(pp[1]), num(pp[2])];
@@ -177,14 +177,48 @@ void runCell(string name, JSONValue fx, ref int judged) {
         }
         ++judged;
     }
+    // The captured q grid needs an odd-node control: every 2q node is also
+    // a q node, and the historical one-step landing allowance admits either.
+    // Pick an off-gizmo pixel whose ray lands on an odd X node of the captured
+    // q=.01 grid, and compare the production press with that independent ray.
+    bool oddNode;
+    int quantumX, quantumY = cast(int)lround(fy0 - 160);
+    V3 quantumExpected;
+    foreach (offset; 210 .. 214) {
+        quantumX = cast(int)lround(fx0 + offset);
+        DV rayOrigin, rayDirection;
+        pixelRay(quantumX, quantumY, vp, rayOrigin, rayDirection);
+        auto localOrigin = toLocal(B, o, [cast(double)rayOrigin.x,
+            cast(double)rayOrigin.y, cast(double)rayOrigin.z]);
+        auto localDirection = toLocal(B, [0.0,0.0,0.0],
+            [cast(double)rayDirection.x, cast(double)rayDirection.y,
+             cast(double)rayDirection.z]);
+        const t = (before[2] - localOrigin[2]) / localDirection[2];
+        V3 raw;
+        foreach (k; 0 .. 3) raw[k] = localOrigin[k] + t * localDirection[k];
+        const long node = lround(raw[0] / step);
+        if (node % 2 == 0 || abs(raw[0] / step - node) > .35) continue;
+        quantumExpected = [node * step, round(raw[1] / step) * step, before[2]];
+        oddNode = true; break;
+    }
+    assert(oddNode, name ~ " rig: four nearby off-gizmo pixels must expose an odd q node");
+    assert(lround(quantumExpected[0] / step) % 2 != 0,
+           name ~ " rig: the quantum control must use an odd q node");
+    click(quantumX, quantumY);
+    const quantumGot = toLocal(B, o, centre(placed));
+    assert(placed && abs(quantumGot[0] - quantumExpected[0]) < 2e-5,
+        format("%s odd-node relocate quantum: got %s expected %s, captured step %s",
+               name, quantumGot, quantumExpected, step));
+    ++quantumJudged;
     cmd("tool.set move off");
     cmd("workplane.reset");
 }
 
 unittest {
     auto fx = parseJSON(readText("tests/fixtures/relocate_axis_view_depth.json"));
-    int judged;
+    int judged, quantumJudged;
     foreach (name; ["R-control", "T2-control", "T3-control", "R-turned", "T2-turned"])
-        runCell(name, fx, judged);
+        runCell(name, fx, judged, quantumJudged);
     assert(judged == 10, format("judged %d landings, expected 10", judged));
+    assert(quantumJudged == 5, format("judged %d odd-node controls, expected 5", quantumJudged));
 }
