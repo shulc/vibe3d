@@ -268,6 +268,16 @@ unittest { // Only the undo of the tool's OWN activation row makes it latent
         "the cancel undoes the edit and drops the tool; its activation row stands");
     dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
     assert(quadAtStart() && tool() == "", "a cancel that leaves the activation row leaves no latent tool");
+    // Another tool's activation row: bare Rotate (E) arms with no row of its
+    // own; the undo of Move's older row ends it, and it is not latent.
+    rig("vertex");
+    key(119, 26);
+    key(32, 44);
+    key(101, 8);
+    assert(tool() == "rotate" && depth() == 1, "rig: bare Rotate armed over Move's activation row");
+    undo();
+    dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
+    assert(quadAtStart() && tool() == "", "the undo of another tool's activation row leaves no latent tool");
 }
 
 unittest { // Ours, uncaptured (gap row): Space and a type FLIP (geometry or Items) still write no drop row
