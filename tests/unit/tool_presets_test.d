@@ -76,9 +76,7 @@ unittest {
     import tools.edit.topology_pen : TopologyPenTool;
     import registry : typedToolFactory;
     import mesh_gpu : GpuMesh;
-    import editmode : EditMode;
     import mesh : Mesh;
-    import shader : Shader;
     import std.file : write, remove;
     import std.conv : to;
     import std.process : thisProcessID;
@@ -87,7 +85,6 @@ unittest {
     Registry reg;
     Mesh m;
     GpuMesh gpu;
-    EditMode mode;
     reg.registerTool("mesh.topoPen", typedToolFactory!TopologyPenTool(() =>
         new TopologyPenTool(() => &m, &gpu)));
     ToolPreset[] selected;
@@ -108,6 +105,16 @@ unittest {
     auto aliases = loadToolPresets(path);
     assert(aliases.length == 2 && aliases[0].hasDropUndo && aliases[1].hasDropUndo &&
         aliases[0].dropUndo == policy && aliases[1].dropUndo == policy, "alias inherits policy and presence");
+    size_t configurations;
+    foreach (extent; [DropUndoExtent.none, DropUndoExtent.newestPressBlock, DropUndoExtent.wholeSession])
+    foreach (redo; [DropRedoPopulation.editRows, DropRedoPopulation.discard, DropRedoPopulation.selectedSuffix]) {
+        write(path, "presets:\n  - id: valid\n    base: mesh.topoPen\n    dropUndo: {extent: " ~ extent.to!string ~ ", redo: " ~ redo.to!string ~ "}\n");
+        auto loaded = loadToolPresets(path);
+        ++configurations;
+        assert(loaded.length == 1 && loaded[0].hasDropUndo && loaded[0].dropUndo == DropUndoPolicy(extent, redo),
+            "all declared drop policy enum values must round-trip the loader");
+    }
+    assert(configurations == 9, "drop configuration population");
     foreach (config; ["{extent: wrong}", "{redo: wrong}", "{unexpected: discard}"]) {
         write(path, "presets:\n  - id: bad\n    base: mesh.topoPen\n    dropUndo: " ~ config ~ "\n");
         assert(collectExceptionMsg(loadToolPresets(path)) !is null, "invalid drop policy must refuse");
