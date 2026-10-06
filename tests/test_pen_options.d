@@ -169,11 +169,11 @@ unittest {
 
     if (wanted("hidden-next-click")) {
         rig(true);
-        // This top-view focus keeps every captured point inside our viewport.
-        penCameraAt(Vec3(.8,1,.15), 440);
         clicks(b9["clicks_xz"]);
         const a = worldPixel(xz(b9["clicks_xz"][0]));
         drag(a, plus40(a));
+        // Pan after release so the next point fits our smaller viewport.
+        penCameraAt(Vec3(.8,1,.4), 440); frameFence(null, 2);
         const c = aliasCells["hidden-next-click"];
         const n = c["nextPoint"];
         clickWorld(Vec3(cast(float)num(n[0]),cast(float)num(n[1]),cast(float)num(n[2])));
