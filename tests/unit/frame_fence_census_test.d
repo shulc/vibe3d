@@ -168,9 +168,26 @@ unittest
     }
     sort(readers); sort(offenders); sort(rawHelpers);
 
-    assert(readers.length == 14,
-        format("9526 floor: %s suite files read a frame-published key, expected 14: %s",
+    assert(readers.length == 15,
+        format("9526 floor: %s suite files read a frame-published key, expected 15: %s",
             readers.length, readers));
+    assert(readers == [
+        "test_axis_slice.d",
+        "test_bus_layer_scale_rebuild_rate.d",
+        "test_change_bus.d",
+        "test_edge_slice_symmetry.d",
+        "test_fix_orientation.d",
+        "test_item_sel_undo.d",
+        "test_item_switch_hook_counters.d",
+        "test_item_switch_hook_effects.d",
+        "test_map_delta_counters.d",
+        "test_mesh_cleanup.d",
+        "test_nonmesh_items.d",
+        "test_position_delta_seam_counters.d",
+        "test_reduce.d",
+        "test_retopology_lines_dots.d",
+        "test_seltype_order.d",
+    ], format("9526 reader inventory changed: %s", readers));
     assert(rawFiles.length >= 30,
         format("9526 floor: only %s files read /api/changes raw; the needle desynced?",
             rawFiles.length));

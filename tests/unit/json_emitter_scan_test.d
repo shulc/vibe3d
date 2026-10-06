@@ -512,6 +512,7 @@ unittest {
         LedgerRow("meshPlanesJson|%.9g", 12, "lossless mesh-plane JSON (+1 S1e surface smoothingAngle)"),
         LedgerRow("orientationToJson|%.9g", 9, "orientation matrix"),
         LedgerRow("View.toJsonWith|%f", 10, "view state"),
+        LedgerRow("View.toJsonWith|%.9g", 1, "camera lens float round-trip (task 10790)"),
         LedgerRow("wireModelProviders.setLayersDataProvider|%.6f", 13,
             "layer transforms"),
         LedgerRow("wireModelProviders.setImagePlaneProvider.vec|%.6f", 3,
@@ -582,17 +583,17 @@ unittest {
     size_t   total;
     foreach (e; kFrozen) total += e.count;
 
-    assert(total == 141, format("the frozen table must add up to the 141 "
+    assert(total == 142, format("the frozen table must add up to the 142 "
                               ~ "specifiers the conversion covered (100 from "
                               ~ "task 1550, plus meshPlanesJson's 11 from task "
                               ~ "1903 Stage B, plus the camera matrices from "
                               ~ "task 7139, plus 8 retopology-mode plan/state "
                               ~ "floats, plus 12 cavity/composite floats, plus "
                               ~ "the two S1e surface smoothing "
-                              ~ "angles, plus 7 env-sample floats), got %d", total));
+                              ~ "angles, plus 7 env-sample floats, plus the camera lens), got %d", total));
     string drift = reconcile(kFrozen, censusHits);
-    if (censusHits.length != 141)
-        drift ~= format("\n    specifier population — recorded 141, scanner "
+    if (censusHits.length != 142)
+        drift ~= format("\n    specifier population — recorded 142, scanner "
                       ~ "found %d", censusHits.length);
     assert(drift.length == 0,
         "the per-symbol specifier census moved. This is the ONLY check that can "

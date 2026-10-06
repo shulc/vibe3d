@@ -1,4 +1,16 @@
 {
+  "provenance": {
+    "schema": 1,
+    "source": "simulated",
+    "reference": "vibe3d-selfgen",
+    "method": "gui-gesture",
+    "captured_utc": "2026-10-06",
+    "task": "10820",
+    "harness": "tests/test_rotation_sector_pixels.d",
+    "inputs": "1280x960 owned GUI; cube vertices 0..7; Right/X and Front/Z; rotate press at centre+(120,0), haul to centre+(104,-60)",
+    "generation": "Owned Xvfb normal product GUI; xwd root framebuffer converted to RGB after production ImGui submission. Guide RGB and fill/outline alpha follow the approved scheme; active ring keeps its existing alpha. This is an OURS product pixel contract, not a new reference capture.",
+    "evidence": "doc/tasks/evidence/10820-rotation-sector/acceptance.md"
+  },
   "task":10820,
   "axes":["X","Z"],
   "guide_rgb":[204,153,255],

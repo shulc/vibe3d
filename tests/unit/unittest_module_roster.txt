@@ -36,6 +36,7 @@ handles.arbiter
 handles.gizmo_metrics
 handles.gl_util
 handles.shapes
+http_providers
 http_server
 image_plane
 input_frame_state
@@ -705,6 +706,7 @@ ui.availability
 ui.grid_plane_test
 ui.image_rows
 ui.item_rows
+ui.viewport_render
 ui.viewport_render_plan_test
 unit.bevel_cold_arm_param_image_test
 unit.prepared_param_update_test

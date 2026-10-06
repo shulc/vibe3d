@@ -14,7 +14,7 @@
 // each derived quantity carries its propagated error, stated beside it.
 module test_retopology_lines_dots;
 
-import http_client : getJson, postJson, quiesce, frameFence, waitPlaybackProcessed;
+import http_client : getJson, postJson, quiesce, frameFence, waitPlaybackProcessed, settledChanges;
 import http_command_helpers : commandBody;
 import drag_helpers : viewportFromCameraMatrices, projectToWindow,
                       Viewport, DHVec3 = Vec3;
@@ -1079,7 +1079,7 @@ unittest { // perspective lens-only consumed A/B/A at a stable draw population
     const mesh=getJson("/api/model");
     auto start=display();
     const layers=getJson("/api/layers")["layers"];
-    const bus=getJson("/api/changes");
+    const bus=settledChanges();
     const cell=start["cells"].array[0];
     assert(jb(cell["renders"])&&!jb(cell["ortho"])&&jb(cell["state"]["retopology"])&&
            jb(cell["plan"]["active"]["cullHiddenVerts"]),"DOT_LENS_HTTP_ACTUAL_DRAW_PLAN");
@@ -1100,7 +1100,7 @@ unittest { // perspective lens-only consumed A/B/A at a stable draw population
         assert(getJson("/api/layers")["layers"]==layers,"DOT_LENS_HTTP_STABLE_ITEMS_MODEL_VERSION");
         const current=display()["cells"].array[0];
         assert(current["state"]==cell["state"]&&current["plan"]==cell["plan"]&&current["selEpoch"]==cell["selEpoch"],"DOT_LENS_HTTP_STABLE_DISPLAY");
-        const now=getJson("/api/changes");
+        const now=settledChanges();
         foreach(key;["totalPosition","totalPoints","totalPolygons","totalMarks","totalSelItem","totalLayerVisible"])
             assert(now[key]==bus[key],"DOT_LENS_HTTP_NO_EPOCH_PUBLICATION "~key);
     }
