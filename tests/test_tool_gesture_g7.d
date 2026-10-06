@@ -440,6 +440,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
         assert(planes() == c.postUndo && undoLen() == u0 + 1 &&
                 history["undo"].array[$ - 1]["command"].str == "history.pressMarker" &&
                 history["redo"].array.length == 0 && restored["tool"].str == "mesh.topoPen" &&
+                !restored["session"]["armed"].boolean &&
                 restored["session"]["token"].integer == gestureToken,
             name ~ ": drop undo must revert the press, re-arm its token, leave one inert marker and discard redo");
         auto refusedRedo = postJ("/api/command", commandBody("history.redo"));
