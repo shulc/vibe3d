@@ -469,3 +469,28 @@ unittest { // A restored tool uses the final mesh as its next press basis at eve
             format("%s %s restored next press must match a fresh arm's basis: %s versus %s", id, door, continued, verts()));
     }
 }
+
+unittest { // Optional diagnostic for the unresolved residual undo-row contract.
+    import std.process : environment;
+    import std.stdio : writeln;
+    if (environment.get("VIBE3D_DROP_SECOND_UNDO_PROBE", "") != "1") return;
+    writeln("DROP_SECOND_UNDO_PROBE: RUN");
+    rig("vertex");
+    ui("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen mode 0");
+    cmd("tool.attr mesh.topoPen innerSnap false");
+    cmd("tool.pipe.attr snap enabled false");
+    dragPx(worldPixel(Vec3(0, 0, 0)), 44, 0);
+    const first = verts();
+    auto atFirst = Vec3(cast(float)first[0][0], cast(float)first[0][1], cast(float)first[0][2]);
+    dragPx(worldPixel(atFirst), 0, 44);
+    assert(quadGap(first, kQuad) > 0.05 && quadGap(verts(), first) > 0.05 && depth() < 40,
+        "second-undo discriminator requires two remaining geometry presses and headroom");
+    keyQ();
+    undo();
+    assert(tool() == "mesh.topoPen" && quadGap(verts(), first) <= 1e-6,
+        "second-undo floor: first undo re-arms and keeps the older press");
+    undo();
+    assert(quadGap(verts(), first) <= 1e-6,
+        format("plain second undo must traverse an inert residual row: got %s; first press %s", verts(), first));
+}
