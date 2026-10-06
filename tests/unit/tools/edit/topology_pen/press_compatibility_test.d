@@ -646,6 +646,10 @@ unittest {
             // Preserve the loose target's original edge slot while adding actual surface support.
             foreach(i;0..4)m.edges~=[base+cast(uint)i,base+cast(uint)((i+1)%4)];m.buildLoops();
         } else {
+            foreach(i,ref p;m.vertices)if(i!=compatibility) {
+                float x,y,z;assert(projectToWindowFull(p,vp,x,y,z));
+                p=point(307.5f+(x-307.5f)/60,300.5f+(y-300.5f)/60,vp);
+            }
             const base=cast(uint)m.vertices.length;
             m.vertices~=[point(306.5f,270.5f,vp),point(306.5f,330.5f,vp)];m.edges~=[base,base+1];
         }
@@ -656,7 +660,10 @@ unittest {
             "MIXED_DISTANCE_PREMISE: supplied winner/paired distances from actual geometry");
         ToolPressPolicy policy;policy.sources=[primary];policy.facing=false;policy.facesDrawn=edge;policy.legacySource=primary;
         policy.legacy=(const(bool)[] v,const(bool)[] e,const(bool)[] f)=>old;
+        const incumbent=toolPressAt(300,300,vp,[primary],false,edge,false);
         const hit=toolPressAt(300,300,vp,policy);
+        writefln("DISTANCE-DATUM class=%s ordinary_class=%s ordinary_index=%s compatibility=%s/%s/%s final=%s/%s",edge?"E":"V",
+            incumbent.kind,incumbent.index,old.distances.vertex,old.distances.edge,old.distances.edgeMid,hit.kind,hit.index);
         assert(hit.kind==(edge?kCascadeEdge:kCascadeVertex) && hit.index==compatibility,
             edge?"MIXED_DISTANCE_DATUM_E: new edge distance preserves final class":"MIXED_DISTANCE_DATUM_V: new vertex distance avoids midpoint veto");
     }
