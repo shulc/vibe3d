@@ -16,7 +16,7 @@
 // holds for the full run only).
 
 import drag_helpers : Vec3, buildDragLog, fetchCamera, playAndWait;
-import http_client : getJson, postJson;
+import http_client : frameFence, getJson, postJson;
 import http_command_helpers : commandBody;
 import pen_rig_helpers;
 import std.algorithm : canFind;
