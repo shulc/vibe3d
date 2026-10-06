@@ -488,15 +488,17 @@ unittest {
 
     assert(fastWake.providerCalls == 0 && coarseWake.providerCalls == 0,
         "5780 deadline service floor: both expired requests must remain unserviced");
-    assert(fastWake.steps == 300 && coarseWake.steps == 18
-        && fastWake.waits >= 300 && coarseWake.waits >= 18
-        && fastWake.returns >= 300 && coarseWake.returns >= 18,
+    assert(fastWake.steps >= 2 && coarseWake.steps >= 2
+        && fastWake.waits >= fastWake.steps && coarseWake.waits >= coarseWake.steps
+        && fastWake.returns >= fastWake.steps
+        && coarseWake.returns >= coarseWake.steps,
         "5780 deadline wake floor: every cadence step must really wake the waiter");
     assert(fastWake.timedOutAt != Duration.max
         && coarseWake.timedOutAt != Duration.max,
         "5780 fixed deadline: repeated wakes must not extend the submit-time deadline");
     // First step at or past the 300 ms budget: 300 x 1 ms and 18 x 17 ms.
-    assert(fastWake.timedOutAt == 300.msecs && coarseWake.timedOutAt == 306.msecs,
+    assert(fastWake.steps == 300 && fastWake.timedOutAt == 300.msecs
+        && coarseWake.steps == 18 && coarseWake.timedOutAt == 306.msecs,
         "5780 fixed deadline: 1 ms versus 17 ms wake cadence changed the "
         ~ "same 300 ms timeout");
     assert(fastWake.replied && coarseWake.replied
