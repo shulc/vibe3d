@@ -138,6 +138,11 @@
 // not name the repository file; the read side uses `import()`, which `-J=tests`
 // resolves in either tree.
 //
+// REGENERATE. `VIBE3D_TOOL_GESTURE_REGENERATE_G7=<scratch output>` retains
+// g7.header.json's curated metadata/provenance and emits this run's live cells.
+// Byte comparison must pass before replacing any fixture. Fresh CAPTURE keeps
+// its own SHA/time and live parameters. Normal comparison also checks regeneration.
+//
 // LANE: `./run_test.d --no-build test_tool_gesture_g7`.
 import http_client : testBaseUrl;
 import http_command_helpers : commandBody;
@@ -166,6 +171,9 @@ alias BASE = testBaseUrl;
 /// lane compiles a scratch COPY of `tests/`, and `-J=tests` resolves this in
 /// both trees while `__FILE_FULL_PATH__` would name the copy.
 enum string kFrozen = import("fixtures/tool_gesture/g7.json");
+
+// Retained metadata only (9514); observations still come from runCell.
+enum string kRegenerationHeader = import("fixtures/tool_gesture/g7.header.json");
 
 /// The one file allowed to write `g7.json`. Asserted against the fixture's own
 /// `writtenBy`, so a second writer has to change the field and be seen.
@@ -553,16 +561,25 @@ string provenanceJson() {
     return s.data;
 }
 
-string fixtureJson(in Cell[] cells) {
+string fixtureJson(in Cell[] cells, bool regenerate = false) {
     auto s = appender!string();
-    s ~= "{\n";
-    s ~= "  \"family\": \"tool_gesture_g7\",\n";
-    s ~= "  \"parameters\": " ~ parametersJson(cells) ~ ",\n";
-    s ~= "  \"writtenBy\": \"" ~ kWrittenBy ~ "\",\n";
-    s ~= "  \"producedBy\": \"" ~ environment.get("VIBE3D_TOOL_GESTURE_SHA", "unknown") ~ "\",\n";
-    s ~= "  \"stand\": \"per-cell; see each cell's `drive`\",\n";
-    s ~= "  \"recipe\": \"" ~ kRecipe ~ "\",\n";
-    s ~= "  \"provenance\": " ~ provenanceJson() ~ ",\n";
+    if (regenerate) {
+        assert(parseJSON(parametersJson(cells))["cells"] ==
+            parseJSON(kRegenerationHeader)["parameters"]["cells"],
+            "g7 regeneration drive differs from retained parameters");
+        // Replace the sidecar's closing brace and newline with the comma
+        // preceding the live observation array; retain its original bytes.
+        s ~= kRegenerationHeader[0 .. $ - 3] ~ ",\n";
+    } else {
+        s ~= "{\n";
+        s ~= "  \"family\": \"tool_gesture_g7\",\n";
+        s ~= "  \"parameters\": " ~ parametersJson(cells) ~ ",\n";
+        s ~= "  \"writtenBy\": \"" ~ kWrittenBy ~ "\",\n";
+        s ~= "  \"producedBy\": \"" ~ environment.get("VIBE3D_TOOL_GESTURE_SHA", "unknown") ~ "\",\n";
+        s ~= "  \"stand\": \"per-cell; see each cell's `drive`\",\n";
+        s ~= "  \"recipe\": \"" ~ kRecipe ~ "\",\n";
+        s ~= "  \"provenance\": " ~ provenanceJson() ~ ",\n";
+    }
     s ~= "  \"cells\": [\n";
     foreach (i, ref c; cells) {
         s ~= "    {\n";
@@ -673,6 +690,11 @@ void scoreCell(const ref Cell fresh, const ref JSONValue frozen) {
     assert(false, msg);
 }
 
+// Shared by staged output and the normal regression path (9514).
+void verifyRegeneration(string generated) {
+    assert(generated == kFrozen, "g7 regeneration differs from frozen bytes");
+}
+
 /// Capture, or compare. `VIBE3D_TOOL_GESTURE_CAPTURE_G7` holds the ABSOLUTE
 /// destination path when capturing.
 void freezeOrCompare(Cell[] cells) {
@@ -681,10 +703,15 @@ void freezeOrCompare(Cell[] cells) {
 
     assert(cells.length > 0, "g7: no cells — the fixture would be empty");
 
-    immutable dest = environment.get("VIBE3D_TOOL_GESTURE_CAPTURE_G7", "");
+    immutable regenerationDest = environment.get("VIBE3D_TOOL_GESTURE_REGENERATE_G7", "");
+    immutable dest = regenerationDest.length ? regenerationDest
+        : environment.get("VIBE3D_TOOL_GESTURE_CAPTURE_G7", "");
     if (dest.length > 0) {
         mkdirRecurse(dirName(dest));
-        write(dest, fixtureJson(cells));
+        auto generated = fixtureJson(cells, regenerationDest.length != 0);
+        write(dest, generated);
+        if (regenerationDest.length)
+            verifyRegeneration(generated);
         return;
     }
 
@@ -708,6 +735,7 @@ void freezeOrCompare(Cell[] cells) {
                  ~ "was reordered", i, fc[i]["name"].str, c.name));
         scoreCell(c, fc[i]);
     }
+    verifyRegeneration(fixtureJson(cells, true));
 }
 
 // ---------------------------------------------------------------------------
@@ -1087,5 +1115,17 @@ unittest {
         },
         { penOff(); });
 
+    // Negative controls: same live observations, but a missing drive record;
+    // and altered/truncated output. Each must flip the named verifier.
+    import core.exception : AssertError;
+    import std.exception : assertThrown;
+    auto droppedDrive = cells.dup;
+    droppedDrive[0].drove = [];
+    assertThrown!AssertError(fixtureJson(droppedDrive, true),
+        "g7 regeneration accepted a dropped drive record");
+    assertThrown!AssertError(verifyRegeneration(kFrozen[0 .. $ - 1]),
+        "g7 verifier accepted dropped bytes");
+    assertThrown!AssertError(verifyRegeneration(" " ~ kFrozen[1 .. $]),
+        "g7 verifier accepted changed bytes");
     freezeOrCompare(cells);
 }
