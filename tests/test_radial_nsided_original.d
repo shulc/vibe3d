@@ -217,3 +217,26 @@ unittest { // Actual reset and mesh-rebuild doors end the original operation win
         cmd("tool.set xfrm.radialAlignTool off");
     }
 }
+
+unittest { // A warm zero-weight member keeps the visible result, not the retained input.
+    auto f=parseJSON(readText("tests/fixtures/radial_nsided_original.json"));
+    auto before=loadOriginal(f);
+    cmd("tool.set xfrm.radialAlignTool on"); attrs(f["cells"][0]);
+    cmd("tool.doApply"); score(f,before,0,"mixed-weight-control");
+    auto first=model();
+    assert(bits(first["vertices"][76][0])!=bits(before["vertices"][76][0]),
+        "mixed-weight zero member must distinguish visible and source positions");
+    attrs(f["cells"][1]);
+    cmd("tool.pipe.attr falloff type linear");
+    cmd("tool.pipe.attr falloff start \"0,0,0\"");
+    cmd("tool.pipe.attr falloff end \"-0.01,0,0\"");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd("tool.doApply");
+    auto after=model();
+    assert(bits(after["vertices"][86][0])!=bits(first["vertices"][86][0]),
+        "mixed-weight positive member must actually apply");
+    foreach(a;0..3)
+        assert(bits(after["vertices"][76][a])==bits(first["vertices"][76][a]),
+            "warm zero-weight member keeps immediate visible result");
+    cmd("tool.set xfrm.radialAlignTool off");
+}
