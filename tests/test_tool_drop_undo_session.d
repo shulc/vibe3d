@@ -394,6 +394,7 @@ unittest { // Two remaining presses: extent is shared, retention is preset data.
     foreach (door; ["navigation", "panel", "command"]) {
         rig("vertex");
         ui("tool.set " ~ id ~ " on");
+        cmd("tool.pipe.attr snap enabled false");
         if (id == "mesh.topoPen") cmd("tool.attr " ~ id ~ " mode 0");
         auto p = worldPixel(Vec3(0, 0, 0));
         dragPx(p, 44, 0);
@@ -434,6 +435,7 @@ unittest { // A restored tool uses the final mesh as its next press basis at eve
     foreach (door; ["navigation", "panel", "command"]) {
         rig("vertex");
         ui("tool.set " ~ id ~ " on");
+        cmd("tool.pipe.attr snap enabled false");
         if (id == "mesh.topoPen") cmd("tool.attr " ~ id ~ " mode 0");
         dragPx(worldPixel(Vec3(0, 0, 0)), 44, 0);
         const first = verts();
@@ -458,9 +460,10 @@ unittest { // A restored tool uses the final mesh as its next press basis at eve
         cmd(commandBody("scene.loadMesh", scene.toString));
         cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));
         ui("tool.set " ~ id ~ " on");
+        cmd("tool.pipe.attr snap enabled false");
         if (id == "mesh.topoPen") cmd("tool.attr " ~ id ~ " mode 0");
         dragPx(worldPixel(atFirst), -44, 0);
         assert(quadGap(continued, verts()) <= 1e-6,
-            format("%s %s restored next press must match a fresh arm's basis", id, door));
+            format("%s %s restored next press must match a fresh arm's basis: %s versus %s", id, door, continued, verts()));
     }
 }

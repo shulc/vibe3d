@@ -3349,3 +3349,50 @@ unittest { // U-RI6 (plan §22.4 P3): the operation's end releases the pinned im
     r.t.discard();
     assert(!r.pinned(), "U-RI6: the operation's end kept the pinned image (endOperation_ releases it)");
 }
+
+unittest {
+    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
+    import commands.mesh.session_edit : MeshSessionEdit;
+    static final class BasisTool : Tool {
+        Mesh* mesh;
+        MeshSnapshot basis;
+        size_t rebases;
+        this(Mesh* target) { mesh = target; basis = MeshSnapshot.capture(*mesh); }
+        override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+            static immutable ToolSessionPolicy p = { activationRow: true, sessionSteps: true };
+            return p;
+        }
+        override void resyncSession() { basis = MeshSnapshot.capture(*mesh); ++rebases; }
+    }
+    foreach (navigation; [false, true]) {
+        Mesh m = makeCube();
+        View v = new View(0, 0, 800, 600);
+        auto original = MeshSnapshot.capture(m);
+        m.vertices[0].x += 1;
+        auto changed = MeshSnapshot.capture(m);
+        Tool active;
+        BasisTool restored;
+        auto history = new CommandHistory();
+        auto session = new EditSession(() => active, history, () { active = null; });
+        auto edit = new MeshSessionEdit(&m, v, EditMode.Vertices, "test.basis", "Basis");
+        edit.setSnapshots(original, changed);
+        edit.markSession(7);
+        auto drop = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "basis", false, false, false, 0, 7, true, false, false, true);
+        drop.setDropUndoPolicy(DropUndoPolicy(DropUndoExtent.wholeSession, DropRedoPopulation.editRows));
+        drop.onActivate = (string id) {
+            restored = new BasisTool(&m);
+            active = restored;
+            session.noteArm(id, 42);
+            assert(restored.basis.matches(m) && !original.matches(m), "completion floor: replay arm sees the unreverted edit");
+        };
+        drop.onCompleteDropUndo = (string id, ulong token) { session.completeDropUndo(id, token); };
+        history.pushEntryForTest(edit);
+        history.pushEntryForTest(drop);
+        assert(navigation ? session.navigate(true) : history.undo(), "drop basis undo succeeds through both doors");
+        assert(original.matches(m) && restored !is null && restored.basis.matches(m),
+            "drop completion rebases the restored tool on the final mesh");
+        assert(restored.rebases == 1, "navigation must not duplicate drop completion rebase");
+        assert(session.sessionStateJson()["token"].integer == 7, "drop completion adopts the restored token");
+        assert(!session.sessionStateJson()["live"].boolean, "drop completion discards live block bookkeeping");
+    }
+}
