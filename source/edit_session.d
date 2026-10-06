@@ -1010,18 +1010,17 @@ private struct ToolSession {
         return r;
     }
 
-    // K-RD rule 3 (RD_DROP_Z0D): the index of the bound tool's own
-    // activation row, when its policy leaves it latent after that row's undo.
+    // K-RD rule 3 (RD_DROP_Z0D): the index of the topmost activation row when
+    // it armed the bound tool and the tool's policy leaves it latent after that
+    // row's undo (a drop row arms nothing).
     private size_t latentArmRow_() {
         import commands.tool.lifecycle : ToolActivationCommand;
         auto t = tool_();
-        if (t is null || t !is bound_ || !t.sessionPolicy().armUndoLeavesToolLatent)
-            return size_t.max;
+        if (t is null || !t.sessionPolicy().armUndoLeavesToolLatent) return size_t.max;
         const ue = history_.undoEntries();
         foreach_reverse (i, ref e; ue)
             if (auto act = cast(const ToolActivationCommand) e.cmd)
-                return !act.dropRow() && act.armedId() == armedId_ &&
-                    act.sessionToken() == token_ ? i : size_t.max;
+                return act.armedId() == armedId_ ? i : size_t.max;
         return size_t.max;
     }
 
@@ -2697,14 +2696,14 @@ private struct ToolSession {
         // Every row the close wrote is the session's (one per operation, e.g.
         // Bevel's Shift-opened ones): the drop's undo takes them all (K-RD rule 2).
         foreach (ref e; ue[first .. $])
-            if (!(e.flags & HistoryFlags.ToolLifecycle) && e.cmd.sessionToken() == 0)
+            if (!(e.flags & HistoryFlags.ToolLifecycle))
                 history_.markEntrySession(e.cmd, closingToken_);
     }
 
     private bool sessionWroteRow_(ulong token) {
         foreach (ref e; history_.undoEntries())
-            if (token != 0 && e.cmd.sessionToken() == token &&
-                !(e.flags & HistoryFlags.ToolLifecycle)) return true;
+            if (e.cmd.sessionToken() == token && !(e.flags & HistoryFlags.ToolLifecycle))
+                return true;
         return false;
     }
 

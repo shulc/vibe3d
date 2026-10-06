@@ -236,11 +236,38 @@ unittest { // Ours, uncaptured (gap row): what forgets the latent tool, and whic
     quiesce();
     assert(quadAtStart() && tool() == "", "a right press does not arm the latent tool");
     latentRig();
+    playAndWait(buildDragLog(c.vpX, c.vpY, c.width, c.height, p[0], p[1], p[0] + 40, p[1], 10, 0, 2));
+    quiesce();
+    assert(quadAtStart() && tool() == "", "a middle press does not arm the latent tool");
+    latentRig();
     playAndWait(buildDragLog(c.vpX, c.vpY, c.width, c.height, p[0], p[1], p[0] + 40, p[1], 10, 1));
     quiesce();
     assert(quadAtStart() && tool() == "", "a Shift press does not arm the latent tool");
     dragPx(p, 40, 0);
     assert(!quadAtStart() && tool() == "move", "the plain press after it still does");
+}
+
+unittest { // Only the undo of the tool's OWN activation row makes it latent
+    // An undo with no transform tool bound: the last armed tool was dropped by
+    // Space (no row), then a selection row is undone.
+    rig("vertex");
+    key(119, 26);
+    key(32, 44);
+    cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
+    undo();
+    dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
+    assert(quadAtStart() && tool() == "", "an undo with no tool bound leaves no latent tool");
+    // An in-session cancel that drops the tool while its activation row stands.
+    rig("vertex");
+    ui("tool.set TransformMove on");
+    cmd("tool.beginSession");
+    cmd("tool.attr TransformMove TX 0.1");
+    assert(!quadAtStart() && depth() == 1, "cancel floor: a live panel edit over the activation row");
+    undo();
+    assert(quadAtStart() && tool() == "" && depth() == 1,
+        "the cancel undoes the edit and drops the tool; its activation row stands");
+    dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
+    assert(quadAtStart() && tool() == "", "a cancel that leaves the activation row leaves no latent tool");
 }
 
 unittest { // Ours, uncaptured (gap row): Space and a type FLIP (geometry or Items) still write no drop row

@@ -149,8 +149,8 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
         flipsSelType_ = true;
         selBefore_ = before;
     }
-    void markRevertsSession() { revertsSession_ = true; }
-    bool revertsSession() const { return dropRow_ && revertsSession_ && previousToken_ != 0; }
+    void markRevertsSession() { revertsSession_ = true; }   // drop rows only (app.d)
+    bool revertsSession() const { return revertsSession_ && previousToken_ != 0; }
     void markDormantTopology() { dormantTopology_ = true; }
     bool dormantTopology() const { return dormantTopology_; }
     bool previousHistoryTopology() const { return previousHistoryTopology_; }

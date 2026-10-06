@@ -181,3 +181,66 @@ unittest { // 0708 — a commit issued from a SUSPENDED context is dropped by BO
         ~ "mutations inside it never reach the user's stack. That is task "
         ~ "0708.");
 }
+
+version (unittest) {
+    // A row of a tool session (`token`) whose revert succeeds; `applied`
+    // false and nothing recorded makes its revert answer false instead.
+    private final class _SessionRowCmd : Command {
+        import mesh     : Mesh;
+        import view     : View;
+        import editmode : EditMode;
+        private Mesh _mesh;
+        private View _view = new View(0, 0, 1, 1);
+        this(ulong token, bool revertible = true) {
+            super(&_mesh, _view, EditMode.Vertices);
+            markSession(token);
+            if (revertible) noteUndoRecorded();
+        }
+        override string name() const { return "test.sessionrow"; }
+        override string label() const { return "SessionRow"; }
+        protected override bool applyImpl() { return true; }
+        protected override void revertImpl() {}
+    }
+}
+
+unittest { // task 9508 (findings_K-RD rule 2): one undo of a session-reverting drop row
+    import mesh : Mesh, makeCube;
+    import view : View;
+    import editmode : EditMode;
+    import commands.tool.lifecycle : ToolActivationCommand;
+    Mesh m = makeCube();
+    View v = new View(0, 0, 800, 600);
+    ToolActivationCommand drop(ulong token) {
+        auto d = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "move", false, false,
+            false, 0, token, true, false, false, true);
+        d.markRevertsSession();
+        return d;
+    }
+    // The drop row takes the session's two rows (to redo, oldest first) and
+    // stops at the activation row, which carries the same token.
+    auto h = new CommandHistory();
+    auto act = new ToolActivationCommand(&m, v, EditMode.Vertices, "move", "", false, false,
+        false, 7);
+    auto r1 = new _SessionRowCmd(7), r2 = new _SessionRowCmd(7);
+    foreach (Command c; [cast(Command) act, r1, r2, drop(7)]) h.pushEntryForTest(c);
+    assert(h.undo() && h.undoEntries().length == 1 && h.undoEntries()[0].cmd is act,
+        "the drop row pops with its session's rows, down to the activation row");
+    assert(h.redoEntries().length == 2 && h.redoEntries()[0].cmd is r1 && h.redoEntries()[1].cmd is r2,
+        "the session's rows go to the redo, oldest first; the drop row does not");
+    // A foreign row (no session) between ends the run: only the drop row pops.
+    h = new CommandHistory();
+    auto foreign = new _SessionRowCmd(0);
+    foreach (Command c; [cast(Command) act, r1, foreign, drop(7)]) h.pushEntryForTest(c);
+    assert(h.undo() && h.undoEntries().length == 3 && h.undoEntries()[$ - 1].cmd is foreign,
+        "a foreign row stops the drop's undo");
+    // A plain row pops alone, even over rows of a session.
+    h = new CommandHistory();
+    foreach (Command c; [cast(Command) r1, r2, new _SessionRowCmd(0)]) h.pushEntryForTest(c);
+    assert(h.undo() && h.undoEntries().length == 2 && h.redoEntries().length == 1,
+        "a row that is no drop row pops alone");
+    // A row whose revert fails: undo answers false, the row is gone, no redo.
+    h = new CommandHistory();
+    foreach (Command c; [cast(Command) r1, new _SessionRowCmd(0, false)]) h.pushEntryForTest(c);
+    assert(!h.undo() && h.undoEntries().length == 1 && h.redoEntries().length == 0,
+        "a refused revert answers false and leaves no redo");
+}
