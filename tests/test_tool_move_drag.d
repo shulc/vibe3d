@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive move-tool drag test (Stage A1 of doc/test_coverage_plan.md).
 //
 // What this exercises end-to-end:
@@ -33,7 +34,8 @@ void main() {}
 
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
-unittest { // X-axis drag of v6 only moves v6 in +X
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // X-axis drag of v6 only moves v6 in +X
     post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
@@ -48,6 +50,7 @@ unittest { // X-axis drag of v6 only moves v6 in +X
     auto pre0 = vertexPos(0);
     auto pre7 = vertexPos(7);
 
+    applyLensControl(controlLens,testBaseUrl());
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
 
@@ -92,7 +95,7 @@ unittest { // X-axis drag of v6 only moves v6 in +X
 
     string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               x0, y0, x1, y1, 20);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     auto post6 = vertexPos(6);
     auto post0 = vertexPos(0);
@@ -119,4 +122,7 @@ unittest { // X-axis drag of v6 only moves v6 in +X
         assert(approx(post7[k], pre7[k], 1e-4),
             "v7 moved on X-arrow drag of v6 (component " ~ k.to!string ~ ")");
     }
+
+    }
+    applyLensControl(defaultLensControl);
 }

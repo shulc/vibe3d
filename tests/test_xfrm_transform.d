@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // XfrmTransformTool headless + interactive drag tests (Steps 2-3
 // of doc/unified_transform_plan.md). Pins the T → R → S chain
 // through `tool.attr xfrm.transform TX/RX/SX ... / tool.doApply`
@@ -233,7 +234,8 @@ unittest { // Toolbar aliases move/rotate/scale use the same full handle banks
     assert(queryCmd("tool.attr scale S ?").type == JSON_TYPE.TRUE);
 }
 
-unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // Interactive: T=1 only, click+drag the X-arrow with v6
            // selected. The composition path dispatches mouse-down to
            // the MoveTool sub-instance which handles the drag as it
            // does on its own. Mirrors test_tool_move_drag.d but via
@@ -244,6 +246,7 @@ unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
     cmd("tool.attr xfrm.transform R false");
     cmd("tool.attr xfrm.transform S false");
 
+    applyLensControl(controlLens);
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
     drag_helpers.Vec3 pivot = drag_helpers.Vec3(0.5f, 0.5f, 0.5f);
@@ -261,7 +264,7 @@ unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
     int y1 = y0 + cast(int)(100.0 * sdy / sLen);
     string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               x0, y0, x1, y1, 20);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     auto verts = dumpVerts();
     double dx = verts[6][0] - 0.5;
@@ -276,6 +279,9 @@ unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
         assert(fabs(verts[0][k] - [-0.5,-0.5,-0.5][k]) < 1e-4,
             "v0 moved on X-only drag of v6");
     }
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 unittest { // Bare Transform: rotate ring dispatches to Rotate, not Move.
@@ -305,7 +311,7 @@ unittest { // Bare Transform: rotate ring dispatches to Rotate, not Move.
     int y1 = y0 - 70;
     string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               x0, y0, x1, y1, 20);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     double[3] centroid = [0, 0, 0];
     foreach (vi; topVerts) {
@@ -364,7 +370,7 @@ unittest { // Bare Transform: scale axis head dispatches to Scale, not Move.
     int y1 = y0;
     string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               x0, y0, x1, y1, 20);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     foreach (i; 0 .. 8) {
         auto p = vertexPos(i);
@@ -402,7 +408,7 @@ unittest { // Bare Transform: rotate then move must not re-apply the rotation.
     string rotLog = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                  cast(int)(cx + 132), cast(int)cy,
                                  cast(int)(cx + 132), cast(int)(cy - 70), 20);
-    playAndWait(rotLog);
+    playAndWaitLensControl(rotLog);
 
     double[3][3] afterRotate;
     foreach (slot, vi; [0, 1, 2])
@@ -421,7 +427,7 @@ unittest { // Bare Transform: rotate then move must not re-apply the rotation.
 
     string moveLog = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                   x0, y0, x1, y1, 20);
-    playAndWait(moveLog);
+    playAndWaitLensControl(moveLog);
 
     double[3] d0;
     auto p0 = vertexPos(0);

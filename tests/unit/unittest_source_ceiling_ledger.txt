@@ -14,7 +14,7 @@
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
 source-files 575
-unittest-blocks 662
+unittest-blocks 666
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -45,7 +45,7 @@ block source/commands/workplane.d 3
 block source/constraint.d 8
 block source/drag.d 13
 block source/drag_identity.d 1
-block source/eventlog.d 12
+block source/eventlog.d 13
 block source/forms.d 29
 block source/frame_stall.d 3
 block source/gl_thread_guard.d 1
@@ -53,6 +53,7 @@ block source/handles/arbiter.d 3
 block source/handles/gizmo_metrics.d 1
 block source/handles/gl_util.d 2
 block source/handles/shapes.d 1
+block source/http_providers.d 1
 block source/http_server.d 3
 block source/image_plane.d 11
 block source/input_frame_state.d 1
@@ -121,6 +122,7 @@ block source/record_observer_hub.d 1
 block source/registry.d 9
 block source/remesh/region_stitch.d 3
 block source/remesh/remesh_job.d 10
+block source/render/render_mvp.d 1
 block source/screen_buckets.d 1
 block source/selection_product.d 4
 block source/snap.d 10
@@ -163,6 +165,7 @@ block source/trackball.d 4
 block source/ui/availability.d 1
 block source/ui/image_rows.d 1
 block source/ui/item_rows.d 2
+block source/ui/viewport_render.d 1
 block source/view.d 26
 block source/viewgrid.d 2
 block source/weightmap_view.d 1

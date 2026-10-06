@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive BoxTool smoke/regression coverage for announcement QA:
 //   1. first click+drag creates a flat base,
 //   2. second click+drag creates height,
@@ -232,7 +233,7 @@ void resetForRotatedWorkplaneBox() {
 
 void dragPixels(int x0, int y0, int x1, int y1, int steps = 16) {
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x0, y0, x1, y1, steps), BASE);
     import core.thread : Thread;
     import core.time : dur;
@@ -246,7 +247,7 @@ void playKeyZ(int mod) {
       ~ `{"t":50.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}` ~ "\n"
       ~ `{"t":60.000,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":%d,"repeat":0}`,
         cam.vpX, cam.vpY, cam.width, cam.height, mod, mod);
-    playAndWait(log, BASE);
+    playAndWaitLensControl(log, BASE);
 }
 
 void playCtrlZ() { playKeyZ(64); }
@@ -280,9 +281,11 @@ Vec3 center() {
     return Vec3(cast(float)qf("cenX"), cast(float)qf("cenY"), cast(float)qf("cenZ"));
 }
 
-unittest { // Box click+drag base, height, handles, and params
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // Box click+drag base, height, handles, and params
     resetForBox();
 
+    applyLensControl(controlLens);
     int cx, cy;
     projectOrDie(Vec3(0, 0, 0), cx, cy, "origin");
 
@@ -360,6 +363,9 @@ unittest { // Box click+drag base, height, handles, and params
     assert(qi("segmentsZ") == 4, "segmentsZ panel write failed");
 
     cmd("tool.set prim.cube off");
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 void assertBaseOnlyCommitCreatesOneCameraFacingPolygon(double elevation) {

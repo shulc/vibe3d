@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Radial-falloff drag test (Stage B3 of doc/test_coverage_plan.md).
 //
 // The plan calls for the two-stage RMB gesture (click → flat disc;
@@ -30,7 +31,8 @@ void main() {}
 
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 
-unittest { // radial falloff: closer-to-center verts move more in a drag
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // radial falloff: closer-to-center verts move more in a drag
     post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
@@ -54,6 +56,7 @@ unittest { // radial falloff: closer-to-center verts move more in a drag
     double[3][8] pre;
     foreach (i; 0 .. 8) pre[i] = vertexPos(i);
 
+    applyLensControl(controlLens,testBaseUrl());
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
 
@@ -76,7 +79,7 @@ unittest { // radial falloff: closer-to-center verts move more in a drag
 
     string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               x0, y0, x1, y1, 20);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     double dy(int i) {
         return vertexPos(i)[1] - pre[i][1];
@@ -109,6 +112,9 @@ unittest { // radial falloff: closer-to-center verts move more in a drag
             "v" ~ i.to!string ~ " (dist √2) moved less than v6 (dist √3): " ~
             dy(i).to!string ~ " < " ~ dy6.to!string);
     }
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 // Task 0066's origin-plane expectation is deliberately superseded, not silently
@@ -246,7 +252,7 @@ unittest { // a falloff handle's centre box is a free handle, the DQ form from t
         immutable int[2] c = worldPixel(Vec3(0.1014f, 0, 0.0513f));
         immutable int[2] p = [c[0] + at[0], c[1] + at[1]];
         auto cam = fetchCamera();
-        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
             p[0], p[1], p[0] + by[0], p[1] + by[1], 12));
         Thread.sleep(dur!"msecs"(200));
         immutable double[3] h = handle();

@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive drag coverage for the Mirror tool's Center handle. Task 0233
 // REMOVED the axis arrows from the Mirror gizmo (reference = 2 boxes + plane,
 // no arrows), so center MOVE now runs only through the center box
@@ -142,7 +143,7 @@ void dragWorldHandle(Vec3 handle, Vec3 axis, double pixels = 80.0, int steps = 1
     int x1 = cast(int)(hx + dx / len * pixels);
     int y1 = cast(int)(hy + dy / len * pixels);
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x0, y0, x1, y1, steps), BASE);
     import core.thread : Thread;
     import core.time : dur;
@@ -161,6 +162,7 @@ void dragWorldHandle(Vec3 handle, Vec3 axis, double pixels = 80.0, int steps = 1
 // ---------------------------------------------------------------------------
 
 unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) {
     resetForMirrorCamera();
 
     // Read the three channels BEFORE the gesture. `resetForMirrorCamera` has
@@ -171,6 +173,7 @@ unittest {
     immutable long   u0           = undoLen();
     immutable size_t v0           = vertexCount();
 
+    applyLensControl(controlLens,BASE);
     auto vp = viewportFromCamera(fetchCamera(BASE));
     float size = gizmoSize(Vec3(0, 0, 0), vp);
     // The former arrowX shaft location — now empty (no arrow handle there),
@@ -200,6 +203,9 @@ unittest {
     Thread.sleep(dur!"msecs"(250));
     assertMirrorCommitted("click-to-place at the former arrow spot",
                           planesBefore, u0, v0);
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +280,7 @@ unittest {
     auto cam = fetchCamera(BASE);
     const int[2] p = worldPixel(Vec3(0, 0, 0));
     void haul(int dx, int dy, int steps) {
-        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                  p[0] + 5, p[1] + 16, p[0] + 5 + dx, p[1] + 16 + dy, steps), BASE);
         import core.thread : Thread;
         import core.time : dur;

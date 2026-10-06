@@ -1535,3 +1535,44 @@ public:
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 }
+
+unittest { // private ViewportSceneRenderer.dotCullFor cache lifetime
+    import view : View;
+    auto v=new Viewport3D(0,0,0,650,544);
+    v.camera.setOrientation(Orientation.fromBasis(Vec3(1,0,0),Vec3(0,1,0),Vec3(0,0,1)));
+    v.camera.distance=4;
+    Mesh m;m.vertices=[Vec3(-1,-1,0),Vec3(1,-1,0),Vec3(1,1,0),Vec3(-1,1,0),
+                       Vec3(2,-1,0),Vec3(2,1,0),Vec3(3,0,0)];
+    m.addFace([0u,1u,2u,3u]);m.addFace([4u,5u,6u]);
+    const model=identityMatrix;
+    const a=v.camera.viewport();v.camera.setFovY(.9026584025557545);const b=v.camera.viewport();
+    const da=visibleDots(m,m.vertices,model,cullEyeOf(a.view,a.proj,a.eye));
+    const db=visibleDots(m,m.vertices,model,cullEyeOf(b.view,b.proj,b.eye));
+    assert(da.slotCount==7 && da.slots==[0u,1u,2u,3u] && db.slots==da.slots,"DOT_CULL_LENS_EQUAL_SLOTS");
+    auto r=new ViewportSceneRenderer;ulong first,second,third,again;
+    v.camera.setFovY(View.defaultFovY);
+    auto vp=v.camera.viewport();
+    auto got=r.dotCullFor(v,m,model,vp,first);
+    auto slots=got.slots.dup;
+    assert(first!=0 && v.dotCullRecomputes==1 && slots==da.slots,"DOT_CULL_LENS_A_FLOOR");
+    version(LensStampLifetimeWitness) {} else {
+        vp=v.camera.viewport();r.dotCullFor(v,m,model,vp,again);
+        assert(again==first && v.dotCullRecomputes==1,"DOT_CULL_LENS_REUSE_A");
+    }
+    v.camera.setFovY(.9026584025557545);
+    vp=v.camera.viewport();got=r.dotCullFor(v,m,model,vp,second);
+    assert(got.slots==slots,"DOT_CULL_LENS_B_EQUAL");
+    assert(v.dotCullRecomputes==2 && second!=first,"DOT_CULL_LENS_RECOMPUTES");
+    vp=v.camera.viewport();r.dotCullFor(v,m,model,vp,again);
+    assert(v.dotCullRecomputes==2 && again==second,"DOT_CULL_SETTLES_AFTER_LENS_STAMP");
+    v.camera.setFovY(View.defaultFovY);
+    vp=v.camera.viewport();r.dotCullFor(v,m,model,vp,third);
+    assert(v.dotCullRecomputes==3 && third!=second,"DOT_CULL_LENS_CONSUMED_ABA");
+    v.camera.setFovY(.9026584025557545);v.camera.setFovY(View.defaultFovY);
+    vp=v.camera.viewport();r.dotCullFor(v,m,model,vp,again);
+    assert(v.dotCullRecomputes==3 && again==third,"DOT_CULL_LENS_UNCONSUMED_ABA");
+    v.camera.setFovY(v.camera.fovY);
+    try v.camera.setFovY(1e-29);catch(Exception){}
+    vp=v.camera.viewport();r.dotCullFor(v,m,model,vp,again);
+    assert(v.dotCullRecomputes==3 && again==third,"DOT_CULL_LENS_REFUSAL_SAME_READ");
+}

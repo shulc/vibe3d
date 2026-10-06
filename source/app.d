@@ -2094,16 +2094,6 @@ void main(string[] args) {
     else Layout layout;
     layout.resize(winW, winH);
 
-    // The editor uses a fixed fovY=45° everywhere (see source/view.d).
-    enum float kFovY = 45.0f * 3.14159265358979f / 180.0f;
-
-    // Now that the viewport is known, attach metadata to the always-on log
-    // so it stays layout/aspect-independent on replay, and tell the player
-    // what the current viewport looks like.
-    if (evLog.active)
-        evLog.writeViewportMeta(layout.vpX, layout.vpY, layout.vpW, layout.vpH, kFovY);
-    setReplayCurrentViewport(layout.vpX, layout.vpY, layout.vpW, layout.vpH, kFovY);
-
     // Phase 1 — camera / ViewCache / picking go global → per-viewport via
     // ViewportManager (source/viewport.d).  Exactly ONE viewport in Phase 1;
     // behaviour is byte-identical to the prior globals.
@@ -2191,6 +2181,16 @@ void main(string[] args) {
         // an out-of-range mask, so this needs no validation.
         g_viewGrid.rungMask = g_prefs.gridStepMask;
     }
+
+    // Publish after per-cell construction/preset seeding. Ortho metadata keeps
+    // the historical placeholder because the journal has no projection kind.
+    float recordingLens() {
+        auto cam = vpm.views[vpm.overlayOwnerId()].camera;
+        return cam.projKind == ProjKind.Ortho ? View.defaultFovY : cam.fovY;
+    }
+    if (evLog.active)
+        evLog.writeViewportMeta(layout.vpX, layout.vpY, layout.vpW, layout.vpH, recordingLens());
+    setReplayCurrentViewport(layout.vpX, layout.vpY, layout.vpW, layout.vpH, recordingLens());
 
     // Nested accessors — ref-returning so member-mutation, ref-param, and
     // address-of (&x()) all bind against the ACTIVE viewport's live fields.
@@ -5287,6 +5287,7 @@ void main(string[] args) {
             // ---- Playback: push due events before polling ----
             if (!scriptedInputHeld) {
                 if (playbackMode) {
+                    setReplayCurrentLens(recordingLens());
                     evPlay.tick();
                 }
             }
@@ -5295,6 +5296,7 @@ void main(string[] args) {
             // in a release/no-http run, where no thread ever posts requests.
             if (httpServer.running) {
                 if (!scriptedInputHeld) {
+                    setReplayCurrentLens(recordingLens());
                     httpServer.tickEventPlayer();
                 }
                 httpServer.tickAll();

@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive drag coverage for the Radial Sweep tool's Start Angle handle.
 //
 // tests/test_fixture_radial_sweep.d drives this tool through parameters only;
@@ -91,7 +92,8 @@ double queryStartAngle() {
     return r["value"].floating;
 }
 
-unittest { // dragging the Start Angle handle moves `startAngle` off zero
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // dragging the Start Angle handle moves `startAngle` off zero
     // NO PRE-DISARM, DELIBERATELY (task 3130). `/api/reset` cancels and DROPS the
     // active tool BEFORE it replaces the geometry, so a gesture left standing by
     // an earlier stand — or by an earlier RED run of this one — cannot commit
@@ -120,6 +122,7 @@ unittest { // dragging the Start Angle handle moves `startAngle` off zero
     immutable long   u0           = undoLen();
     immutable size_t v0           = vertexCount();
 
+    applyLensControl(controlLens,BASE);
     auto cam = fetchCamera(BASE);
     auto vp  = viewportFromCamera(cam);
     Vec3 centre  = Vec3(0.0f, 0.0f, 0.0f);
@@ -154,7 +157,7 @@ unittest { // dragging the Start Angle handle moves `startAngle` off zero
     // constructor (`MeshEditBatch(previewMesh, kRevolveEditScope)`) and this
     // reddens with the per-frame entry count.
     immutable long opLogBefore = busCounter("opLogEntriesRecorded");
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x0, y0, x1, y1, 16), BASE);
     Thread.sleep(dur!"msecs"(120));
     immutable long opLogDuringDrag = busCounter("opLogEntriesRecorded") - opLogBefore;
@@ -220,6 +223,9 @@ unittest { // dragging the Start Angle handle moves `startAngle` off zero
       ~ "changeBus.opLogEntriesRecorded, and it ticked " ~ ctl.to!string
       ~ ". A dead counter passes the drag assertion above for free "
       ~ "(task 1903 §5.8).");
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 unittest { // an axis end writes only the axis, by the free DQ form (K-FH C-RS,
@@ -253,7 +259,7 @@ unittest { // an axis end writes only the axis, by the free DQ form (K-FH C-RS,
         }
         immutable int[2] p = worldPixel(grabbed);
         auto cam = fetchCamera(BASE);
-        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
             p[0], p[1], p[0] + 70, p[1] - 42, 12), BASE);
         Thread.sleep(dur!"msecs"(200));
         immutable double[3] c = vec("center"), a = vec("axis");

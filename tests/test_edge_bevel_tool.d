@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive Edge Bevel width-handle regression.
 //
 // The handle is pressed through its published part-0 anchor, then held across
@@ -35,7 +36,7 @@ void interactiveCmd(string text) {
 void settle() { quiesce(); }
 
 void play(string log) {
-    playAndWait(log, BASE);
+    playAndWaitLensControl(log, BASE);
     settle(); // Let frame-driven tool/preview updates observe the delivered input.
 }
 
@@ -120,11 +121,13 @@ DragSetup armHandle() {
 }
 
 unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) {
     auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectTopFrontEdge();
     long depthBefore = modelDepth();
 
+    applyLensControl(controlLens);
     auto d = armHandle();
     play(button("SDL_MOUSEBUTTONDOWN", 0.0, d.x0, d.y0));
     assert(getJson("/api/tool/state")["dragPart"].integer == 0,
@@ -184,6 +187,9 @@ unittest {
         "one-step and three-step drag previews differ");
     play(button("SDL_MOUSEBUTTONUP", 0.0, one.x1, one.y1));
     cmd("tool.set edge.bevel off");
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 // Two released drags adjust one bevel, and history owns both images while

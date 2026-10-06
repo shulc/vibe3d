@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive drag coverage for the Radial Array tool's Offset handle.
 //
 // tests/test_fixture_radial_array.d and tests/test_mesh_radial_array.d drive
@@ -83,7 +84,8 @@ double queryOffset() {
     return r["value"].floating;
 }
 
-unittest { // dragging the offset arrow moves `offset` off zero
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // dragging the offset arrow moves `offset` off zero
     // NO PRE-DISARM, DELIBERATELY (task 3130). `/api/reset` cancels and DROPS the
     // active tool BEFORE it replaces the geometry, so a gesture left standing by
     // an earlier stand — or by an earlier RED run of this one — cannot commit
@@ -111,6 +113,7 @@ unittest { // dragging the offset arrow moves `offset` off zero
     immutable long   u0           = undoLen();
     immutable size_t v0           = vertexCount();
 
+    applyLensControl(controlLens,BASE);
     auto cam = fetchCamera(BASE);
     auto vp  = viewportFromCamera(cam);
     Vec3 anchor = Vec3(0.0f, 0.0f, 0.0f);
@@ -130,7 +133,7 @@ unittest { // dragging the offset arrow moves `offset` off zero
     int x0 = cast(int) px, y0 = cast(int) py;
     int x1 = cast(int)(px + dx / len * 80.0);
     int y1 = cast(int)(py + dy / len * 80.0);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x0, y0, x1, y1, 16), BASE);
     Thread.sleep(dur!"msecs"(120));
 
@@ -168,4 +171,7 @@ unittest { // dragging the offset arrow moves `offset` off zero
         "the drop recorded " ~ undoDelta.to!string ~ " undo entr(ies), expected "
       ~ "exactly 1 (`mesh.radial_array_edit`, label \"Radial Array\") — 0 means "
       ~ "the gesture left nothing undoable behind it");
+
+    }
+    applyLensControl(defaultLensControl);
 }

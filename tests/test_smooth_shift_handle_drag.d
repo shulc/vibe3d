@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive drag coverage for the Smooth Shift tool's handle drag.
 //
 // tests/test_smooth_shift.d drives this tool entirely through `tool.attr`
@@ -96,7 +97,7 @@ enum long UNDO_DELTA = 3;
 void key(int mod) {
     import core.thread : Thread;
     import core.time   : dur;
-    playAndWait(format(
+    playAndWaitLensControl(format(
         `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}`, mod), BASE);
     Thread.sleep(dur!"msecs"(150));
 }
@@ -122,9 +123,9 @@ void haul(CameraState cam) {
     fetchHandlePart(0, sx, sy, found, BASE);
     assert(found, "Smooth Shift/Thicken lost its offset handle");
     const x = cast(int) sx, y = cast(int) sy;
-    playAndWait(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
+    playAndWaitLensControl(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
     Thread.sleep(dur!"msecs"(150));
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x, y, x, y - 80, 16), BASE);
     Thread.sleep(dur!"msecs"(120));
 }
@@ -158,6 +159,7 @@ void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
     immutable size_t v0           = vertexCount();
     immutable size_t f0           = faceCount();
 
+    reapplyLensControl(BASE);
     auto cam = fetchCamera(BASE);
     auto vp  = viewportFromCamera(cam);
     Vec3 anchor = Vec3(0.0f, 0.5f, 0.0f);
@@ -175,12 +177,12 @@ void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
     assert(len > 1e-6, "the offset axis projects to a point");
 
     int x0 = cast(int) px, y0 = cast(int) py;
-    playAndWait(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x0, y0), BASE);
+    playAndWaitLensControl(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x0, y0), BASE);
     Thread.sleep(dur!"msecs"(150));
 
     int x1 = cast(int)(px + dx / len * 80.0);
     int y1 = cast(int)(py + dy / len * 80.0);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x0, y0, x1, y1, 16), BASE);
     Thread.sleep(dur!"msecs"(120));
 
@@ -294,8 +296,13 @@ void dragCell(string tool, bool thicken) { // both IDs share SmoothShiftTool
 }
 
 unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) {
+    applyLensControl(controlLens);
     dragCell("mesh.smoothShiftTool", false);
     dragCell("mesh.thickenTool", true);
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 // Task 8290 cell B (captured): before the first haul engages the operation, a

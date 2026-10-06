@@ -1,7 +1,7 @@
 module view;
 
 import math;
-import std.math : sqrt, tan, PI;
+import std.math : sqrt, tan, PI, isFinite;
 import std.json : JSONValue, JSONType;
 import trackball : TrackballOption, resolveTrackball, trackballRadius,
                    trackballVector, trackballStep, trackballMouseSpeed,
@@ -102,6 +102,33 @@ bool orientationFromJson(JSONValue v, out Orientation out_) {
 
 // CameraView
 class View {
+    enum float defaultFovY = 45.0f * PI / 180.0f;
+    private float fovY_ = defaultFovY;
+    @property float fovY() const { return fovY_; }
+
+    // One per-cell lens funnel proves positive finite projection coefficients
+    // for every positive signed-int pane (10790; camera_intrinsics_test).
+    static float validatedFovY(double supplied) {
+        import std.exception : enforce;
+        enforce(isFinite(supplied) && supplied > 0 && supplied < PI,
+                "'fovY' must be finite and between zero and PI radians");
+        const narrowed = cast(float)supplied;
+        enforce(isFinite(narrowed) && narrowed > 0 && cast(double)narrowed < PI,
+                "'fovY' is outside the float lens domain");
+        const float tangent = tan(narrowed * 0.5f);
+        const float f = 1.0f / tangent;
+        enum float aMin = cast(float)1 / cast(float)int.max;
+        enum float aMax = cast(float)int.max / cast(float)1;
+        const float horizontalMin = f / aMin;
+        const float horizontalMax = f / aMax;
+        enforce(isFinite(tangent) && tangent > 0 && isFinite(f) && f > 0 &&
+                isFinite(horizontalMin) && horizontalMin > 0 &&
+                isFinite(horizontalMax) && horizontalMax > 0,
+                "'fovY' cannot represent a positive finite projection for all positive panes");
+        return narrowed;
+    }
+    void setFovY(double supplied) { fovY_ = validatedFovY(supplied); }
+
     /// **The camera's rotational truth.** A full 3x3 (see `math.Orientation`),
     /// not three angles: only a matrix can carry a rotation reached by
     /// composing increments about arbitrary axes, and only a matrix is defined
@@ -227,6 +254,7 @@ class View {
         // would round-trip the matrix through the chart three times and leave
         // the default camera a few ulps off the literal default orientation.
         orient_    = Orientation.fromAngles(0.5f, 0.4f, 0.0f);
+        fovY_      = defaultFovY;
         distance   =  3.0f;
         focus      =  Vec3(0, 0, 0);
         projKind   = ProjKind.Perspective;
@@ -640,7 +668,7 @@ class View {
             float aspect = cast(float)width / height;
             localProj = orthographicMatrix(halfH, aspect, 0.001f, 100.0f);
         } else {
-            localProj = perspectiveMatrix(45.0f * PI / 180.0f,
+            localProj = perspectiveMatrix(fovY_,
                                           cast(float)width / height, 0.001f, 100.0f);
         }
         Viewport vp = Viewport(localView, localProj, width, height, x, y, localEye);
@@ -683,13 +711,13 @@ class View {
         o.toAngles(a, e, r);
         return format(
             `{"azimuth":%s,"elevation":%s,"distance":%s,"roll":%s,` ~
-            `"orientation":%s,` ~
+            `"orientation":%s,"fovY":%s,` ~
             `"focus":{"x":%s,"y":%s,"z":%s},` ~
             `"eye":{"x":%s,"y":%s,"z":%s},` ~
             `"width":%d,"height":%d,"vpX":%d,"vpY":%d}`,
             jsonNum(a, "%f"), jsonNum(e, "%f"), jsonNum(d, "%f"),
             jsonNum(r, "%f"),
-            orientationToJson(o),
+            orientationToJson(o), jsonNum(fovY_, "%.9g"),
             jsonNum(f.x, "%f"), jsonNum(f.y, "%f"), jsonNum(f.z, "%f"),
             jsonNum(vp.eye.x, "%f"), jsonNum(vp.eye.y, "%f"),
             jsonNum(vp.eye.z, "%f"),
@@ -706,11 +734,16 @@ class View {
     // independence flags route them to different cells (mirrors task 0217's
     // owner redirect for pan/zoom). With an empty `verts` the out params are
     // left at their default init — callers must guard on `verts.length`.
-    void computeFrame(Vec3[] verts, out Vec3 outFocus, out float outDistance) const
+    void computeFrame(Vec3[] verts, out Vec3 outFocus, out float outDistance) const {
+        computeFrame(verts, outFocus, outDistance,
+                     projKind == ProjKind.Ortho ? defaultFovY : fovY_);
+    }
+
+    void computeFrame(Vec3[] verts, out Vec3 outFocus, out float outDistance,
+                      float framingFovY) const
     {
         if (verts.length == 0) return;
-
-        float fovY = 45.0f * PI / 180.0f;
+        const float fovY = framingFovY;
 
         Vec3 mn = verts[0], mx = verts[0];
         foreach (ref v; verts) {

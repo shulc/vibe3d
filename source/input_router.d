@@ -392,16 +392,11 @@ struct InputRouter {
     EditMode          pendingSelBeforeMode;
     bool              pendingSelOpen = false;
 
-    // The editor uses a fixed fovY=45° everywhere (see source/view.d).
-    // Mirrors main()'s own `kFovY` (app.d, right after `layout.resize` at
-    // init) -- duplicated rather than imported across the
-    // app.d<->input_router.d pair to avoid a fresh circular-import surface for
-    // a single compile-time literal; both copies must change together if the
-    // fixed FOV ever does (view.d itself already repeats the same literal
-    // twice, so this is the SAME pre-existing duplication, not a new one).
-    // Struct-level since step 2a, when `handleKeyDown`'s F1 branch became the
-    // second reader inside this type -- one copy per module, not per handler.
-    enum float kFovY = 45.0f * 3.14159265358979f / 180.0f;
+    float recordingLens() {
+        import view : View, ProjKind;
+        auto cam = app.vpm.views[app.vpm.overlayOwnerId()].camera;
+        return cam.projKind == ProjKind.Ortho ? View.defaultFovY : cam.fovY;
+    }
 
     // Task 0219 window resize (task 0781 relocation). Verbatim body from
     // app.d's main() -- only the free-name resolution changed (main()
@@ -415,9 +410,6 @@ struct InputRouter {
     void handleWindowEvent(ref SDL_WindowEvent we) {
         import eventlog : setReplayCurrentViewport;
         import handles.gl_util : initThickLineProgram;
-        // `kFovY` is the struct-level enum above -- same literal, same value;
-        // it was this handler's own local until step 2a gave it a second
-        // reader (`handleKeyDown`'s F1 branch).
 
         // A release the window never sees must not lock the keyboard.
         // The same for the momentary key's up (task 9470).
@@ -446,7 +438,7 @@ struct InputRouter {
                 initThickLineProgram(thickLineProgram, fbW, fbH);
                 // Keep replay-time pixel remapping calibrated to the new layout.
                 setReplayCurrentViewport(layout.vpX, layout.vpY,
-                                         layout.vpW, layout.vpH, kFovY);
+                                         layout.vpW, layout.vpH, recordingLens());
                 version (web) webConsumedInputMask |= webResizeBit;
             }
         }
@@ -688,7 +680,7 @@ struct InputRouter {
                     recLog.close();
                     recLog.open("recording.jsonl");
                     recLog.writeViewportMeta(layout.vpX, layout.vpY,
-                                             layout.vpW, layout.vpH, kFovY);
+                                             layout.vpW, layout.vpH, recordingLens());
                     logInfo("rec", "started → recording.jsonl");
                     break;
                 case SDLK_F2:

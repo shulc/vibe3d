@@ -163,7 +163,7 @@ uint queryEventStamp() {
 //
 // At record time the logger emits a single VIEWPORT line up front; at replay
 // time the player remaps mouse coordinates from the recorded viewport into
-// the current one. With identical fovY (the editor uses 45° everywhere),
+// the current one. The existing remap assumes identical fovY,
 // only ndc-x changes when aspect changes, and pixel→ndc→pixel round-trips
 // stay accurate.
 // ---------------------------------------------------------------------------
@@ -212,6 +212,10 @@ private __gshared ViewportMeta g_replayCurrentViewport;
 /// Tell the EventPlayer what the runtime viewport looks like right now.
 /// Call from app.d whenever Layout.resize() runs (record-time observers
 /// don't need this — the recorded log carries its own viewport).
+// Refresh only the lens before consumption; rectangle/remap ownership stays
+// at the existing layout door. Unequal-lens remapping is a separate contract.
+void setReplayCurrentLens(float fovY) { g_replayCurrentViewport.fovY = fovY; }
+
 void setReplayCurrentViewport(int vpX, int vpY, int vpW, int vpH, float fovY) {
     g_replayCurrentViewport = ViewportMeta(vpX, vpY, vpW, vpH, fovY, true);
 }
@@ -251,7 +255,7 @@ struct EventLogger {
     void writeViewportMeta(int vpX, int vpY, int vpW, int vpH, float fovY) {
         if (!active) return;
         file.writefln(
-            `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":%.6f}`,
+            `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":%.9g}`,
             vpX, vpY, vpW, vpH, fovY);
         file.flush();
     }
@@ -1109,4 +1113,14 @@ unittest { // EventPlayer.tick: fastForward drains ALL events regardless of nowM
     assert(g_testPushCount == 3);
     assert(p.idx == 3);
     assert(!p.active);
+}
+
+unittest { // private g_replayCurrentViewport lens-only refresh
+    const old=g_replayCurrentViewport;scope(exit)g_replayCurrentViewport=old;
+    setReplayCurrentViewport(150,28,1152,974,.7853982f);
+    setReplayCurrentLens(.902658403f);
+    assert(g_replayCurrentViewport.fovY==.902658403f,"REPLAY_CURRENT_LENS_REFRESH");
+    assert(g_replayCurrentViewport.vpX==150 && g_replayCurrentViewport.vpY==28 &&
+           g_replayCurrentViewport.vpW==1152 && g_replayCurrentViewport.vpH==974 &&
+           g_replayCurrentViewport.valid,"REPLAY_CURRENT_RECTANGLE_RETAINED");
 }

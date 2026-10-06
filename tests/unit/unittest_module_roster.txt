@@ -154,6 +154,8 @@ tests.unit.browser_pick_resume_test
 tests.unit.button_face_test
 tests.unit.bvh_pick_test
 tests.unit.byte_size_test
+tests.unit.camera_intrinsics_test
+tests.unit.camera_intrinsics_wiring_test
 tests.unit.camera_stamp_test
 tests.unit.census_symbols
 tests.unit.change_bus_test
@@ -441,6 +443,7 @@ tests.unit.quad_overlay_eligibility_test
 tests.unit.quit_window_close_guard_test
 tests.unit.registry_construction_authority_test
 tests.unit.removeverts_pointmap_test
+tests.unit.render_camera_intrinsics_wiring_test
 tests.unit.render_ipr_bus_witness_test
 tests.unit.request_result_ownership_test
 tests.unit.retopology_display_model_test

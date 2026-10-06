@@ -14,6 +14,7 @@ class FitSelected : Command {
     // rationale (task 0221). `view` (base-class camera) == scale owner
     // (aspect + distance); `focusCam` receives the framed center.
     private View focusCam;
+    private View framingCam;
     // TASK 1880 — the item-mode arm needs the DOCUMENT, not just the primary
     // mesh: "fit the selection" in Items mode means every selected layer, and
     // each one's geometry sits in ITS OWN local space (the per-item transform
@@ -29,9 +30,10 @@ class FitSelected : Command {
     private Document* doc_;
 
     this(Mesh* mesh, ref View focusCam, ref View scaleCam, EditMode editMode,
-         Document* doc = null) {
+         Document* doc = null, View framingCam = null) {
         super(mesh, scaleCam, editMode);
         this.focusCam = focusCam;
+        this.framingCam = framingCam;
         this.doc_     = doc;
     }
 
@@ -115,7 +117,9 @@ class FitSelected : Command {
         }
         if (verts.length == 0) return true;
         Vec3 c; float d;
-        view.computeFrame(verts, c, d);   // view == scale owner
+        const source = framingCam is null ? view : framingCam;
+        view.computeFrame(verts, c, d,
+            source.projKind == ProjKind.Ortho ? View.defaultFovY : source.fovY);
         focusCam.focus = c;
         view.distance  = d;
         return true;

@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Tests for prim.vertex — interactive single-vertex placement tool.
 //
 // The tool has no headless apply path (interactive only), so these tests
@@ -111,16 +112,18 @@ enum string LOG_HEADER =
 // elevated).  In auto-mode, pickMostFacingPlane returns Z as the dominant
 // axis, so the construction plane is the world XY plane (Z ≈ 0 through origin).
 // ---------------------------------------------------------------------------
-unittest { // 3 clicks → 3 isolated vertices, no faces or edges
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // 3 clicks → 3 isolated vertices, no faces or edges
     resetEmpty();
     setCamera(0.0, 0.2, 3.0);
+    applyLensControl(controlLens);
     activateVertex();
 
     string log = LOG_HEADER ~ "\n"
         ~ clickAt(100, 350, 280) ~ "\n"
         ~ clickAt(200, 430, 280) ~ "\n"
         ~ clickAt(300, 390, 340);
-    playEvents(log);
+    playEvents(matchedLensMetadata(log));
     waitForPlaybackFinish();
     deactivateTool();
 
@@ -134,6 +137,9 @@ unittest { // 3 clicks → 3 isolated vertices, no faces or edges
     assert(m["edges"].array.length == 0,
         "isolation: expected 0 edges, got "
         ~ m["edges"].array.length.to!string);
+    }
+    applyLensControl(defaultLensControl);
+
 }
 
 // ---------------------------------------------------------------------------

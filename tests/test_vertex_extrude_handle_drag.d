@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive drag coverage for the Vertex Extrude tool's handle drag.
 //
 // tests/test_vertex_extrude_tool.d drives this tool entirely through `tool.attr`
@@ -118,7 +119,7 @@ void hover(int x, int y) {
         log ~= format(
             `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n",
             50.0 + i * 20.0, x, y);
-    playAndWait(log, BASE);
+    playAndWaitLensControl(log, BASE);
     Thread.sleep(dur!"msecs"(150));
 }
 
@@ -126,7 +127,7 @@ void drag(int x0, int y0, int x1, int y1, int steps = 16) {
     import core.thread : Thread;
     import core.time   : dur;
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x0, y0, x1, y1, steps), BASE);
     Thread.sleep(dur!"msecs"(120));
 }
@@ -134,13 +135,14 @@ void drag(int x0, int y0, int x1, int y1, int steps = 16) {
 void navigate(bool redo) {
     import core.thread : Thread;
     import core.time : dur;
-    playAndWait(format(
+    playAndWaitLensControl(format(
         `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}`,
         redo ? 65 : 64), BASE);
     Thread.sleep(dur!"msecs"(150));
 }
 
-unittest { // width, then the extrude arrow — and the kernel emits geometry
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // width, then the extrude arrow — and the kernel emits geometry
     import core.thread : Thread;
     import core.time   : dur;
 
@@ -160,6 +162,7 @@ unittest { // width, then the extrude arrow — and the kernel emits geometry
         ~ `"focus":{"x":0,"y":0,"z":0}}`);
     assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
 
+    applyLensControl(controlLens);
     cmd("tool.set " ~ TOOL ~ " on");
     Thread.sleep(dur!"msecs"(250));
 
@@ -225,4 +228,7 @@ unittest { // width, then the extrude arrow — and the kernel emits geometry
     assert(undoLen() - u0 == 2,
         "the drop recorded " ~ (undoLen() - u0).to!string ~ " undo entr(ies), "
         ~ "expected exactly two released gestures and no close-time duplicate");
+
+    }
+    applyLensControl(defaultLensControl);
 }

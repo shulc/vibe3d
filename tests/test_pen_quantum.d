@@ -255,3 +255,24 @@ unittest {
 
     assert(fails.length == 0, fails.join("\n"));
 }
+
+unittest { // explicit perspective lens through real Pen placement and quantum
+    import camera_lens_control_helpers : applyLensControl,defaultLensControl,explicitLensControl;
+    foreach(lens;[defaultLensControl,explicitLensControl]) {
+        assert(postJson("/api/command",commandBody("scene.reset",`{"empty":true}`))["status"].str=="ok");
+        penCommand("history.clear");penCommand("workplane.reset");penCommand("viewport.view Perspective");
+        assert(postJson("/api/camera",`{"focus":{"x":0.07,"y":0,"z":0},"azimuth":0.3,"elevation":1.1,"distance":4}`)["status"].str=="ok");
+        applyLensControl(lens);penCommand("tool.set pen on");
+        const cam=fetchCamera();const grid=liveGrid();
+        const expectedPixel=.8*4/(.5*cam.height/tan(lens*.5));
+        assert(abs(grid[0]-expectedPixel)<1e-6,"PEN_LENS_PIXEL_GAIN");
+        foreach(offset;[[37,-23],[-51,41]]) {
+            const int[2] pixel=[cam.vpX+cam.width/2+offset[0],cam.vpY+cam.height/2+offset[1]];
+            const raw=rawAt(pixel,0);const got=clickRead(pixel);
+            assert(abs(got[1])<1e-4&&abs(got[0]-round(raw[0]/grid[1])*grid[1])<1e-4&&
+                   abs(got[2]-round(raw[1]/grid[1])*grid[1])<1e-4,"PEN_LENS_ACTUAL_PLACEMENT_AND_QUANTUM");
+        }
+        penCommand("tool.set pen off");
+    }
+    applyLensControl(defaultLensControl);
+}

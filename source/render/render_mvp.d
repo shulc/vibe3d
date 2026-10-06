@@ -25,7 +25,7 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 import mesh : Mesh, SubpatchPreview, Surface;
-import view : View;
+import view : View, ProjKind;
 import math : Vec3, Viewport;
 // Modeling-side bus constants and the watcher masks (boundary-safe: render
 // may read modeling, never the reverse).
@@ -152,6 +152,7 @@ private struct PanelState
     float  lastSeenElevation;
     float  lastSeenDistance;
     float  lastSeenRoll;
+    float  lastSeenFovY;
     Vec3   lastSeenFocus;
     int    lastSeenFbW;
     int    lastSeenFbH;
@@ -160,6 +161,7 @@ private struct PanelState
     float  appliedElevation;
     float  appliedDistance;
     float  appliedRoll;
+    float  appliedFovY;
     Vec3   appliedFocus;
     int    appliedFbW;
     int    appliedFbH;
@@ -973,6 +975,7 @@ private bool inputMoving(const(Mesh)* m, View v)
            v.elevation != g.lastSeenElevation ||
            v.distance  != g.lastSeenDistance  ||
            v.roll      != g.lastSeenRoll      ||
+           v.fovY      != g.lastSeenFovY      ||
            v.focus     != g.lastSeenFocus     ||
            g.fbW != g.lastSeenFbW || g.fbH != g.lastSeenFbH;
 }
@@ -987,6 +990,7 @@ private bool needsApply(const(Mesh)* m, View v)
            v.elevation != g.appliedElevation ||
            v.distance  != g.appliedDistance  ||
            v.roll      != g.appliedRoll      ||
+           v.fovY      != g.appliedFovY      ||
            v.focus     != g.appliedFocus     ||
            g.fbW != g.appliedFbW || g.fbH != g.appliedFbH;
 }
@@ -1003,6 +1007,7 @@ private void captureLastSeen(const(Mesh)* m, View v)
     g.lastSeenElevation = v.elevation;
     g.lastSeenDistance  = v.distance;
     g.lastSeenRoll      = v.roll;
+    g.lastSeenFovY      = v.fovY;
     g.lastSeenFocus     = v.focus;
     g.lastSeenFbW       = g.fbW;
     g.lastSeenFbH       = g.fbH;
@@ -1021,6 +1026,7 @@ private void cacheAppliedState(const(Mesh)* m, View v)
     g.appliedElevation = v.elevation;
     g.appliedDistance  = v.distance;
     g.appliedRoll      = v.roll;
+    g.appliedFovY      = v.fovY;
     g.appliedFocus     = v.focus;
     g.appliedFbW       = g.fbW;
     g.appliedFbH       = g.fbH;
@@ -1127,7 +1133,7 @@ private bool updateSceneFromVibe3D(const(Mesh)* m, View v)
     // `view[1]/[5]/[9]` (`view.d`, "Camera BANK" section).
     cd.up     = Vec3(vp.view[1], vp.view[5], vp.view[9]);
     cd.aspect              = cast(float)g.fbW / cast(float)g.fbH;
-    cd.fovRadiansVertical  = 45.0f * cast(float)(PI / 180.0);
+    cd.fovRadiansVertical  = v.projKind == ProjKind.Ortho ? View.defaultFovY : v.fovY;
     cd.nearClip = 0.001f;
     cd.farClip  = 100.0f;
     g.scene.setCamera(cd);
@@ -1267,4 +1273,25 @@ private void setError(string msg)
     g.phase = Phase.error;
     teardownBridge();
     trace("ERROR: " ~ msg);
+}
+
+unittest { // private inputMoving/needsApply/captureLastSeen/cacheAppliedState
+    auto saved = g; scope(exit) g = saved;
+    g = PanelState.init;
+    Mesh m; auto v = new View(0,0,650,544);
+    cacheAppliedState(&m,v);
+    assert(!inputMoving(&m,v) && !needsApply(&m,v),"IPR_LENS_SETTLED_A");
+    v.setFovY(.9026584025557545);
+    assert(inputMoving(&m,v),"IPR_LENS_SEEN_CHANGE");
+    captureLastSeen(&m,v);
+    assert(!inputMoving(&m,v),"IPR_LENS_SEEN_STAMP");
+    assert(needsApply(&m,v),"IPR_LENS_APPLIED_INDEPENDENT");
+    cacheAppliedState(&m,v);
+    assert(!needsApply(&m,v),"IPR_LENS_APPLIED_STAMP");
+    v.setFovY(View.defaultFovY);
+    assert(inputMoving(&m,v) && needsApply(&m,v),"IPR_LENS_CONSUMED_ABA");
+    cacheAppliedState(&m,v);
+    v.setFovY(.9026584025557545);v.setFovY(View.defaultFovY);
+    assert(!inputMoving(&m,v) && !needsApply(&m,v),"IPR_LENS_UNCONSUMED_ABA");
+    v.setFovY(v.fovY);assert(!inputMoving(&m,v)&&!needsApply(&m,v),"IPR_LENS_SAME_VALUE");
 }

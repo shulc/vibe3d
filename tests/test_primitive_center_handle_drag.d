@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // The primitive centre box drags on a viewport-chosen principal world plane,
 // independent of the pinned construction plane used to create the shape.
 
@@ -6,7 +7,7 @@ import http_command_helpers : commandBody;
 import drag_helpers : buildDragLog, fetchCamera, playAndWait;
 import std.format : format;
 import std.json;
-import std.math : abs, sqrt, tan, PI;
+import std.math : abs, sqrt, tan, PI, round;
 
 void main() {}
 
@@ -55,7 +56,7 @@ V3 sizeTriple(string tool) {
 
 void drag(int x0, int y0, int x1, int y1, int steps = 8, uint mod = 0) {
     auto c = fetchCamera(BASE);
-    playAndWait(buildDragLog(c.vpX, c.vpY, c.width, c.height,
+    playAndWaitLensControl(buildDragLog(c.vpX, c.vpY, c.width, c.height,
                              x0, y0, x1, y1, steps, mod), BASE);
 }
 
@@ -152,7 +153,8 @@ bool close(V3 a, V3 b, double eps = 0.04) {
     return abs(a.x-b.x) < eps && abs(a.y-b.y) < eps && abs(a.z-b.z) < eps;
 }
 
-unittest { // (+96,-64) px at 32 px/m, with world XY frozen underneath.
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // (+96,-64) px at 32 px/m, with world XY frozen underneath.
     foreach (tool; ["prim.tube"]) {
         V3[4] actual;
         V3 again;   // face-on, a second drag from where the first ended
@@ -162,6 +164,7 @@ unittest { // (+96,-64) px at 32 px/m, with world XY frozen underneath.
             else                  setOrtho(cell.preset);
             settle();
 
+    applyLensControl(controlLens,BASE);
             auto c = fetchCamera(BASE);
             int cx = c.vpX + c.width / 2;
             int cy = c.vpY + c.height / 2;
@@ -203,8 +206,14 @@ unittest { // (+96,-64) px at 32 px/m, with world XY frozen underneath.
         }
         assert(edgeErrors.length == 0, "edge-on centre drag mismatch: " ~ edgeErrors);
 
-        assert(close(actual[3], cells[3].expected, 1e-4),
-            format("%s %s: expected %s, actual %s", tool, cells[3].name,
-                   cells[3].expected.toString(), actual[3].toString()));
+        const ratio=tan(controlLens*.5)/tan(PI/8.0);
+        assert(.03125*ratio>.025&&.03125*ratio<=.05,"LENS_PRIMITIVE_QUANTUM_BAND");
+        const expected=V3(0,round(2.5*ratio/.05)*.05,round(3.75*ratio/.05)*.05);
+        assert(close(actual[3], expected, 1e-4),
+            format("%s %s lens %s: expected %s, actual %s", tool, cells[3].name,
+                   controlLens, expected.toString(), actual[3].toString()));
     }
+
+    }
+    applyLensControl(defaultLensControl);
 }

@@ -26,11 +26,11 @@ void registerViewportCommands(ref Registry reg, LiveSessionRole owner,
     assert(vpm !is null, "viewport registration requires a ViewportManager");
     reg.registerCommand("viewport.fit", () => cast(Command)
         new Fit(&owner.activeMesh(), vpm.focusOwnerCamera(vpm.activeId),
-                vpm.scaleOwnerCamera(vpm.activeId), live.mode, owner.document()));
+                vpm.scaleOwnerCamera(vpm.activeId), live.mode, owner.document(), vpm.activeCamera()));
     reg.registerCommand("viewport.fit_selected", () => cast(Command)
         new FitSelected(&owner.activeMesh(), vpm.focusOwnerCamera(vpm.activeId),
                         vpm.scaleOwnerCamera(vpm.activeId), live.mode,
-                        owner.document()));
+                        owner.document(), vpm.activeCamera()));
     reg.registerCommand("viewport.view", () => cast(Command)
         new ViewportViewPreset(&owner.activeMesh(), live.view(), live.mode, vpm));
     reg.registerCommand("viewport.layout", () => cast(Command)

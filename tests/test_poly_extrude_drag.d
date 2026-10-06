@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive drag coverage for the Polygon Extrude tool's ON-HANDLE drag.
 //
 // The suite already drove this tool's OFF-handle view-plane haul, but never
@@ -183,7 +184,7 @@ double queryShiftY() {
 
 void navigate(bool undo) {
     const mod = undo ? 64 : 65;
-    playAndWait(format(
+    playAndWaitLensControl(format(
         `{"t":50,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%s,"repeat":0}` ~ "\n"
       ~ `{"t":60,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":%s,"repeat":0}` ~ "\n",
         mod, mod), BASE);
@@ -238,7 +239,7 @@ void setupPoly() {
 void dragHandle(int dx, int steps = 12, int mod = 0, int button = 1) {
     int x, y; handlePx(x, y);
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x + dx, y, steps, mod, cast(ubyte)button), BASE);
     settle();
 }
@@ -253,7 +254,7 @@ void dragFree(int dx, int dy, int steps = 12, int mod = 0, int button = 1,
         int pressX = 896, int pressY = 246) {
     auto cam = fetchCamera(BASE);
     const int x = cam.vpX + pressX, y = cam.vpY + pressY;
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x + dx, y + dy, steps, mod, cast(ubyte)button), BASE);
     settle();
 }
@@ -262,7 +263,8 @@ void tapHandle(int button, int mod = 0) {
     dragHandle(0, 1, mod, button);
 }
 
-unittest { // a purely horizontal drag on the arrow moves `distance`
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // a purely horizontal drag on the arrow moves `distance`
     auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
@@ -292,6 +294,7 @@ unittest { // a purely horizontal drag on the arrow moves `distance`
     immutable long   u0           = undoLen();
     immutable size_t v0           = vertexCount();
 
+    applyLensControl(controlLens,BASE);
     auto cam = fetchCamera(BASE);
     auto vp  = viewportFromCamera(cam);
     Vec3 anchor = Vec3(0.5f, 0.0f, 0.0f);
@@ -312,7 +315,7 @@ unittest { // a purely horizontal drag on the arrow moves `distance`
     // Purely horizontal, in whichever direction grows the projection.
     int x0 = cast(int) px, y0 = cast(int) py;
     int x1 = x0 + (sdx > 0 ? 80 : -80);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x0, y0, x1, y0, 16), BASE);
     Thread.sleep(dur!"msecs"(120));
 
@@ -347,6 +350,9 @@ unittest { // a purely horizontal drag on the arrow moves `distance`
         "the drop recorded " ~ (undoLen() - u0).to!string ~ " undo entr(ies), "
         ~ "expected exactly 1 — `deactivate()` commits only when the tool "
         ~ "built, so 0 here means the whole gesture was a no-op");
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 unittest { // Polygon first group is one activation+topology navigation step.
@@ -543,8 +549,8 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
 
     int x, y; freePx(x, y);
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
-    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
+    playAndWaitLensControl(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x + 37, y - 34, 12), BASE);
     st = getJson("/api/tool/state");
     const dragShiftX = queryShiftX(), dragShiftY = queryShiftY();
@@ -553,7 +559,7 @@ unittest { // Param image -> closed redo -> fresh dormant attr-only adjustment.
         && undoLen() == fresh && st["session"]["live"].type == JSONType.false_,
         format("param-fresh dormant drag lost basis/attrs: mesh=%s shift=(%s,%s)",
             planes() == param, dragShiftX, dragShiftY));
-    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x + 37, y - 34), BASE);
     auto h = getJson("/api/history");
     assert(planes() == param && undoLen() == fresh + 1
@@ -656,8 +662,8 @@ unittest { // Prepared switch closes a held drag once, without a cumulative row.
     const u0 = undoLen();
     int x, y; handlePx(x, y);
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
-    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
+    playAndWaitLensControl(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x + 80, y, 12), BASE);
     const preview = planes();
     assert(preview != initial && vertexCount() == 12,
@@ -665,7 +671,7 @@ unittest { // Prepared switch closes a held drag once, without a cumulative row.
     cmd("tool.set move on");
     assert(planes() == preview && undoLen() == u0 + 2,
         "prepared switch lost the pending Polygon image or duplicated a row");
-    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, x + 80, y), BASE);
+    playAndWaitLensControl(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, x + 80, y), BASE);
     navigate(true);
     navigate(true);
     assert(planes() == initial && vertexCount() == 8 && undoLen() == u0 - 1,
@@ -691,14 +697,14 @@ unittest { // Full closed redo makes a fresh Polygon arm dormant and attr-only.
     const armDist = queryDistance(), armShiftX = queryShiftX(), armShiftY = queryShiftY();
     int x, y; handlePx(x, y);
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
-    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height, x, y), BASE);
+    playAndWaitLensControl(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x + 60, y, 12), BASE);
     auto st = getJson("/api/tool/state");
     assert(planes() == freshImage && undoLen() == fresh
         && st["session"]["live"].type == JSONType.false_,
         "dormant Polygon held drag armed or previewed topology");
-    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, x + 60, y), BASE);
+    playAndWaitLensControl(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height, x + 60, y), BASE);
     auto h = getJson("/api/history");
     assert(planes() == freshImage && undoLen() == fresh + 1
         && h["undo"].array[$ - 1]["command"].str == "tool.topology_adjustment",

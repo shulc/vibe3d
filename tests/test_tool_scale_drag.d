@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive scale-tool drag test (Stage A3 of doc/test_coverage_plan.md).
 //
 // Selects all 8 cube verts (so the entire mesh scales), activates the
@@ -82,7 +83,7 @@ void runScalePlaneDrag(int plane) {
                                             cam.height,
                                             cast(int)cx, cast(int)cy,
                                             80, 0, 20);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     foreach (i; 0 .. 8) {
         auto p = vertexPos(i);
@@ -107,7 +108,8 @@ void runScalePlaneDrag(int plane) {
     }
 }
 
-unittest { // X-axis scale: drag X-arrow → mesh X spreads, Y / Z stay
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // X-axis scale: drag X-arrow → mesh X spreads, Y / Z stay
     post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     // Select all 8 cube verts so the whole mesh participates (ACEN.Auto
@@ -123,6 +125,7 @@ unittest { // X-axis scale: drag X-arrow → mesh X spreads, Y / Z stay
     double[3][8] pre;
     foreach (i; 0 .. 8) pre[i] = vertexPos(i);
 
+    applyLensControl(controlLens,testBaseUrl());
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
 
@@ -162,7 +165,7 @@ unittest { // X-axis scale: drag X-arrow → mesh X spreads, Y / Z stay
 
     string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               x0, y0, x1, y1, 20);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     foreach (i; 0 .. 8) {
         auto p = vertexPos(i);
@@ -183,6 +186,9 @@ unittest { // X-axis scale: drag X-arrow → mesh X spreads, Y / Z stay
         assert((p[0] > 0) == (pre[i][0] > 0),
             "v" ~ i.to!string ~ ".x flipped sign — negative scale factor");
     }
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 unittest { // X-axis scale keeps dragging from relative motion even if x/y stop
@@ -229,7 +235,7 @@ unittest { // X-axis scale keeps dragging from relative motion even if x/y stop
 
     string log = buildPinnedRelativeDragLog(cam.vpX, cam.vpY, cam.width,
                                             cam.height, x0, y0, dx, dy, 20);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     foreach (i; 0 .. 8) {
         auto p = vertexPos(i);
@@ -299,7 +305,7 @@ unittest { // X-axis scale reaches zero with finite reverse drag
 
     string log = buildPinnedRelativeDragLog(cam.vpX, cam.vpY, cam.width,
                                             cam.height, x0, y0, dx, dy, 20);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     foreach (i; 0 .. 8) {
         auto p = vertexPos(i);
@@ -323,7 +329,7 @@ unittest { // centre disc: a press on the pivot and a drag scale all three axes 
     auto vp  = viewportFromCamera(cam);
     float cx, cy;
     assert(projectToWindow(Vec3(0, 0, 0), vp, cx, cy), "pivot projects off-camera");
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              cast(int)cx, cast(int)cy, cast(int)cx + 60, cast(int)cy, 20));
     auto p = vertexPos(6);   // a corner: all three components +-0.5
     immutable f0 = fabs(p[0]) / 0.5, f1 = fabs(p[1]) / 0.5, f2 = fabs(p[2]) / 0.5;

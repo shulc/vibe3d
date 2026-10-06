@@ -1069,3 +1069,39 @@ unittest {
     }
     writeln("  test_retopology_lines_dots: all cells passed");
 }
+
+unittest { // perspective lens-only consumed A/B/A at a stable draw population
+    cmdOk("scene.reset");cmdOk("viewport.view Perspective");
+    cmd("viewport.retopology",`{"value":"on"}`);showVertices(true);settle();
+    auto display(){return getJson("/api/viewport/display");}
+    const population=getJson("/api/layers")["layers"].array.length;
+    assert(population==1,"DOT_LENS_HTTP_ITEM_FLOOR");
+    const mesh=getJson("/api/model");
+    auto start=display();
+    const layers=getJson("/api/layers")["layers"];
+    const bus=getJson("/api/changes");
+    const cell=start["cells"].array[0];
+    assert(jb(cell["renders"])&&!jb(cell["ortho"])&&jb(cell["state"]["retopology"])&&
+           jb(cell["plan"]["active"]["cullHiddenVerts"]),"DOT_LENS_HTTP_ACTUAL_DRAW_PLAN");
+    assert(!jb(getJson("/api/subpatch/preview")["active"]),"DOT_LENS_HTTP_NO_PREVIEW");
+    // Actual cell diagnostics count once per drawn item mesh.
+    auto counter(JSONValue j){return num(j["cells"].array[0]["dotCullRecomputes"]);}
+    foreach(lens;[.9026584025557545,cast(double)cast(float)(45.0f*PI/180.0f)]) {
+        const before=counter(display());
+        assert(postJson("/api/camera",format(`{"fovY":%.17g}`,lens))["status"].str=="ok");settle();
+        assert(counter(display())==before+population,"DOT_LENS_HTTP_CONSUMED_RECOMPUTES");
+        const count=counter(display());settle();
+        assert(counter(display())==count,"DOT_LENS_HTTP_SETTLED");
+        assert(postJson("/api/camera",format(`{"fovY":%.17g}`,lens))["status"].str=="ok");
+        getJson("/api/camera");settle();assert(counter(display())==count,"DOT_LENS_HTTP_SAME_READ");
+        assert(postJson("/api/camera",`{"fovY":1e-29}`)["status"].str=="error");settle();
+        assert(counter(display())==count,"DOT_LENS_HTTP_REFUSAL");
+        assert(getJson("/api/model")["vertices"]==mesh["vertices"],"DOT_LENS_HTTP_NO_MESH_WRITE");
+        assert(getJson("/api/layers")["layers"]==layers,"DOT_LENS_HTTP_STABLE_ITEMS_MODEL_VERSION");
+        const current=display()["cells"].array[0];
+        assert(current["state"]==cell["state"]&&current["plan"]==cell["plan"]&&current["selEpoch"]==cell["selEpoch"],"DOT_LENS_HTTP_STABLE_DISPLAY");
+        const now=getJson("/api/changes");
+        foreach(key;["totalPosition","totalPoints","totalPolygons","totalMarks","totalSelItem","totalLayerVisible"])
+            assert(now[key]==bus[key],"DOT_LENS_HTTP_NO_EPOCH_PUBLICATION "~key);
+    }
+}

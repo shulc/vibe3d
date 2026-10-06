@@ -14,7 +14,7 @@ module lib.drag;
 // this module.
 
 import std.format : format;
-import std.json   : parseJSON;
+import std.json   : parseJSON, JSONValue, JSONType;
 import std.math   : sqrt, tan, PI;
 import std.net.curl : get;
 
@@ -76,12 +76,20 @@ struct Viewport {
 struct CameraState {
     Vec3 eye, focus;
     int width, height, vpX, vpY;
+    float fovY = 45.0f * PI / 180.0f;
+    float[16] viewMatrix, projMatrix;
+    bool hasMatrices;
     // The spherical ELEVATION the app currently holds, in radians. Read-only
     // here and carried purely so a scenario/case that re-aims the camera
     // (`lib.http.setCameraElevation`) can put back what it found instead of
     // guessing the launch default — the camera is process state, and the
     // matrix fields above cannot be posted back to `/api/camera`.
     float elevation = 0;
+}
+
+private double jnum(JSONValue v) {
+    return v.type == JSONType.integer ? cast(double)v.integer
+         : v.type == JSONType.uinteger ? cast(double)v.uinteger : v.floating;
 }
 
 CameraState fetchCamera() {
@@ -98,13 +106,21 @@ CameraState fetchCamera() {
     c.vpX    = cast(int)j["vpX"].integer;
     c.vpY    = cast(int)j["vpY"].integer;
     if ("elevation" in j) c.elevation = cast(float)j["elevation"].floating;
+    c.fovY = cast(float)jnum(j["fovY"]);
+    assert(j["viewMatrix"].array.length == 16 && j["projMatrix"].array.length == 16,
+           "camera: both served matrices have sixteen entries");
+    foreach (i; 0 .. 16) {
+        c.viewMatrix[i] = cast(float)jnum(j["viewMatrix"].array[i]);
+        c.projMatrix[i] = cast(float)jnum(j["projMatrix"].array[i]);
+    }
+    c.hasMatrices = true;
     return c;
 }
 
 Viewport viewportFromCamera(CameraState c) {
     Viewport vp;
-    vp.view   = lookAt(c.eye, c.focus, Vec3(0, 1, 0));
-    vp.proj   = perspectiveMatrix(45.0f * PI / 180.0f,
+    vp.view   = c.hasMatrices ? c.viewMatrix : lookAt(c.eye, c.focus, Vec3(0, 1, 0));
+    vp.proj   = c.hasMatrices ? c.projMatrix : perspectiveMatrix(c.fovY,
                                   cast(float)c.width / c.height, 0.001f, 100.0f);
     vp.width  = c.width;
     vp.height = c.height;

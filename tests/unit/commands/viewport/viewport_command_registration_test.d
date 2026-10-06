@@ -646,3 +646,30 @@ unittest { // U7: the cavity commands (task 9190) reach exactly the addressed ce
     assert(fixture.history.undoEntries().length == depth0,
         "U7: a viewport cavity command (applied or refused) must record no history");
 }
+
+unittest { // initiating lens, historical scale-owner aspect and write targets
+    import view : ProjKind;
+    import std.math : sqrt,tan,PI;
+    foreach(id;["viewport.fit","viewport.fit_selected"]) {
+        auto f=new Fixture;f.registry.bindSelTypeAuthority(LiveSessionRole(f.session));f.registerViewport();f.vpm.activeId=0;
+        auto initiating=f.vpm.views[0].camera;auto scale=f.vpm.views[3].camera;
+        initiating.projKind=ProjKind.Perspective;
+        initiating.setFovY(.9026584025557545);scale.setFovY(1.2);
+        initiating.setSize(1000,100);scale.setSize(200,300);
+        f.layerA.selected=true;f.layerB.selected=true;
+        // Item selection frames the cube and translated octahedron in world space.
+        import seltype : SelType;
+        f.session.selTypeOrder.touch(SelType.Item);
+        f.sentinels();
+        const radius=sqrt(140.25f)*.5f;
+        const expected=radius/(.9f*tan(initiating.fovY*.5f)*(200.0f/300));
+        assert(f.script(id)==CommandInvocationOutcome.applied,"LENS_FIT_FACTORY_APPLIES");
+        assert(fabs(scale.distance-expected)<1e-4,format("LENS_FIT_INITIATING_OWNER_ASPECT id=%s distance=%s expected=%s focus=%s",id,scale.distance,expected,scale.focus));
+        assert(near(scale.focus,Vec3(5.25f,0,0))&&initiating.focus==Vec3(100,0,0)&&initiating.distance==50,
+               "LENS_FIT_HISTORICAL_WRITE_OWNERS");
+        initiating.projKind=ProjKind.Ortho;f.sentinels();
+        const ortho=radius/(.9f*tan(cast(float)(45.0f*PI/180.0f)*.5f)*(200.0f/300));
+        assert(f.script(id)==CommandInvocationOutcome.applied);
+        assert(fabs(scale.distance-ortho)<1e-4,"LENS_FIT_ORTHO_HISTORICAL");
+    }
+}

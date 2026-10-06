@@ -932,7 +932,7 @@ class HttpServer {
     // evaluation touches live mesh vertices.
     private alias PathQueryProvider = string delegate(float t);
     private PathQueryProvider pathQueryProvider;
-    // POST /api/camera — sync bridge to set the live View. Used by
+    // POST /api/camera — partial live View update; optional fovY in radians. Used by
     // the cross-engine drag test to align vibe3d's camera with a
     // reference engine's before replaying a drag through /api/play-events.
     private alias CameraSetHandler = void delegate(JSONValue params);

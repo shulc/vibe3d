@@ -86,6 +86,9 @@ struct Viewport {
 struct CameraState {
     Vec3 eye, focus;
     int width, height, vpX, vpY;
+    float fovY = 45.0f * PI / 180.0f;
+    float[16] viewMatrix, projMatrix;
+    bool hasMatrices;
 }
 
 CameraState fetchCamera(string baseUrl = testBaseUrl()) {
@@ -101,13 +104,21 @@ CameraState fetchCamera(string baseUrl = testBaseUrl()) {
     c.height = cast(int)j["height"].integer;
     c.vpX    = cast(int)j["vpX"].integer;
     c.vpY    = cast(int)j["vpY"].integer;
+    c.fovY = cast(float)jnum(j["fovY"]);
+    assert(j["viewMatrix"].array.length == 16 && j["projMatrix"].array.length == 16,
+           "camera: both served matrices have sixteen entries");
+    foreach (i; 0 .. 16) {
+        c.viewMatrix[i] = cast(float)jnum(j["viewMatrix"].array[i]);
+        c.projMatrix[i] = cast(float)jnum(j["projMatrix"].array[i]);
+    }
+    c.hasMatrices = true;
     return c;
 }
 
 Viewport viewportFromCamera(CameraState c) {
     Viewport vp;
-    vp.view   = lookAt(c.eye, c.focus, Vec3(0, 1, 0));
-    vp.proj   = perspectiveMatrix(45.0f * PI / 180.0f,
+    vp.view   = c.hasMatrices ? c.viewMatrix : lookAt(c.eye, c.focus, Vec3(0, 1, 0));
+    vp.proj   = c.hasMatrices ? c.projMatrix : perspectiveMatrix(c.fovY,
                                   cast(float)c.width / c.height,
                                   0.001f, 100.0f);
     vp.width  = c.width;

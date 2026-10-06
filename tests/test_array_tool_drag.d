@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // THE FIRST RECORD COVERAGE OF `mesh.arrayTool`'s gesture (task 2900).
 //
 // The tool was not uncovered — `tests/test_tool_overlay_item_space.d` block 5
@@ -73,13 +74,14 @@ size_t vertexCount() { return getJson("/api/model")["vertices"].array.length; }
 void navigate(bool redo) {
     import core.thread : Thread;
     import core.time : dur;
-    playAndWait(format(
+    playAndWaitLensControl(format(
         `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}`,
         redo ? 65 : 64), BASE);
     Thread.sleep(dur!"msecs"(150));
 }
 
-unittest { // a free centre haul arrays face 4 and records exactly one entry
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // a free centre haul arrays face 4 and records exactly one entry
     // NO PRE-DISARM, DELIBERATELY (task 3130). `/api/reset` cancels and DROPS the
     // active tool BEFORE it replaces the geometry, so a gesture left standing by
     // an earlier stand — or by an earlier RED run of this one — cannot commit
@@ -121,10 +123,11 @@ unittest { // a free centre haul arrays face 4 and records exactly one entry
     // No handle: the haul is anchored wherever the press lands and feeds
     // `planeDragDelta`, so the press is the viewport centre by construction —
     // the same drive `tests/test_tool_overlay_item_space.d` block 5 uses.
+    applyLensControl(controlLens,BASE);
     auto cam = fetchCamera(BASE);
     immutable int cx = cam.vpX + cam.width / 2;
     immutable int cy = cam.vpY + cam.height / 2;
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              cx, cy, cx + 70, cy - 40, 12), BASE);
     Thread.sleep(dur!"msecs"(200));
 
@@ -163,7 +166,7 @@ unittest { // a free centre haul arrays face 4 and records exactly one entry
 
     immutable string firstImage = planes();
     immutable double firstOffX = attrOf("offX");
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              cx, cy, cx + 70, cy - 40, 12), BASE);
     Thread.sleep(dur!"msecs"(200));
     immutable string secondImage = planes();
@@ -208,6 +211,9 @@ unittest { // a free centre haul arrays face 4 and records exactly one entry
         "after one undo the mesh has " ~ vertexCount().to!string ~ " vertices, "
         ~ "expected the pre-gesture " ~ v0.to!string ~ " — the recorded entry "
         ~ "does not invert the array it claims to own");
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 unittest { // the offset haul (K-FH C-NT-off Array, fixtures K-FH.json KFH_NT_ARRAY):
@@ -239,7 +245,7 @@ unittest { // the offset haul (K-FH C-NT-off Array, fixtures K-FH.json KFH_NT_AR
         Thread.sleep(dur!"msecs"(300));
         immutable int[2] p = worldPixel(Vec3(0.2977f, 0, 0.1979f));
         auto cam = fetchCamera(BASE);
-        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
             p[0], p[1], p[0] + 70, p[1] - 42, 12), BASE);
         Thread.sleep(dur!"msecs"(200));
         immutable double[3] o = [attrOf("offX"), attrOf("offY"), attrOf("offZ")];

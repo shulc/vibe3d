@@ -18,15 +18,17 @@ class Fit : Command {
     // redirect for pan/zoom. `view` (the base-class camera) IS the scale
     // owner — it supplies the aspect for the frame and receives the distance.
     private View focusCam;
+    private View framingCam;
     // TASK 1880 — nullable document, same shape and same reason as
     // `FitSelected`'s: "fit ALL" means the whole SCENE, and a scene is layers.
     // Null keeps the pre-1880 active-layer-only behaviour for bare callers.
     private Document* doc_;
 
     this(Mesh* mesh, ref View focusCam, ref View scaleCam, EditMode editMode,
-         Document* doc = null) {
+         Document* doc = null, View framingCam = null) {
         super(mesh, scaleCam, editMode);
         this.focusCam = focusCam;
+        this.framingCam = framingCam;
         this.doc_     = doc;
     }
 
@@ -65,7 +67,9 @@ class Fit : Command {
         }
         if (verts.length == 0) return true;
         Vec3 c; float d;
-        view.computeFrame(verts, c, d);   // view == scale owner
+        const source = framingCam is null ? view : framingCam;
+        view.computeFrame(verts, c, d,
+            source.projKind == ProjKind.Ortho ? View.defaultFovY : source.fovY);
         focusCam.focus = c;
         view.distance  = d;
         return true;

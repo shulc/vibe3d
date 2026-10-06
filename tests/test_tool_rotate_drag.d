@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive rotate-tool drag test (Stage A2 of doc/test_coverage_plan.md).
 //
 // The X/Y/Z semicircle arcs reorient themselves toward the camera every
@@ -52,7 +53,8 @@ int findTopFace() {
     assert(false, "no top face found in default cube");
 }
 
-unittest { // dragging the view-axis ring rotates top face rigidly
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // dragging the view-axis ring rotates top face rigidly
     post(testBaseUrl() ~ "/api/command", commandBody("scene.reset"));
 
     int topFace = findTopFace();
@@ -76,6 +78,7 @@ unittest { // dragging the view-axis ring rotates top face rigidly
     foreach (i, vi; topVerts) pre[i] = vertexPos(vi);
     auto preBottom0 = vertexPos(0);  // v0 is bottom — must not move
 
+    applyLensControl(controlLens,testBaseUrl());
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
 
@@ -100,7 +103,7 @@ unittest { // dragging the view-axis ring rotates top face rigidly
 
     string log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                               x0, y0, x1, y1, 20);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     auto postBottom0 = vertexPos(0);
     foreach (k; 0 .. 3) {
@@ -136,4 +139,7 @@ unittest { // dragging the view-axis ring rotates top face rigidly
                 dPre.to!string ~ " → " ~ dPost.to!string);
         }
     }
+
+    }
+    applyLensControl(defaultLensControl);
 }

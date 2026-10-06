@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // mesh.clone: a linear generator, then a clone effector. Two direct
 // drags must re-space the same copies and produce two ToolSession steps.
 import http_client : testBaseUrl, getJson, postJson;
@@ -37,7 +38,7 @@ double attrOf(string name) {
 void navigate(bool redo) {
     import core.thread : Thread;
     import core.time : dur;
-    playAndWait(format(
+    playAndWaitLensControl(format(
         `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%d,"repeat":0}`,
         redo ? 65 : 64), BASE);
     Thread.sleep(dur!"msecs"(150));
@@ -74,6 +75,7 @@ void assertLinearCopies() {
 }
 
 unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) {
     import core.thread : Thread;
     import core.time : dur;
     auto r = postJson("/api/command", commandBody("scene.reset"));
@@ -93,11 +95,12 @@ unittest {
     immutable source = planes();
     immutable u0 = undoLen();
     assert(verts().length == 8, "source cube should have 8 vertices");
+    applyLensControl(controlLens,BASE);
     auto cam = fetchCamera(BASE);
     immutable int cx = cam.vpX + cam.width / 2;
     immutable int cy = cam.vpY + cam.height / 2;
     void dragOnce() {
-        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
             cx, cy, cx + 70, cy - 40, 12), BASE);
         Thread.sleep(dur!"msecs"(200));
     }
@@ -131,6 +134,9 @@ unittest {
             ? "the second spacing" : "another image") ~ ")");
     cmd("tool.set " ~ TOOL ~ " off");
     assert(undoLen() == u0 + 1, "drop must not add a history row");
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 unittest { // captured: a 1.2 per-copy X scale grows each successive copy by 20%
@@ -152,7 +158,7 @@ unittest { // captured: a 1.2 per-copy X scale grows each successive copy by 20%
     auto cam = fetchCamera(BASE);
     immutable int cx = cam.vpX + cam.width / 2;
     immutable int cy = cam.vpY + cam.height / 2;
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         cx, cy, cx + 70, cy - 40, 12), BASE);
     auto v = verts();
     assert(v.length == 20, "scaled clone must still create three copies");
@@ -190,7 +196,7 @@ unittest { // the offset haul is a free handle, quantised (K-H3 H3_NT): top orth
     immutable double[3] o0 = [attrOf("offX"), attrOf("offY"), attrOf("offZ")];
     auto cam = fetchCamera(BASE);
     immutable int cx = cam.vpX + cam.width / 2, cy = cam.vpY + cam.height / 2;
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         cx, cy, cx + 70, cy - 42, 12), BASE);
     Thread.sleep(dur!"msecs"(200));
     immutable double[3] d = [attrOf("offX") - o0[0], attrOf("offY") - o0[1],

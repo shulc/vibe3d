@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive Flex move-handle drag regression test.
 //
 // Bug (pre-fix): in Flex mode (`xfrm.flex`: axis.mode=select,
@@ -161,10 +162,12 @@ double[3] movedCentroid(double[3][] pre, double[3][] now) {
 }
 
 unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) {
     // ---- scene: level-2 Catmull-Clark cube, upper-region face patch ----
     postJson("/api/command", commandBody("scene.reset", `{"type":"subdivcube","levels":2}`));
     postJson("/api/camera", `{"azimuth":0.785,"elevation":0.6,"distance":3.2}`);
 
+    applyLensControl(controlLens);
     // Select every face whose centroid sits in the upper region
     // (y > -0.35). This is a PARTIAL set with a deep interior (the
     // moving verts) and an anchored boundary ring — exactly the Flex
@@ -280,4 +283,7 @@ unittest {
         ~ " at step " ~ (jumpAt + 1).to!string
         ~ " — the gizmo frame re-oriented mid-drag (frozen-frame fix regressed)."
         ~ "\n increments: " ~ inc.to!string);
+
+    }
+    applyLensControl(defaultLensControl);
 }

@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive drag coverage for the Edge Extrude tool's ON-HANDLE drag.
 //
 // tests/test_undo_tracker_extrude.d already drives this tool through real
@@ -117,7 +118,7 @@ void handlePx(int part, out int x, out int y) {
 
 void drag(int x0, int y0, int x1, int y1, int steps = 12) {
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x0, y0, x1, y1, steps), BASE);
     import core.thread : Thread;
     import core.time   : dur;
@@ -126,7 +127,7 @@ void drag(int x0, int y0, int x1, int y1, int steps = 12) {
 
 void navigate(bool undo) {
     const mod = undo ? 64 : 65;
-    playAndWait(format(
+    playAndWaitLensControl(format(
         `{"t":50,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%s,"repeat":0}` ~ "\n"
       ~ `{"t":60,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":%s,"repeat":0}` ~ "\n",
         mod, mod), BASE);
@@ -154,7 +155,7 @@ void setupEdge() {
 
 void rightClick(int x, int y) {
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x, y, 1, 0, 3), BASE);
 }
 
@@ -174,7 +175,8 @@ int findEdgeXPosZNeg() {
     return -1;
 }
 
-unittest { // width, then a horizontal haul on the extrude arrow, and the tool builds
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // width, then a horizontal haul on the extrude arrow, and the tool builds
     auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
@@ -225,8 +227,9 @@ unittest { // width, then a horizontal haul on the extrude arrow, and the tool b
 
     // A motionless Middle press clones the current operation on the selected
     // ridge. It is a row of its own and its undo restores the prior group.
+    applyLensControl(controlLens,BASE);
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         ex, ey, ex, ey, 1, 0, 2), BASE);
     immutable string middleImage = planes();
     assert(middleImage != secondImage,
@@ -301,6 +304,9 @@ unittest { // width, then a horizontal haul on the extrude arrow, and the tool b
         "the extrude added no vertex (still " ~ v0.to!string ~ ")");
     assert(undoLen() - u0 == 2,
         "outside z2 must leave the two handle rows");
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 unittest { // A foreign UiState row must beat completed-step cancel handling.
@@ -348,7 +354,7 @@ unittest { // A zero Middle boundary has its own cursor despite equal images.
     immutable long u0 = undoLen();
     int x, y; handlePx(0, x, y);
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x, y, 1, 0, 2), BASE);
     assert(planes() == image, "zero Middle changed mesh image");
     assert(undoLen() == u0 + 1, "zero Middle omitted cursor row");
@@ -437,7 +443,7 @@ unittest { // A recording UI command closes after Middle without a carrier row.
     drag(x, y, x - 40, y);
     immutable string first = planes();
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x, y, 1, 0, 2), BASE);
     immutable string middle = planes();
     assert(middle != first && undoLen() == u0 + 2,
@@ -481,16 +487,16 @@ unittest { // A close while a drag is held records its pending image once.
     immutable long u0 = undoLen();
     int x, y; handlePx(1, x, y);
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y), BASE);
-    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x - 40, y, 12), BASE);
     immutable string preview = planes();
     assert(preview != initial, "held-drag fixture did not build a preview");
     cmd("tool.set move on");
     assert(planes() == preview && undoLen() == u0 + 2,
         "mid-gesture close lost the pending Edge image or duplicated a row");
-    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x - 40, y), BASE);
     navigate(true);
     navigate(true);
@@ -528,15 +534,15 @@ unittest { // Full closed redo leaves a fresh Edge activation dormant.
     immutable double armWidth = getJson("/api/tool/state")["width"].floating;
     handlePx(1, x, y);
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y), BASE);
-    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x - 40, y, 12), BASE);
     auto st = getJson("/api/tool/state");
     assert(planes() == rearmed && undoLen() == fresh &&
         st["session"]["live"].type == JSONType.false_,
         "dormant Edge held drag armed or previewed topology before release");
-    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x - 40, y), BASE);
     assert(planes() == rearmed && undoLen() == fresh + 1,
         "dormant Edge drag must add one attr-only row without moving mesh");
@@ -733,16 +739,16 @@ unittest { // Explicit drop while held must preserve its single pending row.
     immutable long u0 = undoLen();
     int x, y; handlePx(1, x, y);
     auto cam = fetchCamera(BASE);
-    playAndWait(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragDownLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y), BASE);
-    playAndWait(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragMotionLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x, y, x - 40, y, 12), BASE);
     immutable string preview = planes();
     assert(preview != initial, "held explicit-drop fixture has no preview");
     cmd("tool.set " ~ TOOL ~ " off");
     assert(planes() == preview && undoLen() == u0 + 1,
         "explicit drop discarded pending image or appended duplicate row");
-    playAndWait(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragUpLog(cam.vpX, cam.vpY, cam.width, cam.height,
         x - 40, y), BASE);
     navigate(true);
     // The drop folded the begin row (task 9210, S5b) and the held row into one group:

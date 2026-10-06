@@ -828,6 +828,18 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
 // wireViewportProviders — `/api/camera` (both verbs), `/api/gpu/face-vbo`,
 // `/api/viewport/display`, `/api/viewport/probe`, `/api/pick`,
 // `/api/surface-raycast` — everything that answers about a CELL.
+private double cameraLensParam(JSONValue n) {
+    double lens;
+    switch(n.type) {
+        case JSONType.integer:  lens=cast(double)n.integer;break;
+        case JSONType.uinteger: lens=cast(double)n.uinteger;break;
+        case JSONType.float_:   lens=n.floating;break;
+        default:throw new Exception("'fovY' must be a number");
+    }
+    View.validatedFovY(lens);
+    return lens;
+}
+
 private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                                    InputFrameState ifs,
                                    ref string[] optionalSlots) {
@@ -1693,6 +1705,11 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 if (_v >= 0 && _v < vpm.cellCount) _vidx = _v;
             }
             ref View targetCam = vpm.views[_vidx].camera;
+            // Lens preflight precedes every legacy pose/size write (10790).
+            double lens = targetCam.fovY;
+            if ("fovY" in p) {
+                lens = cameraLensParam(p["fovY"]);
+            }
             float floatFrom(string field, float def) {
                 if (field !in p) return def;
                 auto n = p[field];
@@ -1748,6 +1765,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                                        comp("y", targetCam.focus.y),
                                        comp("z", targetCam.focus.z));
             }
+            if ("fovY" in p) targetCam.setFovY(lens);
             // Optional viewport resize.
             if ("width" in p && "height" in p) {
                 targetCam.setSize(
@@ -2749,5 +2767,16 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
                 "command 'layer.add' did not apply");
         });
         }
+    }
+}
+
+unittest { // private cameraLensParam preflight numeric representations
+    import std.exception : assertThrown;
+    foreach(n;[JSONValue(cast(long)1),JSONValue(cast(ulong)2),JSONValue(.9026584025557545)]) {
+        assert(cameraLensParam(n)>0&&cameraLensParam(n)<3.141592653589793,"HTTP_TYPED_NUMERIC_LENS");
+    }
+    foreach(n;[JSONValue(cast(long)0),JSONValue(cast(ulong)0),JSONValue(double.nan),JSONValue(double.infinity),
+               JSONValue(true),JSONValue("1"),JSONValue(null),JSONValue(1e-29)]) {
+        assertThrown(cameraLensParam(n),"HTTP_TYPED_INVALID_LENS");
     }
 }

@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive drag coverage for the Vertex Bevel tool's handle drag.
 //
 // tests/test_vertex_bevel_tool.d drives this tool entirely through `tool.attr`
@@ -99,7 +100,8 @@ string buildHoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
         vpX, vpY, vpW, vpH, x, y);
 }
 
-unittest { // dragging the inset arrow moves `inset` off zero
+unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) { // dragging the inset arrow moves `inset` off zero
     auto r = postJson("/api/command", commandBody("scene.reset"));
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
@@ -126,6 +128,7 @@ unittest { // dragging the inset arrow moves `inset` off zero
     immutable long   u0           = undoLen();
     immutable size_t v0           = vertexCount();
 
+    applyLensControl(controlLens);
     auto cam = fetchCamera(BASE);
     auto vp  = viewportFromCamera(cam);
     Vec3 anchor = Vec3(0.5f, 0.5f, 0.5f);
@@ -144,7 +147,7 @@ unittest { // dragging the inset arrow moves `inset` off zero
     assert(len > 1e-6, "the inset axis projects to a point");
 
     int x0 = cast(int) px, y0 = cast(int) py;
-    playAndWait(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x0, y0), BASE);
+    playAndWaitLensControl(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x0, y0), BASE);
     Thread.sleep(dur!"msecs"(150));
 
     int x1 = cast(int)(px + dx / len * 80.0);
@@ -160,7 +163,7 @@ unittest { // dragging the inset arrow moves `inset` off zero
     // something here.
     auto cBefore = parseJSON(cast(string) get(BASE ~ "/api/changes"));
 
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x0, y0, x1, y1, 16), BASE);
     Thread.sleep(dur!"msecs"(120));
 
@@ -208,14 +211,14 @@ unittest { // dragging the inset arrow moves `inset` off zero
         ~ "never popped, so every later commit on this mesh defers forever and "
         ~ "the app silently stops publishing (plan §2.2c).");
 
-    playAndWait(format(
+    playAndWaitLensControl(format(
         `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}`), BASE);
     Thread.sleep(dur!"msecs"(150));
     assert(vertexCount() == v0,
         "Vertex Bevel first undo must restore the pre-gesture topology");
     assert(abs(queryInset()) < 1e-6,
         "Vertex Bevel remains armed with zero Inset after first undo");
-    playAndWait(format(
+    playAndWaitLensControl(format(
         `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":65,"repeat":0}`), BASE);
     Thread.sleep(dur!"msecs"(150));
     assert(vertexCount() == v1,
@@ -226,9 +229,9 @@ unittest { // dragging the inset arrow moves `inset` off zero
         "first released Vertex Bevel gesture must own one row");
 
     const firstMesh = getJson("/api/model");
-    playAndWait(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x0, y0), BASE);
+    playAndWaitLensControl(buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, x0, y0), BASE);
     Thread.sleep(dur!"msecs"(150));
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+    playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x0, y0, x1, y1, 16), BASE);
     Thread.sleep(dur!"msecs"(120));
     const secondMesh = getJson("/api/model");
@@ -237,12 +240,12 @@ unittest { // dragging the inset arrow moves `inset` off zero
            && secondMesh["vertices"].toString != firstMesh["vertices"].toString
            && secondInset > after,
         "second Vertex Bevel gesture must adjust the same topology");
-    playAndWait(format(
+    playAndWaitLensControl(format(
         `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}`), BASE);
     Thread.sleep(dur!"msecs"(150));
     assert(getJson("/api/model")["vertices"].toString == firstMesh["vertices"].toString,
         "undo of second Vertex Bevel gesture restores the first image");
-    playAndWait(format(
+    playAndWaitLensControl(format(
         `{"t":0.000,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":65,"repeat":0}`), BASE);
     Thread.sleep(dur!"msecs"(150));
     assert(getJson("/api/model")["vertices"].toString == secondMesh["vertices"].toString
@@ -261,4 +264,7 @@ unittest { // dragging the inset arrow moves `inset` off zero
     assert(undoLen() - u0 == 2,
         "the released gesture recorded " ~ (undoLen() - u0).to!string
         ~ " undo entries, expected two completed gestures");
+
+    }
+    applyLensControl(defaultLensControl);
 }

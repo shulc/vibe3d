@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Interactive Poly Bevel handle-drag coverage.
 //
 // The poly.bevel TOOL's interactive mouse drag had ZERO test coverage — every
@@ -160,6 +161,7 @@ unittest {
 // dragging the box TOWARD the center grows inset (cap shrinks) — inverted from a
 // naive axis drag — and the box FOLLOWS the cursor inward.
 unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) {
     auto reset = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.reset", `{"type":"cube"}`)));
     assert(reset["status"].str == "ok", "cube reset failed");
     selectFaceZero();
@@ -175,6 +177,7 @@ unittest {
         cen = cen + Vec3(cast(float)v[0].floating, cast(float)v[1].floating, cast(float)v[2].floating);
     }
     cen = cen * (1.0f / cast(float)f0.length);
+    applyLensControl(controlLens);
     auto vp = viewportFromCamera(fetchCamera(BASE));
     float ax, ay;
     assert(projectToWindow(cen, vp, ax, ay), "face centroid projects off camera");
@@ -204,6 +207,9 @@ unittest {
 
     play(button("SDL_MOUSEBUTTONUP", tx, ty));
     cmd("tool.set poly.bevel off");
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 // Free 2D drag OFF the handles: click empty space + drag → vertical is shift

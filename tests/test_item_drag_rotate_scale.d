@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Task 0614 Phase 3 — the item apply path, Rotate + Scale banks.
 //
 // Mirrors test_item_drag_move.d for the other two banks: a gesture must
@@ -107,6 +108,7 @@ unittest {
 // -----------------------------------------------------------------------
 
 unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) {
     resetCube();
     cmd("layer.attr 0 pos.x -1.5");
     cmd("layer.attr 0 pivot.x 0.25");
@@ -119,6 +121,7 @@ unittest {
 
     post(BASE ~ "/api/script", "tool.set scale");
 
+    applyLensControl(controlLens);
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
     // World pivot == pos.x + pivot.x == -1.25 here.
@@ -129,7 +132,7 @@ unittest {
     int y1 = gy + cast(int)(45.0 * uy);
 
     auto log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, gx, gy, x1, y1);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     post(BASE ~ "/api/script", "tool.set scale off");
 
@@ -150,4 +153,7 @@ unittest {
     assert(preVerts == postVerts,
         "scale apply must leave mesh.vertices byte-identical — "
         ~ "/api/model?layer=0 changed");
+
+    }
+    applyLensControl(defaultLensControl);
 }

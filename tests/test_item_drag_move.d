@@ -1,3 +1,4 @@
+import camera_lens_control_helpers;
 // Task 0614 Phase 3 — the item apply path, Move bank.
 //
 // In Item mode, a Move gizmo drag must write the LAYER's `ItemXform.pos`,
@@ -59,6 +60,7 @@ Vec3 layerPos(int layer = 0) {
 // -----------------------------------------------------------------------
 
 unittest {
+    foreach(controlLens;[defaultLensControl,explicitLensControl]) {
     resetCube();
     cmd("select.typeFrom item");  // 9511 (K-CD4): layer.select never changes the type
     cmd("layer.select index:0");
@@ -73,6 +75,7 @@ unittest {
 
     post(BASE ~ "/api/script", "tool.set move");
 
+    applyLensControl(controlLens);
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
     Vec3 pivot = Vec3(0, 0, 0);   // the item's world pivot == pos+pivot == (0,0,0) here
@@ -82,7 +85,7 @@ unittest {
     int y1 = gy + cast(int)(60.0 * uy);
 
     auto log = buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, gx, gy, x1, y1);
-    playAndWait(log);
+    playAndWaitLensControl(log);
 
     post(BASE ~ "/api/script", "tool.set move off");
 
@@ -99,6 +102,9 @@ unittest {
         ~ "BYTE-IDENTICAL — /api/model?layer=0 changed after a Move drag "
         ~ "(the apply path wrote mesh.vertices instead of, or in addition "
         ~ "to, layer.xform.pos)");
+
+    }
+    applyLensControl(defaultLensControl);
 }
 
 // -----------------------------------------------------------------------
