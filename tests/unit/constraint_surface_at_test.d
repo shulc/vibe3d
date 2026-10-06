@@ -339,12 +339,17 @@ unittest {
     // Propagated binary32 projection/ray error, capture ray residual 8.1e-8.
     assert((guided.valuesWorld-Vec3(.00826900759f,.5456922998f,.8359350448f)).length<2e-6f,
         format("ORBIT_GUIDE_P: continuous projected U on original facets; got %s",guided.valuesWorld));
+    cs.offset=.1f;const shifted=cs.componentGuide(u,vp);
+    assert((shifted.valuesWorld-guided.valuesWorld-Vec3(.0865356558f,.4696283286f,.8786130054f)*.1f).length<2e-6f,"ORBIT_GUIDE_OFFSET: decoded offset/normal operation follows the surface query");
+    cs.offset=0;
     HandleDrag grab;const h=Vec3(-.1f,.3f,.9486833215f);grab.press(h,0,0);bool skip;
     scope resolve=(Vec3 input){return cs.componentGuide(input,vp);};
     const first=grab.client(4,0,DragFrame(DragKind.viewPlane),vp,skip,resolve)-h;
     assert((first-Vec3(.00285084405f,.00596616715f,-.01110023379f)).length<2e-6f,"ORBIT_GUIDE_FIRST: first accepted motion elects Z");
     const delta=grab.client(70,0,DragFrame(DragKind.viewPlane),vp,skip,resolve)-h;
     assert((delta-Vec3(.1082690091f,.2456922878f,-.1127482767f)).length<2e-6f,"ORBIT_GUIDE_DELTA: accepted mask subtracts raw H");
+    import std.stdio : writefln;
+    writefln("ORBIT-GUIDE-P U=%s P=%s mask=%s first_delta=%s final_delta=%s",u,guided.valuesWorld,guided.acceptedMask,first,delta);
     const placed=cs.pass(h+Vec3(0,0,delta.z),vp);
     assert((placed-Vec3(-.1092237979f,.3284087181f,.9295859933f)).length<2e-6f,"ORBIT_GEOMETRY: separate nearest pass consumes H+Z offset");
     const ordinary=cs.guideEnvironment(false,vp);
@@ -356,8 +361,10 @@ unittest {
     cs.geom=ConstrainGeom.Point;
     auto ortho=orthoRig();const orthoOn=cs.guideEnvironment(true,ortho);
     assert(!orthoOn.supported()&&cs.componentGuide(u,orthoOn).acceptedMask==0,"ORTHO_GEOMETRY_ON: preserve old recast scope");
-    cs.handle=false;assert(cs.componentGuide(u,vp).acceptedMask==0,"ORBIT_HANDLE_OFF: same hittable guide declines");
-    cs.handle=true;cs.enabled=false;assert(cs.componentGuide(u,vp).acceptedMask==0,"ORBIT_DISABLED: same hittable guide declines");
+    version (GuideMissFocused) {} else {
+        cs.handle=false;assert(cs.componentGuide(u,vp).acceptedMask==0,"ORBIT_HANDLE_OFF: same hittable guide declines");
+        cs.handle=true;cs.enabled=false;assert(cs.componentGuide(u,vp).acceptedMask==0,"ORBIT_DISABLED: same hittable guide declines");
+    }
     cs.enabled=true;assert(cs.componentGuide(Vec3(20,20,.71f),vp).acceptedMask==0,"ORBIT_MISS: real miss never accepts mask7");
     import math : translationMatrix;
     const shift=Vec3(2,-3,4);auto local=background;

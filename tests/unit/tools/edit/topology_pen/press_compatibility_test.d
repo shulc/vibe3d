@@ -716,7 +716,7 @@ unittest {
     import toolpipe.packets : ConstrainGeom;
     import snap : setBackgroundSnapSources, backgroundSourcesFull;
     import view : View;
-    import math : Orientation, translationMatrix;
+    import math : Orientation, translationMatrix, orthographicMatrix;
     import drag : HandleDrag, DragFrame, DragKind;
     import bvh_pick : SurfaceHit;
     import std.file : readText;
@@ -790,4 +790,21 @@ unittest {
         ++population;
     }
     assert(population==7,"PEN_GUIDE_POPULATION: positive plus six independent exclusions");
+    auto ortho=viewport();ortho.proj=orthographicMatrix(300.0f/440.0f,800.0f/600.0f,.01f,100);ortho.width=800;ortho.height=600;ortho.focus=Vec3(0,0,0);
+    Mesh plane;plane.vertices=[Vec3(-2,-.005f,-2),Vec3(2,-.005f,-2),Vec3(2,-.005f,2),Vec3(-2,-.005f,2)];plane.faces=[[0u,3u,2u,1u]];
+    setBackgroundSnapSources([cast(const(Mesh)*)&plane],[ModelSpace.world()]);
+    cs.geom=ConstrainGeom.Off;cs.enabled=true;cs.handle=true;pen.moveAxisLock_=true;
+    const orthoH=Vec3(.272742241f,0,.297731015f);Vec3 oldOff,newOff;bool perspectiveAccepted;
+    assert(pen.grabOffset(orthoH,70,-42,ortho,oldOff));
+    assert(abs(oldOff.x-.157257759f)<1e-6f&&abs(oldOff.y+.0048828125f)<1e-6f,"PEN_ORTHO_INHERITED: five-argument client retains captured ortho provider");
+    assert(pen.grabOffset(orthoH,70,-42,ortho,newOff,perspectiveAccepted,true));
+    assert(!perspectiveAccepted&&(newOff-oldOff).length<1e-6f,"PEN_ORTHO_ACCEPTANCE: orthographic guide does not change vertex publication policy");
+    import document : ItemXform, primaryModelSpaceResolver;
+    ItemXform transform;transform.pos=Vec3(.3f,0,.2f);transform.rot=Vec3(0,90,0);transform.scl=Vec3(2,3,.5f);
+    const space=transform.modelSpace();const savedSpace=primaryModelSpaceResolver;scope(exit)primaryModelSpaceResolver=savedSpace;
+    primaryModelSpaceResolver=()=>space;
+    setBackgroundSnapSources([cast(const(Mesh)*)&background],[ModelSpace.world()]);cs.geom=ConstrainGeom.Point;
+    const localH=space.toLocalPoint(h);Vec3 localOff;bool localAccepted;
+    assert(pen.grabOffset(localH,70,0,vp,localOff,localAccepted,true),"PEN_TRANSFORMED_MAP: actual source frame translates");
+    assert(localAccepted&&(space.toWorldPoint(localH+localOff)-h-Vec3(.1082690091f,.2456922878f,-.1127482767f)).length<2e-6f,"PEN_TRANSFORMED_GUIDE: raw world guide round-trips to primary local");
 }
