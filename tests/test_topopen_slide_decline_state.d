@@ -1,4 +1,4 @@
-// Topology Pen — WHY a Ctrl+LMB Slide press did not arm, over
+// Topology Pen — WHY an Edge Slide option press did not arm, over
 // `/api/tool/state` (doc/tasks/work/0482-topopen-move-nonvertex.md item 3
 // follow-up).
 //
@@ -60,13 +60,13 @@ string viewportLine(int vpX, int vpY, int vpW, int vpH) {
                   vpX, vpY, vpW, vpH);
 }
 
-/// A Ctrl-held LEFT button DOWN with no partner — probes the arm decision.
+/// A plain LEFT button DOWN with Edge Slide enabled with no partner — probes the arm decision.
 string optionDown(double t, int px, int py) {
     return format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,`
                 ~ `"clicks":1,"mod":%u}`, t, px, py, OPTION_MODS);
 }
 
-string ctrlUp(double t, int px, int py) {
+string optionUp(double t, int px, int py) {
     return format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,`
                 ~ `"clicks":1,"mod":%u}`, t, px, py, OPTION_MODS);
 }
@@ -158,7 +158,7 @@ unittest {
         "a pick miss resolved no edge, so it must report no declined seed");
     assert(s1["slideArmed"].type == JSONType.false_, "a pick miss must not arm Slide");
 
-    postJson("/api/play-events", vpl ~ "\n" ~ ctrlUp(20.0, mx, my) ~ "\n");
+    postJson("/api/play-events", vpl ~ "\n" ~ optionUp(20.0, mx, my) ~ "\n");
     waitPlayerIdle();
 
     // --- CASE 2: the CONTRACT DECLINE -> "no_continuation", and the resolved
@@ -184,7 +184,7 @@ unittest {
     assert(cast(int)s2["slideSeed"].integer == -1,
         "`slideSeed` keeps its ARMED-gesture meaning and must stay -1 on a decline");
 
-    postJson("/api/play-events", vpl ~ "\n" ~ ctrlUp(20.0, ix, iy) ~ "\n");
+    postJson("/api/play-events", vpl ~ "\n" ~ optionUp(20.0, ix, iy) ~ "\n");
     waitPlayerIdle();
 
     assert(vertexCountLayer(0) == 6 && edgeCountLayer(0) == 7 && faceCountLayer(0) == 2,
@@ -221,7 +221,7 @@ unittest {
 
     // Release at the SAME pixel — a zero-delta no-op — and the reason must
     // still read "none" (the release path neither sets nor clears it).
-    postJson("/api/play-events", vpl ~ "\n" ~ ctrlUp(20.0, ax, ay) ~ "\n");
+    postJson("/api/play-events", vpl ~ "\n" ~ optionUp(20.0, ax, ay) ~ "\n");
     waitPlayerIdle();
 
     auto s4 = getJson("/api/tool/state");

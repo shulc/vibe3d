@@ -1,7 +1,7 @@
 // Topology Pen P7 — slide_drag (Tier-C, best-effort HTTP,
 // doc/topopen_p7_slide_plan.md "Testing Strategy").
 //
-// Ctrl+LMB-drags an edge of a 2-quad "domino" fixture (SAME topology as the
+// Plain LMB with Edge Slide enabled drags an edge of a 2-quad "domino" fixture (SAME topology as the
 // P5 removeFaceAt domino rig: F0=[0,1,2,3], F1=[1,4,5,2] sharing edge 1-2)
 // through the real event-log/dispatch path. Vertex valence is engineered so
 // the SAME fixture exercises both cases the plan pins:
@@ -41,8 +41,8 @@
 // Still asserted unchanged: colinearity to the endpoint's OWN incident edge,
 // zero topology delta, polygon-continuation rail at the valence-3 hub,
 // held-fixed on the ambiguous interior edge, and exact undo restoration.
-// Uses an OPTION_MODS-hold-around-LMB-drag chord (same fragility P5/P6 flagged for
-// their own MMB chords).
+// Uses plain LMB with the Edge Slide option. These domino expectations retain
+// the existing port regression; the exact option law remains open in gap 627.
 //
 // Run via: ./run_test.d topopen_slide_drag
 

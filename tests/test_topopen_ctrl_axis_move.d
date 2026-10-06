@@ -10,7 +10,7 @@
 import drag_helpers : Vec3, Viewport, dot, fetchCamera, kPaceLine, playAndWait, projectToWindow,
     viewportFromCameraMatrices;
 import pen_rig_helpers : penCameraAt, penCommand, penSceneEmpty, readVerts;
-import http_client : postJson;
+import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
 import std.algorithm : canFind;
 import std.array : split;
@@ -67,12 +67,20 @@ private int[2] rig(const double[3][4] quad, Vec3 h, bool transformed = false,
     }
     penCommand("viewport.view Top");
     penCameraAt(h, kPpm);
+    penCommand(preset ? "tool.set mesh.dragWeld on" : "tool.set mesh.topoPen on");
+    penCommand("tool.attr mesh.topoPen mode move");
     penCommand("tool.pipe.attr constrain enabled " ~ (constraint ? "true" : "false"));
     penCommand("tool.pipe.attr constrain geometry off");
     penCommand("tool.pipe.attr constrain handle true");
-    penCommand(preset ? "tool.set mesh.dragWeld on" : "tool.set mesh.topoPen on");
-    penCommand("tool.attr mesh.topoPen mode move");
     penCommand(`tool.pipe.attr snap types ""`);
+    size_t cons;
+    foreach (stage; getJson("/api/toolpipe")["stages"].array) if (stage["task"].str == "CONS") {
+        assert(stage["attrs"]["enabled"].str == (constraint ? "true" : "false") &&
+               stage["attrs"]["geometry"].str == "off" && stage["attrs"]["handle"].str == "true",
+               "rig: effective constraint policy after tool activation matches the cell");
+        ++cons;
+    }
+    assert(cons == 1, "rig: exactly one constraint policy read");
     Viewport vp = viewportFromCameraMatrices();
     float px, py;
     assert(projectToWindow(h, vp, px, py), "rig: the grab point must project");

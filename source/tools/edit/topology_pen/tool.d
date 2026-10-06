@@ -4048,9 +4048,9 @@ public:
         return ms.toLocalPoint(aW + kW) - moveAnchor_;
     }
 
-    // The shared free translator consumes the gated ortho component guide
-    // before world-axis election (9528, K-DW2/GUIDE_PRECISION_10660). Accepted
-    // coordinates use the raw grab anchor; no guide retains q(H+T)-q(H).
+    // Ctrl-axis Move with geometry OFF consumes the gated ortho component
+    // guide before world-axis election (9528, K-DW2/GUIDE_PRECISION_10660).
+    // Ordinary Move and geometry ON retain their captured recast route.
     package bool grabOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
                             out Vec3 offLocal) {
         const ms = primaryModelSpace();
@@ -4058,13 +4058,15 @@ public:
         grab.press(ms.toWorldPoint(anchorLocal), 0, 0);
         bool skip;
         auto cs = liveConstrainStage();
-        import drag : ComponentGuide;
-        scope guide = (Vec3 u) { return cs is null ? ComponentGuide.init : cs.componentGuide(u, vp); };
+        import drag : ComponentGuideResolver;
+        import math : lockedViewAxis;
+        const guidedRoute = moveAxisLock_ && cs !is null && cs.geom == ConstrainGeom.Off
+            && lockedViewAxis(vp) >= 0;
+        scope ComponentGuideResolver guide;
+        if (guidedRoute) guide = (Vec3 u) { return cs.componentGuide(u, vp); };
         Vec3 toW = grab.client(dx, dy, DragFrame(DragKind.viewPlane), vp, skip, guide);
         if (skip) return false;
-        // Preserve the existing non-axis-view path pending its guide producer capture.
-        import math : lockedViewAxis;
-        if (lockedViewAxis(vp) < 0) {
+        if (!guidedRoute) {
             float qx, qy, qz;
             Vec3 hitW;
             if (projectToWindowFull(toW, vp, qx, qy, qz) && backgroundRayHit(qx, qy, vp, hitW)) toW = hitW;

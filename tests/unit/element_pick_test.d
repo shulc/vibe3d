@@ -163,6 +163,27 @@ unittest {
     assert(secondary.kind == kCascadeEdge && secondary.source == 1 && secondary.owner.mesh is &up, "press-source: secondary foreground retains source identity");
     assert(toolPressAt(xy[0], xy[1], vp, [ToolPressSource(&empty, ms, 10)], true, true, true).kind == -1,
            "press-source: excluded background is not queried");
+    Mesh cover;
+    cover.vertices = [Vec3(-2, 1, -2), Vec3(2, 1, -2), Vec3(2, 1, 2), Vec3(-2, 1, 2)];
+    cover.faces = [cast(uint[])[0, 3, 2, 1]];
+    cover.buildLoops();
+    const centre = at(Vec3(0, 0, 0));
+    const covered = [ToolPressSource(&cover, ms), ToolPressSource(&up, ms)];
+    assert(toolPressAt(centre[0], centre[1], vp, covered, true, false, false).kind == kCascadeVertex,
+           "press-occlusion: no depth policy admits a front vertex behind a surface");
+    assert(toolPressAt(centre[0], centre[1], vp, covered, true, true, false).kind == -1,
+           "press-occlusion: admitted foreground surface hides the lower vertex");
+    reverse(cover.faces[0]); cover.buildLoops();
+    const throughBack = toolPressAt(centre[0], centre[1], vp, covered, true, true, false);
+    assert(throughBack.kind == kCascadeVertex && throughBack.owner.mesh is &up,
+           "press-occlusion: cull facing before depth so the lower front candidate survives");
+    foreach (fi; 0 .. up.faces.length) up.setFaceHidden(fi, true);
+    assert(!toolPressFaceAdmitted(up, 0, ms, vp, false) &&
+           !toolPressEdgeAdmitted(up, interior, ms, vp, false) &&
+           !toolPressVertexAdmitted(up, 4, ms, vp, false),
+           "press-hidden: facing bypass does not admit hidden geometry");
+    assert(toolPressAt(xy[0], xy[1], vp, [ToolPressSource(&up, ms)], false, false, true).kind == -1,
+           "press-hidden: hidden source supplies no component or polygon candidate");
 }
 
 unittest {
