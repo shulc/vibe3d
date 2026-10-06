@@ -9955,6 +9955,7 @@ unittest {
     }
     // Query admission and this tool's bound mesh are independent identities.
     import hover_state : ToolPressSource, toolPressSourcesResolver;
+    import mesh : makeGridPlane;
     import std.algorithm : reverse;
     auto secondary = makeGridPlane(2);
     foreach (ref face; secondary.faces) reverse(face);
