@@ -239,7 +239,8 @@ void cmd(string line) {
 //       Ctrl+Z #2 pops the first gesture (v6 back to the run baseline ==
 //                 post-run-A, count +1 -> floor, tool LIVE);
 //       Ctrl+Z #3 consumes run B's arm record without changing geometry;
-//       Ctrl+Z #4 pops committed run A (v6 back to the pristine cube).
+//       Ctrl+Z #4 pops run A's drop row with run A (v6 back to the pristine
+//                 cube, move re-armed; K-RD CD_Q_TM, task 9508).
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
@@ -402,7 +403,8 @@ unittest {
     assert(undoCount() == committedFloor,
         "Ctrl+Z #3 must remove exactly the surfaced run-B arm row");
 
-    // Ctrl+Z #4 now reaches committed run A and restores the pristine corner.
+    // Ctrl+Z #4 now reaches run A's drop row: it pops WITH committed run A (K-RD
+    // CD_Q_TM, task 9508), restores the pristine corner and re-arms move.
     playAndWait(ctrlZ(80.0));
     settle();
     auto v6Popped = vert(6);
@@ -412,9 +414,11 @@ unittest {
         "Ctrl+Z #4 must pop the committed run A (v6 back to (0.5,0.5,0.5)); got ("
         ~ v6Popped[0].to!string ~ "," ~ v6Popped[1].to!string ~ "," ~
         v6Popped[2].to!string ~ ")");
-    assert(undoCount() == committedFloor - 1,
-        "Ctrl+Z #4 pops exactly one committed entry; expected " ~
-        (committedFloor - 1).to!string ~ " got " ~ undoCount().to!string);
+    assert(undoCount() == committedFloor - 2,
+        "Ctrl+Z #4 pops run A's drop row with its one committed entry; expected " ~
+        (committedFloor - 2).to!string ~ " got " ~ undoCount().to!string);
+    assert(getJson("/api/input/context")["tool"].toString == `"move"`,
+        "Ctrl+Z #4 re-arms the dropped tool (K-RD CD_Q_TM)");
 
     postJson("/api/script", "tool.set move off");
     settle();
@@ -485,30 +489,23 @@ unittest {
     // coalesced panel deltas) as ONE entry. Total == 2.
     postJson("/api/script", "tool.set move off");
     settle();
-    assert(undoCount() == stackBefore + 2,
+    assert(undoCount() == stackBefore + 3,
         "gizmo run + relocate + coalesced panel edits + drop => exactly TWO " ~
-        "entries; got " ~ (undoCount() - stackBefore).to!string);
+        "run entries and the drop row (K-RD CD_Q_TM); got " ~
+        (undoCount() - stackBefore).to!string);
 
-    // Ctrl+Z #1 pops the post-boundary run (gizmo-relocated + panel deltas):
-    // geometry back to the post-run-1 position.
+    // Ctrl+Z #1 undoes the drop with the whole session — run 1 and the
+    // post-boundary run (gizmo-relocated + panel deltas) — and re-arms move
+    // (K-RD CD_Q2_TM, task 9508).
     postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6Undo1 = vert(6);
-    assert(fabs(v6Undo1[0] - v6AfterRun1[0]) < 1e-3 &&
-           fabs(v6Undo1[1] - v6AfterRun1[1]) < 1e-3 &&
-           fabs(v6Undo1[2] - v6AfterRun1[2]) < 1e-3,
-        "Ctrl+Z #1 should pop the whole post-boundary run (back to post-run-1); "
+    assert(fabs(v6Undo1[0] - 0.5) < 1e-3 &&
+           fabs(v6Undo1[1] - 0.5) < 1e-3 &&
+           fabs(v6Undo1[2] - 0.5) < 1e-3 &&
+           getJson("/api/input/context")["tool"].toString == `"move"`,
+        "Ctrl+Z #1 should revert the whole session and re-arm (K-RD CD_Q2_TM); "
         ~ "got (" ~ v6Undo1[0].to!string ~ "," ~ v6Undo1[1].to!string ~ "," ~
         v6Undo1[2].to!string ~ ")");
-
-    // Ctrl+Z #2 pops run 1: geometry back to the pristine cube corner.
-    postJson("/api/command", commandBody("history.undo"));
-    settle();
-    auto v6Undo2 = vert(6);
-    assert(fabs(v6Undo2[0] - 0.5) < 1e-3 &&
-           fabs(v6Undo2[1] - 0.5) < 1e-3 &&
-           fabs(v6Undo2[2] - 0.5) < 1e-3,
-        "Ctrl+Z #2 should pop run 1 (back to the cube corner); got (" ~
-        v6Undo2[0].to!string ~ "," ~ v6Undo2[1].to!string ~ "," ~
-        v6Undo2[2].to!string ~ ")");
+    assert(fabs(v6AfterRun1[0] - 0.5) > 1e-2, "floor: run 1 moved v6");
 }

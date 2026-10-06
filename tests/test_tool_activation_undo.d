@@ -3,19 +3,18 @@
 // Two interactive Move gizmo gestures, EACH bracketed by tool.set move /
 // tool.set move off, drive the production path:
 //   * the gesture's mouse-up records a snapshot-based in-session geometry entry;
-//   * each tool arm emits a lifecycle record; drop consolidates the run but
-//     owns no additional lifecycle step. The arm record is visible in
-//     /api/history and also counted by /api/undo/status.toolLifecycleCount.
+//   * each tool arm emits a lifecycle record; the drop consolidates the run and
+//     writes ONE drop row (K-RD CD_Q_TM, task 9508). Both rows are visible in
+//     /api/history and counted by /api/undo/status.toolLifecycleCount.
 //
-// Resulting surfaced stack after both gestures (undo count = 4 new entries):
-//   [ArmA(lifecycle), geomA(Model), ArmB(lifecycle), geomB(Model)]
+// Resulting surfaced stack after both gestures (undo count = 6 new entries):
+//   [ArmA, geomA, DropA, ArmB, geomB, DropB]  (Arm/Drop are lifecycle rows)
 //
-// Undo sequence (the headline contract this task pins):
-//   undo₁ → geomB reverts (v6 back to post-gesture-A position).
+// Undo sequence (K-RD rule 2, CD_Q_TM / CD_Q2_TM_z2):
+//   undo₁ → DropB with geomB (v6 back to post-gesture-A), move re-armed.
 //   undo₂ → ArmB lifecycle step, geometry no-op.
-//   undo₃ → geomA reverts (v6 back to the cube baseline).
+//   undo₃ → DropA with geomA (v6 back to the cube baseline), move re-armed.
 //   undo₄ → ArmA lifecycle step, geometry no-op.
-// Redo round-trip walks the same steps in reverse and restores both gestures.
 //
 // Gizmo gestures drive the MAIN loop via drag_helpers.buildDragLog +
 // /api/play-events with the mandatory ~120ms post-playback settle. Verify-and-
@@ -163,11 +162,11 @@ unittest {
     postJson("/api/script", "tool.set move off");
     settle();
 
-    assert(undoCount() == floor + 2,
-        "after gesture A + drop: floor+2 surfaced entries; floor=" ~ floor.to!string
-        ~ " got " ~ undoCount().to!string);
-    assert(lifecycleCount() == 1,
-        "after gesture A + drop: 1 lifecycle entry; got " ~ lifecycleCount().to!string);
+    assert(undoCount() == floor + 3,
+        "after gesture A + drop: floor+3 surfaced entries (arm, geometry, drop row; "
+        ~ "K-RD CD_Q_TM); floor=" ~ floor.to!string ~ " got " ~ undoCount().to!string);
+    assert(lifecycleCount() == 2,
+        "after gesture A + drop: 2 lifecycle entries (arm + drop); got " ~ lifecycleCount().to!string);
 
     // --- Gesture B: drag, then DROP (consolidate run B + emit lifecycle) ---
     postJson("/api/script", "tool.set move");
@@ -177,18 +176,20 @@ unittest {
     postJson("/api/script", "tool.set move off");
     settle();
 
-    assert(undoCount() == floor + 4,
-        "after gesture B + drop: floor+4 surfaced entries; floor=" ~ floor.to!string
+    assert(undoCount() == floor + 6,
+        "after gesture B + drop: floor+6 surfaced entries; floor=" ~ floor.to!string
         ~ " got " ~ undoCount().to!string);
-    assert(lifecycleCount() == 2,
-        "after gesture B + drop: 2 lifecycle entries; got " ~ lifecycleCount().to!string);
+    assert(lifecycleCount() == 4,
+        "after gesture B + drop: 4 lifecycle entries; got " ~ lifecycleCount().to!string);
 
-    // --- undo₁: revert geomB (v6 -> afterA) ---
+    // --- undo₁: drop B with geomB (v6 -> afterA), move re-armed (K-RD CD_Q_TM) ---
     postJson("/api/command", commandBody("history.undo"));
     settle();
-    assert(vertNear(vert(6), afterA),
-        "undo₁ should revert geomB to afterA; got " ~ vert(6).to!string
-        ~ " want " ~ afterA.to!string);
+    assert(vertNear(vert(6), afterA) && lifecycleCount() == 3,
+        "undo₁ should revert geomB to afterA with drop B; got " ~ vert(6).to!string
+        ~ " want " ~ afterA.to!string ~ ", lifecycle " ~ lifecycleCount().to!string);
+    assert(getJson("/api/input/context")["tool"].toString == `"move"`,
+        "undo₁ re-arms move (K-RD CD_Q_TM)");
 
     // Arm B is now the tail. Strict LIFO makes undo₂ consume that lifecycle
     // record without touching geomA; the former two-press geometry contract
@@ -205,12 +206,12 @@ unittest {
     assert(lifecycleCount() == beforeArmBStep - 1,
         "undo₂ must consume exactly one lifecycle entry");
 
-    // undo₃ now reaches geomA and restores the original geometry.
+    // undo₃ now reaches drop A with geomA and restores the original geometry.
     postJson("/api/command", commandBody("history.undo"));
     settle();
-    assert(vertNear(vert(6), base),
-        "undo₃ should revert geomA to baseline; got " ~ vert(6).to!string
-        ~ " want " ~ base.to!string);
+    assert(vertNear(vert(6), base) && lifecycleCount() == 1,
+        "undo₃ should revert geomA to baseline with drop A; got " ~ vert(6).to!string
+        ~ " want " ~ base.to!string ~ ", lifecycle " ~ lifecycleCount().to!string);
     assert(canUndoLifecycle(), "undo₄ must see the remaining arm-A lifecycle tail");
     auto beforeStep = lifecycleCount();
     postJson("/api/command", commandBody("history.undo"));

@@ -412,14 +412,15 @@ unittest {
     assert(undoCount() == committedFloor,
         "the lifecycle step must remove exactly the surfaced run-B arm row");
 
-    // Ctrl+Z #3 now reaches run A and restores the cube corner.
+    // Ctrl+Z #3 now reaches run A's drop row: it pops WITH run A (K-RD CD_Q_ROT,
+    // task 9508) and restores the cube corner.
     playAndWait(ctrlZ(70.0));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "the THIRD Ctrl+Z pops the prior committed rotate run A (back to cube)");
-    assert(undoCount() == committedFloor - 1,
-        "the third Ctrl+Z pops exactly one committed entry; expected "
-        ~ (committedFloor - 1).to!string ~ " got " ~ undoCount().to!string);
+    assert(undoCount() == committedFloor - 2,
+        "the third Ctrl+Z pops run A's drop row with its committed entry; expected "
+        ~ (committedFloor - 2).to!string ~ " got " ~ undoCount().to!string);
 
     cmd("tool.set TransformRotate off");
     settle();
@@ -491,8 +492,8 @@ unittest {
     // Task 8530: DROP retains both rows for grouped outside navigation.
     cmd("tool.set TransformRotate off");
     settle();
-    assert(undoCount() == floor + 2,
-        "drop retains both completed rotation gestures; floor="
+    assert(undoCount() == floor + 3,
+        "(+ the drop row, K-RD CD_Q_ROT) drop retains both completed rotation gestures; floor="
         ~ floor.to!string ~ " now=" ~ undoCount().to!string);
 
     // A single post-drop Ctrl+Z reverts the WHOLE run back to the cube.
@@ -554,8 +555,8 @@ unittest {
     // the surviving gesture-1 entry is reverted by one more Ctrl+Z.
     cmd("tool.set TransformRotate off");
     settle();
-    assert(undoCount() == floor2 + 1,
-        "after the step the run is already one surviving entry; the drop adds "
+    assert(undoCount() == floor2 + 2,
+        "(+ the drop row, K-RD CD_Q_ROT) after the step the run is already one surviving entry; the drop adds "
         ~ "nothing; floor=" ~ floor2.to!string ~ " now=" ~ undoCount().to!string);
     playAndWait(ctrlZ(70.0));
     settle();

@@ -226,8 +226,8 @@ unittest {
         "second live attr write is ABSOLUTE (+0.10, not 0.15)");
 
     cmd("tool.set move off");
-    assert(undoCount() == undoBefore + 1,
-        "live-session attr edits coalesce to ONE undo entry; before="
+    assert(undoCount() == undoBefore + 2,
+        "(+ the drop row, K-RD CD_Q_TM) live-session attr edits coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
     auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);

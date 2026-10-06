@@ -196,8 +196,8 @@ unittest {
     // Drop: the whole session coalesces to exactly ONE undo entry.
     bool couldUndoBeforeDrop = canUndo();
     cmd("tool.set move off");
-    assert(undoCount() == undoBefore + 1,
-        "panel-edit session must coalesce to ONE undo entry; before="
+    assert(undoCount() == undoBefore + 2,
+        "(+ the drop row, K-RD CD_Q_TM) panel-edit session must coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
     assert(canUndo(), "canUndo must be true after a committed session");
 
@@ -235,8 +235,8 @@ unittest {
 
     // Drop → exactly ONE new undo entry → undo restores the original.
     cmd("tool.set move off");
-    assert(undoCount() == undoBefore + 1,
-        "live-session attr edits coalesce to ONE undo entry; before="
+    assert(undoCount() == undoBefore + 2,
+        "(+ the drop row, K-RD CD_Q_TM) live-session attr edits coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
     auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
@@ -296,8 +296,8 @@ unittest {
 
     // Drop still coalesces to ONE entry.
     cmd("tool.set move off");
-    assert(undoCount() == undoBefore + 1,
-        "stage-re-eval session must coalesce to ONE undo entry; before="
+    assert(undoCount() == undoBefore + 2,
+        "(+ the drop row, K-RD CD_Q_TM) stage-re-eval session must coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
     auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
@@ -345,8 +345,8 @@ unittest {
 
     // Drop → exactly ONE new undo entry → one undo restores the original.
     cmd("tool.set TransformRotate off");
-    assert(undoCount() == undoBefore + 1,
-        "rotate value-edit session must coalesce to ONE undo entry; before="
+    assert(undoCount() == undoBefore + 2,
+        "(+ the drop row, K-RD CD_Q_ROT) rotate value-edit session must coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
     auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
@@ -388,8 +388,8 @@ unittest {
         "asymmetric second rotate value edit is absolute around the baseline pivot");
 
     cmd("tool.set TransformRotate off");
-    assert(undoCount() == undoBefore + 1,
-        "asymmetric rotate value-edit session must coalesce to ONE undo entry; before="
+    assert(undoCount() == undoBefore + 2,
+        "(+ the drop row, K-RD CD_Q_ROT) asymmetric rotate value-edit session must coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
     auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
@@ -427,8 +427,8 @@ unittest {
     assertVertex(6, 1.5, 0.5, 0.5, "second scale value edit is absolute (SX=3, not 6)");
 
     cmd("tool.set TransformScale off");
-    assert(undoCount() == undoBefore + 1,
-        "scale value-edit session must coalesce to ONE undo entry; before="
+    assert(undoCount() == undoBefore + 2,
+        "(+ the drop row, K-RD CD_Q_SCL) scale value-edit session must coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
     auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
@@ -487,10 +487,10 @@ unittest {
 
     cmd("tool.set Transform off");
     long entries = undoCount() - undoBefore;
-    assert(entries == 1,
-        "combined T+R+S must record one wrapper-owned entry; got "
-        ~ entries.to!string);
-    auto recorded = getJson("/api/history")["undo"].array[$ - 1];
+    assert(entries == 2,
+        "combined T+R+S must record one wrapper-owned entry under the drop row "
+        ~ "(K-RD CD_Q_TM); got " ~ entries.to!string);
+    auto recorded = getJson("/api/history")["undo"].array[$ - 2];
     assert(recorded["command"].str == "mesh.vertex_edit",
         "combined T+R+S must record the wrapper's vertex-edit command; got "
         ~ recorded.toString);
@@ -498,8 +498,8 @@ unittest {
         "combined T+R+S entry must be named by the Transform command; got "
         ~ recorded["label"].str);
 
-    // Undoing every recorded entry restores the original mesh.
-    foreach (_; 0 .. entries) postJson("/api/command", commandBody("history.undo"));
+    // The drop's undo reverts the whole session (K-RD CD_Q_TM): the original mesh.
+    postJson("/api/command", commandBody("history.undo"));
     assertVertex(6, 0.5, 0.5, 0.5, "undoing all entries restores the original (combined T+R+S)");
 }
 

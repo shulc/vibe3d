@@ -350,8 +350,8 @@ unittest {
     // Drop -> consolidate the three-gesture run into ONE surviving entry.
     postJson("/api/script", "tool.set move off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop consolidates the THREE-gesture run into ONE surviving entry; floor="
+    assert(undoCount() == floor + 2,
+        "(+ the drop row, K-RD CD_Q_TM) drop consolidates the THREE-gesture run into ONE surviving entry; floor="
         ~ floor.to!string ~ " now=" ~ undoCount().to!string);
     assert(inSessionCount() == 0,
         "after the drop the consolidated entry is an ordinary (non-inSession) "
@@ -427,8 +427,8 @@ unittest {
 
     cmd("tool.set Transform off");
     settle();
-    assert(undoCount() == floor + 2,
-        "RunClose must retain the Move and open RZ contributions as two rows; got "
+    assert(undoCount() == floor + 3,
+        "(+ the drop row, K-RD CD_Q_TM) RunClose must retain the Move and open RZ contributions as two rows; got "
         ~ (undoCount() - floor).to!string);
     assert(inSessionCount() == 0,
         "tool drop must close both retained RunClose rows");
@@ -562,21 +562,22 @@ unittest {
     // Drop -> consolidates run B. Two surviving entries total.
     postJson("/api/script", "tool.set move off");
     settle();
-    assert(undoCount() == floor + 2,
-        "drag + relocate boundary + drag + drop => TWO surviving entries; floor="
+    assert(undoCount() == floor + 3,
+        "(+ the drop row, K-RD CD_Q_TM) drag + relocate boundary + drag + drop => TWO surviving entries; floor="
         ~ floor.to!string ~ " now=" ~ undoCount().to!string);
     assert(inSessionCount() == 0, "both runs consolidated at the drop");
 
-    // Ctrl+Z pops run B -> back to post-run-A; Ctrl+Z pops run A -> cube.
-    postJson("/api/command", commandBody("history.undo"));
-    settle();
-    assert(vertNear(vert(6), v6AfterRunA),
-        "Ctrl+Z #1 pops run B back to post-run-A; got (" ~ vert(6)[0].to!string
-        ~ "," ~ vert(6)[1].to!string ~ "," ~ vert(6)[2].to!string ~ ")");
+    // The drop's Ctrl+Z pops both runs -> cube (K-RD CD_Q2_TM, task 9508); a
+    // redo then replays run A alone -> post-run-A (the two runs stay separate).
     postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
-        "Ctrl+Z #2 pops run A back to the cube corner");
+        "Ctrl+Z #1 undoes the drop with both runs, back to the cube corner");
+    postJson("/api/command", commandBody("history.redo"));
+    settle();
+    assert(vertNear(vert(6), v6AfterRunA),
+        "the redo replays run A alone (post-run-A); got (" ~ vert(6)[0].to!string
+        ~ "," ~ vert(6)[1].to!string ~ "," ~ vert(6)[2].to!string ~ ")");
     drainHistory();
 }
 
@@ -637,8 +638,8 @@ unittest {
     // Drop. The transform run remained live, so both gestures consolidate.
     postJson("/api/script", "tool.set move off");
     settle();
-    assert(undoCount() == floor + 1,
-        "redo inside a live transform run consolidates to ONE entry at the drop; floor="
+    assert(undoCount() == floor + 2,
+        "(+ the drop row, K-RD CD_Q_TM) redo inside a live transform run consolidates to ONE entry at the drop; floor="
         ~ floor.to!string ~ " now=" ~ undoCount().to!string);
     assert(vertNear(vert(6), v6BothDrags),
         "the drop does not move geometry — the mesh holds the redo'd both-drags "
@@ -753,8 +754,8 @@ unittest {
     // gesture + a popped re-grade resolve to ONE entry).
     postJson("/api/script", "tool.set move off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop leaves ONE entry (the surviving gesture; the re-grade was popped) "
+    assert(undoCount() == floor + 2,
+        "(+ the drop row, K-RD CD_Q_TM) drop leaves ONE entry (the surviving gesture; the re-grade was popped) "
         ~ "(D); floor=" ~ floor.to!string ~ " now=" ~ undoCount().to!string);
 
     postJson("/api/command", commandBody("history.undo"));
@@ -831,8 +832,8 @@ unittest {
     // contract C is covered there).
     postJson("/api/script", "tool.set move off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop consolidates gesture + BOTH discrete re-grades to ONE entry (D); "
+    assert(undoCount() == floor + 2,
+        "(+ the drop row, K-RD CD_Q_TM) drop consolidates gesture + BOTH discrete re-grades to ONE entry (D); "
         ~ "floor=" ~ floor.to!string ~ " now=" ~ undoCount().to!string);
 
     // One post-drop Ctrl+Z reverts the WHOLE consolidated run to the cube — the
@@ -1004,8 +1005,8 @@ unittest {
     // Drop: the whole run consolidates to ONE entry (D).
     postJson("/api/script", "tool.set move off");
     settle();
-    assert(undoCount() == floor + 1,
-        "drop consolidates the five-entry run to ONE (D); floor=" ~ floor.to!string
+    assert(undoCount() == floor + 2,
+        "(+ the drop row, K-RD CD_Q_TM) drop consolidates the five-entry run to ONE (D); floor=" ~ floor.to!string
         ~ " now=" ~ undoCount().to!string);
 
     // One post-drop Ctrl+Z reverts the WHOLE run to the cube. The witness that
@@ -1096,8 +1097,8 @@ unittest {
     // gesture-1 entry reverts on one more Ctrl+Z back to the cube.
     cmd("tool.set TransformScale off");
     settle();
-    assert(undoCount() == floor + 1,
-        "after the step the run is one surviving entry; the drop adds nothing; "
+    assert(undoCount() == floor + 2,
+        "(+ the drop row, K-RD CD_Q_SCL) after the step the run is one surviving entry; the drop adds nothing; "
         ~ "floor=" ~ floor.to!string ~ " now=" ~ undoCount().to!string);
     playAndWait(ctrlZ(70.0));
     settle();
@@ -1186,9 +1187,10 @@ unittest {
     assert(u["status"].str == "ok",
         "post-drop Ctrl+Z over the partially-evicted consolidated run must not "
         ~ "fail: " ~ u.toString);
-    assert(undoCount() == beforePop - 1,
-        "the walk-back is monotone — the consolidated survivor pops exactly one "
-        ~ "entry; before=" ~ beforePop.to!string ~ " now=" ~ undoCount().to!string);
+    assert(undoCount() == beforePop - 2,
+        "the walk-back is monotone — the drop row pops with the consolidated "
+        ~ "survivor (K-RD CD_Q_TM, task 9508); before=" ~ beforePop.to!string
+        ~ " now=" ~ undoCount().to!string);
     drainHistory();
 }
 
@@ -1254,23 +1256,23 @@ unittest {
     // Drop -> consolidates the Rotate run. TWO surviving single-bank entries.
     cmd("tool.set Transform off");
     settle();
-    assert(undoCount() == floor + 2,
-        "drop leaves TWO surviving single-bank entries (Move run + Rotate run); "
+    assert(undoCount() == floor + 3,
+        "(+ the drop row, K-RD CD_Q_TM) drop leaves TWO surviving single-bank entries (Move run + Rotate run); "
         ~ "floor=" ~ floor.to!string ~ " now=" ~ undoCount().to!string);
     assert(inSessionCount() == 0, "both single-bank runs consolidated");
 
-    // Ctrl+Z pops the Rotate run -> back to post-Move; Ctrl+Z pops the Move run
-    // -> back to the cube.
-    postJson("/api/command", commandBody("history.undo"));
-    settle();
-    assert(vertNear(vert(6), v6AfterMove),
-        "Ctrl+Z #1 pops the Rotate run back to the post-Move geometry; got ("
-        ~ vert(6)[0].to!string ~ "," ~ vert(6)[1].to!string ~ ","
-        ~ vert(6)[2].to!string ~ ")");
+    // The drop's Ctrl+Z pops both runs -> the cube (K-RD CD_Q2_TM, task 9508);
+    // a redo replays the Move run alone -> post-Move (the bank switch split them).
     postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
-        "Ctrl+Z #2 pops the Move run back to the cube corner");
+        "Ctrl+Z #1 undoes the drop with both runs, back to the cube corner");
+    postJson("/api/command", commandBody("history.redo"));
+    settle();
+    assert(vertNear(vert(6), v6AfterMove),
+        "the redo replays the Move run alone (post-Move); got ("
+        ~ vert(6)[0].to!string ~ "," ~ vert(6)[1].to!string ~ ","
+        ~ vert(6)[2].to!string ~ ")");
     drainHistory();
 }
 

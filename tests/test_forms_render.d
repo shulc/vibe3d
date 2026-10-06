@@ -254,8 +254,8 @@ unittest {
 
     // Drop the tool → the whole session coalesces to exactly ONE undo entry.
     cmd("tool.set xfrm.transform off");
-    assert(undoCount() == undoBefore + 1,
-        "form value edits coalesce to ONE undo entry; before="
+    assert(undoCount() == undoBefore + 2,
+        "(+ the drop row, K-RD CD_Q_TM) form value edits coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
 
     // One undo restores the original geometry.
