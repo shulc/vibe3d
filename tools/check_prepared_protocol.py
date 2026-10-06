@@ -2781,29 +2781,73 @@ mutate_param_sources("PreviewRebuild", preview_image_sources, preview_image_gate
     ("preview", "image.expectedCage.matches(cage_)", "true", "drop cage witness"),
 ))
 
-# Twelve tools whose param image is state only: a live witness and the tool's
-# own exact projection, built with no detached mesh and no kernel run (the
-# kernel stands once, in the tool's one operation; tasks 9433/9434/9489).
+# Twelve tools share an exact projection + live witness; fresh candidates have
+# no filled baseline (the production door_call_gate above pins that premise).
 PARAM_IMAGE_REGION = ("ParamImage buildPreparedParamUpdate(", "installPreparedParamUpdate(")
+STATE_PARAM_CLASSES = ("ArrayTool", "MagnetTool", "SmoothShiftTool", "EdgeBevelTool",
+    "PolyBevelTool", "EdgeExtrudeTool", "PolyExtrudeTool", "PolyInsetTool",
+    "VertexExtrudeTool", "VertexBevelTool", "VertexMergeTool", "ReductionTool")
+state_image_sources = {"owner": param_update_sources["owner"], "tree": param_update_sources["tree"]}
+def state_image_gate(s):
+    owner = s["owner"]
+    start = owner.find("struct PreparedStateParamImage(ProjectionT, KindT)")
+    end = owner.find("/// One closed owner", start)
+    image = owner[start:end] if 0 <= start < end else ""
+    aliases = sorted(re.findall(
+        r"alias Prepared(\w+)ParamImage = PreparedStateParamImage!\(", s["tree"]))
+    return (len(STATE_PARAM_CLASSES) == 12 and aliases == sorted(
+                c.removesuffix("Tool") for c in STATE_PARAM_CLASSES) and all(x in image for x in (
+            "mixin DefaultParamEffectKind!KindT;", "ProjectionT expected;",
+            "MeshSnapshot expectedLive;",
+            "static PreparedStateParamImage prepare(ProjectionT projection, ref const Mesh live)",
+            "image.valid = true;", "image.expected = projection;",
+            "image.expectedLive = MeshSnapshot.capture(live);",
+            "return valid && expected == projection && expectedLive.matches(live);",
+            "this = PreparedStateParamImage.init;")) and
+        not any(x in image for x in ("expectedBefore", "candidate", "operation(",
+            "static if", "ToolT", "cast(")))
+if not state_image_gate(state_image_sources):
+    fail("shared state-only parameter image contract drift")
+mutate_param_sources("State image", state_image_sources, state_image_gate, (
+    ("owner", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live capture"),
+    ("owner", "expectedLive.matches(live)", "true", "drop live match"),
+    ("owner", "expected == projection", "true", "drop exact projection"),
+    ("owner", "ref const Mesh live", "ref Mesh live", "drop const builder fence"),
+    ("tree", "alias PreparedArrayParamImage = PreparedStateParamImage!(", "alias PreparedArrayParamImage = OtherImage!(", "drop image client"),
+))
 def state_param_gate(cls, kernel, identity):
     def gate(s):
         tool = s["tool"]
         start = tool.find(PARAM_IMAGE_REGION[0])
         end = tool.find(PARAM_IMAGE_REGION[1], start)
         region = tool[start:end] if 0 <= start < end else ""
+        prefix = cls.removesuffix("Tool")
+        projection = "paramProjection(live)" if cls == "MagnetTool" else "paramProjection()"
+        builder = (f"return Prepared{prefix}ParamImage.prepare(projection, live);"
+            if cls in ("ArrayTool", "MagnetTool") else
+            f"return Prepared{prefix}ParamImage.prepare(paramProjection(), live);")
+        exact_alias = (f"alias Prepared{prefix}ParamImage = PreparedStateParamImage!("
+            f"{prefix}ParamProjection, Prepared{prefix}ParamKind);")
         return (tool.count(kernel) == 1 and bool(region) and all(x in region for x in (
-                    "image.expectedLive = MeshSnapshot.capture(live);",
-                    "image.expectedLive.matches(live)",
-                    "image.expectedBefore.matches(")) and
-                identity in tool and producer_mixin(cls) in tool and
+                    "ParamImage buildPreparedParamUpdate(string, ref const Mesh live)",
+                    builder, f"return image.matches({projection}, live);")) and
+                exact_alias in tool and identity in tool and producer_mixin(cls) in tool and
                 not any(x in region for x in (
-                    "beginPreparedShadow(", "candidate", "operation(", "applies")))
+                    "beginPreparedShadow(", "candidate", "operation(", "applies", "expectedBefore")) and
+                (cls != "ArrayTool" or all(x in tool for x in (
+                    "active == other.active && built == other.built", "projection.item = item_.dup;"))) and
+                (cls != "MagnetTool" or all(x in tool for x in (
+                    "projection.touchedIdx = touchedIdx_.dup;",
+                    "projection.touchedPrev = touchedPrev_.dup;",
+                    "return MagnetParamProjection(active, dragging, built, sessionKey_.matches(live),",
+                    "pickedVi, center_, target_, strength_, dist_, touchedIdx_, touchedPrev_);",
+                    "sessionMatches == other.sessionMatches"))))
     return gate
 for label, path, cls, kernel, identity in (
     ("Array", "alignment/array_tool.d", "ArrayTool", "arrayFacesGrid(",
      "sameFloat(dist, other.dist)"),
     ("Magnet", "deform/magnet.d", "MagnetTool", "applyMagnet(mesh,",
-     "sameSliceBytes(touchedPrev_, image.expectedTouchedPrev)"),
+     "sameSliceBytes(touchedPrev, other.touchedPrev)"),
     ("Smooth Shift", "deform/smooth_shift_tool.d", "SmoothShiftTool",
      "ed.smoothShiftFacesByMask(mask, shift_, scale_, thicken_)",
      "sameFloat(shift, other.shift)"),
@@ -2835,19 +2879,15 @@ for label, path, cls, kernel, identity in (
     gate = state_param_gate(cls, kernel, identity)
     if not gate(sources):
         fail(f"{label} onParamChanged prepared contract drift")
-    in_region = lambda text, row: text.find(PARAM_IMAGE_REGION[0])
+    projection = "paramProjection(live)" if cls == "MagnetTool" else "paramProjection()"
     mutate_param_sources(label, sources, gate, (
-        ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
-        ("tool", "image.expectedLive.matches(live)", "true", "drop live match"),
-        ("tool", "        return image;\n",
-         "        auto shadow = beginPreparedShadow(image.candidate);\n        return image;\n",
-         "reintroduce detached mesh"),
+        ("tool", f"return image.matches({projection}, live);", "return true;", "drop shared image match"),
+        ("tool", "ref const Mesh live", "ref Mesh live", "drop const builder fence"),
         ("tool", producer_mixin(cls), "", "drop producer mixin"),
-    ), in_region)
+    ), lambda text, row: text.find(PARAM_IMAGE_REGION[0]))
     mutate_param_sources(label, sources, gate, (
         ("tool", identity, "true", "drop exact identity"),
-        ("tool", "        return image;\n", "        " + kernel + ";\n        return image;\n",
-         "second kernel site"),
+        ("tool", kernel, kernel + kernel, "second kernel site"),
     ))
 
 # Slice's parameter image is state only too; it names the axis latch.

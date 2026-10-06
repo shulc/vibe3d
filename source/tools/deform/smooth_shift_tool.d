@@ -34,7 +34,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_smooth_shift_activation : PreparedSmoothShiftActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer, DefaultParamEffectKind;
+    PreparedParamUpdateProducer, PreparedStateParamImage;
 import prepared_tool_effect : PreparedSmoothShiftParamEffect,
     PreparedSmoothShiftParamKind;
 import document : Layer;
@@ -66,16 +66,7 @@ struct SmoothShiftParamProjection {
     }
 }
 
-struct PreparedSmoothShiftParamImage {
-    mixin DefaultParamEffectKind!PreparedSmoothShiftParamKind;
-    bool valid;
-    SmoothShiftParamProjection expected;
-    MeshSnapshot expectedLive, expectedBefore;
-    void clear() nothrow @nogc {
-        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        valid = false;
-    }
-}
+alias PreparedSmoothShiftParamImage = PreparedStateParamImage!(SmoothShiftParamProjection, PreparedSmoothShiftParamKind);
 
 // ---------------------------------------------------------------------------
 // SmoothShiftTool — interactive Smooth Shift + Thicken (factory id
@@ -366,17 +357,11 @@ public:
             engaged, thicken_, sharp_, shift_, scale_, maxAngle_);
     }
     final PreparedSmoothShiftParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
-        PreparedSmoothShiftParamImage image;
-        image.valid = true; image.expected = paramProjection();
-        image.expectedLive = MeshSnapshot.capture(live);
-        image.expectedBefore = before;
-        return image;
+        return PreparedSmoothShiftParamImage.prepare(paramProjection(), live);
     }
     final bool preparedParamUpdateMatches(in PreparedSmoothShiftParamImage image,
             ref const Mesh live) const nothrow @nogc {
-        return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) &&
-            image.expectedBefore.matches(before);
+        return image.matches(paramProjection(), live);
     }
     final void installPreparedParamUpdate(ref PreparedSmoothShiftParamImage image)
             nothrow @nogc {

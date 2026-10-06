@@ -9,7 +9,7 @@ import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKin
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedMagnetParamEffect, PreparedMagnetParamKind;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer, DefaultParamEffectKind;
+    PreparedParamUpdateProducer, PreparedStateParamImage;
 import command_history : PreparedHistoryKind;
 
 import bindbc.sdl;
@@ -39,22 +39,32 @@ import core.stdc.string : memcmp;
 import std.math : sqrt;
 import perf_probe : g_perf, Cat;
 
-struct PreparedMagnetParamImage {
-    mixin DefaultParamEffectKind!PreparedMagnetParamKind;
-    bool valid, expectedActive, expectedDragging, expectedBuilt;
-    bool expectedSessionMatches;
-    int expectedPickedVi;
-    Vec3 expectedCenter, expectedTarget;
-    float expectedStrength, expectedDist;
-    MeshSnapshot expectedLive, expectedBefore;
-    uint[] expectedTouchedIdx;
-    Vec3[] expectedTouchedPrev;
-    void clear() nothrow @nogc {
-        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        expectedTouchedIdx = null; expectedTouchedPrev = null;
-        this.valid = false;
+struct MagnetParamProjection {
+    bool active, dragging, built, sessionMatches;
+    int pickedVi;
+    Vec3 center, target;
+    float strength, dist;
+    const(uint)[] touchedIdx;
+    const(Vec3)[] touchedPrev;
+    bool opEquals(const MagnetParamProjection other) const nothrow @nogc {
+        bool sameBytes(T)(ref const T a, ref const T b) nothrow @nogc {
+            return memcmp(&a, &b, T.sizeof) == 0;
+        }
+        bool sameSliceBytes(T)(const(T)[] a, const(T)[] b) nothrow @nogc {
+            return a.length == b.length && (a.length == 0 ||
+                memcmp(a.ptr, b.ptr, a.length * T.sizeof) == 0);
+        }
+        return active == other.active && dragging == other.dragging &&
+            built == other.built && pickedVi == other.pickedVi &&
+            sameBytes(center, other.center) && sameBytes(target, other.target) &&
+            sameBytes(strength, other.strength) && sameBytes(dist, other.dist) &&
+            sameSliceBytes(touchedIdx, other.touchedIdx) &&
+            sameSliceBytes(touchedPrev, other.touchedPrev) &&
+            sessionMatches == other.sessionMatches;
     }
 }
+
+alias PreparedMagnetParamImage = PreparedStateParamImage!(MagnetParamProjection, PreparedMagnetParamKind);
 
 /// Convergent attraction deformer tool (`xfrm.pointAttract`).
 ///
@@ -267,42 +277,19 @@ public:
         // dist changed while dragging — rebuild with new radius.
         if (pname == "dist" && dragging && built) rebuildPreview();
     }
-    final PreparedMagnetParamImage buildPreparedParamUpdate(string,
-            ref const Mesh live) {
-        PreparedMagnetParamImage image;
-        image.valid = true; image.expectedActive = active;
-        image.expectedDragging = dragging; image.expectedBuilt = built;
-        image.expectedPickedVi = pickedVi;
-        image.expectedCenter = center_; image.expectedTarget = target_;
-        image.expectedStrength = strength_; image.expectedDist = dist_;
-        image.expectedLive = MeshSnapshot.capture(live);
-        image.expectedTouchedIdx = touchedIdx_.dup;
-        image.expectedTouchedPrev = touchedPrev_.dup;
-        image.expectedSessionMatches = sessionKey_.matches(live);
-        image.expectedBefore = before;
-        return image;
+    private MagnetParamProjection paramProjection(ref const Mesh live) const nothrow @nogc {
+        return MagnetParamProjection(active, dragging, built, sessionKey_.matches(live),
+            pickedVi, center_, target_, strength_, dist_, touchedIdx_, touchedPrev_);
+    }
+    final PreparedMagnetParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
+        auto projection = paramProjection(live);
+        projection.touchedIdx = touchedIdx_.dup;
+        projection.touchedPrev = touchedPrev_.dup;
+        return PreparedMagnetParamImage.prepare(projection, live);
     }
     final bool preparedParamUpdateMatches(in PreparedMagnetParamImage image,
-            ref Mesh live) const nothrow @nogc {
-        bool sameBytes(T)(ref const T a, ref const T b) nothrow @nogc {
-            return memcmp(&a, &b, T.sizeof) == 0;
-        }
-        bool sameSliceBytes(T)(const(T)[] a, const(T)[] b) nothrow @nogc {
-            return a.length == b.length && (a.length == 0 ||
-                memcmp(a.ptr, b.ptr, a.length * T.sizeof) == 0);
-        }
-        return image.valid && active == image.expectedActive &&
-            dragging == image.expectedDragging && built == image.expectedBuilt &&
-            pickedVi == image.expectedPickedVi &&
-            sameBytes(center_, image.expectedCenter) &&
-            sameBytes(target_, image.expectedTarget) &&
-            sameBytes(strength_, image.expectedStrength) &&
-            sameBytes(dist_, image.expectedDist) &&
-            sameSliceBytes(touchedIdx_, image.expectedTouchedIdx) &&
-            sameSliceBytes(touchedPrev_, image.expectedTouchedPrev) &&
-            sessionKey_.matches(live) == image.expectedSessionMatches &&
-            image.expectedLive.matches(live) &&
-            (!before.filled || image.expectedBefore.matches(before));
+            ref const Mesh live) const nothrow @nogc {
+        return image.matches(paramProjection(live), live);
     }
     final void installPreparedParamUpdate(ref PreparedMagnetParamImage image)
             nothrow @nogc {

@@ -8,7 +8,7 @@ import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedArrayParamEffect, PreparedArrayParamKind;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer, DefaultParamEffectKind;
+    PreparedParamUpdateProducer, PreparedStateParamImage;
 import mesh_gpu : GpuUploadOwner;
 import document : Layer;
 
@@ -100,6 +100,7 @@ import core.stdc.string : memcmp;
 //     section excludes for Instance/Replica Array (item-level cloning).
 // ---------------------------------------------------------------------------
 struct ArrayParamProjection {
+    bool active, built;
     int numX, numY, numZ;
     float offX, offY, offZ, jitX, jitY, jitZ;
     float sclX, sclY, sclZ, angP, angH, angB;
@@ -111,7 +112,8 @@ struct ArrayParamProjection {
         bool sameFloat(ref const float a, ref const float b) nothrow @nogc {
             return memcmp(&a, &b, float.sizeof) == 0;
         }
-        return numX == other.numX && numY == other.numY && numZ == other.numZ &&
+        return active == other.active && built == other.built &&
+            numX == other.numX && numY == other.numY && numZ == other.numZ &&
             sameFloat(offX, other.offX) && sameFloat(offY, other.offY) &&
             sameFloat(offZ, other.offZ) && sameFloat(jitX, other.jitX) &&
             sameFloat(jitY, other.jitY) && sameFloat(jitZ, other.jitZ) &&
@@ -124,17 +126,7 @@ struct ArrayParamProjection {
     }
 }
 
-struct PreparedArrayParamImage {
-    mixin DefaultParamEffectKind!PreparedArrayParamKind;
-    bool valid, expectedActive, expectedBuilt;
-    ArrayParamProjection expectedParams;
-    MeshSnapshot expectedLive, expectedBefore;
-    void clear() nothrow @nogc {
-        expectedParams.item = null;
-        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        this.valid = false;
-    }
-}
+alias PreparedArrayParamImage = PreparedStateParamImage!(ArrayParamProjection, PreparedArrayParamKind);
 
 final class ArrayTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
         TopologyStepClient {
@@ -347,21 +339,13 @@ public:
         if (interactiveParamEdit) rebuildPreview();
     }
     final PreparedArrayParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
-        PreparedArrayParamImage image;
-        image.valid = true; image.expectedActive = active;
-        image.expectedBuilt = built;
-        image.expectedParams = paramProjection();
-        image.expectedParams.item = item_.dup;
-        image.expectedLive = MeshSnapshot.capture(live);
-        image.expectedBefore = before;
-        return image;
+        auto projection = paramProjection();
+        projection.item = item_.dup;
+        return PreparedArrayParamImage.prepare(projection, live);
     }
     final bool preparedParamUpdateMatches(in PreparedArrayParamImage image,
             ref const Mesh live) const nothrow @nogc {
-        return image.valid &&
-            active == image.expectedActive && built == image.expectedBuilt &&
-            image.expectedParams == paramProjection() &&
-            image.expectedLive.matches(live) && image.expectedBefore.matches(before);
+        return image.matches(paramProjection(), live);
     }
     final void installPreparedParamUpdate(ref PreparedArrayParamImage image)
             nothrow @nogc {
@@ -446,7 +430,7 @@ public:
 
 private:
     ArrayParamProjection paramProjection() const nothrow @nogc {
-        return ArrayParamProjection(numX_, numY_, numZ_, offX_, offY_, offZ_,
+        return ArrayParamProjection(active, built, numX_, numY_, numZ_, offX_, offY_, offZ_,
             jitX_, jitY_, jitZ_, sclX_, sclY_, sclZ_, angP_, angH_, angB_,
             between_, replace_, flip_, merge_, dist_, cast(int)source_, item_);
     }

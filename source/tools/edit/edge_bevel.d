@@ -36,7 +36,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_edge_bevel_activation : PreparedEdgeBevelActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer, DefaultParamEffectKind;
+    PreparedParamUpdateProducer, PreparedStateParamImage;
 import prepared_tool_effect : PreparedEdgeBevelParamEffect,
     PreparedEdgeBevelParamKind;
 import document : Layer;
@@ -65,16 +65,7 @@ struct EdgeBevelParamProjection {
     }
 }
 
-struct PreparedEdgeBevelParamImage {
-    mixin DefaultParamEffectKind!PreparedEdgeBevelParamKind;
-    bool valid;
-    EdgeBevelParamProjection expected;
-    MeshSnapshot expectedLive, expectedBefore;
-    void clear() nothrow @nogc {
-        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        valid = false;
-    }
-}
+alias PreparedEdgeBevelParamImage = PreparedStateParamImage!(EdgeBevelParamProjection, PreparedEdgeBevelParamKind);
 
 // ---------------------------------------------------------------------------
 // EdgeBevelTool — interactive Edge Bevel (factory id `edge.bevel`).
@@ -286,16 +277,11 @@ public:
             widthMode_, width_, roundLevel_);
     }
     final PreparedEdgeBevelParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
-        PreparedEdgeBevelParamImage image;
-        image.valid = true; image.expected = paramProjection();
-        image.expectedLive = MeshSnapshot.capture(live);
-        image.expectedBefore = before;
-        return image;
+        return PreparedEdgeBevelParamImage.prepare(paramProjection(), live);
     }
     final bool preparedParamUpdateMatches(in PreparedEdgeBevelParamImage image,
             ref const Mesh live) const nothrow @nogc {
-        return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) && image.expectedBefore.matches(before);
+        return image.matches(paramProjection(), live);
     }
     final void installPreparedParamUpdate(ref PreparedEdgeBevelParamImage image)
             nothrow @nogc {

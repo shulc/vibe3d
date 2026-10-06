@@ -31,7 +31,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_inset_activation : PreparedPolyInsetActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer, DefaultParamEffectKind;
+    PreparedParamUpdateProducer, PreparedStateParamImage;
 import prepared_tool_effect : PreparedPolyInsetParamEffect,
     PreparedPolyInsetParamKind;
 import document : Layer;
@@ -54,16 +54,7 @@ struct PolyInsetParamProjection {
     }
 }
 
-struct PreparedPolyInsetParamImage {
-    mixin DefaultParamEffectKind!PreparedPolyInsetParamKind;
-    bool valid;
-    PolyInsetParamProjection expected;
-    MeshSnapshot expectedLive, expectedBefore;
-    void clear() nothrow @nogc {
-        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        valid = false;
-    }
-}
+alias PreparedPolyInsetParamImage = PreparedStateParamImage!(PolyInsetParamProjection, PreparedPolyInsetParamKind);
 
 // ---------------------------------------------------------------------------
 // PolyInsetTool — interactive Polygon Inset (factory id `mesh.polyInsetTool`,
@@ -281,16 +272,11 @@ public:
         return PolyInsetParamProjection(interactiveParamEdit, active, built, inset_);
     }
     final PreparedPolyInsetParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
-        PreparedPolyInsetParamImage image;
-        image.valid = true; image.expected = paramProjection();
-        image.expectedLive = MeshSnapshot.capture(live);
-        image.expectedBefore = before;
-        return image;
+        return PreparedPolyInsetParamImage.prepare(paramProjection(), live);
     }
     final bool preparedParamUpdateMatches(in PreparedPolyInsetParamImage image,
             ref const Mesh live) const nothrow @nogc {
-        return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) && image.expectedBefore.matches(before);
+        return image.matches(paramProjection(), live);
     }
     final void installPreparedParamUpdate(ref PreparedPolyInsetParamImage image)
             nothrow @nogc {

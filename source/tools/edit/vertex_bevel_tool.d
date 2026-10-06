@@ -36,7 +36,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_bevel_activation : PreparedVertexBevelActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer, DefaultParamEffectKind;
+    PreparedParamUpdateProducer, PreparedStateParamImage;
 import prepared_tool_effect : PreparedVertexBevelParamEffect,
     PreparedVertexBevelParamKind;
 import document : Layer;
@@ -53,16 +53,7 @@ struct VertexBevelParamProjection {
     }
 }
 
-struct PreparedVertexBevelParamImage {
-    mixin DefaultParamEffectKind!PreparedVertexBevelParamKind;
-    bool valid;
-    VertexBevelParamProjection expected;
-    MeshSnapshot expectedLive, expectedBefore;
-    void clear() nothrow @nogc {
-        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        valid = false;
-    }
-}
+alias PreparedVertexBevelParamImage = PreparedStateParamImage!(VertexBevelParamProjection, PreparedVertexBevelParamKind);
 
 struct PreparedVertexBevelActivationImage {
     MeshSnapshot before;
@@ -269,18 +260,11 @@ public:
             inset_);
     }
     final PreparedVertexBevelParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
-        PreparedVertexBevelParamImage image;
-        image.valid = true; image.expected = paramProjection();
-        image.expectedLive = MeshSnapshot.capture(live);
-        image.expectedBefore = before;
-        return image;
+        return PreparedVertexBevelParamImage.prepare(paramProjection(), live);
     }
-    final bool preparedParamUpdateMatches(
-            in PreparedVertexBevelParamImage image, ref const Mesh live) const
-            nothrow @nogc {
-        return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) &&
-            image.expectedBefore.matches(before);
+    final bool preparedParamUpdateMatches(in PreparedVertexBevelParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.matches(paramProjection(), live);
     }
     final void installPreparedParamUpdate(
             ref PreparedVertexBevelParamImage image) nothrow @nogc {

@@ -38,7 +38,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_extrude_activation : PreparedPolyExtrudeActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer, DefaultParamEffectKind;
+    PreparedParamUpdateProducer, PreparedStateParamImage;
 import prepared_tool_effect : PreparedPolyExtrudeParamEffect,
     PreparedPolyExtrudeParamKind;
 import document : Layer;
@@ -83,16 +83,7 @@ struct PolyExtrudeParamProjection {
     }
 }
 
-struct PreparedPolyExtrudeParamImage {
-    mixin DefaultParamEffectKind!PreparedPolyExtrudeParamKind;
-    bool valid;
-    PolyExtrudeParamProjection expected;
-    MeshSnapshot expectedLive, expectedBefore;
-    void clear() nothrow @nogc {
-        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        valid = false;
-    }
-}
+alias PreparedPolyExtrudeParamImage = PreparedStateParamImage!(PolyExtrudeParamProjection, PreparedPolyExtrudeParamKind);
 
 // ---------------------------------------------------------------------------
 // PolyExtrudeTool — interactive Face Extrude (factory id `poly.extrude`).
@@ -302,16 +293,11 @@ public:
             extentFrameX, extentFrameY, extentFrameZ);
     }
     final PreparedPolyExtrudeParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
-        PreparedPolyExtrudeParamImage image;
-        image.valid = true; image.expected = paramProjection();
-        image.expectedLive = MeshSnapshot.capture(live);
-        image.expectedBefore = before;
-        return image;
+        return PreparedPolyExtrudeParamImage.prepare(paramProjection(), live);
     }
     final bool preparedParamUpdateMatches(in PreparedPolyExtrudeParamImage image,
             ref const Mesh live) const nothrow @nogc {
-        return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) && image.expectedBefore.matches(before);
+        return image.matches(paramProjection(), live);
     }
     final void installPreparedParamUpdate(ref PreparedPolyExtrudeParamImage image)
             nothrow @nogc {

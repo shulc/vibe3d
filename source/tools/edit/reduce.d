@@ -29,7 +29,7 @@ import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer, DefaultParamEffectKind;
+    PreparedParamUpdateProducer, PreparedStateParamImage;
 import prepared_tool_effect : PreparedReductionParamEffect,
     PreparedReductionParamKind;
 import document : Layer;
@@ -46,16 +46,7 @@ struct ReductionParamProjection {
     }
 }
 
-struct PreparedReductionParamImage {
-    mixin DefaultParamEffectKind!PreparedReductionParamKind;
-    bool valid;
-    ReductionParamProjection expected;
-    MeshSnapshot expectedLive, expectedBefore;
-    void clear() nothrow @nogc {
-        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        valid = false;
-    }
-}
+alias PreparedReductionParamImage = PreparedStateParamImage!(ReductionParamProjection, PreparedReductionParamKind);
 
 // ---------------------------------------------------------------------------
 // ReductionTool — interactive polygon reduction (factory id `mesh.reduceTool`).
@@ -204,17 +195,11 @@ public:
             pb_, ratio_);
     }
     final PreparedReductionParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
-        PreparedReductionParamImage image;
-        image.valid = true; image.expected = paramProjection();
-        image.expectedLive = MeshSnapshot.capture(live);
-        image.expectedBefore = before;
-        return image;
+        return PreparedReductionParamImage.prepare(paramProjection(), live);
     }
     final bool preparedParamUpdateMatches(in PreparedReductionParamImage image,
             ref const Mesh live) const nothrow @nogc {
-        return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) &&
-            image.expectedBefore.matches(before);
+        return image.matches(paramProjection(), live);
     }
     final void installPreparedParamUpdate(ref PreparedReductionParamImage image)
             nothrow @nogc {

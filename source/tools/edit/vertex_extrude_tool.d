@@ -36,7 +36,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_extrude_activation : PreparedVertexExtrudeActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer, DefaultParamEffectKind;
+    PreparedParamUpdateProducer, PreparedStateParamImage;
 import prepared_tool_effect : PreparedVertexExtrudeParamEffect,
     PreparedVertexExtrudeParamKind;
 import document : Layer;
@@ -56,16 +56,7 @@ struct VertexExtrudeParamProjection {
     }
 }
 
-struct PreparedVertexExtrudeParamImage {
-    mixin DefaultParamEffectKind!PreparedVertexExtrudeParamKind;
-    bool valid;
-    VertexExtrudeParamProjection expected;
-    MeshSnapshot expectedLive, expectedBefore;
-    void clear() nothrow @nogc {
-        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        valid = false;
-    }
-}
+alias PreparedVertexExtrudeParamImage = PreparedStateParamImage!(VertexExtrudeParamProjection, PreparedVertexExtrudeParamKind);
 
 struct PreparedVertexExtrudeActivationImage {
     MeshSnapshot before;
@@ -273,18 +264,11 @@ public:
             shift_, width_);
     }
     final PreparedVertexExtrudeParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
-        PreparedVertexExtrudeParamImage image;
-        image.valid = true; image.expected = paramProjection();
-        image.expectedLive = MeshSnapshot.capture(live);
-        image.expectedBefore = before;
-        return image;
+        return PreparedVertexExtrudeParamImage.prepare(paramProjection(), live);
     }
-    final bool preparedParamUpdateMatches(
-            in PreparedVertexExtrudeParamImage image, ref const Mesh live) const
-            nothrow @nogc {
-        return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) &&
-            image.expectedBefore.matches(before);
+    final bool preparedParamUpdateMatches(in PreparedVertexExtrudeParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.matches(paramProjection(), live);
     }
     final void installPreparedParamUpdate(
             ref PreparedVertexExtrudeParamImage image) nothrow @nogc {

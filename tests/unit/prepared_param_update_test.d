@@ -299,6 +299,93 @@ unittest {
     assert(bad.length == 0, bad.join("; "));
 }
 
+// The generic image clears all retained projection data and refuses a cleared
+// image even against its own default projection. Exact float bytes survive the
+// fold: signed zero differs, and identical NaN payloads compare equal.
+unittest {
+    import tools.deform.magnet : MagnetParamProjection, PreparedMagnetParamImage;
+    import tools.alignment.array_tool : ArrayParamProjection, PreparedArrayParamImage;
+    import core.stdc.string : memcpy;
+    auto layer = new Layer; layer.meshRef() = makeCube();
+    MagnetParamProjection projection;
+    projection.touchedIdx = [0u]; projection.touchedPrev = [Vec3(1, 2, 3)];
+    auto image = PreparedMagnetParamImage.prepare(projection, layer.meshRef());
+    assert(image.matches(projection, layer.meshRef()), "generic image lost its projection");
+    image.valid = false;
+    assert(!image.matches(projection, layer.meshRef()), "an invalid generic image matched");
+    image.valid = true;
+    image.clear();
+    assert(!image.valid && image.expected.touchedIdx.length == 0 &&
+        image.expected.touchedPrev.length == 0 && !image.expectedLive.filled,
+        "generic image retained projection data after clear");
+    assert(!image.matches(MagnetParamProjection.init, layer.meshRef()),
+        "a cleared generic image matched");
+
+    auto array = PreparedArrayParamImage.prepare(ArrayParamProjection.init, layer.meshRef());
+    array.expected.item = "retained";
+    array.clear();
+    assert(array.expected.item is null, "generic image retained the Array item");
+
+    MagnetParamProjection a, b;
+    a.dist = 0.0f; b.dist = -0.0f;
+    assert(a != b, "Magnet projection lost exact signed-zero equality");
+    uint payload = 0x7fc00001;
+    memcpy(&a.dist, &payload, float.sizeof); memcpy(&b.dist, &payload, float.sizeof);
+    assert(a == b, "Magnet projection rejected identical NaN bytes");
+    a.touchedIdx = [0u]; b.touchedIdx = [1u];
+    assert(a != b, "Magnet projection omitted touched indices");
+    uint[] sharedIndices = [0u, 1u];
+    a.touchedIdx = sharedIndices[0 .. 1]; b.touchedIdx = sharedIndices;
+    assert(a != b, "Magnet projection omitted touched-array length");
+    a.touchedIdx = [0u]; b.touchedIdx = [0u]; a.touchedPrev = [Vec3(1, 2, 3)];
+    b.touchedPrev = [Vec3(1, 2, 4)];
+    assert(a != b, "Magnet projection omitted touched positions");
+}
+
+// Array's active/built flags and Magnet's full drag state remain projected
+// data. Each changed member alone must refuse while the live mesh holds still.
+unittest {
+    auto ar = Rig!ArrayRow.make(true, true);
+    static foreach (member; ["active", "built"]) {{
+        auto image = ar.tool.buildPreparedParamUpdate("", ar.layer.meshRef());
+        assert(ar.tool.preparedParamUpdateMatches(image, ar.layer.meshRef()));
+        __traits(getMember, image.expected, member) =
+            !__traits(getMember, image.expected, member);
+        assert(!ar.tool.preparedParamUpdateMatches(image, ar.layer.meshRef()),
+            "Array projection omitted " ~ member);
+    }}
+    auto mr = Rig!MagnetRow.make(true, true);
+    mr.gpu.suppressCageUpload = true;
+    mr.tool.notifyInteractiveParamChanged("dist");
+    auto first = mr.tool.buildPreparedParamUpdate("dist", mr.layer.meshRef());
+    auto second = mr.tool.buildPreparedParamUpdate("dist", mr.layer.meshRef());
+    assert(first.expected.sessionMatches, "Magnet projection omitted the live session key");
+    assert(first.expected.touchedIdx.length == 1 && first.expected.touchedPrev.length == 1,
+        "Magnet projection rig must touch the selected vertex");
+    assert(first.expected.touchedIdx.ptr !is second.expected.touchedIdx.ptr &&
+        first.expected.touchedPrev.ptr !is second.expected.touchedPrev.ptr,
+        "Magnet images must own separate touched-array copies");
+    static foreach (member; ["active", "dragging", "built", "sessionMatches",
+            "pickedVi", "center", "target", "strength", "dist", "touchedIdx", "touchedPrev"]) {{
+        auto image = mr.tool.buildPreparedParamUpdate("dist", mr.layer.meshRef());
+        assert(mr.tool.preparedParamUpdateMatches(image, mr.layer.meshRef()));
+        alias FieldT = typeof(__traits(getMember, image.expected, member));
+        static if (is(FieldT == bool))
+            __traits(getMember, image.expected, member) =
+                !__traits(getMember, image.expected, member);
+        else static if (is(FieldT == int) || is(FieldT == float))
+            __traits(getMember, image.expected, member) += 1;
+        else static if (is(FieldT == Vec3))
+            __traits(getMember, image.expected, member).x += 1;
+        else static if (member == "touchedIdx")
+            image.expected.touchedIdx = [image.expected.touchedIdx[0] + 1];
+        else
+            image.expected.touchedPrev = [image.expected.touchedPrev[0] + Vec3(1, 0, 0)];
+        assert(!mr.tool.preparedParamUpdateMatches(image, mr.layer.meshRef()),
+            "Magnet projection omitted " ~ member);
+    }}
+}
+
 // Edge Slice is the one row whose armed write carries a mesh image (its chain
 // re-bake), so its GPU upload refuses a foreign or a missing upload owner.
 unittest {

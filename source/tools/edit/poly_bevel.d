@@ -35,7 +35,7 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_bevel_activation : PreparedPolyBevelActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
-    PreparedParamUpdateProducer, DefaultParamEffectKind;
+    PreparedParamUpdateProducer, PreparedStateParamImage;
 import prepared_tool_effect : PreparedPolyBevelParamEffect,
     PreparedPolyBevelParamKind;
 import document : Layer;
@@ -66,16 +66,7 @@ struct PolyBevelParamProjection {
     }
 }
 
-struct PreparedPolyBevelParamImage {
-    mixin DefaultParamEffectKind!PreparedPolyBevelParamKind;
-    bool valid;
-    PolyBevelParamProjection expected;
-    MeshSnapshot expectedLive, expectedBefore;
-    void clear() nothrow @nogc {
-        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
-        valid = false;
-    }
-}
+alias PreparedPolyBevelParamImage = PreparedStateParamImage!(PolyBevelParamProjection, PreparedPolyBevelParamKind);
 
 // ---------------------------------------------------------------------------
 // PolyBevelTool — interactive Polygon Bevel (factory id `poly.bevel`).
@@ -331,16 +322,11 @@ public:
             group_, square_, opApplied_, inset_, shift_, segments_, opIndex_);
     }
     final PreparedPolyBevelParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
-        PreparedPolyBevelParamImage image;
-        image.valid = true; image.expected = paramProjection();
-        image.expectedLive = MeshSnapshot.capture(live);
-        image.expectedBefore = opBase();
-        return image;
+        return PreparedPolyBevelParamImage.prepare(paramProjection(), live);
     }
     final bool preparedParamUpdateMatches(in PreparedPolyBevelParamImage image,
             ref const Mesh live) const nothrow @nogc {
-        return image.valid && image.expected == paramProjection() &&
-            image.expectedLive.matches(live) && image.expectedBefore.matches(opBase());
+        return image.matches(paramProjection(), live);
     }
     final void installPreparedParamUpdate(ref PreparedPolyBevelParamImage image)
             nothrow @nogc {

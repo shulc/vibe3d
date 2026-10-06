@@ -3,10 +3,31 @@ module prepared_param_update;
 import core.atomic : atomicOp;
 import document : Layer;
 import mesh : Mesh;
+import snapshot : MeshSnapshot;
 
 struct PreparedParamToken { @disable this(this); private: ulong owner, generation; }
 struct ValidatedParamToken { @disable this(this); private: ulong owner, generation; }
 private shared ulong nextParamOwner;
+
+/// The fresh-candidate parameter door keeps exact projected state and a live
+/// mesh witness (9515; check_prepared_protocol.py pins its twelve clients).
+struct PreparedStateParamImage(ProjectionT, KindT) {
+    mixin DefaultParamEffectKind!KindT;
+    bool valid;
+    ProjectionT expected;
+    MeshSnapshot expectedLive;
+    static PreparedStateParamImage prepare(ProjectionT projection, ref const Mesh live) {
+        PreparedStateParamImage image;
+        image.valid = true;
+        image.expected = projection;
+        image.expectedLive = MeshSnapshot.capture(live);
+        return image;
+    }
+    bool matches(in ProjectionT projection, ref const Mesh live) const nothrow @nogc {
+        return valid && expected == projection && expectedLive.matches(live);
+    }
+    void clear() nothrow @nogc { this = PreparedStateParamImage.init; }
+}
 
 /// One closed owner for a tool's interactive parameter-preview transition.
 /// The tool is data: `ownsPreparedLayer`, `buildPreparedParamUpdate`,
