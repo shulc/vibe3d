@@ -112,6 +112,21 @@ unittest // pen.d appends no geometry except through the one builder
     const calls = countIdent(code, "appendPenGeometry");
     assert(calls == 4, format("pen.d names appendPenGeometry %s times; "
         ~ "expected exactly the 4 producers", calls));
+    // Rebuild search/order have one click producer; no release weld remains.
+    assert(countIdent(code, "penMergeSources") == 1 &&
+        countIdent(code, "penPolygonOrder") == 1,
+        "pen rebuild search and order must each have one click producer");
+    import std.algorithm : filter;
+    import std.array : array;
+    import std.ascii : isWhite;
+    string compact(string text) { return text.filter!(c => !isWhite(c)).array.idup; }
+    assert(compact(" a\t b\n c\r ") == "abc", "rebuild token control");
+    const formula = "penMergeSources(vertices_,frame.toWorld,3*viewWorldPerPixel(cachedVp))";
+    assert(countOccurrences(compact(code), formula) == 1,
+        "pen rebuild distance must be 3 world pixels at the current viewport");
+    assert(countIdent(code, "weldVertex") == 0 &&
+        countIdent(code, "findHoveredVertExcept") == 0,
+        "pen release weld machinery remains");
 }
 
 unittest // the builder module is where the adders went (control of the above)

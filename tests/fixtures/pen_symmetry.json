@@ -1217,4 +1217,6 @@
  "not_drivable": {
   "A6-toggle (mirror of all points vs latched at point 0)": "the only toggle without a script call ends the stroke, so a mid-stroke symmetry change cannot be observed"
  }
+,
+ "release_keeps_mirror_links": {"captured_utc":"2026-10-06","expected":{"vertices":[[0.9,1.0,0.0],[-0.5,1.0,0.5],[0.5,1.0,0.5],[0.9,1.0,0.0],[-0.9,1.0,0.0],[-0.9,1.0,0.0]],"faces":[[1,2,3,0],[2,4,5,1]]}}
 }
