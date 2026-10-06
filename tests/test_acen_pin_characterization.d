@@ -226,9 +226,8 @@ void record(string key) {
 }
 
 // ---------------------------------------------------------------------------
-// Drag helpers — generic, mode-agnostic: always re-read the CURRENT published
-// pivot before projecting a handle, so they work regardless of which ACEN
-// mode (and therefore which pivot position) is active.
+// Gizmo drags re-read the current published pivot before projecting handles.
+// The characterization's relocate click uses its fixed golden pixel route.
 // ---------------------------------------------------------------------------
 
 // Whole-mesh (no selection) Y-arrow Move drag by `px` window pixels.
