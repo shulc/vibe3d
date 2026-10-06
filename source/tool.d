@@ -445,12 +445,12 @@ struct ToolSessionPolicy {
     /// A `tool.set` drop — Q / `tool.set <id> off`, or the current type's
     /// selection key (`DropContext.toolSetDoor`) — writes a drop row whose
     /// undo also reverts the dropped session's rows and re-arms the tool
-    /// fresh (K-RD rule 2, task 9508; captured on the transform presets and
+    /// fresh (findings_K-RD rule 2; captured on the transform presets and
     /// Polygon Bevel). The other doors are uncaptured for these tools.
     bool toolSetDropRow;
     /// The undo that removes this tool's activation row leaves it LATENT:
     /// undrawn, and the next plain viewport press re-arms it (K-RD rule 3,
-    /// RD_DROP_Z0D; task 9508, captured on the transform tool).
+    /// RD_DROP_Z0D; captured on the transform tool).
     bool armUndoLeavesToolLatent;
     /// A PRESS opens a new operation: before the press step's open image is
     /// taken, the session resets `haulAttrs` to their defaults (the Shift arm

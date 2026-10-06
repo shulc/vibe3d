@@ -1954,7 +1954,7 @@ final class CommandHistory {
             redoStack.length = 0;
         else
             redoStack = [entry] ~ redoStack;
-        // K-RD rule 2 (task 9508): a drop row that reverts its session takes
+        // K-RD rule 2: a drop row that reverts its session takes
         // the dropped session's rows below it in the same step (to redo).
         while (armPolicy !is null && armPolicy.revertsSession() && undoStack.length &&
                !(undoStack[$ - 1].flags & HistoryFlags.ToolLifecycle) &&

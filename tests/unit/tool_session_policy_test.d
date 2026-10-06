@@ -431,10 +431,15 @@ unittest { // (3) the doors reach the tool session only through EditSession
     // The undo door has no prune (amendment A16: it was inert).
     // Task 8920 (S2a): the depth snapshot first, the settle after a MOVED stack;
     // task 8930 (S2b): the snapshot also holds the token and the armed model post mode.
+    // Task 9508 (K-RD rule 3): the bound tool's activation row is read before
+    // the step; the step that removed it, leaving no tool, makes the tool latent.
     assert(squeeze(bodyAt(ts, "bool undo()")) == "{navBefore_=NavBefore(history_.undoEntries().length,"
            ~ "token_,boundModel_()&&postmodeArmed_);"
+           ~ "constarmRow=latentArmRow_();constid=armedId_;"
            ~ "constr=undoImpl_();if(r)openBlock_=null;"
            ~ "if(r&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
+           ~ "if(r&&tool_()is"~"null&&history_.undoEntries().length<=armRow){latentId_=id;"
+           ~ "latentTop_=undoTop_();latentDepth_=history_.undoEntries().length;}"
            ~ "returnr;}",
            "S7a wiring census: ToolSession.undo body changed: " ~ squeeze(bodyAt(ts, "bool undo()")));
     inOrder(squeeze(bodyAt(ts, "bool redo()")),
@@ -1942,9 +1947,10 @@ static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
     "previewHistoryLadder", "opensAt", "noClone", "imageAttrs", "haulAttrs",
     "activationResetAttrs", "armAttr", "headlessReplacesWindow", "recordCarriesActivation",
     "keepAliveOnCancel", "rollovers", "handleAnchor", "armRestoresWholeImage", "dropWritesRow",
+    "toolSetDropRow", "armUndoLeavesToolLatent",
     "pressOpensOperation", "foldsParamRowsIntoBlock",
     "redoPinsRefireImage", "commandEndsOpenGesture", "stepsParamWrites"],
-    "UND2 pin: ToolSessionPolicy's members changed (measured 26 since task 9428)");
+    "UND2 pin: ToolSessionPolicy's members changed (measured 28 since task 9508)");
 
 /// The session type `EditSession` holds in its field `tools_`.
 private template SessionOf(ES) {
@@ -2249,12 +2255,53 @@ unittest { // (10)
            format("S6 policy classes: dropWritesRow declared by %s, expected the pen only", declared));
     auto app = squeeze(bodyAt(blankNonCode(readText("source/app.d")),
         "void dropActiveToolWith(ToolTransition why, DropContext ctx)"));
-    assert(app.count("constbooldropRow=activeTool!is"~"null&&activeTool.sessionPolicy().dropWritesRow&&dropWritesRowFor(why);") == 1,
+    assert(app.count("constbooldropRow=activeTool!is"~"null&&dropWritesRowFor(why)&&" ~
+                     "(activeTool.sessionPolicy().dropWritesRow||" ~
+                     "(activeTool.sessionPolicy().toolSetDropRow&&ctx.toolSetDoor));") == 1,
            "S6 wiring census: the drop door no longer reads the policy and the transition table");
-    inOrder(app, ["dropWritesRowFor(why);",
+    inOrder(app, ["ctx.toolSetDoor));",
                   "scope(failure)if(session!is"~"null)session.abandonDropRow();",
                   "session.closeOperation(closeReasonFor(why),CommandDoor.ui,dropRow,ctx);",
                   "activeTool.deactivate();"], "dropActiveToolWith");
+}
+
+// ---------------------------------------------------------------------------
+// (10b) Task 9508 — K-RD rules 2 and 3 are policy DATA. `toolSetDropRow`:
+// captured for the transform presets and Polygon Bevel (findings_K-RD CD_Q /
+// CD_S × Move, Rotate, Scale, Move Item, Bevel); `armUndoLeavesToolLatent`:
+// captured on the transform tool (RD_DROP_Z0D). Exactly these classes declare
+// them; the `tool.set` doors are the only ones that raise `toolSetDoor`.
+// ---------------------------------------------------------------------------
+
+static assert(ToolSessionPolicy.init.toolSetDropRow == false);
+static assert(ToolSessionPolicy.init.armUndoLeavesToolLatent == false);
+
+unittest { // (10b)
+    string[] dropRow, latent;
+    size_t scanned;
+    foreach (m; ModuleInfo) {
+        if (m is null || !m.name.startsWith("tools.")) continue;
+        foreach (c; m.localClasses) {
+            if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
+                continue;
+            ++scanned;
+            const pol = blit(c).sessionPolicy();
+            if (pol.toolSetDropRow) dropRow ~= c.name;
+            if (pol.armUndoLeavesToolLatent) latent ~= c.name;
+        }
+    }
+    assert(scanned == 48, format("9508 policy classes: scanned %s, measured 48", scanned));
+    dropRow.sort();
+    assert(dropRow == ["tools.edit.poly_bevel.PolyBevelTool",
+                       "tools.transform.xfrm_transform.XfrmTransformTool"],
+           format("9508 policy classes: toolSetDropRow declared by %s", dropRow));
+    assert(latent == ["tools.transform.xfrm_transform.XfrmTransformTool"],
+           format("9508 policy classes: armUndoLeavesToolLatent declared by %s", latent));
+    auto app = blankNonCode(readText("source/app.d"));
+    assert(squeeze(app).count("ctx.toolSetDoor=true;") == 1,
+           "9508 wiring census: one door raises toolSetDoor besides the type keys");
+    assert(squeeze(app).count("DropContext(false,true,before,!flipped)") == 2,
+           "9508 wiring census: the two selection-type funnels pass !flipped as toolSetDoor");
 }
 
 // ---------------------------------------------------------------------------

@@ -928,7 +928,7 @@ struct InputRouter {
             beginInteractiveSelEdit();
             return;
         }
-        // K-RD rule 3 (task 9508): a plain press re-arms a latent tool first.
+        // K-RD rule 3: a plain press re-arms a latent tool first.
         if (app.activeTool is null && btn.button == SDL_BUTTON_LEFT
             && ifs.viewportInputAllowed()
             && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)))

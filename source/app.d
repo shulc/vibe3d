@@ -3921,7 +3921,7 @@ void main(string[] args) {
     };
     toolHost.deactivate = () {
         DropContext ctx;
-        ctx.toolSetDoor = true;   // Q / `tool.set <id> off` (task 9508)
+        ctx.toolSetDoor = true;   // Q / `tool.set <id> off`
         dropActiveToolWith(ToolTransition.explicitDrop, ctx);
     };
 

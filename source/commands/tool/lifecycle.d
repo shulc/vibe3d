@@ -23,7 +23,7 @@ interface ToolArmLifecyclePolicy {
     string previousId() const;
     bool carriesRedoAfterUndo() const;
     bool joinsFirstGroup() const;
-    /// K-RD rule 2 (task 9508): the undo of this row also undoes the rows of
+    /// K-RD rule 2: the undo of this row also undoes the rows of
     /// the session `previousToken` names, below it (a drop row only).
     bool revertsSession() const;
     ulong previousToken() const;

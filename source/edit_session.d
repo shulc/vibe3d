@@ -580,7 +580,7 @@ final class EditSession {
 
     bool terminalRedoRequested() const { return tools_.terminalRedoRequested(); }
 
-    /// K-RD rule 3 (task 9508): arm the latent tool for a plain viewport press.
+    /// K-RD rule 3: arm the latent tool for a plain viewport press.
     bool armLatentTool() { return tools_.armLatent(); }
 
     // Framework "apply and continue" (task 0461 — the reference editor's
@@ -1012,7 +1012,7 @@ private struct ToolSession {
         return r;
     }
 
-    // K-RD rule 3 (task 9508, RD_DROP_Z0D): the index of the bound tool's own
+    // K-RD rule 3 (RD_DROP_Z0D): the index of the bound tool's own
     // activation row, when its policy leaves it latent after that row's undo.
     private size_t latentArmRow_() {
         import commands.tool.lifecycle : ToolActivationCommand;
@@ -2707,7 +2707,7 @@ private struct ToolSession {
         if (dropRowFactory_ is null) return;
         // A session-reverting drop writes its row only over a row of the
         // dropped session: with edits +1 (K-RD CD_Q_*), without them none
-        // (task 5911 C1/q, C1/off, C6g/q: history delta {}).
+        // (tool_drop_pipe_stages capture C1/q, C1/off, C6g/q: delta {}).
         import commands.tool.lifecycle : ToolActivationCommand;
         const top = undoTop_();
         if (pendingDrop_.revertsSession && (top is null || pendingDrop_.previousToken == 0 ||
