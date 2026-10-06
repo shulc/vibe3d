@@ -596,6 +596,61 @@ version(unittest) unittest {
     assert(weldCandidate.faces[$ - 1] == [weldBase+1,weldBase+2,weldBase+3,weldBase],
         "frozen candidate order consumption");
     assert(weldCandidate.vertices[weldBase+2] == Vec3(.23,1,.23), "cached candidate geometry consumption");
+    auto clearImage = weldPen.buildPreparedParamImage("flip");
+    assert(clearImage.nextSources.length == 5 && clearImage.nextOrder.length == 4,
+        "configuration parameter clear population");
+    clearImage.clear();
+    assert(clearImage.nextSources.length == 0 && clearImage.nextOrder.length == 0,
+        "configuration parameter clear topology");
+    // Private cache images must leave plain polygons together in both doors.
+    foreach (configuration; 0 .. 6) {
+        auto configPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+        configPen.state = PenState.Drawing;
+        configPen.vertices_ = weldPen.vertices_.dup;
+        configPen.links_ = weldPen.links_.dup;
+        configPen.sources_ = weldPen.sources_.dup;
+        configPen.order_ = weldPen.order_.dup;
+        configPen.geometryPoints_ = weldPen.geometryPoints_.dup;
+        configPen.previewGpu.suppressCageUpload = true;
+        foreach (v; configPen.vertices_) configPen.vertHandlers ~= configPen.vertMarker(v);
+        final switch (configuration) {
+            case 0: configPen.params_.type = PenType.lines; break;
+            case 1: configPen.params_.type = PenType.vertices; break;
+            case 2: configPen.params_.type = PenType.subdiv; break;
+            case 3: configPen.params_.makeQuads = true; break;
+            case 4: configPen.params_.wall = PenWall.inner; break;
+            case 5: configPen.mirror_.enabled = true; break;
+        }
+        auto configImage = configPen.buildPreparedParamImage("type");
+        assert(configImage.expectedSources.length == 5 && configImage.expectedOrder.length == 4 &&
+            configPen.preparedParamMatches(configImage), "configuration cache expected population");
+        assert(configImage.nextSources.length == 0 && configImage.nextOrder.length == 0,
+            "configuration prepared topology invalidation");
+        assert(configImage.nextGeometryPoints == configImage.nextVertices,
+            "configuration prepared geometry invalidation");
+        if (configuration == 0)
+            assert(configImage.nextPreview.vertices.length == 5 &&
+                configImage.nextPreview.faces == [[0u,1],[1u,2],[2u,3],[3u,4]],
+                "configuration prepared preview consumes invalidation");
+        if (configuration == 2)
+            assert(configImage.nextPreview.vertices.length == 5 &&
+                configImage.nextPreview.faces.length == 1 &&
+                configImage.nextPreview.faces[0].length == 5,
+                "configuration prepared preview order invalidation");
+        configPen.installPreparedParam(configImage);
+        assert(configPen.sources_.length == 0 && configPen.order_.length == 0 &&
+            configPen.geometryPoints_ == configPen.vertices_, "configuration cache installation");
+        assert(configImage.nextSources.length == 0 && configImage.nextOrder.length == 0,
+            "configuration parameter image cleared");
+        configPen.sources_ = weldPen.sources_.dup;
+        configPen.order_ = weldPen.order_.dup;
+        configPen.geometryPoints_ = weldPen.geometryPoints_.dup;
+        configPen.onParamChanged("type");
+        assert(configPen.sources_.length == 0 && configPen.order_.length == 0,
+            "configuration live topology invalidation");
+        assert(configPen.geometryPoints_ == configPen.vertices_,
+            "configuration live geometry invalidation");
+    }
     weldPen.params_.currentPoint = 2;
     weldPen.params_.posX = .26; weldPen.params_.posY = 1; weldPen.params_.posZ = .26;
     auto positionImage = weldPen.buildPreparedParamImage("posX");
@@ -612,9 +667,14 @@ version(unittest) unittest {
     weldPen.geometryPoints_[2].x = .28;
     weldPen.appendVertex(Vec3(.4,1,.4), -1);
     assert(weldPen.geometryPoints_ == weldPen.vertices_, "cached append geometry reset");
+    assert(weldPen.sources_.length == 0 && weldPen.order_.length == 0,
+        "append invalidates frozen topology");
+    weldPen.sources_ = [0,1,2,3,0,5]; weldPen.order_ = [1,2,3,0];
     weldPen.geometryPoints_[2].x = .28;
     weldPen.insertVertexAfter(0, Vec3(.3,1,.3), -1);
     assert(weldPen.geometryPoints_ == weldPen.vertices_, "cached insert geometry reset");
+    assert(weldPen.sources_.length == 0 && weldPen.order_.length == 0,
+        "insert invalidates frozen topology");
     weldPen.clearStroke();
     assert(weldPen.sources_.length == 0 && weldPen.order_.length == 0 &&
         weldPen.geometryPoints_.length == 0,
@@ -728,7 +788,7 @@ struct PreparedPenParamImage {
     Vec3[] expectedVertices, nextVertices;
     Vec3[] expectedGeometryPoints, nextGeometryPoints;
     int[] expectedLinks, nextLinks;
-    uint[] expectedSources, expectedOrder;
+    uint[] expectedSources, expectedOrder, nextSources, nextOrder;
     BoxHandler[] expectedHandlers;
     Vec3[] expectedHandlerPositions, nextHandlerPositions;
     float[16] expectedToWorld;
@@ -740,6 +800,7 @@ struct PreparedPenParamImage {
         expectedVertices = nextVertices = null;
         expectedGeometryPoints = nextGeometryPoints = null;
         expectedLinks = nextLinks = null; expectedSources = expectedOrder = null;
+        nextSources = nextOrder = null;
         expectedHandlers = null;
         expectedHandlerPositions = nextHandlerPositions = null;
         expectedPreview = MeshSnapshot.init; nextPreview = Mesh.init;
@@ -896,6 +957,10 @@ public:
         // and re-render. The panel writes through the typed pointer first,
         // so params_.* already holds the new value when this fires.
         if (state != PenState.Drawing) return;
+        if (!supportsFrozenPolygon(params_, mirror_)) {
+            sources_ = order_ = null;
+            geometryPoints_ = vertices_.dup;
+        }
 
         if (name == "currentPoint") {
             // Clamp to a valid index range and refresh posX/Y/Z to mirror the
@@ -926,6 +991,14 @@ public:
             name == "close" || name == "wall" || name == "offset";
     }
 
+    // Frozen corners belong only to the plain polygon configuration (9518).
+    // Other shapes build from the stroke points; see the task's cache proof.
+    private static bool supportsFrozenPolygon(in PenParams params,
+            in SymmetryPacket mirror) nothrow @nogc {
+        return params.type == PenType.polygons && !params.makeQuads &&
+            params.wall == PenWall.off && !mirror.enabled;
+    }
+
     final PreparedPenParamImage buildPreparedParamImage(string name) const {
         PreparedPenParamImage image;
         image.valid = true; image.kind = PreparedPenParamKind.Noop;
@@ -937,6 +1010,7 @@ public:
         image.nextGeometryPoints = geometryPoints_.dup;
         image.expectedLinks = links_.dup; image.nextLinks = links_.dup;
         image.expectedSources = sources_.dup; image.expectedOrder = order_.dup;
+        image.nextSources = sources_.dup; image.nextOrder = order_.dup;
         image.expectedHandlers.length = vertHandlers.length;
         image.expectedHandlerPositions.length = vertHandlers.length;
         image.nextHandlerPositions.length = vertHandlers.length;
@@ -950,6 +1024,10 @@ public:
         image.expectedMirror = penMirror(mirror_);
         image.expectedPreview = MeshSnapshot.capture(previewMesh);
         if (state != PenState.Drawing) return image;
+        if (!supportsFrozenPolygon(image.nextParams, image.expectedMirror)) {
+            image.nextSources = image.nextOrder = null;
+            image.nextGeometryPoints = image.nextVertices.dup;
+        }
         if (name == "currentPoint") {
             image.kind = PreparedPenParamKind.CurrentPoint;
             int n = cast(int)image.nextVertices.length;
@@ -983,7 +1061,7 @@ public:
         auto shadow = beginPreparedShadow(image.nextPreview);
         appendPenGeometry(image.nextPreview, PenStroke.of(buildPoints(image.nextVertices, image.nextGeometryPoints),
             frame.toWorld, image.nextParams, withoutSceneLinks(image.nextLinks),
-            mirror_, wallNormal: wallNormal, sources: sources_, order: order_), PenBuildPurpose.Preview);
+            mirror_, wallNormal: wallNormal, sources: image.nextSources, order: image.nextOrder), PenBuildPurpose.Preview);
         foreach (i, v; image.nextVertices)
             if (i < image.nextHandlerPositions.length)
                 image.nextHandlerPositions[i] = transformPoint(frame.toWorld, v);
@@ -1019,6 +1097,8 @@ public:
         vertices_ = image.nextVertices; image.nextVertices = null;
         geometryPoints_ = image.nextGeometryPoints; image.nextGeometryPoints = null;
         links_ = image.nextLinks; image.nextLinks = null;
+        sources_ = image.nextSources; image.nextSources = null;
+        order_ = image.nextOrder; image.nextOrder = null;
         if (image.upload) installPreparedMeshImage(previewMesh, image.nextPreview);
         foreach (i, handler; vertHandlers)
             handler.pos = image.nextHandlerPositions[i];
@@ -1336,8 +1416,7 @@ public:
         }
         // Polygon rebuild (9518): clicks search at 3 world pixels and freeze
         // their corners. Drag/Return/drop only move or consume this topology.
-        if (params_.type == PenType.polygons && !params_.makeQuads &&
-            params_.wall == PenWall.off && !mirror_.enabled) {
+        if (supportsFrozenPolygon(params_, mirror_)) {
             sources_ = params_.merge ? penMergeSources(vertices_, frame.toWorld,
                 3 * viewWorldPerPixel(cachedVp)) : null;
             order_ = penPolygonOrder(vertices_, frame.toWorld, sources_, false);
@@ -1711,6 +1790,7 @@ private:
         refreshLinks();
         links_ ~= selfMirrorOr(link, pos, vertices_.length);
         vertices_ ~= pos;
+        sources_ = order_ = null;
         geometryPoints_ = vertices_.dup;
         vertHandlers ~= vertMarker(pos);
     }
@@ -1761,6 +1841,7 @@ private:
             selfMirrorOr(shiftedLink(link, insertIdx, 1), pos, insertIdx) ~
             links_[insertIdx .. $];
         vertices_ = vertices_[0 .. insertIdx] ~ pos ~ vertices_[insertIdx .. $];
+        sources_ = order_ = null;
         geometryPoints_ = vertices_.dup;
         vertHandlers = vertHandlers[0 .. insertIdx] ~ vertMarker(pos)
             ~ vertHandlers[insertIdx .. $];

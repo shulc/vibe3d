@@ -62,6 +62,21 @@ unittest {
         JSONValue[] vs; foreach (p; points) vs ~= JSONValue([JSONValue(p.x),JSONValue(p.y),JSONValue(p.z)]);
         compare(id,JSONValue(vs),parseJSON("[[1,0,3,2]]")); ++ran;
     }
-    if (!only.length) assert(ran == 20,format("merge cell population %s expected 20",ran));
+    foreach (kind; ["lines", "vertices"]) foreach (ending; ["script", "return"]) {
+        const id = "type-roundtrip-" ~ kind ~ "-" ~ ending;
+        if (only.length && only != id) continue;
+        start(false);
+        penCommand("tool.attr pen type " ~ kind);
+        clickWorld(Vec3(0,1,.44));
+        penCommand("tool.attr pen type polygons");
+        if (ending == "script") penCommand("tool.set pen off");
+        else playAndWait(kPaceLine ~ `{"t":50.000,"type":"SDL_KEYDOWN","sym":13,"mod":0}` ~ "\n");
+        const m = getJson("/api/model");
+        assert(m["vertices"].array.length == 5, id ~ ": five clicked points");
+        assert(m["faces"] == parseJSON("[[1,0,4,3,2]]"),
+            id ~ ": type round-trip lost a clicked stroke corner: " ~ m["faces"].toString);
+        ++ran;
+    }
+    if (!only.length) assert(ran == 24,format("merge cell population %s expected 24",ran));
     else assert(ran == 1, "requested merge cell missing");
 }
