@@ -81,8 +81,10 @@ private enum string[] kNamedExceptions = [
 /// added `markEntryFold` (reviewed: the tool session sets the parameter-row
 /// fold bits on rows it recorded; no tool calls it, so no axis-3 write).
 /// Topology-redo S5 (task 9170) added `truncateRedo` (reviewed: the tool
-/// session's law-3 cut; no tool calls it, so no axis-3 write).
-private enum size_t kHistorySurface = 69;
+/// session's law-3 cut; no tool calls it, so no axis-3 write). Task 9508
+/// added `generation` (reviewed: a read the tool session keys its latent tool
+/// on; it writes nothing, so no axis-3 write).
+private enum size_t kHistorySurface = 70;
 
 /// Tool-side history wrappers, counted as identifier tokens (every spelling:
 /// call, declaration, address-of).
