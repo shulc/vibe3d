@@ -394,7 +394,8 @@ void perspectiveCtrlBackgroundPoint(ushort portOffset = 0) {
         return reply["value"].type==JSONType.string ? reply["value"].str.to!double : penNum(reply["value"]);
     }
     penPlay(penMotion(60,at[0]+2,at[1],1,PEN_KMOD_LCTRL)~"\n"~penMotion(80,at[0]+4,at[1],1,PEN_KMOD_LCTRL),"first eligible Ctrl election");
-    assert(abs(offset("offsetX"))<1e-7&&abs(offset("offsetY"))<1e-7&&abs(offset("offsetZ")+.01110023379)<2e-6,"ORBIT_FIRST_Z: first eligible guided motion publishes only Z");
+    const firstZ=offset("offsetZ");
+    assert(abs(offset("offsetX"))<1e-7&&abs(offset("offsetY"))<1e-7&&abs(firstZ+.01110023379)<2e-6,"ORBIT_FIRST_Z: first eligible guided motion publishes only Z");
     string motions;foreach(i;3..36)motions~=penMotion(40+20*i,at[0]+2*i,at[1],1,PEN_KMOD_LCTRL)~"\n";
     penPlay(motions,"35 acknowledged Ctrl motions");
     const held=getJson("/api/tool/state");writeln("ORBIT-CTRL-HELD ",held);
@@ -411,7 +412,7 @@ void perspectiveCtrlBackgroundPoint(ushort portOffset = 0) {
     if(output.length) {
         import std.file : write;
         write(output,format(`{"camera":%s,"press":[%s,%s],"firstZ":%s,"finalZ":%s,"held":%s,"foregroundAfter":%s,"backgroundAfter":%s}`,
-            camera,x,y,-.01110023379,offset("offsetZ"),held,getJson("/api/model"),getJson("/api/model?layer=1")));
+            camera,x,y,firstZ,offset("offsetZ"),held,getJson("/api/model"),getJson("/api/model?layer=1")));
     }
     penCtrlZ("perspective Ctrl undo1");penCtrlZ("perspective Ctrl undo2");
     assert(penMesh()==before,"ORBIT_UNDO: full foreground restored after captured sequence");

@@ -749,9 +749,9 @@ unittest {
         cs.enabled=true;cs.handle=true;cs.geom=ConstrainGeom.Point;pen.moveAxisLock_=true;
         setBackgroundSnapSources([cast(const(Mesh)*)&background],[ModelSpace.world()]);
         Vec3 costOff;bool costAccepted;
-        assert(pen.grabOffset(h,70,0,vp,costOff,costAccepted));
+        assert(pen.grabOffset(h,70,0,vp,costOff,costAccepted,true));
         cs.queries=0;const allocated=GC.stats().allocatedInCurrentThread;auto clock=StopWatch(AutoStart.yes);
-        size_t costEvents;foreach(i;1..36) {assert(pen.grabOffset(h,2*i,0,vp,costOff,costAccepted));++costEvents;}
+        size_t costEvents;foreach(i;1..36) {assert(pen.grabOffset(h,2*i,0,vp,costOff,costAccepted,true));++costEvents;}
         const elapsed=clock.peek.total!"usecs";const bytes=GC.stats().allocatedInCurrentThread-allocated;
         assert(costEvents==35&&cs.queries==35,"GUIDE_COST_POPULATION: original 35 evaluated costEvents issue 35 surface queries");
         writefln("GUIDE-COST bg_vertices=%s bg_faces=%s costEvents=%s queries=%s bytes=%s elapsed_us=%s final_offset=%s costAccepted=%s",background.vertices.length,background.faces.length,costEvents,cs.queries,bytes,elapsed,costOff,costAccepted);
@@ -767,10 +767,17 @@ unittest {
             setBackgroundSnapSources([cast(const(Mesh)*)&background],[remote]);
         }
         Vec3 off;bool accepted;cs.queries=0;
-        assert(pen.grabOffset(h,70,0,vp,off,accepted),"PEN_GUIDE_MAP: actual translator valid");
+        assert(pen.grabOffset(h,70,0,vp,off,accepted,true),"PEN_GUIDE_MAP: actual translator valid");
         assert(cs.queries==(which>=5?2:1),"PEN_GUIDE_QUERY_COUNT: one supported success or preserved recast; failed perspective attempt adds one query");
         if(which==0) {
             assert(accepted&&(off-Vec3(.1082690091f,.2456922878f,-.1127482767f)).length<2e-6f,"PEN_GUIDE_ACCEPTED: actual production provider before election");
+            Vec3 inherited;assert(pen.grabOffset(h,70,0,vp,inherited),"PEN_INHERITED_MAP: existing callers still valid");
+            HandleDrag oldGrab;oldGrab.press(h,0,0);bool oldSkip;
+            const oldClient=oldGrab.client(70,0,DragFrame(DragKind.viewPlane),vp,oldSkip);
+            float sx,sy,sz;Vec3 rayOrigin,rayDirection;SurfaceHit oldHit;
+            assert(projectToWindowFull(oldClient,vp,sx,sy,sz));screenPointToRay(sx,sy,vp,rayOrigin,rayDirection);
+            assert(cs.rayHit(rayOrigin,rayDirection,oldHit,backgroundSourcesFull()),"PEN_INHERITED_HIT: old recast positive control");
+            assert((inherited-(oldHit.point-h)).length<2e-6f,"PEN_INHERITED_POLICY: existing five-argument callers do not request perspective activation");
         } else {
             HandleDrag grab;grab.press(h,0,0);bool skip;
             auto old=grab.client(70,0,DragFrame(DragKind.viewPlane),vp,skip);

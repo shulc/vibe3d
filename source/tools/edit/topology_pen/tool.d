@@ -4109,7 +4109,7 @@ public:
         immutable int dx = px - moveStartX_, dy = py - moveStartY_;
         moveOffset_ = Vec3(0, 0, 0);
         Vec3 off;
-        if (releaseIsClick(dx, dy) || !grabOffset(moveAnchor_, dx, dy, vp, off, movePerspectiveGuideAccepted_))
+        if (releaseIsClick(dx, dy) || !grabOffset(moveAnchor_, dx, dy, vp, off, movePerspectiveGuideAccepted_, true))
             return moveBase_.dup;
         if (moveAxisLock_) off = onElectedAxis(off);
         moveOffset_ = off;
@@ -4137,11 +4137,11 @@ public:
     package bool grabOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
                             out Vec3 offLocal) {
         bool accepted;
-        return grabOffset(anchorLocal, dx, dy, vp, offLocal, accepted);
+        return grabOffset(anchorLocal, dx, dy, vp, offLocal, accepted, false);
     }
 
     package bool grabOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
-                            out Vec3 offLocal, out bool acceptedPerspective) {
+                            out Vec3 offLocal, out bool acceptedPerspective, bool perspectiveGuideRequested) {
         const ms = primaryModelSpace();
         HandleDrag grab;
         grab.press(ms.toWorldPoint(anchorLocal), 0, 0);
@@ -4150,7 +4150,7 @@ public:
         import drag : ComponentGuideResolver;
         import math : isOrtho;
         const env = cs is null ? typeof(cs.guideEnvironment(false, vp)).init
-                               : cs.guideEnvironment(moveAxisLock_, vp);
+                               : cs.guideEnvironment(moveAxisLock_ && (isOrtho(vp) || perspectiveGuideRequested), vp);
         const guidedRoute = cs !is null && env.supported();
         bool acceptedGuide;
         scope ComponentGuideResolver guide;
