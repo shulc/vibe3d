@@ -2634,7 +2634,7 @@ def pen_param_gate(pen, private, effect):
                 'if (rebuildsPreview(name)) {',
                 'else if (name == "posX" || name == "posY" || name == "posZ")',
                 "beginPreparedShadow(image.nextPreview)",
-                "appendPenGeometry(image.nextPreview, PenStroke.of(image.nextVertices,",
+                "appendPenGeometry(image.nextPreview, PenStroke.of(buildPoints(image.nextVertices, image.nextGeometryPoints),",
                 "drainPreparedShadowDelivery(image.nextPreview")) and
             "installPreparedMeshImage(previewMesh, image.nextPreview)" in pen and
             "target.classinfo !is PenTool.classinfo" in factory and
@@ -5535,7 +5535,7 @@ def pen_deactivate_gate(tool, owner, effect, context, handlers):
         "frame.toWorld == image.toWorld" in state and
         "installPreparedMeshImage(previewMesh, image.previewClear);" in state and
         "beginPreparedShadow(candidate)" in candidate and
-        "appendPenGeometry(candidate, PenStroke.of(image.vertices," in candidate and
+        "appendPenGeometry(candidate, PenStroke.of(buildPoints(image.vertices, image.geometryPoints)," in candidate and
         "PenBuildPurpose.Commit" in candidate and
         "candidate.declareCornerAppend(); candidate.buildLoops();" in candidate and
         "candidate.syncSelection();" in candidate and

@@ -71,7 +71,7 @@ private Vec3[] commit() {
     penCommand("tool.set pen off");
     return readVerts();
 }
-private string[] compare(string cell, Vec3[] got, JSONValue want) {
+private string[] compare(string cell, const(Vec3)[] got, JSONValue want) {
     if (got.length != want.array.length)
         return [format("%s: %d vertices, expected %d (got %s)", cell, got.length,
                        want.array.length, got)];
