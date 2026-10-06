@@ -305,3 +305,42 @@ unittest {
     assert((planar - Vec3(0.43f, 0, 0.2f)).length < 1e-6f,
            "planar sibling: preserve the shared handle-plane form");
 }
+
+// Task9528 phase-zero transport observation; the independent lens is kept
+// separate from the real View so a projection discrepancy remains visible.
+unittest {
+    import view : View;
+    import math : Orientation, projectToWindowFull, screenPointToRay;
+    import drag : preparePlaneDrag;
+    import viewgrid : viewWorldPerPixel, viewVectorQuantum;
+    import std.math : atan;
+    import std.stdio : writefln;
+    const r=Vec3(.2004414573445789f,.5011036433614473f,-.8418541208472314f);
+    const u=Vec3(-.9284766908852593f,.37139067635410367f,0);
+    const b=Vec3(.3126567713329426f,.7816419283323567f,.5397051409913891f);
+    const h=Vec3(-.10000000149011612f,.30000001192092896f,.94868332147598267f);
+    auto camera=new View(0,0,1152,974);camera.focus=Vec3(0,0,0);
+    camera.distance=4;camera.setOrientation(Orientation.fromBasis(r,u,b));
+    auto actual=camera.viewport();auto independent=actual;
+    independent.proj=perspectiveMatrix(cast(float)(2*atan(487/1004.7545731629976)),1152.0f/974,.001f,100);
+    assert((actual.eye-Vec3(1.2506270853317702f,3.1265677133294263f,2.1588205639655564f)).length<1e-6f,
+        "ORBIT_PRESS_MAP: actual View preserves full rolled camera eye");
+    foreach(vp;[actual,independent]) {
+        writefln("ORBIT-MATRICES view=%(%.9g,%) proj=%(%.9g,%)",vp.view[],vp.proj[]);
+        float x,y,z;assert(projectToWindowFull(h,vp,x,y,z),"ORBIT_PRESS_MAP: populated raw handle projects");
+        const map=preparePlaneDrag(h,3,vp);assert(map.valid,"ORBIT_FROZEN_TRAVEL: real shared map exists");
+        assert(map.jacobian.axisU==Vec3(0,0,1) && map.jacobian.axisV==Vec3(1,0,0),
+            "ORBIT_FROZEN_TRAVEL: actual automatic world frame is Z/X");
+        auto g=HandleDrag();g.press(h,0,0);bool skip;
+        foreach(dx;[4,70]) {
+            const t=h+map.jacobian.apply(dx,0);const rounded=vectorSnap(t,viewVectorQuantum(vp));
+            const dq=g.client(dx,0,DragFrame(DragKind.viewPlane),vp,skip)-h;
+            Vec3 org,dir;float qx,qy,qz;assert(projectToWindowFull(rounded,vp,qx,qy,qz));
+            screenPointToRay(qx,qy,vp,org,dir);
+            writefln("ORBIT-PHASE0 lens=%s rect=%s,%s,%s,%s H=%s projection=%s,%s eye=%s focus=%s focal=%.9g k=%.9g q=%.9g inverse=%.9g,%.9g,%.9g,%.9g dx=%s T=%s U=%s DQ=%s guideRay=%s/%s",
+                vp.proj==actual.proj?"production":"independent",vp.x,vp.y,vp.width,vp.height,h,x,y,vp.eye,vp.focus,
+                .5f*vp.height*vp.proj[5],10*viewWorldPerPixel(vp),viewVectorQuantum(vp),map.jacobian.i00,map.jacobian.i01,
+                map.jacobian.i10,map.jacobian.i11,dx,t,rounded,dq,org,dir);
+        }
+    }
+}

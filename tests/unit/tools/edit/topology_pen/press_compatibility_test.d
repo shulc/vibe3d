@@ -416,3 +416,57 @@ unittest {
     auto t=new TopologyPenTool();t.meshSrc_=()=>&m;SubjectPacket subject;subject.mesh=&m;subject.viewport=vp;subject.pickFacing=true;subject.pickFacesDrawn=false;
     int index;assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.Vertex && index==0,"scope-all-vertex-raw-faces: actual primary compatibility point survives ordinary back-FACE refusal");
 }
+
+private Mesh mixedTieRig(bool edge, bool compatibilityFirst, float ordinaryX,
+                         float compatibilityX, float y, const ref Viewport vp,
+                         out int ordinary, out int compatibility) {
+    import std.algorithm : reverse;
+    Mesh m;
+    if(edge) {
+        m.vertices=[point(ordinaryX,270,vp),point(ordinaryX,330,vp),point(ordinaryX+100,330,vp),point(ordinaryX+100,270,vp)];
+        m.faces=[[0u,3u,2u,1u]];m.rebuildEdgesFromFaces();m.buildLoops();
+        ordinary=-1;
+        foreach(i,e;m.edges)if(e==[0u,1u] || e==[1u,0u])ordinary=cast(int)i;
+        assert(ordinary>=0,"MIXED_RIG_E: ordinary segment exists");
+        m.vertices~=[point(compatibilityX,270,vp),point(compatibilityX,330,vp)];
+        if(compatibilityFirst){uint[2][] loose=[[4u,5u]];m.edges=loose~m.edges;++ordinary;compatibility=0;}
+        else{compatibility=cast(int)m.edges.length;m.edges~=[4u,5u];}
+    } else {
+        auto grid=makeGridPlane(2);
+        foreach(ref v;grid.vertices)v=point(ordinaryX+v.x*60,y+v.z*60,vp);
+        foreach(ref f;grid.faces)reverse(f);
+        grid.buildLoops();
+        ordinary=4;
+        if(compatibilityFirst) {
+            m.vertices=[point(compatibilityX,y,vp)]~grid.vertices;
+            foreach(f;grid.faces){auto shifted=f.dup;foreach(ref vi;shifted)++vi;m.faces~=shifted;}
+            m.rebuildEdgesFromFaces();m.buildLoops();ordinary=5;compatibility=0;
+        } else {m=grid;compatibility=cast(int)m.vertices.length;m.vertices~=point(compatibilityX,y,vp);}
+    }
+    const s=toolPressSupport(m,ModelSpace.world(),vp);
+    assert(edge ? s.edges[ordinary]&&!s.edges[compatibility] : s.vertices[ordinary]&&!s.vertices[compatibility],
+        "MIXED_RIG: actual ordinary and compatibility populations discriminate");
+    return m;
+}
+
+unittest {
+    import toolpipe.packets : SubjectPacket;
+    const vp=viewport();auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
+    foreach(edge;[false,true])foreach(first;[true,false])foreach(mode;0..3)foreach(reciprocal;[false,true]) {
+        const ox=mode==0?302.0f:reciprocal?297.0f:mode==1?304.0f:303.0f;
+        const cx=mode==0?302.0f:reciprocal?(mode==1?304.0f:303.0f):297.0f;
+        const y=mode==1?300.5f:300.0f;
+        int ordinary,compatibility;m=mixedTieRig(edge,first,ox,cx,y,vp,ordinary,compatibility);
+        const s=toolPressSupport(m,ModelSpace.world(),vp);const primary=ToolPressSource(&m,ModelSpace.world());
+        const full=t.legacyPressGather(300,300,vp,false,primary);
+        const subset=t.legacyPressGather(300,300,vp,false,primary,s.vertices,s.edges,s.faces);
+        SubjectPacket subject;subject.mesh=&m;subject.viewport=vp;subject.pickFacing=true;subject.pickFacesDrawn=false;
+        const now=t.queryPressTarget(300,300,vp,false,&subject);
+        float ax,ay,az;const oi=edge?m.edges[ordinary][0]:cast(uint)ordinary;const ci=edge?m.edges[compatibility][0]:cast(uint)compatibility;
+        assert(projectToWindowFull(m.vertices[oi],vp,ax,ay,az));const oMetric=edge?abs(ax-300):(ax-300)*(ax-300)+(ay-300)*(ay-300);
+        assert(projectToWindowFull(m.vertices[ci],vp,ax,ay,az));const cMetric=edge?abs(ax-300):(ax-300)*(ax-300)+(ay-300)*(ay-300);
+        writefln("TIE-PHASE0 class=%s first=%s mode=%s reciprocal=%s ordinary=%s compat=%s full=%s/%s subset=%s/%s metrics=%s/%s current=%s/%s",
+            edge?"E":"V",first,mode,reciprocal,ordinary,compatibility,edge?full.edge.index:full.vertex.index,edge?full.distances.edge:full.distances.vertex,
+            edge?subset.edge.index:subset.vertex.index,edge?subset.distances.edge:subset.distances.vertex,oMetric,cMetric,now.kind,now.index);
+    }
+}

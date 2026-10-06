@@ -289,3 +289,29 @@ unittest {
     }
 
 }
+
+// Phase-zero observation uses the original scene and full camera. Its outputs
+// precede any new perspective-guide expectation (task9528).
+unittest {
+    if(!runs("orbit_phase0"))return;
+    import topology_pen_session_helpers : penRigLoad, penArmUi, penMesh;
+    import std.path : buildPath, dirName;
+    import std.json : JSONValue;
+    import std.stdio : writeln;
+    const r=penRigLoad(buildPath(dirName(__FILE_FULL_PATH__),"fixtures/topology_pen_session_rig.v3d"));
+    penArmUi(r);
+    auto reply=postJson("/api/camera", `{"orientation":[0.2004414573445789,0.5011036433614473,-0.8418541208472314,-0.9284766908852593,0.37139067635410367,0,0.3126567713329426,0.7816419283323567,0.5397051409913891],"distance":4,"focus":{"x":0,"y":0,"z":0}}`);
+    assert(reply["status"].str=="ok","ORBIT_PRESS_MAP: actual camera accepts full basis");
+    const raw=getJson("/api/camera");writeln("ORBIT-HTTP-CAMERA ",raw);
+    const before=getJson("/api/model");const pipe=getJson("/api/toolpipe");
+    const vp=viewportFromCameraMatrices();const h=Vec3(-.1f,.3f,.94868332147598267f);
+    float x,y;assert(projectToWindow(h,vp,x,y),"ORBIT_PRESS_MAP: actual raw H projects");
+    writeln("ORBIT-HTTP-PRESS H=",h," pixel=",x,",",y," primary=",getJson("/api/layers"));
+    int[2][] path;foreach(i;0..35)path~=[2,0];
+    ctrlDrag([cast(int)round(x),cast(int)round(y)],path);
+    const outcome=getJson("/api/tool/state");writeln("ORBIT-HTTP-OUTCOME ",outcome);
+    import std.file : write;
+    const output=environment.get("VIBE3D_OBSERVATION_OUTPUT","");
+    if(output.length)write(output,format(`{"camera":%s,"before":%s,"pipe":%s,"press":[%s,%s],"outcome":%s,"after":%s}`,raw,before,pipe,x,y,outcome,getJson("/api/model")));
+    assert(penMesh().nv==16,"ORBIT_PRESS_MAP: original populated foreground retained");
+}
