@@ -228,10 +228,10 @@ unittest { // Actual registered session, same object/token and position delivery
     rig.session.editMesh()=original(f); rig.session.editMode=EditMode.Polygons;
     auto m=&rig.session.editMesh();
     class ObservedRadial : RadialAlignTool {
-        bool evaluating;
+        bool evaluating; size_t calls;
         this() { super(() => m,&rig.gpu,rig.session.editModePtr()); }
         override bool applyHeadless() {
-            evaluating=true; scope(exit) evaluating=false;
+            ++calls; evaluating=true; scope(exit) evaluating=false;
             return super.applyHeadless();
         }
     }
@@ -257,12 +257,31 @@ unittest { // Actual registered session, same object/token and position delivery
     changeBus.onMeshChanged((size_t subject,uint changed) nothrow {
         if(subject==cast(size_t)m) { flags|=changed; deliveryInside|=t.evaluating; }
     });
+    import core.memory : GC;
+    import std.stdio : writefln;
+    size_t coldBytes, warmBytes, refusalBytes;
     foreach(c;0..4) {
         radialAttrs(t,f["cells"][c]); flags=0; deliveryInside=false;
+        if(c==1) {
+            foreach(p;t.params()) if(p.name=="weight") *p.fptr=0;
+            auto refusal=rig.registry.makeCommand("tool.doApply");
+            const start=GC.allocatedInCurrentThread;
+            assert(!rig.executor.applyOrRefire(refusal,RecordMode.Record,null),
+                "radial CPU zero-write refusal");
+            refusalBytes=GC.allocatedInCurrentThread-start;
+            assert(flags==0,"radial refused source publishes no Position delivery");
+            assert(bits(m.vertices[73].x)==bits(vector(f["cells"][0]["weighted"][1]).x),
+                "radial CPU refusal preserves visible inverse");
+            foreach(p;t.params()) if(p.name=="weight") *p.fptr=1;
+        }
         assert(rig.activeTool is t && rig.editSession.currentToken()==token,
             "radial real same-instance and token before evaluation");
         auto row=rig.registry.makeCommand("tool.doApply");
+        const start=GC.allocatedInCurrentThread;
         assert(rig.executor.applyOrRefire(row,RecordMode.Record,null),"radial real factory apply");
+        const allocated=GC.allocatedInCurrentThread-start;
+        if(c==0) coldBytes=allocated;
+        if(c==1) warmBytes=allocated;
         assert(bits(m.vertices[73].x)==bits(vector(f["cells"][c]["weighted"][1]).x),
             "radial real retained source index1.x");
         foreach(i;0..90) {
@@ -289,6 +308,22 @@ unittest { // Actual registered session, same object/token and position delivery
     assert(rig.editSession.navigate(false),"radial EditSession forward");
     assert(bits(m.vertices[73].x)==bits(vector(f["cells"][3]["weighted"][1]).x),
         "radial EditSession recorded forward");
+    rig.activeTool=null;
+    assert(rig.history.undo(),"radial closed allocation inverse control");
+    const start=GC.allocatedInCurrentThread;
+    assert(rig.history.redo(),"radial closed allocation Redo");
+    const closedBytes=GC.allocatedInCurrentThread-start;
+    assert(rig.activeTool is null &&
+        bits(m.vertices[73].x)==bits(vector(f["cells"][3]["weighted"][1]).x),
+        "radial closed CPU replay owns its postimage without rearm");
+    rig.activeTool=inherited;
+    const calls=t.calls;
+    assert(rig.history.undo() && rig.history.redo(),"radial replay with another family armed");
+    assert(rig.activeTool is inherited && t.calls==calls &&
+        bits(m.vertices[73].x)==bits(vector(f["cells"][3]["weighted"][1]).x),
+        "radial carrier must not evaluate current or recorded tool");
+    writefln("RADIAL-L2-ALLOC-GC full90 cold=%s warm=%s refusal=%s closedRedo=%s",
+        coldBytes,warmBytes,refusalBytes,closedBytes);
 }
 unittest { // Outside-neighbor coordinates use the same explicit source domain.
     import tools.alignment.align_kernels : alignOutsideNeighbours;
