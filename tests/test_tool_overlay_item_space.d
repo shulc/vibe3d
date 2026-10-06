@@ -674,16 +674,36 @@ unittest {
 unittest {
     enum string TOOL = "mesh.arrayTool";
 
-    // The DELTA the drag added, not the absolute offset. The baseline is
-    // zeroed on both stands: the press handle is P0 - (c + off0) (K-FH
-    // C-NT-off), so the default layer-space (1,1,1) would put the two stands'
-    // handles at different world points and the same picture would not be
-    // the same drag (task 9527).
+    // The DELTA the drag added, not the absolute offset. The press handle is
+    // P0 - pos(c + off0) (K-FH C-NT-off), so both stands start from the SAME
+    // world baseline w: the baked stand takes off0 = w, the transformed one
+    // L^-1 w. Then the same picture is the same drag, and an off0 that skips
+    // the item matrix moves the transformed stand's handle (task 9527).
+    immutable double[3] w = [1.0, 1.0, 1.0];
+    double[3] baseline(bool transformed) {
+        if (!transformed) return w;
+        auto m = composeItemMatrix();   // Cramer's rule on the linear part
+        double det3(double[3] a, double[3] b, double[3] c) {
+            return a[0]*(b[1]*c[2] - b[2]*c[1]) - b[0]*(a[1]*c[2] - a[2]*c[1])
+                 + c[0]*(a[1]*b[2] - a[2]*b[1]);
+        }
+        immutable double[3] c0 = [m[0], m[1], m[2]], c1 = [m[4], m[5], m[6]], c2 = [m[8], m[9], m[10]];
+        immutable double d = det3(c0, c1, c2);
+        return [det3(w, c1, c2) / d, det3(c0, w, c2) / d, det3(c0, c1, w) / d];
+    }
     double[3] offsetOf(bool transformed) {
         buildStand(transformed);
         cmd("tool.set " ~ TOOL ~ " on");
-        foreach (a; ["offX", "offY", "offZ"]) cmd("tool.attr " ~ TOOL ~ " " ~ a ~ " 0");
+        immutable double[3] o = baseline(transformed);
+        foreach (i, a; ["offX", "offY", "offZ"])
+            cmd(format("tool.attr %s %s %.9f", TOOL, a, o[i]));
         settle();
+        if (transformed) {
+            double[3] lifted = applyLinear(composeItemMatrix(),
+                [attr(TOOL, "offX"), attr(TOOL, "offY"), attr(TOOL, "offZ")]);
+            assert(len3([lifted[0] - w[0], lifted[1] - w[1], lifted[2] - w[2]]) < 1e-4,
+                format("rig: the transformed stand's baseline lifts to %s, not w %s", lifted, w));
+        }
         double[3] pre = [attr(TOOL, "offX"), attr(TOOL, "offY"), attr(TOOL, "offZ")];
         auto cam = fetchCamera();
         int x0 = cam.vpX + cam.width / 2;
