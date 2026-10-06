@@ -333,6 +333,8 @@ unittest { // Independent registered snapshot delegate sees the actual carrier.
     assert(h.history.undoEntryCommandLine(0) == "probe.ordinary tag:before"
         && h.history.undoEntryCommandLine(1) == "probe.noop tag:accepted",
         "registered ordinary and accepted-no-op canonical lines remain byte-exact");
+    auto ordinary = h.registry.makeCommand("probe.ordinary");
+    assert(ordinary.apply() && h.value == 2, "ordinary replay positive control reaches its registered factory");
     assert(h.history.undoEntryCommandLine(4) == "", "actual marker canonical serializer is independently empty");
     const path = buildPath("/var/tmp", "vibe3d-residual-history.lxm");
     scope(exit) if (exists(path)) remove(path);
@@ -342,6 +344,4 @@ unittest { // Independent registered snapshot delegate sees the actual carrier.
     const bytes = readText(path);
     assert(bytes == "#LXMacro#\nprobe.ordinary tag:before\nprobe.noop tag:accepted\nprobe.first\n"
         && bytes.count('\n') == 4, "real marker export bytes and count must exclude only marker and lifecycle");
-    auto ordinary = h.registry.makeCommand("probe.ordinary");
-    assert(ordinary.apply() && h.value == 2, "ordinary replay positive control reaches its registered factory");
 }

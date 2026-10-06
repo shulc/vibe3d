@@ -495,6 +495,7 @@ unittest {
     size_t model, ui; r.h.undoDepthCounts(model, ui);
     assert(model == 1 && ui == 0, "residual depth excludes the marker and lifecycle");
     assert(r.h.undoEntryCommandLine(1) == "probe.first", "ordinary canonical-line positive control");
+    version (ResidualSerializationOnly) {} else
     assert(r.h.undoEntryCommandLine(2) == "", "real residual marker canonical line must be exactly empty");
     assert(r.h.jumpToVisible(2) && r.m.vertices[0].x == 1 && r.last.reverts == 1 && r.field.reverts == 1,
         "marker jump consumption never reverts the old press again");

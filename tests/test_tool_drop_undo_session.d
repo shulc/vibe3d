@@ -470,8 +470,9 @@ unittest { // A restored tool uses the final mesh as its next press basis at eve
             else cmd("history.undo");
             assert(quadGap(verts(), first) <= 1e-6 && tool() == id,
                 "marker consumption must preserve next-press geometry and tool state");
-            assert(getJson("/api/tool/state")["session"]["token"].integer == stateBeforeMarker["session"]["token"].integer,
-                "marker consumption must preserve restored session token");
+            const stateAfterMarker = getJson("/api/tool/state");
+            assert(stateAfterMarker["session"] == stateBeforeMarker["session"],
+                "marker consumption must preserve the restored session state without settlement");
         }
         dragPx(worldPixel(atFirst), -44, 0);
         const continued = verts();
