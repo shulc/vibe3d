@@ -1997,7 +1997,7 @@ final class CommandHistory {
         }
         // Freeze scalar identity before rearming; no original press is retained
         // by the fresh carrier. Only a fully reverted selected block earns it.
-        const markerResidual = dropping && selected > 1 &&
+        const markerResidual = selected > 1 &&
             lifecycle.dropUndoPolicy().residual == DropUndoResidualPopulation.pressMarker;
         const pressToken = markerResidual ? undoStack[$ - selected].cmd.sessionToken() : 0;
         const pressName = markerResidual ? undoStack[$ - selected].commandName : "";

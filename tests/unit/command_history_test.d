@@ -463,6 +463,7 @@ class ResidualRig {
 }
 
 unittest { // Consume the real carrier before the structural-shape witness.
+    version (ResidualCapacityOnly) return;
     auto r = new ResidualRig(); r.close();
     assert(r.h.undo() && r.m.vertices[0].x == 1 && r.last.reverts == 1,
         "residual consume floor: newest press was reverted once");
@@ -471,6 +472,7 @@ unittest { // Consume the real carrier before the structural-shape witness.
 }
 
 unittest {
+    version (ResidualCapacityOnly) return;
     auto r = new ResidualRig(); r.close();
     const gen = r.h.generation(); const epoch = r.h.undoEpoch();
     assert(r.h.undo() && r.m.vertices[0].x == 1 && r.completions == 1,
@@ -502,6 +504,7 @@ unittest {
 }
 
 unittest {
+    version (ResidualCapacityOnly) return;
     // One press directly above activation must never pair with it.
     auto r = new ResidualRig(false);
     r.h.recordToolLifecycle(r.activation); r.press("single", 2, true); r.close();
@@ -529,6 +532,9 @@ unittest {
         foreach (e; f.h.undoEntries()) assert(!(e.flags & HistoryFlags.PressMarker),
             "partial suffix revert cannot manufacture a successful marker");
     }
+}
+
+unittest { // Bounded population is an independently selectable mutation cell.
     auto full = new ResidualRig(false);
     full.h.recordToolLifecycle(full.activation);
     foreach (i; 0 .. 48) full.press("capacity", cast(float)i + 1, true);
