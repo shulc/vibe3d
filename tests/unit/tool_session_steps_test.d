@@ -1685,10 +1685,12 @@ private const(MeshSnapshot) rowImage(CommandHistory h, size_t k, string which) {
     import commands.mesh.session_edit : MeshSessionEdit;
     auto row = cast(const MeshSessionEdit) h.undoEntries()[k].cmd;
     assert(row !is null, format("8646 reuse: row %d is no MeshSessionEdit", k));
-    foreach (i, ref f; row.tupleof)
-        static if (__traits(identifier, MeshSessionEdit.tupleof[i]) == "before"
-                   || __traits(identifier, MeshSessionEdit.tupleof[i]) == "after")
-            if (__traits(identifier, MeshSessionEdit.tupleof[i]) == which) return f;
+    foreach (i, ref payload; row.tupleof)
+        static if (__traits(identifier, MeshSessionEdit.tupleof[i]) == "payload_")
+            foreach (j, ref image; payload.tupleof)
+                static if (__traits(identifier, typeof(payload).tupleof[j]) == "before_"
+                           || __traits(identifier, typeof(payload).tupleof[j]) == "after_")
+                    if (__traits(identifier, typeof(payload).tupleof[j]) == which ~ "_") return image;
     assert(0, "8646 reuse: MeshSessionEdit has no field " ~ which);
 }
 

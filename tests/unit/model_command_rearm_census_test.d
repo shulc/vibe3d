@@ -193,7 +193,7 @@ unittest { // One close routine: the session decides by policy, the tool by its 
     foreach (generic; ["commitUncommittedEdit", "resyncSession", "cast("])
         assert(close.indexOf(generic) < 0,
             "M2 close census: the routine gained a per-tool branch: " ~ generic);
-    const finish = bodyAt(source, "void finishClose() {\n        if (pendingMark_)");
+    const finish = bodyAt(source, "void finishClose() {\n        if (pendingMark_ || pendingDropRow_ || pendingResume_) invalidateHeadlessSource();\n        if (pendingMark_)");
     assert(finish.count("resumeAfterClose(") == 1 && finish.count("pendingResume_ = false") == 1,
         "M2 close census: finishClose no longer resumes exactly once");
 }

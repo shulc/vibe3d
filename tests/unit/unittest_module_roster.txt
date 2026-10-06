@@ -677,6 +677,7 @@ toolpipe.stages.axis
 toolpipe.stages.constrain
 toolpipe.stages.falloff
 toolpipe.stages.snap
+tools.alignment.align_kernels
 tools.alignment.mirror
 tools.common.command_wrapper
 tools.common.session_mesh_key

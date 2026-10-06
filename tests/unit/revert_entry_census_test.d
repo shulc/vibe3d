@@ -790,7 +790,7 @@ private static immutable LedgerRow[] kUndoImage = [
     LedgerRow("MeshRemove.revertImpl", 1, "recorded undo-image revert"),
     LedgerRow("MeshScreenSlice.evaluate", 1, "recorded undo-image revert"),
     LedgerRow("MeshScreenSlice.revertImpl", 1, "recorded undo-image revert"),
-    LedgerRow("MeshSessionEdit.revertImpl", 1, "recorded undo-image revert"),
+    LedgerRow("MeshEditPayload.reverse", 1, "shared history-owned delta revert"),
     LedgerRow("MeshSmooth.revertImpl", 1, "recorded undo-image revert"),
     LedgerRow("MeshSmoothShift.evaluate", 1, "recorded undo-image revert"),
     LedgerRow("MeshSmoothShift.revertImpl", 1, "recorded undo-image revert"),

@@ -4366,8 +4366,6 @@ private static immutable LedgerRow[] kSnapHolders = [
     LedgerRow("SubdivideFaceted", 1, "bucket D whole-mesh replacement"),
     LedgerRow("SceneReset", 1, "bucket D document replacement"),
     LedgerRow("MeshLoadRaw", 1, "bucket D document replacement"),
-    LedgerRow("ToolDoApplyCommand", 1, "bucket D opaque wrapper"),
-    LedgerRow("ToolHeadlessCommand", 1, "bucket D opaque wrapper"),
     LedgerRow("MeshBevel", 1, "bucket A value-blocked edge arm"),
     LedgerRow("MeshEdgeExtrude", 1, "bucket A value-blocked kernel"),
     LedgerRow("MeshEdgeExtend", 1, "bucket A value-blocked kernel"),
@@ -4375,8 +4373,9 @@ private static immutable LedgerRow[] kSnapHolders = [
     LedgerRow("SelectSetEdit", 1, "bucket A permanently dense registry"),
     LedgerRow("SelectSetRename", 1, "bucket A permanently dense registry"),
     LedgerRow("SelectSetDelete", 1, "bucket A permanently dense registry"),
-    LedgerRow("MeshSessionEdit", 4,
-              "bucket E history-owned visible pair plus topology preview-basis pair"),
+    LedgerRow("MeshEditPayload", 1, "shared successful visible pair"),
+    LedgerRow("MeshSessionEdit", 2,
+              "bucket E topology preview-basis pair"),
     LedgerRow("(module scope)", 1, "bucket E session-edit unittest stand"),
 ];
 
@@ -4402,7 +4401,7 @@ unittest // Stage M - the closing MeshSnapshot declaration census
     const problems = reconcile(kSnapHolders, hits);
     assert(problems.length == 0,
         "the source/commands MeshSnapshot-holder symbol ledger changed.\n" ~ problems);
-    assert(hits.length == 21 && filesRead >= 150,
-        format("expected 21 MeshSnapshot declarations over a live commands walk; got %d over %d files",
+    assert(hits.length == 18 && filesRead >= 150,
+        format("expected 18 MeshSnapshot declarations over a live commands walk; got %d over %d files",
                hits.length, filesRead));
 }

@@ -1380,15 +1380,37 @@ private string[] scanFlagWrites(string rel, string text, out size_t insideCount)
 {
     auto lines  = text.split("\n");
     auto owned  = flagOwnerRanges(lines);
+    size_t[2][] checkpointOwned;
+    if (rel == "source/mesh_edit_delta.d") {
+        foreach (i, line; lines) if (line.strip == "void restore(ref Checkpoint c) nothrow @nogc {") {
+            int depth;
+            foreach (j; i .. lines.length) {
+                foreach (ch; codeOutsideStrings(lines[j])) {
+                    if (ch == '{') ++depth;
+                    else if (ch == '}') --depth;
+                }
+                if (depth == 0) { checkpointOwned ~= [i, j]; break; }
+            }
+        }
+        assert(checkpointOwned.length == 1, "checkpoint flag owner range must be exactly one");
+    }
+    size_t checkpointWrites;
     string[] out_;
     insideCount = 0;
     foreach (i, line; lines) {
         if (!isFlagWriteLine(line)) continue;
         bool inside = false;
         foreach (r; owned) if (i >= r[0] && i <= r[1]) { inside = true; break; }
+        bool checkpoint;
+        foreach (r; checkpointOwned) if (i >= r[0] && i <= r[1]) { checkpoint = true; break; }
         if (inside) ++insideCount;
-        else out_ ~= format("%s:%d %s", rel, i + 1, line.strip);
+        else if (checkpoint) {
+            ++checkpointWrites;
+            assert(line.strip == "wantsFaceReindex = c.faceReindex;",
+                "checkpoint owner may only restore its saved face-reindex preference");
+        } else out_ ~= format("%s:%d %s", rel, i + 1, line.strip);
     }
+    if (checkpointOwned.length) assert(checkpointWrites == 1, "checkpoint must restore face-reindex preference exactly once");
     return out_;
 }
 

@@ -274,9 +274,9 @@ unittest {
     // Task 9490: the radial ring start reads `workplane_fit` (+1; registration held it).
     // Task 9525: `tools.edit.drag_weld` deleted (-1 each).
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
-    assert(edit.queue.length == 250 && positive.queue.length == 514,
-        format("6670 import closure census changed: edit=%d/250 "
-            ~ "registration=%d/514", edit.queue.length,
+    assert(edit.queue.length == 251 && positive.queue.length == 515,
+        format("6670 import closure census changed: edit=%d/251 "
+            ~ "registration=%d/515", edit.queue.length,
             positive.queue.length));
 }
 

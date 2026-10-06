@@ -78,6 +78,10 @@ unittest { // Retained input and immediate inverse are independent images.
     const topology = m.topologyVersion;
     auto first = invocation(rig);
     assert(applyRegistered(rig, first) && m.vertices[0].x == x + 2);
+    bool borrowAvailable;
+    try { auto probe = Tool.HeadlessBorrow(t, m.vertices); borrowAvailable = true; }
+    catch (Exception e) {}
+    assert(borrowAvailable, "successful invocation must release active borrow ownership");
     t.retain = false; // the session pinned this policy at arm
     t.amount = 5;
     assert(m.vertices[0].x == x + 2, "raw values must leave geometry inert");

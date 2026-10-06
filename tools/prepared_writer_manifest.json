@@ -1463,7 +1463,7 @@
     {
       "aggregate": "RadialAlignTool",
       "module": "tools.alignment.radial_align_tool",
-      "semantic_sha256": "059b479b7bd7ea91a45278115ae821b8cb960796db6b8b12c4f32a22a28eb193",
+      "semantic_sha256": "b4455a791908be9cad818d008400fa3c9ccb8d35a5e47b6a33c32c78045e076f",
       "signature": "Param[]()",
       "symbol": "params"
     },

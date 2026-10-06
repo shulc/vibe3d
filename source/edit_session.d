@@ -2923,3 +2923,13 @@ private struct ToolSession {
         if (token != 0 && t !is null && t is bound_ && armedId_ == id) token_ = token;
     }
 }
+
+version(unittest) unittest { // Private receipt ownership must release storage at arm.
+    ToolSession session;
+    session.tool_ = () => cast(Tool)null;
+    session.headlessSource_.positions = [Vec3(1, 2, 3)];
+    session.headlessSource_.filled = true;
+    session.noteArm("private-release-probe", 42);
+    assert(!session.headlessSource_.filled && session.headlessSource_.positions.length == 0,
+        "new arm must release the prior session source receipt");
+}

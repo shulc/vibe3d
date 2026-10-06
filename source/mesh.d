@@ -16812,6 +16812,7 @@ unittest { // Private frame bookkeeping across a rejected nested invocation.
     const leaks = changeBus.batchLeaks;
     try {
         auto invocation = MeshInvocation(m);
+        m.beginEditBatch(null, MeshEditScope.Geometry); // rejected legacy nested frame
         auto inner = MeshEditBatch.unrecorded(m, MeshEditScope.Geometry | MeshEditScope.Marks);
         m.faceMarks[0] |= Mesh.Marks.Hide;
         m.refreshHiddenDerived();
