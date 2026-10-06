@@ -3353,7 +3353,7 @@ unittest { // U-RI6 (plan §22.4 P3): the operation's end releases the pinned im
 unittest {
     import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
     import commands.mesh.session_edit : MeshSessionEdit;
-    static final class BasisTool : Tool {
+    static class BasisTool : Tool {
         Mesh* mesh;
         MeshSnapshot basis;
         size_t rebases;
@@ -3364,6 +3364,23 @@ unittest {
         }
         override void resyncSession() { basis = MeshSnapshot.capture(*mesh); ++rebases; }
     }
+    static final class BasisModelTool : BasisTool, TopologyStepClient {
+        this(Mesh* target) { super(target); }
+        override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+            static immutable ToolSessionPolicy p = { activationRow: true, sessionSteps: true,
+                historyTopologySteps: true, opensAt: OpensAt.arm };
+            return p;
+        }
+        override Mesh* topologyStepMesh() { return mesh; }
+        override MeshSnapshot topologyStepBasis() { return basis; }
+        override Command topologyStepCarrier() { return null; }
+        override bool recordTopologyStep(Command) { return false; }
+        override string topologyStepLabel() { return "Basis"; }
+        override void setTopologyDormant(bool) {}
+        override void rebaseTopologyStep(MeshSnapshot b) { basis = b; ++rebases; }
+        override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot b) { rebaseTopologyStep(b); }
+    }
+    foreach (model; [false, true])
     foreach (navigation; [false, true]) {
         Mesh m = makeCube();
         View v = new View(0, 0, 800, 600);
@@ -3380,7 +3397,7 @@ unittest {
         auto drop = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "basis", false, false, false, 0, 7, true, false, false, true);
         drop.setDropUndoPolicy(DropUndoPolicy(DropUndoExtent.wholeSession, DropRedoPopulation.editRows));
         drop.onActivate = (string id) {
-            restored = new BasisTool(&m);
+            restored = model ? new BasisModelTool(&m) : new BasisTool(&m);
             active = restored;
             session.noteArm(id, 42);
             assert(restored.basis.matches(m) && !original.matches(m), "completion floor: replay arm sees the unreverted edit");
