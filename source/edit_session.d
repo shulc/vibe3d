@@ -580,6 +580,9 @@ final class EditSession {
 
     bool terminalRedoRequested() const { return tools_.terminalRedoRequested(); }
 
+    /// K-RD rule 3 (task 9508): arm the latent tool for a plain viewport press.
+    bool armLatentTool() { return tools_.armLatent(); }
+
     // Framework "apply and continue" (task 0461 — the reference editor's
     // apply-and-continue gesture, Shift+click on a creation/interactive-edit
     // tool). If the active tool holds an open edit AND supports in-place
@@ -766,6 +769,7 @@ struct DropRowSpec {
     string previousId;
     ulong previousToken;
     DropContext ctx;
+    bool revertsSession;   // the policy's `dropUndoRevertsSession`
 }
 
 /// What a navigation saw BEFORE it ran: the undo depth, so the settle after
@@ -927,6 +931,10 @@ private struct ToolSession {
     // redo of a parameter row the press or activation below it (L55). A
     // script-door arm opens nothing (C1-F3).
     private Rebindable!(const Command) openBlock_;
+    // K-RD rule 3: the latent tool and the history state its arm-undo left.
+    private string latentId_;
+    private Rebindable!(const Command) latentTop_;
+    private size_t latentDepth_;
 
     this(Tool delegate() tool, CommandHistory history,
          void delegate() dropTool,
@@ -989,11 +997,46 @@ private struct ToolSession {
     bool undo() {
         navBefore_ = NavBefore(history_.undoEntries().length, token_,
                                boundModel_() && postmodeArmed_);
+        const armRow = latentArmRow_();
+        const id = armedId_;
         const r = undoImpl_();
         if (r) openBlock_ = null;
         if (r && history_.undoEntries().length != navBefore_.depth)
             settleAfterNavigation_(true);
+        // K-RD rule 3: the undo that removed the activation row left the tool latent.
+        if (r && tool_() is null && history_.undoEntries().length <= armRow) {
+            latentId_ = id;
+            latentTop_ = undoTop_();
+            latentDepth_ = history_.undoEntries().length;
+        }
         return r;
+    }
+
+    // K-RD rule 3 (task 9508, RD_DROP_Z0D): the index of the bound tool's own
+    // activation row, when its policy leaves it latent after that row's undo.
+    private size_t latentArmRow_() {
+        import commands.tool.lifecycle : ToolActivationCommand;
+        auto t = tool_();
+        if (t is null || t !is bound_ || !t.sessionPolicy().armUndoLeavesToolLatent)
+            return size_t.max;
+        const ue = history_.undoEntries();
+        foreach_reverse (i, ref e; ue)
+            if (auto act = cast(const ToolActivationCommand) e.cmd)
+                return !act.dropRow() && act.armedId() == armedId_ &&
+                    act.sessionToken() == token_ ? i : size_t.max;
+        return size_t.max;
+    }
+
+    /// A plain viewport press with no tool armed re-arms the latent tool (no
+    /// row), while the history is where its activation's undo left it.
+    bool armLatent() {
+        const id = latentId_;
+        latentId_ = null;
+        if (id.length == 0 || tool_() !is null || rearmClosedTool_ is null ||
+            undoTop_() !is latentTop_.get ||
+            history_.undoEntries().length != latentDepth_) return false;
+        history_.replayWithoutRecord(() => rearmClosedTool_(id));
+        return tool_() !is null;
     }
 
     bool redo() {
@@ -1476,6 +1519,7 @@ private struct ToolSession {
     CloseOutcome close(CloseReason r, CommandDoor door, bool dropRow = false,
                        DropContext ctx = DropContext.init) {
         // A new close starts a new account, whatever an unfinished one left.
+        if (r != CloseReason.command) latentId_ = null;
         pendingMark_ = false;
         pendingDropRow_ = false;
         closedRow_ = null;
@@ -1485,7 +1529,8 @@ private struct ToolSession {
         closingToken_ = currentToken();
         if (dropRow && r == CloseReason.drop && t is bound_ && armedId_.length) {
             pendingDropRow_ = true;
-            pendingDrop_ = DropRowSpec(armedId_.idup, closingToken_, ctx);
+            pendingDrop_ = DropRowSpec(armedId_.idup, closingToken_, ctx,
+                t.sessionPolicy().dropUndoRevertsSession);
         }
         if (topologyPending_ && reporting_(t) &&
             t.sessionPolicy().historyTopologySteps)
@@ -1577,6 +1622,7 @@ private struct ToolSession {
     }
 
     void noteArm(string id, ulong token, bool postmodeArmed = true) {
+        latentId_ = null;
         auto t = tool_();
         bound_ = t;
         instanceActive_ = false;   // every bind is a new instance (M-init)

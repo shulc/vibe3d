@@ -928,6 +928,11 @@ struct InputRouter {
             beginInteractiveSelEdit();
             return;
         }
+        // K-RD rule 3 (task 9508): a plain press re-arms a latent tool first.
+        if (app.activeTool is null && btn.button == SDL_BUTTON_LEFT
+            && ifs.viewportInputAllowed()
+            && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)))
+            app.session.armLatentTool();
         if (app.activeTool) {
             // Framework "apply and continue" (the reference editor's apply-
             // and-continue gesture, task 0461): a Shift+LMB while the active

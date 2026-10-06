@@ -109,7 +109,8 @@ class PolyBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient 
             sessionSteps: true, opensAt: OpensAt.arm, noClone: false,
             imageAttrs: ["inset", "shift", "applied", "op"],
             haulAttrs: ["inset", "shift"], armAttr: "applied",
-            headlessReplacesWindow: true };
+            headlessReplacesWindow: true, dropWritesRow: true,
+            dropUndoRevertsSession: true };
         return policy;
     }
 

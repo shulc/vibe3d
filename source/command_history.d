@@ -1954,6 +1954,16 @@ final class CommandHistory {
             redoStack.length = 0;
         else
             redoStack = [entry] ~ redoStack;
+        // K-RD rule 2 (task 9508): a drop row that reverts its session takes
+        // the dropped session's rows below it in the same step (to redo).
+        while (armPolicy !is null && armPolicy.revertsSession() && undoStack.length &&
+               !(undoStack[$ - 1].flags & HistoryFlags.ToolLifecycle) &&
+               undoStack[$ - 1].cmd.sessionToken() == armPolicy.previousToken()) {
+            auto row = undoStack[$ - 1];
+            undoStack.length -= 1;
+            if (!row.cmd.revert()) break;
+            redoStack = [row] ~ redoStack;
+        }
 
         ++_undoEpoch;  // bump exactly once per successful undo
         g_perf.count(Cat.undoApply, 1);  // task 0200 F-I7 (no-op in default build)

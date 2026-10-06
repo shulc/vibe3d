@@ -23,6 +23,10 @@ interface ToolArmLifecyclePolicy {
     string previousId() const;
     bool carriesRedoAfterUndo() const;
     bool joinsFirstGroup() const;
+    /// K-RD rule 2 (task 9508): the undo of this row also undoes the rows of
+    /// the session `previousToken` names, below it (a drop row only).
+    bool revertsSession() const;
+    ulong previousToken() const;
 }
 
 class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
@@ -58,6 +62,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     private bool dropRow_;
     private bool flipsSelType_;
     private SelType selBefore_;
+    private bool revertsSession_;
 
     // Hooks wired by app.d after construction.
     void delegate(string) onActivate;
@@ -144,6 +149,8 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
         flipsSelType_ = true;
         selBefore_ = before;
     }
+    void markRevertsSession() { revertsSession_ = true; }
+    bool revertsSession() const { return dropRow_ && revertsSession_ && previousToken_ != 0; }
     void markDormantTopology() { dormantTopology_ = true; }
     bool dormantTopology() const { return dormantTopology_; }
     bool previousHistoryTopology() const { return previousHistoryTopology_; }

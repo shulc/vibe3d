@@ -442,6 +442,15 @@ struct ToolSessionPolicy {
     /// loses the gesture on that undo; we keep it (L8, a deliberate
     /// divergence, gap row (a)). Every other tool: no row, by data.
     bool dropWritesRow;
+    /// The undo of this tool's drop row also reverts the dropped session's
+    /// rows below it, and the tool re-arms fresh (K-RD rule 2, task 9508;
+    /// captured for the transform presets and Polygon Bevel). false: the
+    /// undo re-arms and keeps the edits (the Topology Pen, gap row (a)).
+    bool dropUndoRevertsSession;
+    /// The undo that removes this tool's activation row leaves it LATENT:
+    /// undrawn, and the next plain viewport press re-arms it (K-RD rule 3,
+    /// RD_DROP_Z0D; task 9508, captured on the transform tool).
+    bool armUndoLeavesToolLatent;
     /// A PRESS opens a new operation: before the press step's open image is
     /// taken, the session resets `haulAttrs` to their defaults (the Shift arm
     /// of `openOperation`), and those names are restored only into the tool
