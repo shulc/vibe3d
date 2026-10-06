@@ -518,7 +518,7 @@ private string[] oursCells(ref int ran) {
         clickWorld(q ~ p(0.9, 0));
         drag(q[0], p(0.9, 0));
         drop(); ++ran;
-        fails ~= fixture("release_keeps_mirror_links", fx["release_keeps_mirror_links"]["expected"]);
+        fails ~= fixture("release_keeps_mirror_links", parseJSON(import("fixtures/pen_symmetry.json"))["release_keeps_mirror_links"]["expected"]);
     }
     // A point inserted on m(p1) links p1; Backspace (the global delete, pen
     // wave plan S8, captured BD-sel / F7) ends the stroke, committed and

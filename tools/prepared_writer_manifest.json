@@ -662,7 +662,7 @@
     {
       "aggregate": "PenTool",
       "module": "tools.create.pen",
-      "semantic_sha256": "212070574db747249e347506bff33b1ee971341e45a4071a70c1609984f9d713",
+      "semantic_sha256": "c6b1dadd94a662941199bfbf8883ca86449d97d36c5895ec6d79665634e5f5af",
       "signature": "void(string name)",
       "symbol": "onParamChanged"
     },
@@ -1526,7 +1526,7 @@
     {
       "aggregate": "PenTool",
       "module": "tools.create.pen",
-      "semantic_sha256": "7f69d6b89eb716cc61a6cf9fe1dc113197cbc5e3dda3834b87549ba449e838f7",
+      "semantic_sha256": "6e2ea759d8161e1f08599ba259c65ca1e7fc8d5e0e81905ac4285e329f01b2f8",
       "signature": "Param[]()",
       "symbol": "params"
     },

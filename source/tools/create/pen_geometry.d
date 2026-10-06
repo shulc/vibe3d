@@ -119,6 +119,20 @@ uint[] penMergeSources(const(Vec3)[] points, in float[16] toWorld, float dist) {
     return sources;
 }
 
+// Each node binds the last retained corner even when its first/adjacent
+// duplicate was skipped. Safe update walks all nodes; the last write wins.
+Vec3[] penMovedPoints(const(Vec3)[] points, const(uint)[] sources) {
+    auto geometry = points.dup;
+    uint last;
+    const first = sources.length ? sources[0] : 0;
+    foreach (i, p; points) {
+        const source = i < sources.length ? sources[i] : cast(uint)i;
+        if (i == 0 || (source != last && source != first)) last = source;
+        geometry[last] = p;
+    }
+    return geometry;
+}
+
 uint[] penPolygonOrder(const(Vec3)[] points, in float[16] toWorld,
                        const(uint)[] sources, bool flip) {
     Vec3[] world;

@@ -73,6 +73,16 @@ unittest // exact rebuilt geometry and connectivity, including repeated corners
                 c["id"].str, purpose, m.faces, faces));
         }
     }
+    // Ordered safe writes include skipped first/adjacent nodes, and later
+    // repeated corners overwrite the same survivor without changing panel data.
+    const moved = [Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0),
+                   Vec3(3,0,0), Vec3(4,0,0), Vec3(5,0,0)];
+    assert(penMovedPoints(moved, [0u,1,2,0,2,1]) ==
+        [moved[0], moved[5], moved[4], moved[3], moved[4], moved[5]],
+        "safe update last corner aliases and ordered writes");
+    assert(penMovedPoints(moved, null) == moved &&
+        penMovedPoints([], null).length == 0,
+        "safe update identity and empty controls");
     // Box law on every world axis, including the stroke's off-plane axis.
     const pts = [Vec3(0,0,0), Vec3(.005,.005,.005), Vec3(.02,0,0),
                  Vec3(0,.02,0), Vec3(0,0,.02), Vec3(.01,.01,.01)];

@@ -556,8 +556,13 @@ version(unittest) unittest {
     weldPen.links_ = [-1,-1,-1,-1,-1]; weldPen.sources_ = [0,1,2,3,0];
     // Built before p1 moved; recomputing this order from the moved points differs.
     weldPen.order_ = [1,2,3,0];
+    weldPen.geometryPoints_ = weldPen.vertices_.dup;
+    weldPen.geometryPoints_[2] = Vec3(.23,1,.23);
     auto weldDrop = weldPen.buildPreparedDeactivateState();
     assert(weldPen.preparedDeactivateStateMatches(weldDrop), "frozen drop control");
+    weldPen.geometryPoints_[2].x = .24;
+    assert(!weldPen.preparedDeactivateStateMatches(weldDrop), "cached drop geometry changed");
+    weldPen.geometryPoints_[2].x = .23;
     weldPen.sources_[4] = 4;
     assert(!weldPen.preparedDeactivateStateMatches(weldDrop), "frozen drop source changed");
     weldPen.sources_[4] = 0; weldPen.order_ = [0,2,1,3];
@@ -567,6 +572,10 @@ version(unittest) unittest {
     assert(weldPen.preparedParamMatches(weldParam) &&
         weldParam.nextPreview.vertices.length == 4 &&
         weldParam.nextPreview.faces == [[1u,2,3,0]], "frozen param control");
+    assert(weldParam.nextPreview.vertices[2] == Vec3(.23,1,.23), "cached param geometry consumption");
+    weldPen.geometryPoints_[2].x = .24;
+    assert(!weldPen.preparedParamMatches(weldParam), "cached param geometry changed");
+    weldPen.geometryPoints_[2].x = .23;
     weldPen.sources_[4] = 4;
     assert(!weldPen.preparedParamMatches(weldParam), "frozen param source changed");
     weldPen.sources_[4] = 0; weldPen.order_ = [0,2,1,3];
@@ -577,6 +586,7 @@ version(unittest) unittest {
     weldPen.onParamChanged("flip");
     assert(weldPen.previewMesh.vertices.length == 4 &&
         weldPen.previewMesh.faces == [[1u,2,3,0]], "frozen live preview control");
+    assert(weldPen.previewMesh.vertices[2] == Vec3(.23,1,.23), "cached live geometry consumption");
     Mesh weldCandidate; MeshSnapshot weldPre; uint weldFlags, weldDomains;
     const uint weldBase = cast(uint)mesh.vertices.length;
     assert(weldPen.buildPreparedDeactivateCandidate(weldDrop, weldCandidate,
@@ -585,8 +595,14 @@ version(unittest) unittest {
         "frozen candidate source consumption");
     assert(weldCandidate.faces[$ - 1] == [weldBase+1,weldBase+2,weldBase+3,weldBase],
         "frozen candidate order consumption");
+    assert(weldCandidate.vertices[weldBase+2] == Vec3(.23,1,.23), "cached candidate geometry consumption");
+    weldPen.installPreparedParam(weldParam);
+    assert(weldPen.geometryPoints_[2] == Vec3(.23,1,.23) &&
+        weldParam.expectedGeometryPoints.length == 0 &&
+        weldParam.nextGeometryPoints.length == 0, "cached parameter geometry installation");
     weldPen.clearStroke();
-    assert(weldPen.sources_.length == 0 && weldPen.order_.length == 0,
+    assert(weldPen.sources_.length == 0 && weldPen.order_.length == 0 &&
+        weldPen.geometryPoints_.length == 0,
         "frozen topology survived stroke clear");
 
     // S8: the commit minimums per type (Enter / drop): polygons 3 / 2,
@@ -672,7 +688,7 @@ struct PreparedPenDeactivateImage {
     bool valid, willCommit;
     ubyte expectedState;
     PenParams params;
-    Vec3[] vertices;
+    Vec3[] vertices, geometryPoints;
     int[] links;
     uint[] sources, order;
     SessionMeshKey[] linkKey;   // the mesh `links` index; read at the candidate build
@@ -684,7 +700,7 @@ struct PreparedPenDeactivateImage {
     size_t expectedHandlerCount;
     bool expectedMeshChanged;
     void clear() nothrow @nogc {
-        vertices = null; links = null; sources = order = null; linkKey = null; previewClear = Mesh.init;
+        vertices = geometryPoints = null; links = null; sources = order = null; linkKey = null; previewClear = Mesh.init;
         this = PreparedPenDeactivateImage.init;
     }
 }
@@ -695,6 +711,7 @@ struct PreparedPenParamImage {
     ubyte expectedState;
     PenParams expectedParams, nextParams;
     Vec3[] expectedVertices, nextVertices;
+    Vec3[] expectedGeometryPoints, nextGeometryPoints;
     int[] expectedLinks, nextLinks;
     uint[] expectedSources, expectedOrder;
     BoxHandler[] expectedHandlers;
@@ -706,6 +723,7 @@ struct PreparedPenParamImage {
     Mesh nextPreview;
     void clear() nothrow @nogc {
         expectedVertices = nextVertices = null;
+        expectedGeometryPoints = nextGeometryPoints = null;
         expectedLinks = nextLinks = null; expectedSources = expectedOrder = null;
         expectedHandlers = null;
         expectedHandlerPositions = nextHandlerPositions = null;
@@ -736,6 +754,7 @@ private:
     // under; links are read only while it matches (`liveLinks`, below).
     SessionMeshKey[] strokeKey_;
     uint[]           order_;        // last click's polygon topology
+    Vec3[]           geometryPoints_; // safe-update geometry; panel points stay separate
     uint[]           sources_;      // last polygon rebuild; moves/end only consume
     BoxHandler[]     vertHandlers;  // one cyan marker per in-progress vertex (handler.pos in WORLD)
     ToolHandles      toolHandles;   // single-source hover arbiter (Test pass)
@@ -841,6 +860,7 @@ public:
             Param.podArray_("linkKey", "Link Key", &strokeKey_),
             Param.podArray_("sources", "Sources", &sources_),
             Param.podArray_("order", "Order", &order_),
+            Param.podArray_("geometryPoints", "Geometry Points", &geometryPoints_),
         ];
     }
 
@@ -877,6 +897,7 @@ public:
             if (idx < 0 || idx >= cast(int)vertices_.length) return;
             vertices_[idx] = Vec3(params_.posX, params_.posY, params_.posZ);
             links_[idx] = -1;    // a typed point never shares a vertex (S5)
+            geometryPoints_ = vertices_.dup;
             uploadPreview();
             return;
         }
@@ -897,6 +918,8 @@ public:
         image.expectedParams = params_; image.nextParams = params_;
         image.expectedVertices = vertices_.dup;
         image.nextVertices = vertices_.dup;
+        image.expectedGeometryPoints = geometryPoints_.dup;
+        image.nextGeometryPoints = geometryPoints_.dup;
         image.expectedLinks = links_.dup; image.nextLinks = links_.dup;
         image.expectedSources = sources_.dup; image.expectedOrder = order_.dup;
         image.expectedHandlers.length = vertHandlers.length;
@@ -940,9 +963,10 @@ public:
             image.nextVertices[idx] = Vec3(image.nextParams.posX,
                 image.nextParams.posY, image.nextParams.posZ);
             image.nextLinks[idx] = -1;
+            image.nextGeometryPoints = image.nextVertices.dup;
         } else return image;
         auto shadow = beginPreparedShadow(image.nextPreview);
-        appendPenGeometry(image.nextPreview, PenStroke.of(image.nextVertices,
+        appendPenGeometry(image.nextPreview, PenStroke.of(buildPoints(image.nextVertices, image.nextGeometryPoints),
             frame.toWorld, image.nextParams, withoutSceneLinks(image.nextLinks),
             mirror_, wallNormal: wallNormal, sources: sources_, order: order_), PenBuildPurpose.Preview);
         foreach (i, v; image.nextVertices)
@@ -958,6 +982,7 @@ public:
         if (!image.valid || cast(ubyte)state != image.expectedState ||
             !sameValueBytes(params_, image.expectedParams) ||
             !sameSliceBytes(vertices_, image.expectedVertices) ||
+            !sameSliceBytes(geometryPoints_, image.expectedGeometryPoints) ||
             !sameSliceBytes(links_, image.expectedLinks) ||
             !sameSliceBytes(sources_, image.expectedSources) ||
             !sameSliceBytes(order_, image.expectedOrder) ||
@@ -977,6 +1002,7 @@ public:
         if (!image.valid) return;
         params_ = image.nextParams;
         vertices_ = image.nextVertices; image.nextVertices = null;
+        geometryPoints_ = image.nextGeometryPoints; image.nextGeometryPoints = null;
         links_ = image.nextLinks; image.nextLinks = null;
         if (image.upload) installPreparedMeshImage(previewMesh, image.nextPreview);
         foreach (i, handler; vertHandlers)
@@ -1050,6 +1076,7 @@ public:
         PreparedPenDeactivateImage image;
         image.valid = true; image.expectedState = cast(ubyte)state;
         image.params = params_; image.vertices = vertices_.dup;
+        image.geometryPoints = geometryPoints_.dup;
         image.links = links_.dup; image.linkKey = strokeKey_.dup;
         image.sources = sources_.dup; image.order = order_.dup;
         image.toWorld = frame.toWorld; image.mirror = penMirror(mirror_);
@@ -1064,6 +1091,7 @@ public:
             in PreparedPenDeactivateImage image) const nothrow @nogc {
         return image.valid && cast(ubyte)state == image.expectedState &&
             params_ == image.params && vertices_ == image.vertices &&
+            geometryPoints_ == image.geometryPoints &&
             links_ == image.links && sources_ == image.sources && order_ == image.order && symmetryMirrorsEqual(mirror_, image.mirror) &&
             vertHandlers.length == image.expectedHandlerCount &&
             meshChanged == image.expectedMeshChanged &&
@@ -1100,7 +1128,7 @@ public:
         if (!image.willCommit) return true;
         pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
         auto shadow = beginPreparedShadow(candidate);
-        appendPenGeometry(candidate, PenStroke.of(image.vertices,
+        appendPenGeometry(candidate, PenStroke.of(buildPoints(image.vertices, image.geometryPoints),
             image.toWorld, image.params,
             linksUnder(image.linkKey, image.links, *mesh), image.mirror,
             image.selMode, image.wallNormal, image.sources, image.order), PenBuildPurpose.Commit);
@@ -1349,6 +1377,7 @@ public:
             if (l > -2 || l == -2 - dragVertIdx)
                 links_[dragVertIdx] = selfMirrorOr(link, hit, dragVertIdx);
             if (params_.currentPoint == dragVertIdx) syncPosFromCurrent();
+            geometryPoints_ = penMovedPoints(vertices_, sources_);
             uploadPreview();
         }
         return true;
@@ -1656,12 +1685,18 @@ private:
     Vec3 toLocalP(Vec3 p) const { return transformPoint(frame.toLocal, p); }
 
     // `link`: the edited-mesh vertex the point shares, or -1 (resolvePenPoint).
+    private static const(Vec3)[] buildPoints(const(Vec3)[] points,
+            const(Vec3)[] geometry) nothrow @nogc {
+        return geometry.length == points.length ? geometry : points;
+    }
+
     void appendVertex(Vec3 pos, int link) {
         // pos is in LOCAL workplane coords; the vertex handler renders in
         // world, so hit-testing needs the world image of `pos`.
         refreshLinks();
         links_ ~= selfMirrorOr(link, pos, vertices_.length);
         vertices_ ~= pos;
+        geometryPoints_ = vertices_.dup;
         vertHandlers ~= vertMarker(pos);
     }
 
@@ -1687,7 +1722,7 @@ private:
 
     // Empties every per-point stroke array together (the one reset site: an
     // array added beside `vertices_` / `links_` is cleared here once).
-    void clearStroke() nothrow @nogc { vertices_.length = 0; links_.length = 0; sources_.length = 0; order_.length = 0; }
+    void clearStroke() nothrow @nogc { vertices_.length = 0; links_.length = 0; sources_.length = 0; order_.length = 0; geometryPoints_.length = 0; }
 
     // One cyan marker for a LOCAL stroke point (markers render in WORLD).
     BoxHandler vertMarker(Vec3 pos) {
@@ -1711,6 +1746,7 @@ private:
             selfMirrorOr(shiftedLink(link, insertIdx, 1), pos, insertIdx) ~
             links_[insertIdx .. $];
         vertices_ = vertices_[0 .. insertIdx] ~ pos ~ vertices_[insertIdx .. $];
+        geometryPoints_ = vertices_.dup;
         vertHandlers = vertHandlers[0 .. insertIdx] ~ vertMarker(pos)
             ~ vertHandlers[insertIdx .. $];
     }
@@ -1738,7 +1774,7 @@ private:
             rollovers: Rollover.target, sessionSteps: true,
             imageAttrs: ["type", "currentPoint", "posX", "posY", "posZ", "flip",
                          "makeQuads", "merge", "close", "selectNew", "raycast",
-                         "wall", "offset", "points", "link", "linkKey", "sources", "order"] };
+                         "wall", "offset", "points", "link", "linkKey", "sources", "order", "geometryPoints"] };
         return policy;
     }
     // In-stroke undo / redo (fixture pen_instroke_undo.json): the
@@ -1894,7 +1930,7 @@ private:
             links_.length == vertices_.length,
             "pen: one marker and one link per stroke point");
         previewMesh.clear();
-        appendPenGeometry(previewMesh, PenStroke.of(vertices_, frame.toWorld,
+        appendPenGeometry(previewMesh, PenStroke.of(buildPoints(vertices_, geometryPoints_), frame.toWorld,
             params_, withoutSceneLinks(links_), mirror_, wallNormal: wallNormal, sources: sources_, order: order_),
             PenBuildPurpose.Preview);
         previewGpu.upload(previewMesh);
@@ -1940,7 +1976,7 @@ private:
     void commitPolygon() {
         // A pure tail append into the live scene mesh, declared as such for
         // the corner-append cross-check.
-        appendPenGeometry(*mesh, PenStroke.of(vertices_, frame.toWorld,
+        appendPenGeometry(*mesh, PenStroke.of(buildPoints(vertices_, geometryPoints_), frame.toWorld,
             params_, liveLinks(), mirror_, selMode(), wallNormal, sources_, order_), PenBuildPurpose.Commit);
         mesh.declareCornerAppend();
         mesh.buildLoops();

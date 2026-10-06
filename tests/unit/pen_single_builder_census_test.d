@@ -119,7 +119,7 @@ unittest // pen.d appends no geometry except through the one builder
     import std.algorithm : filter;
     import std.array : array;
     import std.ascii : isWhite;
-    string compact(string text) { return text.filter!(c => !isWhite(c)).array.idup; }
+    string compact(string text) { string result; foreach (char c; text) if (!isWhite(c)) result ~= c; return result; }
     assert(compact(" a\t b\n c\r ") == "abc", "rebuild token control");
     const formula = "penMergeSources(vertices_,frame.toWorld,3*viewWorldPerPixel(cachedVp))";
     assert(countOccurrences(compact(code), formula) == 1,

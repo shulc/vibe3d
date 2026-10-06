@@ -534,7 +534,7 @@ private immutable StepRow[] kStepTable = [
     StepRow("pen", OpensAt.firstPress, false,
             ["type", "currentPoint", "posX", "posY", "posZ", "flip", "makeQuads",
              "merge", "close", "selectNew", "raycast", "wall", "offset", "points",
-             "link", "linkKey", "sources", "order"]),
+             "link", "linkKey", "sources", "order", "geometryPoints"]),
     // Plan 8646 (S5): every published pen attribute is an image attribute (D15,
     // captured R-all); S7a adds the operation context (offsets + descriptor).
     StepRow("mesh.topoPen", OpensAt.firstPress, false,
@@ -670,7 +670,7 @@ unittest { // (4)
     assert(paramArmIds == ["edge.extend", "mesh.edgeSliceTool", "mesh.loopSliceTool",
                            "mesh.sliceTool", "pen", "poly.bevel"],
            format("UND2: the attribute arm (a parameter write is a step) is %s", paramArmIds));
-    // Image-producing population floors: 21 ids, 174 image names, 3 Action triggers
+    // Image-producing population floors: 21 ids, 175 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(imageStepIds);
     assert(imageStepIds == ["edge.bevel", "edge.extend", "edge.extrude",
@@ -681,7 +681,7 @@ unittest { // (4)
                        "mesh.thickenTool", "mesh.topoPen", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "pen", "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: image-step ids %s", imageStepIds));
-    assert(checkedNames == 174, format("M3 step table: %s image names checked, measured 174",
+    assert(checkedNames == 175, format("M3 step table: %s image names checked, measured 175",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "
