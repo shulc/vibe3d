@@ -31,7 +31,7 @@ import editmode : EditMode;
 import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
 import math : Vec3;
 import prefs : g_prefs;
-import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes;
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, registrationFamilyBytes;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import view : View;
 import viewport : LayoutPreset, ViewportManager;
@@ -417,7 +417,7 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
     foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d",
                                SpanMode.depth)) {
         ++sourceFiles;
-        const code = blankNonCode(readText(entry.name));
+        const code = blankUnittestBodies(blankNonCode(readText(entry.name)));
         foreach (_; matchAll(code, ctRegex!(`\bvpm\s*=[^=>]`)))
             vpmWriteSites ~= entry.name[repoRoot.length + 1 .. $];
     }
