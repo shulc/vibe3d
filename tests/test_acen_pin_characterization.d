@@ -256,17 +256,11 @@ void dragMoveY(int px) {
 // path (setUserPlaced) for relocate-allowed modes.
 void offGizmoRelocateClick() {
     auto cam = fetchCamera();
-    auto vp  = viewportFromCamera(cam);
-    Vec3 piv = evalPivot();
-    float size = gizmoSize(piv, vp);
-    float sx1, sy1, sx2, sy2;
-    assert(projectToWindow(Vec3(piv.x, piv.y + size/5.0f, piv.z), vp, sx1, sy1), "arrow start off-camera");
-    assert(projectToWindow(Vec3(piv.x, piv.y + size, piv.z), vp, sx2, sy2), "arrow end off-camera");
-    double dx = sx2 - sx1, dy = sy2 - sy1;
-    double len = sqrt(dx*dx + dy*dy);
-    double ux = dx / len, uy = dy / len;
-    int cx = cast(int)(sx1 + 220.0 * uy);
-    int cy = cast(int)(sy1 - 220.0 * ux);
+    // The golden's default-pane relocate input is (105,195) within the pane.
+    // Freeze that original pixel route: subpixel matrix precision must not
+    // shift this characterization's input across an integer boundary (10790).
+    int cx = cam.vpX + 105;
+    int cy = cam.vpY + 195;
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, cx, cy, cx, cy, 1));
     settle();
 }
