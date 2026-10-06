@@ -1,4 +1,13 @@
 {
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference_token": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "captured_utc": "2026-10-06",
+  "harness": "private capture harness",
+  "notes": "Frozen next-click rebuild meshes from isolated polygon strokes; release, Return and drop controls were read separately."
+ },
   "distance": 0.006825516145530925,
   "rows": [
     {"id":"lower-moved","points":[[-0.2,1.0,-0.2],[-0.195,1.0,0.2],[0.0,1.0,0.44],[0.2,1.0,0.2],[-0.2,1.0,0.2]],"merge":1,"vertices":[[-0.2,1.0,-0.2],[-0.195,1.0,0.2],[0.0,1.0,0.44],[0.2,1.0,0.2]],"faces":[[1,0,1,3,2]],"dragged":1,"landing":[-0.195,0.2]},

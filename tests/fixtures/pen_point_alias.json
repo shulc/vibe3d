@@ -1,4 +1,13 @@
 {
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference_token": "ref-editor@11.2v3",
+  "method": "gui-gesture",
+  "captured_utc": "2026-10-06",
+  "harness": "private capture harness",
+  "notes": "Frozen hidden-point release and next-click rebuild meshes, with actual panel point readback before script end."
+ },
  "hidden-release": {
   "vertices": [
    [
