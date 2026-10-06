@@ -390,6 +390,7 @@ package struct ChordOv {
     ModeOv mode  = ModeOv.FromUser;
     FlagOv loop  = FlagOv.FromUser;
     FlagOv slide = FlagOv.FromUser;
+    bool   axis  = false;   // the move holds ONE world axis (K-FH rule 5)
 }
 
 /// All 12 wired slots, named by the CHORD they are — the gesture each one ends
@@ -419,12 +420,10 @@ package immutable ChordOv[12] kChordOv = [
     ChordOv(ModeOv.FromUser,  FlagOv.FromUser, FlagOv.FromUser),
     // ShiftLmb     — Duplicate, and it READS the loop flag.                    [M]
     ChordOv(ModeOv.Duplicate, FlagOv.FromUser, FlagOv.FromUser),
-    // CtrlLmb      — the dropdown, with Edge SLIDE forced: the reference
-    //                documents Ctrl in Move mode as doing exactly what the
-    //                Edge Slide option does. Ctrl+RMB was MEASURED not to
-    //                force slide (it ran a plain move), so this is asymmetric
-    //                on purpose and is NOT generalised to "Ctrl forces slide". [D]
-    ChordOv(ModeOv.FromUser,  FlagOv.FromUser, FlagOv.ForceOn),
+    // CtrlLmb      — the dropdown, the move held to ONE world axis (K-FH
+    //                C-TS: a vertex or edge moves along one axis, not along
+    //                its rails; the Edge Slide option is a different law).  [M]
+    ChordOv(ModeOv.FromUser,  FlagOv.FromUser, FlagOv.FromUser, true),
     // ShiftCtrlLmb — Smoothing.                                               [D]
     ChordOv(ModeOv.Smooth,    FlagOv.FromUser, FlagOv.FromUser),
     // Mmb          — Split.                                                   [D]

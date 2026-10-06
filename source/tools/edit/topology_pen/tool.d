@@ -381,6 +381,10 @@ private:
     // The edge/polygon Move's shared offset at the last evaluation (zero on a
     // click or a miss): what the release writes to the Offset (L18).
     package Vec3         moveOffset_ = Vec3(0, 0, 0);
+    // The axis move (K-FH rule 5): the offset keeps ONE world axis
+    // (`moveAxis_`, -1 until elected), chosen once by `axisHeld`.
+    package bool         moveAxisLock_ = false;
+    package int          moveAxis_     = -1;
     package int          moveStartX_, moveStartY_;
     package bool         moveDirty_ = false;
     bool         moveWelded_ = false;
@@ -3537,7 +3541,7 @@ public:
     // at any time) — resolving the mode a second time at release would
     // otherwise commit a gesture nobody armed.
     package bool onPlainLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        return runPenMode(penMode_, edgeLoop_, edgeSlide_, InputButton.Left, e, vts);
+        return runPenMode(penMode_, edgeLoop_, edgeSlide_, false, InputButton.Left, e, vts);
     }
 
     // THE mode dispatcher (task 0487) — the one place a resolved
@@ -3557,13 +3561,13 @@ public:
     // its own handler, which calls `resetAllGestureArms()` and would wipe a
     // record written up front. Stamping last makes the field describe the
     // press that just happened, whatever the handler did along the way.
-    private bool runPenMode(PenMode mode, bool loop, bool slide, InputButton btn,
+    private bool runPenMode(PenMode mode, bool loop, bool slide, bool axis, InputButton btn,
                             ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         final switch (mode) {
         case PenMode.Move:
-            return moveOrPlaceDown(e, vts, false, loop, slide, btn);
+            return moveOrPlaceDown(e, vts, false, loop, slide, axis, btn);
         case PenMode.Point:
-            return moveOrPlaceDown(e, vts, true, loop, slide, btn);
+            return moveOrPlaceDown(e, vts, true, loop, slide, axis, btn);
         case PenMode.Duplicate:
             // Two variants, one implementation each, both on this path: the
             // loop variant gathers and trims (`onDupLoopShiftRmbDown`), the
@@ -3671,7 +3675,7 @@ public:
     // gesture for, never a placement. So the handler claims the event for
     // both of its own outcomes, and only for those.
     private bool moveOrPlaceDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
-                                 bool placeOnEmpty, bool loop, bool slide,
+                                 bool placeOnEmpty, bool loop, bool slide, bool axis,
                                  InputButton btn) {
         stamp(true, PenGesture.PlaceOrMove, btn);
 
@@ -3690,7 +3694,10 @@ public:
         // gesture in this tool, so a loop press is the only one of the two that
         // can be honoured.
         if (loop)  return stamp(onMoveLoopRmbDown(e, vts), PenGesture.MoveLoop, btn);
-        if (slide) return stamp(onCtrlLmbDown(e, vts),     PenGesture.Slide,    btn);
+        // The axis move (K-FH rule 5) is captured with no background; over
+        // one the slide laws L47/L49/L50 stand.
+        if (slide || axis && backgroundSourcesFull().length != 0)
+            return stamp(onCtrlLmbDown(e, vts), PenGesture.Slide, btn);
 
         Viewport vp = viewportOf(vts);
         int src = findSourceVertex(e.x, e.y, vp);
@@ -3717,8 +3724,11 @@ public:
             // release is safe because `lmbPlaceOrMoveUp` trusts the arm BOOLS
             // rather than the base's `armed_[]` slot (the documented
             // arm-before-decline gap).
-            return armMoveElement(e, vts, vp);
+            if (!armMoveElement(e, vts, vp)) return false;
+            moveAxisLock_ = axis;
+            return true;
         }
+        if (axis) return false;   // an axis move has nothing to place
 
         // Empty space. Only Point mode places here; Move mode has nothing to
         // move and declines, exactly like every other miss in this tool.
@@ -4041,6 +4051,8 @@ public:
         moveStartX_  = e.x;
         moveStartY_  = e.y;
         moveDirty_   = false;
+        moveAxisLock_ = false;
+        moveAxis_    = -1;
         moveArmed_   = true;
         grabbedVert_ = (kind == MoveElem.Vertex) ? cast(int) uniq[0] : -1;
         // The arm decides the row (Fill's refusal ends as a Move, plan 8646
@@ -4079,10 +4091,28 @@ public:
         immutable int dx = px - moveStartX_, dy = py - moveStartY_;
         moveOffset_ = Vec3(0, 0, 0);
         Vec3 off;
-        if (releaseIsClick(dx, dy) || !grabOffset(moveAnchor_, dx, dy, vp, off))
+        if (releaseIsClick(dx, dy) || !grabOffset(moveAnchor_, dx, dy, vp, off)
+            || moveAxisLock_ && !axisHeld(off))
             return moveBase_.dup;
         moveOffset_ = off;
         return carriedTargets(moveBase_, off);
+    }
+
+    // The axis move (K-FH rule 5, cells KFH_TS_V/E/VSK/ESK): the first
+    // evaluation past the click gate elects the world axis of the offset's
+    // largest |component|, a tie going to the HIGHER axis (`edgeSlideAxis`);
+    // every evaluation then keeps that one world channel of `offLocal`. False
+    // while nothing is elected (a zero offset: ours, gap row 437).
+    private bool axisHeld(ref Vec3 offLocal) {
+        const ms = primaryModelSpace();
+        const Vec3 aW = ms.toWorldPoint(moveAnchor_);
+        const Vec3 dW = ms.toWorldPoint(moveAnchor_ + offLocal) - aW;
+        if (moveAxis_ < 0) moveAxis_ = edgeSlideAxis(dW, kEdgeSlideTieEps);
+        if (moveAxis_ < 0) return false;
+        const Vec3 kW = Vec3(moveAxis_ == 0 ? dW.x : 0.0f, moveAxis_ == 1 ? dW.y : 0.0f,
+                             moveAxis_ == 2 ? dW.z : 0.0f);
+        offLocal = ms.toLocalPoint(aW + kW) - moveAnchor_;
+        return true;
     }
 
     // The Move family's shared offset: the grab point `anchorLocal` dragged
@@ -4352,6 +4382,8 @@ public:
         moveBase_    = null;
         moveDirty_   = false;
         moveWelded_  = false;
+        moveAxisLock_ = false;
+        moveAxis_    = -1;
     }
 
     // P3 (doc/topopen_p3_plan.md), on the Shift+LMB "Duplicate" overlay slot
@@ -6273,7 +6305,7 @@ public:
                                    ? penMode_ : modeOfOverride(ov.mode);
             immutable bool loop    = (ov.loop  == FlagOv.ForceOn) || edgeLoop_;
             immutable bool slide   = (ov.slide == FlagOv.ForceOn) || edgeSlide_;
-            return runPenMode(mode, loop, slide, btn, e, vts);
+            return runPenMode(mode, loop, slide, ov.axis, btn, e, vts);
         }
         if (p == InputPhase.Up) return penGestureUp(gestureOn_[btn], e, vts);
         // `Move` never arrives — this tool does not route `onMouseMotion`
