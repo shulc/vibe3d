@@ -12548,8 +12548,8 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 192 && histBlocks == 83 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (192), %d read "
+    assert(blocks.length == 193 && histBlocks == 83 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (193), %d read "
              ~ "history (83), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));

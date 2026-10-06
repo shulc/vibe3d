@@ -7,7 +7,7 @@
 // 0.002275172049 m/px (q 0.005), snap off, the drag path of each round.
 // VIBE3D_CELL=<name>[,<name>...] runs only those blocks (mutation drills).
 
-import drag_helpers : Vec3, Viewport, fetchCamera, kPaceLine, playAndWait, projectToWindow,
+import drag_helpers : Vec3, Viewport, dot, fetchCamera, kPaceLine, playAndWait, projectToWindow,
     viewportFromCameraMatrices;
 import pen_rig_helpers : penCameraAt, penCommand, penSceneEmpty, readVerts;
 import http_client : postJson;
@@ -138,17 +138,21 @@ unittest { // KFH_TS_ESK — the skewed edge v0-v3 at its press foot: both ends 
 // local (0.0025,0,0.03). WORLD X wins; the mutant electing LOCAL Z differs.
 unittest {
     if (!runs("transformed_primary")) return;
-    const at = rig([[0,0,0], [0.2,0,0], [0.2,0,0.2], [0,0,0.2]], Vec3(0.3f, 0, 0.2f), true);
+    const at = rig([[0.0,0,0], [0.2,0,0], [0.2,0,0.2], [0.0,0,0.2]], Vec3(0.3f, 0, 0.2f), true);
     ctrlDrag(at, [[6,-3], [64,-39]]); // total (70,-42): world DQ (0.16,0,-0.095)
     auto local = readVerts(); // /api/model publishes the primary's layer-local mesh.
     assert(local.length == 4, "transformed-primary: keep the quad's four vertices");
     const Vec3 worldV0 = Vec3(0.3f + 0.5f * local[0].z, 3 * local[0].y, 0.2f - 2 * local[0].x);
-    assert((worldV0 - Vec3(0.46f, 0, 0.2f)).length < 1e-4f,
+    const worldError = worldV0 - Vec3(0.46f, 0, 0.2f);
+    assert(dot(worldError, worldError) < 1e-8f,
            format("transformed-primary: elect WORLD X, v0 world (0.46,0,0.2); got %s", worldV0));
-    assert((local[0] - Vec3(0, 0, 0.32f)).length < 1e-4f,
+    const localError = local[0] - Vec3(0, 0, 0.32f);
+    assert(dot(localError, localError) < 1e-8f,
            format("transformed-primary: WORLD X +0.16 round-trips to LOCAL Z +0.32; got %s", local[0]));
     const Vec3[3] unchanged = [Vec3(0.2f,0,0), Vec3(0.2f,0,0.2f), Vec3(0,0,0.2f)];
-    foreach (i, v; unchanged)
-        assert((local[i + 1] - v).length < 1e-4f,
+    foreach (i, v; unchanged) {
+        const error = local[i + 1] - v;
+        assert(dot(error, error) < 1e-8f,
                format("transformed-primary: ungrabbed v%s stays LOCAL %s; got %s", i + 1, v, local[i + 1]));
+    }
 }
