@@ -119,6 +119,18 @@ unittest {
     }
     assert(motions==35&&dx==70&&presses==1&&metas==1,"HTTP_AUTHORED_DELIVERY_POPULATION");
     assert(getJson("/api/tool/state",base)["stepVerts"].array==[JSONValue(13)],"HTTP_ORIGINAL_V13_ROUTE");
+    import std.process : environment;
+    import std.file : mkdirRecurse,write;
+    const evidenceDir=environment.get("VIBE3D_LENS_EVIDENCE_DIR","");
+    if(evidenceDir.length) {
+        mkdirRecurse(evidenceDir);
+        write(buildPath(evidenceDir,"authored.jsonl"),log);
+        write(buildPath(evidenceDir,"recorded.jsonl"),recording);
+        write(buildPath(evidenceDir,"camera.json"),camera().toString~"\n");
+        write(buildPath(evidenceDir,"model-before.json"),mesh.toString~"\n");
+        write(buildPath(evidenceDir,"model-after.json"),getJson("/api/model",base).toString~"\n");
+        write(buildPath(evidenceDir,"player-status.json"),getJson("/api/play-events/status",base).toString~"\n");
+    }
 
 }
 
