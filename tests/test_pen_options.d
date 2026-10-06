@@ -10,8 +10,9 @@
 // quantum kept), snapping off; the background is
 // a unit sphere at (0, 1, 0) in layer 1 (64 x 32), the edit layer 0. The
 // hidden-press panel is read from currentPoint and posXYZ proxies while the
-// stroke is live. Its committed ring (an unexplained missing corner) remains
-// pending capture; a committed mesh cannot stand in for the panel. `VIBE3D_CELL=<id>` runs one cell alone (the population floor
+// stroke is live. A skipped first duplicate binds the last retained corner;
+// safe update moves that corner until the next click rebuilds from panel points.
+// `VIBE3D_CELL=<id>` runs one cell alone (the population floor
 // holds for the full run only).
 
 import drag_helpers : Vec3, buildDragLog, fetchCamera, playAndWait;
@@ -92,6 +93,11 @@ unittest {
     string[] fails;
     size_t ran;
     const b9 = fx["b9"];
+    const aliasCells = parseJSON(import("fixtures/pen_point_alias.json"));
+    void faces(string id, JSONValue want) {
+        const got = getJson("/api/model")["faces"];
+        if (got != want) fails ~= format("%s: faces %s expected %s", id,got,want);
+    }
     // The capture's +40 px at 440 px/m ends on x 0.39: drag to that point.
     int[2] plus40(int[2]) { return worldPixel(xz(b9["drag_to_xz"])); }
 
@@ -105,7 +111,8 @@ unittest {
         if (penAttrValue("currentPoint") != num(c["current_after"]))
             fails ~= format("occluded_press_raycast_off: current %s, expected %s",
                             penAttrValue("currentPoint"), num(c["current_after"]));
-        fails ~= compare("occluded_press_raycast_off", commit(), c["expected"]);
+        fails ~= compare("occluded_press_raycast_off", commit(), aliasCells["ordinary-grab"]["vertices"]);
+        faces("occluded_press_raycast_off", aliasCells["ordinary-grab"]["faces"]);
         ++ran;
     }
 
@@ -138,13 +145,13 @@ unittest {
         foreach (i; 0 .. 5) {
             penAttr("currentPoint", i);
             const cur = penAttrValue("currentPoint");
-            const want = i == 4 ? 3 : i;
+            const want = num(aliasCells["hidden-release"]["current"][i]);
             if (cur != want) fails ~= format("raycast-hidden-press-panel: current %s expected %s",cur,want);
-            if (i < 4) panel ~= Vec3(cast(float)penAttrValue("posX"),
+            panel ~= Vec3(cast(float)penAttrValue("posX"),
                 cast(float)penAttrValue("posY"), cast(float)penAttrValue("posZ"));
         }
-        assert(panel.length == 4, "raycast-hidden-press-panel: point population");
-        fails ~= compare("raycast-hidden-press-panel", panel, c["panel_points"]);
+        assert(panel.length == 5, "raycast-hidden-press-panel: observer population");
+        fails ~= compare("raycast-hidden-press-panel", panel, aliasCells["hidden-release"]["panel"]);
         commit();
         ++ran;
     }
@@ -154,14 +161,24 @@ unittest {
         const a = worldPixel(xz(b9["clicks_xz"][0]));
         drag(a, plus40(a));
         const got = commit();
-        const want = b9["cases"]["occluded_press_raycast_on"]["expected"];
-        bool near(Vec3 g, JSONValue w) {
-            return abs(g.x - num(w[0])) <= kTol && abs(g.y - num(w[1])) <= kTol &&
-                abs(g.z - num(w[2])) <= kTol;
-        }
-        if (!(got.length >= 1 && near(got[0], want[0]) && got.canFind!(g => near(g, want[2]))))
-            fails ~= format("occluded_press_raycast_on: p0 must stay at %s and a point at %s "
-                            ~ "must exist; got %s", want[0], want[2], got);
+        const want = aliasCells["hidden-release"];
+        fails ~= compare("occluded_press_raycast_on", got, want["vertices"]);
+        faces("occluded_press_raycast_on", want["faces"]);
+        ++ran;
+    }
+
+    if (wanted("hidden-next-click")) {
+        rig(true);
+        // This top-view focus keeps every captured point inside our viewport.
+        penCameraAt(Vec3(.8,1,.15), 440);
+        clicks(b9["clicks_xz"]);
+        const a = worldPixel(xz(b9["clicks_xz"][0]));
+        drag(a, plus40(a));
+        const c = aliasCells["hidden-next-click"];
+        const n = c["nextPoint"];
+        clickWorld(Vec3(cast(float)num(n[0]),cast(float)num(n[1]),cast(float)num(n[2])));
+        fails ~= compare("hidden-next-click", commit(), c["vertices"]);
+        faces("hidden-next-click", c["faces"]);
         ++ran;
     }
 
@@ -184,9 +201,9 @@ unittest {
         ++ran;
     }
 
-    // Population floor: 5 B9 cells + the two K-B3 raycast cells.
+    // Population floor: five raycast cells, two panel/visible cells, one rebuild.
     if (only is null)
-        assert(ran == 7, format("population floor: %d cells ran, expected 7", ran));
+        assert(ran == 8, format("population floor: %d cells ran, expected 8", ran));
     // The first line names the first failing cell.
     assert(fails.length == 0, fails.join("\n  "));
 }

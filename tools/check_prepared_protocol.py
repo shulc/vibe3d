@@ -2564,7 +2564,7 @@ def pen_activation_gate(pen, private, context):
             private, "static PreparedPrivateStateOwner penDeactivate") and
         "case PreparedPrivateStateKind.Pen: penTarget.installPreparedPrivateActivation();" in private and
         "state = PenState.Idle; clearStroke(); params_.currentPoint = -1;" in installer and
-        "void clearStroke() nothrow @nogc { vertices_.length = 0; links_.length = 0; }" in pen and
+        "void clearStroke() nothrow @nogc { vertices_.length = 0; links_.length = 0; sources_.length = 0; order_.length = 0; geometryPoints_.length = 0; }" in pen and
         "params_.posX = params_.posY = params_.posZ = 0.0f;" in installer and
         "dragArmed = dragInitiated = false; dragVertIdx = -1;" in installer and
         "e.privateState.install();" in context and "e.gpuCreate.installEnlisted();" in context and
@@ -2586,10 +2586,13 @@ for target, old, new, label in (
      "            PreparedActivateKind.Pen, ok)", "forge effect owner"),
     ("pen", "state = PenState.Idle; clearStroke(); params_.currentPoint = -1;",
      "state = PenState.Idle; params_.currentPoint = -1;", "drop stroke reset"),
-    ("pen", "{ vertices_.length = 0; links_.length = 0; }",
-     "{ links_.length = 0; }", "drop vertices from the stroke reset"),
-    ("pen", "{ vertices_.length = 0; links_.length = 0; }",
-     "{ vertices_.length = 0; }", "drop links from the stroke reset"),
+    ("pen", "{ vertices_.length = 0; links_.length = 0; sources_.length = 0; order_.length = 0; geometryPoints_.length = 0; }",
+     "{ links_.length = 0; sources_.length = 0; order_.length = 0; geometryPoints_.length = 0; }", "drop vertices from the stroke reset"),
+    ("pen", "{ vertices_.length = 0; links_.length = 0; sources_.length = 0; order_.length = 0; geometryPoints_.length = 0; }",
+     "{ vertices_.length = 0; sources_.length = 0; order_.length = 0; geometryPoints_.length = 0; }", "drop links from the stroke reset"),
+    ("pen", "sources_.length = 0;", "", "drop sources from the stroke reset"),
+    ("pen", "order_.length = 0;", "", "drop order from the stroke reset"),
+    ("pen", "geometryPoints_.length = 0;", "", "drop geometry from the stroke reset"),
     ("pen", "params_.posX = params_.posY = params_.posZ = 0.0f;\n"
      "        dragArmed = dragInitiated = false; dragVertIdx = -1;",
      "params_.posX = 0.0f;\n"
