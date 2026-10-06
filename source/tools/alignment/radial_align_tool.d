@@ -13,6 +13,7 @@ import editmode;
 import math : Vec3, Viewport;
 import shader;
 import params : Param;
+import tool : ToolSessionPolicy, HeadlessSourcePolicy;
 import change_bus : MeshEditScope;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import document : Layer;
@@ -31,7 +32,7 @@ import prepared_tool_effect : PreparedTransformActivationEffect,
 /// Bend/Push's existing headless-attr-driven precedent rather than
 /// inventing an undocumented drag gesture.
 ///
-/// Shared target law (tasks 9490, 20261040): Circle retains its start/search;
+/// Shared target/source law (tasks 9490, 20261040, 20261110): Circle retains its start/search;
 /// N-sided uses integer knot ownership and double chords. Weight blends source
 /// to target with falloff evaluated at the target (task 9446, K-F2).
 class RadialAlignTool : TransformTool, PreparedToolDoorClient {
@@ -50,6 +51,16 @@ public:
     }
 
     override string name() const { return "Radial Align"; }
+
+    // The session owns original positions; this leaf only borrows
+    // them during evaluation (radial lifecycle completion amendment, L2).
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            headlessSource: HeadlessSourcePolicy.retainedPositions,
+            activationRow: true, sessionSteps: true, historyRecordedSteps: true
+        };
+        return policy;
+    }
 
     // Task 0393: headlessMode/headlessSide/headlessRotate/headlessAngle/
     // headlessWeight are STICKY tool-defaults (this tool has no interactive
@@ -119,35 +130,38 @@ public:
         auto chain = extractAlignChain(mesh, *editMode);
         if (chain.verts.length < 1) return false;
 
+        const positions = headlessSourcePositions(mesh.vertices);
         Vec3[] source = new Vec3[](chain.verts.length);
-        foreach (i, vi; chain.verts) source[i] = mesh.vertices[vi];
+        foreach (i, vi; chain.verts) source[i] = positions[vi];
 
         bool nsideMode = (headlessMode == "nside");
         auto aligned = radialAlignTargets(source, nsideMode, headlessSide,
                                           headlessAngle, headlessRotate,
-                                          alignOutsideNeighbours(mesh, *editMode, chain.verts));
+                                          alignOutsideNeighbours(mesh, *editMode, chain.verts, positions));
 
         if (toProcess.length != mesh.vertices.length)
             toProcess.length = mesh.vertices.length;
         toProcess[] = false;
 
         bool any = false;
+        float[] weights = new float[](chain.verts.length);
         // Task 0619: hoisted — see bend.d.
         const auto aim = dragAimSpace();
         foreach (i, vi; chain.verts) {
-            float w = headlessWeight * falloffWeightAt(aligned[i], cast(int)vi, aim);
+            weights[i] = headlessWeight * falloffWeightAt(aligned[i], cast(int)vi, aim);
+            any |= weights[i] != 0.0f;
+        }
+        if (!any) return false;
+        foreach (i, vi; chain.verts) {
+            const w = weights[i];
             if (w == 0.0f) continue;
             mesh.vertices[vi] = weightedLerp(source[i], aligned[i], w);
             toProcess[vi] = true;
-            any = true;
         }
-        if (!any) return false;
 
         applySymmetryToDrag();
-        // ToolDoApplyCommand's snapshot/restore owns undo; this bumps
-        // mutationVersion for the change-notification bus, matching the
-        // one-shot Command's existing convention
-        // (commands/mesh/radial_align.d).
+        // The command owns the reversible payload and delivery batch; this
+        // publishes the actual position writes without a structural increment.
         mesh.commitChange(MeshEditScope.Position);
         return true;
     }

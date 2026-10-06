@@ -1,4 +1,34 @@
 {
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "debug-live",
+    "captured_utc": "2026-10-06T16:46:25.037395+00:00",
+    "scope": [
+      "cells[0].target",
+      "cells[1].target",
+      "cells[2].target",
+      "cells[3].target"
+    ],
+    "notes": "captured_utc is the start of target readback; model, selection, orderedIds and source operands are our editor HTTP input. castBits and weighted are derived; sdk is separate mesh readback.",
+    "target_read_utc": [
+      "2026-10-06T16:46:25.037395+00:00",
+      "2026-10-06T16:47:31.540012+00:00",
+      "2026-10-06T16:47:47.628959+00:00",
+      "2026-10-06T16:48:02.844364+00:00"
+    ],
+    "input_origin": "own-editor-http-readback",
+    "input_captured_utc": "2026-10-06T12:33:46.650266+00:00",
+    "original_fixture_sha256": "b68bc3a6443ca0f9fe0b19ec5bbdbd38c91fe1bf8e45cd1d3e642811d1b3ce05",
+    "input_packet_sha256": "bcf44858100b684377ccf2aad71791b139d2e56bf6735d1ec96b8b414b2f80b1",
+    "packet_roles": {
+      "target": "target-readback",
+      "input": "input-readback",
+      "identity": "capture-identity",
+      "read_site": "target-read-site"
+    }
+  },
   "model": {
     "vertexCount": 90,
     "edgeCount": 162,

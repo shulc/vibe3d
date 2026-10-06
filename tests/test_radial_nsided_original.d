@@ -113,7 +113,7 @@ unittest { // Command factory, each tuple from fresh original source, Undo/Redo.
         cmd("history.redo"); score(f,before,c,"command-redo");
     }
 }
-unittest { // Fresh registered tool door and Undo; reapply/closed-tool Redo remain findings.
+unittest { // Fresh registered tool door, actual inverse and closed-tool forward replay.
     schema(true);
     auto f=parseJSON(readText("tests/fixtures/radial_nsided_original.json"));
     foreach(c;0..4) {
@@ -133,6 +133,87 @@ unittest { // Fresh registered tool door and Undo; reapply/closed-tool Redo rema
         auto h=getJson("/api/history");
         assert(h["undo"].array.length==2,"tool arm and apply history");
         cmd("history.undo"); restored(before);
-        // Closed-tool Redo is retained as a measured open product finding.
+        assert(getJson("/api/tool/state").object.length == 0, "closed tool state absent");
+        cmd("history.redo"); score(f,before,c,"closed-tool-redo");
+        assert(getJson("/api/tool/state").object.length == 0, "closed Redo must not rearm");
+        assert(getJson("/api/history")["undo"].array.length==2, "closed Redo adds no row");
+        cmd("history.undo"); restored(before);
+    }
+}
+
+private void attrs(JSONValue cell) {
+    cmd("tool.attr xfrm.radialAlignTool mode nside");
+    cmd("tool.attr xfrm.radialAlignTool weight 1");
+    cmd(format("tool.attr xfrm.radialAlignTool side %s",cell["side"].integer));
+    cmd(format("tool.attr xfrm.radialAlignTool rotate %s",cell["rotate"].integer));
+    cmd(format("tool.attr xfrm.radialAlignTool angle %s",cell["angle"].integer));
+    foreach(key;["side","rotate","angle"]) {
+        auto query=postJson("/api/command","tool.attr xfrm.radialAlignTool "~key~" ?");
+        assert(query["status"].str=="ok" && number(query["value"])==number(cell[key]),
+            "same-arm accepted attrs "~key);
+    }
+}
+unittest { // Four independent goldens, one arm and retained ORIGINAL evaluation input.
+    auto f=parseJSON(readText("tests/fixtures/radial_nsided_original.json"));
+    auto before=loadOriginal(f);
+    cmd("tool.set xfrm.radialAlignTool on");
+    const token=getJson("/api/tool/state")["session"]["token"].integer;
+    assert(token>0,"same-arm nonempty identity");
+    foreach(c;0..4) {
+        attrs(f["cells"][c]);
+        assert(getJson("/api/tool/state")["session"]["token"].integer==token,
+            "same armed instance token before scoring reapply");
+        if(c>0) score(f,before,c-1,"attrs-inert");
+        else restored(before);
+        assert(getJson("/api/history")["undo"].array.length==c+1,
+            "same arm has one activation and one row per accepted apply");
+        if(c==1) {
+            cmd("tool.attr xfrm.radialAlignTool weight 0");
+            auto refusal=postJson("/api/command","tool.doApply");
+            assert(refusal["status"].str=="error","radial zero-write reapply must refuse");
+            score(f,before,0,"refusal-inverse");
+            assert(getJson("/api/history")["undo"].array.length==2,
+                "refused radial reapply publishes no row");
+            cmd("tool.attr xfrm.radialAlignTool weight 1");
+        }
+        cmd("tool.doApply");
+        score(f,before,c,"tool");
+    }
+    // Each command's immediate inverse is the previous visible result.
+    foreach_reverse(c;0..4) {
+        cmd("history.undo");
+        if(c>0) score(f,before,c-1,"immediate-inverse"); else restored(before);
+    }
+    foreach(c;0..4) { cmd("history.redo"); score(f,before,c,"same-arm-redo"); }
+    cmd("tool.set xfrm.radialAlignTool off");
+}
+unittest { // History panel jump reader walks the same owned closed payload.
+    auto f=parseJSON(readText("tests/fixtures/radial_nsided_original.json"));
+    auto before=loadOriginal(f);
+    cmd("tool.set xfrm.radialAlignTool on"); attrs(f["cells"][0]);
+    cmd("tool.doApply"); score(f,before,0,"jump-control");
+    cmd("tool.set xfrm.radialAlignTool off");
+    auto r=postJson("/api/history/jump",`{"target":1}`);
+    assert(r["status"].str=="ok","closed panel jump Undo"); restored(before);
+    r=postJson("/api/history/jump",`{"target":2}`);
+    assert(r["status"].str=="ok","closed panel jump Redo"); score(f,before,0,"jump-redo");
+    assert(getJson("/api/tool/state").object.length==0,"panel replay must keep tool absent");
+}
+
+unittest { // Actual reset and mesh-rebuild doors end the original operation window.
+    auto f=parseJSON(readText("tests/fixtures/radial_nsided_original.json"));
+    foreach(reset;[true,false]) {
+        auto before=loadOriginal(f);
+        cmd("tool.set xfrm.radialAlignTool on"); attrs(f["cells"][0]);
+        cmd("tool.doApply"); score(f,before,0,"reset-control");
+        if(reset) {
+            cmd("tool.reset");
+            cmd("tool.set xfrm.radialAlignTool off");
+        }
+        // Reload the original through the real geometry-rebuild/reset owner.
+        before=loadOriginal(f);
+        cmd("tool.set xfrm.radialAlignTool on"); attrs(f["cells"][1]);
+        cmd("tool.doApply"); score(f,before,1,"reset-new-source");
+        cmd("tool.set xfrm.radialAlignTool off");
     }
 }

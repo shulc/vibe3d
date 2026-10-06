@@ -288,7 +288,9 @@ private double radialCos(double angle) pure nothrow @safe @nogc {
 /// the only points Radial Align's circle-phase search measures against:
 /// a closed selection with no outside neighbour has an empty
 /// list everywhere, and the search keeps the start vertex at its own angle.
-Vec3[][] alignOutsideNeighbours(Mesh* mesh, EditMode editMode, const(uint)[] chain) {
+Vec3[][] alignOutsideNeighbours(Mesh* mesh, EditMode editMode, const(uint)[] chain,
+                               const(Vec3)[] positions = null) {
+    if (positions is null) positions = mesh.vertices;
     const bool[] inside = mesh.operandVertexMask(editMode);
     int[uint] slotOf;
     foreach (k, vi; chain) slotOf[vi] = cast(int)k;
@@ -297,7 +299,7 @@ Vec3[][] alignOutsideNeighbours(Mesh* mesh, EditMode editMode, const(uint)[] cha
         foreach (s; 0 .. 2) {
             const uint a = e[s], b = e[1 - s];
             if (inside[b]) continue;
-            if (auto k = a in slotOf) result[*k] ~= mesh.vertices[b];
+            if (auto k = a in slotOf) result[*k] ~= positions[b];
         }
     }
     return result;
@@ -568,9 +570,6 @@ unittest { // Task 20261040: private radialAlignStart, original first equal-key 
     center = center * (1.0 / p.length);
     const normal = ringNormal(p, center);
     const start = radialAlignStart(p, center, normal);
-    double radius = 0;
-    foreach (q; p) radius += (q-center).len;
-    radius /= p.length;
     assert(start == 0, format("original-start expected=0 actual=%s", start));
 
     // Captured small-N fallback initializer, independently of target geometry.

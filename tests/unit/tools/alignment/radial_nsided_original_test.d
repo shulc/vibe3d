@@ -4,6 +4,7 @@ import std.file : readText;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.format : format;
 import math : Vec3;
+import tool;
 import mesh : Mesh;
 import editmode : EditMode;
 import tools.alignment.align_kernels : radialAlignTargets, extractAlignChain;
@@ -203,5 +204,176 @@ unittest { // N-sided bypasses outside search, with a flipping Circle control.
     foreach(i,v;held) foreach(a,actual;[v.x,v.y,v.z]) {
         const want=[plain[i].x,plain[i].y,plain[i].z][a];
         assert(bits(actual)==bits(want),"N-sided outside invariant");
+    }
+}
+
+private void radialAttrs(tool.Tool t, JSONValue cell) {
+    foreach(p;t.params()) {
+        if(p.name=="mode") *p.sptr="nside";
+        if(p.name=="side") *p.iptr=cast(int)cell["side"].integer;
+        if(p.name=="rotate") *p.iptr=cast(int)cell["rotate"].integer;
+        if(p.name=="angle") *p.fptr=cast(float)cell["angle"].integer;
+        if(p.name=="weight") *p.fptr=1;
+    }
+}
+unittest { // Actual registered session, same object/token and position delivery.
+    import tests.unit.live_registration_rig : LiveRegistrationRig;
+    import tools.alignment.radial_align_tool : RadialAlignTool;
+    import tool : Tool, HeadlessSourcePolicy;
+    import tools.transform.transform : TransformTool;
+    import command_history : RecordMode;
+    import change_bus : changeBus, MeshEditScope;
+    import mesh : g_isDocumentMesh;
+    auto f=fixture(); auto rig=new LiveRegistrationRig;
+    rig.session.editMesh()=original(f); rig.session.editMode=EditMode.Polygons;
+    auto m=&rig.session.editMesh();
+    class ObservedRadial : RadialAlignTool {
+        bool evaluating;
+        this() { super(() => m,&rig.gpu,rig.session.editModePtr()); }
+        override bool applyHeadless() {
+            evaluating=true; scope(exit) evaluating=false;
+            return super.applyHeadless();
+        }
+    }
+    auto t=new ObservedRadial;
+    class DefaultTransform : TransformTool {
+        this() { super(() => m,&rig.gpu,rig.session.editModePtr()); }
+    }
+    auto inherited=new DefaultTransform;
+    auto policy=t.sessionPolicy(), base=inherited.sessionPolicy();
+    assert(policy.headlessSource==HeadlessSourcePolicy.retainedPositions);
+    policy.headlessSource=base.headlessSource;
+    assert(policy==base,"radial policy must preserve every inherited lifecycle field");
+    rig.activeTool=t; rig.registerLifecycle();
+    const token=rig.editSession.issueToken(); rig.editSession.noteArm(rig.activeToolId,token);
+    const originalBits=m.vertices.dup;
+    const topology=m.topologyVersion;
+    auto priorFilter=g_isDocumentMesh;
+    scope(exit) g_isDocumentMesh=priorFilter;
+    g_isDocumentMesh=(const(Mesh)* candidate) => candidate is m;
+    const listeners=changeBus.meshSubscriberCheckpointForTest();
+    scope(exit) changeBus.restoreMeshSubscribersForTest(listeners);
+    uint flags; bool deliveryInside;
+    changeBus.onMeshChanged((size_t subject,uint changed) nothrow {
+        if(subject==cast(size_t)m) { flags|=changed; deliveryInside|=t.evaluating; }
+    });
+    foreach(c;0..4) {
+        radialAttrs(t,f["cells"][c]); flags=0; deliveryInside=false;
+        assert(rig.activeTool is t && rig.editSession.currentToken()==token,
+            "radial real same-instance and token before evaluation");
+        auto row=rig.registry.makeCommand("tool.doApply");
+        assert(rig.executor.applyOrRefire(row,RecordMode.Record,null),"radial real factory apply");
+        assert(bits(m.vertices[73].x)==bits(vector(f["cells"][c]["weighted"][1]).x),
+            "radial real retained source index1.x");
+        foreach(i;0..90) {
+            auto expected=i<72 ? originalBits[i] : vector(f["cells"][c]["weighted"][i-72]);
+            assert(bits(m.vertices[i].x)==bits(expected.x) &&
+                bits(m.vertices[i].y)==bits(expected.y) && bits(m.vertices[i].z)==bits(expected.z),
+                "radial CPU full mesh bits");
+        }
+        assert(m.topologyVersion==topology,"radial warm source access must not restore topology");
+        assert(flags==MeshEditScope.Position,"radial actual delivery after command closing brace");
+        assert(!deliveryInside,"radial delivery must wait until kernel returns to command closing brace");
+        assert(t.headlessSourcePositions(m.vertices).ptr==m.vertices.ptr,"radial borrow release");
+    }
+    // Equal output is still an accepted Position write, distinct from refusal.
+    flags=0;
+    auto equalRow=rig.registry.makeCommand("tool.doApply");
+    assert(rig.executor.applyOrRefire(equalRow,RecordMode.Record,null),
+        "radial accepted write-equal control");
+    assert(flags==MeshEditScope.Position,"radial write-equal actual delivery");
+    assert(rig.history.undo(),"radial write-equal inverse");
+    assert(rig.editSession.navigate(true),"radial EditSession inverse");
+    assert(bits(m.vertices[73].x)==bits(vector(f["cells"][2]["weighted"][1]).x),
+        "radial EditSession immediate inverse");
+    assert(rig.editSession.navigate(false),"radial EditSession forward");
+    assert(bits(m.vertices[73].x)==bits(vector(f["cells"][3]["weighted"][1]).x),
+        "radial EditSession recorded forward");
+}
+unittest { // Outside-neighbor coordinates use the same explicit source domain.
+    import tools.alignment.align_kernels : alignOutsideNeighbours;
+    import tools.alignment.radial_align_tool : RadialAlignTool;
+    import tool : Tool;
+    import mesh_gpu : GpuMesh;
+    auto f=fixture(); auto m=original(f); auto ring=source(f,m);
+    auto positions=m.vertices.dup;
+    // Change only the borrowed complement; ring input remains bit-identical.
+    foreach(i;0..72) positions[i]=Vec3(7+cast(float)i*.01f,3,-5);
+    auto chain=extractAlignChain(&m,EditMode.Polygons);
+    Vec3[][] outside=new Vec3[][](18);
+    foreach(k,vi;chain.verts) foreach(e;m.edges) {
+        if(e[0]==vi && e[1]<72) outside[k]~=positions[e[1]];
+        if(e[1]==vi && e[0]<72) outside[k]~=positions[e[0]];
+    }
+    size_t population;
+    foreach(v;outside) population+=v.length;
+    assert(population==18,"outside source control population");
+    const current=alignOutsideNeighbours(&m,EditMode.Polygons,chain.verts);
+    const borrowed=alignOutsideNeighbours(&m,EditMode.Polygons,chain.verts,positions);
+    assert(current!=outside,"outside source positive discriminator");
+    assert(borrowed==outside,"outside helper must read provided source coordinates");
+    auto expected=radialAlignTargets(ring,false,4,0,0,outside);
+    auto old=radialAlignTargets(ring,false,4,0,0,current);
+    assert(expected!=old,"circle outside source result must discriminate domains");
+    GpuMesh gpu; EditMode mode=EditMode.Polygons;
+    auto t=new RadialAlignTool(() => &m,&gpu,&mode);
+    {
+        auto borrow=Tool.HeadlessBorrow(t,positions);
+        assert(t.applyHeadless(),"circle borrowed source accepted control");
+    }
+    foreach(i,vi;chain.verts) {
+        const want=weightedLerp(ring[i],expected[i],1);
+        assert(m.vertices[vi]==want,"radial outside source must reach circle evaluator");
+    }
+    assert(t.headlessSourcePositions(m.vertices).ptr==m.vertices.ptr,
+        "circle direct invocation borrow release");
+}
+
+unittest { // Radial leaf uses the fresh legitimate input after common boundaries.
+    import tests.unit.live_registration_rig : LiveRegistrationRig;
+    import tools.alignment.radial_align_tool : RadialAlignTool;
+    import tools.alignment.align_kernels : alignOutsideNeighbours;
+    import command_history : RecordMode;
+    import tool_activation_ownership : CloseReason, CommandDoor;
+    foreach(boundary;["close","navigation","rearm","primary","selection","document"]) {
+        auto f=fixture(); auto rig=new LiveRegistrationRig;
+        rig.session.editMesh()=original(f); rig.session.editMode=EditMode.Polygons;
+        auto t=new RadialAlignTool(() => &rig.session.editMesh(),&rig.gpu,rig.session.editModePtr());
+        rig.activeTool=t; rig.registerLifecycle();
+        rig.editSession.noteArm(rig.activeToolId,rig.editSession.issueToken());
+        radialAttrs(t,f["cells"][0]);
+        assert(rig.executor.applyOrRefire(rig.registry.makeCommand("tool.doApply"),RecordMode.Record,null),
+            "radial boundary accepted control");
+        if(boundary=="close") {
+            rig.editSession.closeOperation(CloseReason.drop,CommandDoor.script);
+            rig.editSession.finishClose();
+        } else if(boundary=="navigation") assert(rig.editSession.navigate(true));
+        else if(boundary=="rearm")
+            rig.editSession.noteArm(rig.activeToolId,rig.editSession.issueToken());
+        else if(boundary=="primary") {
+            rig.layerB.meshRef()=original(f); rig.session.document.setPrimary(rig.layerB);
+        } else if(boundary=="selection") rig.session.editMesh().selectFace(0);
+        auto m=&rig.session.editMesh();
+        foreach(ref v;m.vertices) v.x+=2;
+        const chain=extractAlignChain(m,EditMode.Polygons);
+        Vec3[] input;
+        foreach(vi;chain.verts) input~=m.vertices[vi];
+        auto expected=radialAlignTargets(input,true,5,0,0,
+            alignOutsideNeighbours(m,EditMode.Polygons,chain.verts));
+        assert(input.length>0 && expected.length==input.length,"radial boundary input population");
+        radialAttrs(t,f["cells"][1]);
+        bool accepted;
+        if(boundary=="document") {
+            int replacementDocument;
+            accepted=rig.editSession.invokeHeadless(t,*m,&replacementDocument,
+                EditMode.Polygons,() => t.applyHeadless());
+        } else accepted=rig.executor.applyOrRefire(
+            rig.registry.makeCommand("tool.doApply"),RecordMode.Record,null);
+        assert(accepted,"radial fresh source accepted "~boundary);
+        foreach(k,vi;chain.verts) {
+            const want=weightedLerp(input[k],expected[k],1);
+            assert(bits(m.vertices[vi].x)==bits(want.x) && bits(m.vertices[vi].y)==bits(want.y) &&
+                bits(m.vertices[vi].z)==bits(want.z),"radial boundary fresh source "~boundary);
+        }
     }
 }
