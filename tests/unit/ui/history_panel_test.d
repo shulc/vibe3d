@@ -14,6 +14,8 @@ import macro_recorder : MacroRecorder;
 import mesh : Mesh, makeCube;
 import registry : Registry;
 import tool : Tool;
+import tool;
+import snapshot;
 import tool_activation_ownership : ToolTransition;
 import ui.history_panel;
 import ui.panels : drawCommandHistoryPanel, historyMacroStripSnapshot,
@@ -67,6 +69,24 @@ private final class HistoryPanelKeepAliveTool : Tool {
         static immutable ToolSessionPolicy policy = { keepAliveOnCancel: true };
         return policy;
     }
+}
+
+private final class HistoryPanelModelTool : Tool, tool.TopologyStepClient {
+    Mesh* mesh;
+    size_t rebases;
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            sessionSteps: true, historyTopologySteps: true };
+        return policy;
+    }
+    override Mesh* topologyStepMesh() { return mesh; }
+    override snapshot.MeshSnapshot topologyStepBasis() { return snapshot.MeshSnapshot.capture(*mesh); }
+    override Command topologyStepCarrier() { return null; }
+    override bool recordTopologyStep(Command) { return false; }
+    override string topologyStepLabel() { return "Model"; }
+    override void setTopologyDormant(bool) {}
+    override void rebaseTopologyStep(snapshot.MeshSnapshot) { ++rebases; }
+    override void restoreTopologyStep(in tool.AttrImage, snapshot.MeshSnapshot) { assert(false); }
 }
 
 private final class HistoryPanelActionHarness {
@@ -488,4 +508,28 @@ unittest { // A new pending edit responds before the marker underneath it.
     assert(controller.navigate(true) && r.h.undoEntries().length == 0
         && pending.resyncs == resyncs && r.m.vertices[0].x == -0.5,
         "actual marker navigation must skip attribute/basis settlement");
+}
+
+unittest { // A real residual row cannot settle another bound model client.
+    import tests.unit.command_history_test : ResidualRig;
+    auto harness = new HistoryPanelActionHarness();
+    auto r = new ResidualRig(false); r.h = harness.history;
+    r.h.recordToolLifecycle(r.activation);
+    r.first = r.press("probe.first", 1, true);
+    r.last = r.press("probe.last", 2, true);
+    r.field = r.press("probe.field", 3, false);
+    r.h.markEntryFold(r.field, command_history.HistoryFlags.JoinsBelow);
+    r.close(); assert(r.h.undo());
+    auto model = new HistoryPanelModelTool(); model.mesh = &r.m;
+    harness.activeTool = model; harness.session.noteArm("model", 7, false);
+    const before = harness.session.sessionStateJson();
+    const rebases = model.rebases;
+    auto controller = harness.controller(new HistoryPanelState());
+    assert(before["armed"].boolean == false && r.h.undoEntries().length == 3,
+        "marker settlement fixture requires a closed model and an actual residual above older press");
+    assert(controller.navigate(true) && r.h.undoEntries().length == 2
+        && r.h.undoEntries()[1].cmd is r.first && r.m.vertices[0].x == 1,
+        "actual marker consumption preserves the older press and geometry");
+    assert(model.rebases == rebases && harness.session.sessionStateJson() == before,
+        "marker consumption cannot settle the bound model client or change its operation state");
 }
