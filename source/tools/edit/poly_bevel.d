@@ -144,7 +144,6 @@ private:
     // The restore-and-rebuild seam (task 1620) — see
     // tools/edit/preview_rebuild.d.
     PreviewRebuild preview_;
-    Viewport     cachedVp;
 
     // LOCAL (task 0645): `anchor` / `baseAnchor` are mesh-space points and
     // `shiftAxis` / `insetAxis` mesh-space directions, because that is what

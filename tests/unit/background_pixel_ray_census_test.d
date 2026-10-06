@@ -304,18 +304,13 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
         format("syncEventViewport must be the router's one call and its declaration: %s", syncSites));
     // A tool declaring its own `cachedVp` HIDES the synced base field (D allows
     // it silently), so the router sync never reaches it. Exact roster, measured
-    // (18 files); it may only shrink, as each tool drops its field (task 9524).
+    // (3 files); it may only shrink, as each tool drops its field.
     sort(ownViewport);
     assert(ownViewport == [
-        "tools/alignment/array_tool.d", "tools/alignment/clone_tool.d", "tools/alignment/mirror.d",
-        "tools/alignment/radial_array_tool.d", "tools/alignment/radial_sweep_tool.d",
-        "tools/common/command_wrapper.d", "tools/create/pen.d", "tools/deform/smooth_shift_tool.d",
-        "tools/edit/edge_bevel.d", "tools/edit/edge_extend.d", "tools/edit/edge_extrude.d",
-        "tools/edit/poly_bevel.d", "tools/edit/poly_extrude.d", "tools/edit/poly_inset_tool.d",
-        "tools/edit/vert_merge_tool.d", "tools/edit/vertex_bevel_tool.d",
-        "tools/edit/vertex_extrude_tool.d", "tools/transform/transform.d"],
+        "tools/alignment/array_tool.d", "tools/alignment/clone_tool.d",
+        "tools/alignment/radial_sweep_tool.d"],
         format("tools declaring their own cachedVp (hiding the router-synced one) must be exactly the "
-               ~ "recorded 18, which may only shrink: %s", ownViewport));
+               ~ "recorded 3, which may only shrink: %s", ownViewport));
     immutable vertexTool = blankNonCode(readText(buildPath(root, "source", "tools/create/vertex_place.d")));
     assert(tokenAt(vertexTool, "kGuideTypes").length == 0,
         "the vertex tool passes no guide mask: after the guide-block deletion it has no candidate to strip");

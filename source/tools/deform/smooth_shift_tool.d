@@ -181,7 +181,6 @@ private:
     // and the first haul starts Offset from zero (captured).
     bool         engaged;
     MeshSnapshot before;
-    Viewport     cachedVp;
 
     bool gizmoValid;
     Vec3 anchor;

@@ -263,7 +263,6 @@ private:
     int      moverDragAxis = -1;  // 0/1/2 = X/Y/Z arrow, 3 = centerBox, 4 = rotateBox, -1 = none
     int      moverLastMX, moverLastMY;
     HandleDrag grab;              // the centre box: the centre at the press + travel
-    Viewport cachedVp;
 
 public:
     this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu, LitShader litShader) {

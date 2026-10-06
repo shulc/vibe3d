@@ -139,7 +139,6 @@ private:
     bool         built;
     MeshSnapshot before;
     PreviewRebuild preview_;     // the restore-and-rebuild seam (preview_rebuild.d)
-    Viewport     cachedVp;
 
     // Haul drag state. No drawn handle to hit-test — any LMB press (outside
     // camera-nav modifiers) begins the haul directly. `valueDrag_` carries the

@@ -218,7 +218,6 @@ private:
     bool          built;
     bool          gestureOpen;
     MeshSnapshot  before;
-    Viewport      cachedVp;
 
     // Drag state.
     enum int PART_OFFSET = 0;

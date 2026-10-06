@@ -136,7 +136,6 @@ private:
     bool         active;
     bool         built;
     MeshSnapshot before;
-    Viewport     cachedVp;
 
     // Haul drag state. No drawn handle to hit-test — any LMB press
     // (outside camera-nav modifiers, with a live vertex selection) begins

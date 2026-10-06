@@ -159,11 +159,6 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
     // scale with the current attribute magnitude.
     private ClickPointHandler clickHandle;
 
-    // Cached viewport from the last frame — needed for falloff
-    // evaluation (some falloff types like Screen / Lasso need vp;
-    // linear / radial / cylinder / element ignore it).
-    private Viewport cachedVp;
-
     // Last falloff config SET seen by `applyWithLivePipeline` — used by
     // `evaluate()` to detect live changes (the FalloffStage's panel
     // widgets fire onParamChanged on the stage, not on this Tool, so
@@ -521,20 +516,7 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
 
     // ---- drag interaction --------------------------------------------
 
-    // Task 0209 (Quad/Split any-cell input): the projection to hit-test/
-    // unproject against arrives WITH the event via SubjectPacket.viewport
-    // (app.d's buildToolVts stamps `vpm.inputSnapshot()` — the hovered cell
-    // outside a gesture, the drag-origin cell throughout one). Sync it into
-    // `cachedVp` as the FIRST statement of every mouse handler, mirroring
-    // XfrmTransformTool.syncInputViewport, so the down/motion math below
-    // never depends on a stale value left by the last DRAW pass (which only
-    // ran for the previous owner cell).
-    private void syncInputViewport(ref VectorStack vts) {
-        if (auto sp = vts.get!SubjectPacket()) cachedVp = sp.viewport;
-    }
-
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        syncInputViewport(vts);
         if (e.button != SDL_BUTTON_LEFT) return false;
         // Skip alt/ctrl chords — camera owns those.
         auto modState = SDL_GetModState();
@@ -573,7 +555,6 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
     }
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
-        syncInputViewport(vts);
         // Falloff endpoint drag — gizmo updates the FalloffStage's
         // attrs via tool.pipe.attr; the subsequent `evaluate()` tick
         // detects the live falloff change and re-applies the preview.
@@ -591,7 +572,6 @@ abstract class CommandWrapperTool : Tool, FrameParameterEvalClient, RefireClient
     }
 
     override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
-        syncInputViewport(vts);
         // Release falloff endpoint drag first — it consumes
         // independently of the tool's own drag.
         if (pipeGizmoHost !is null && pipeGizmoHost.routeUp(e))

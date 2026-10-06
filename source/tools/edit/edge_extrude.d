@@ -144,7 +144,6 @@ private:
     /// completed step pairs and their bases belong to CommandHistory.
     MeshSnapshot  before;
     PreviewRebuild preview_;       // the restore-and-rebuild seam (preview_rebuild.d)
-    Viewport      cachedVp;        // last frame's viewport (for the gizmo handles)
 
     // Gizmo frame, computed at activate() from the ORIGINAL (pre-extrude)
     // selection. `gizmoValid` is false when there is no extrudable selection

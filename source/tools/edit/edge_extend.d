@@ -42,7 +42,7 @@ import mesh_gpu : GpuUploadOwner;
 
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
-import toolpipe.packets : SymmetryPacket, SubjectPacket;
+import toolpipe.packets : SymmetryPacket;
 
 struct PreparedEdgeExtendToolActivationImage {
     bool valid;
@@ -277,7 +277,6 @@ private:
     // topology-changing rebuild and a position-only one; see
     // tools/edit/preview_rebuild.d for what the key must contain and why.
     PreviewRebuild preview_;
-    Viewport     cachedVp;
 
     // Which gizmo bank owns this drag — the press's own bank probe (Move, then
     // the principal Rotate rings, then Scale), not the arbiter. None = no drag.
@@ -1017,12 +1016,9 @@ public:
         // the first press nothing is drawn (gap 217) — take this event's
         // viewport, as XfrmTransformTool.syncInputViewport does.
         xfrm.syncBankInputViewports(vts);
-        // The event's viewport — the one the banks just took.
-        Viewport pvp = cachedVp;
-        if (auto sp = vts.get!SubjectPacket()) pvp = sp.viewport;
         {
             Vec3 ro, rd;
-            screenPointToRay(e.x, e.y, pvp, ro, rd);
+            screenPointToRay(e.x, e.y, cachedVp, ro, rd);
             if (!rayPlaneIntersect(ro, rd, xfrm.moveGizmoCenter(), rd, pressPoint_))
                 pressPoint_ = xfrm.moveGizmoCenter();
         }
@@ -1061,7 +1057,7 @@ public:
         // handle is under the press and only that bank is offered it; a miss
         // offers every bank (capture K-EX EX_R: with Move and Rotate on, a
         // ring press rotates — Move's off-handle haul does not take it).
-        immutable DragBank hitBank = first ? DragBank.None : xfrm.pressHitBank(e.x, e.y, pvp);
+        immutable DragBank hitBank = first ? DragBank.None : xfrm.pressHitBank(e.x, e.y, cachedVp);
         bool offered(DragBank b) { return hitBank == DragBank.None || hitBank == b; }
         if (first) {
             // No handle is drawn before the operation opens (gap 217), so the
@@ -1096,7 +1092,7 @@ public:
             // stays where it is drawn (Q-pose).
             import tools.create.create_common : screenToPlacementWorld;
             immutable Vec3 handleAt = xfrm.moveGizmoCenter();
-            mv.beginScreenPlaneDragAt(e.x, e.y, screenToPlacementWorld(e.x, e.y, pvp),
+            mv.beginScreenPlaneDragAt(e.x, e.y, screenToPlacementWorld(e.x, e.y, cachedVp),
                                       (mods & KMOD_CTRL) != 0, /*notifyAcen=*/false, vts);
             mv.handler.setPosition(handleAt);
             picked = DragBank.Move;

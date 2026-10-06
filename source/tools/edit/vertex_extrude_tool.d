@@ -138,7 +138,6 @@ private:
     bool         built;
     MeshSnapshot before;
     PreviewRebuild preview_;     // the restore-and-rebuild seam (preview_rebuild.d)
-    Viewport     cachedVp;
 
     bool gizmoValid;
     Vec3 anchor;

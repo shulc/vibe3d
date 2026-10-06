@@ -132,7 +132,6 @@ private:
     // The restore-and-rebuild seam (task 1620) — see
     // tools/edit/preview_rebuild.d.
     PreviewRebuild preview_;
-    Viewport     cachedVp;
 
     bool gizmoValid;
     Vec3 anchor;

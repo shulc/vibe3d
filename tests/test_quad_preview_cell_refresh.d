@@ -168,3 +168,82 @@ unittest { // a press in the bottom-right cell resolves under THAT cell, one per
         if (auto m = family(t[0], t[1])) failed ~= m;
     assert(failed.length == 0, format("%-(%s\n%)", failed));
 }
+
+unittest { // tools without their own viewport field resolve a bottom-right press under THAT cell (task 9524)
+    // The Quad bottom-right cell is the Single camera at half size, so a gesture
+    // at half the Single offsets from the cell's corner must give the Single
+    // result. A tool reading the last-drawn cell (Top) misses the handle or
+    // places far off. The pen clicks the cell's centre, which lands on its
+    // focus, the origin. Every family runs; failures are reported together.
+    double num(JSONValue v) {
+        return v.type == JSONType.float_ ? v.floating : cast(double)v.integer;
+    }
+    double[] attr(string tool, string a) {
+        auto r = postJson("/api/command", "tool.attr " ~ tool ~ " " ~ a ~ " ?");
+        assert(r["status"].str == "ok", "attribute query failed: " ~ r.toString);
+        if (r["value"].type != JSONType.array) return [num(r["value"])];
+        double[] v;
+        foreach (c; r["value"].array) v ~= num(c);
+        return v;
+    }
+    // Reset, select, activate `tool`; in Single press the handle `part` (or the
+    // viewport centre + `at`) and drag (dx, dy); with `quad` the same gesture
+    // at half scale from the bottom-right cell's corner. Returns the `reads`.
+    double[] gesture(bool quad, string tool, string reset, string select, int part, int[2] at,
+                     int dx, int dy, string[] reads...) {
+        scope(exit) postJson("/api/command", "viewport.layout Single");
+        scope(exit) postJson("/api/command", "tool.set " ~ tool ~ " off");
+        command("viewport.layout Single");
+        auto r = postJson("/api/command", commandBody("scene.reset", reset));
+        assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+        if (select.length) {
+            r = postJson("/api/command", commandBody("mesh.select", select));
+            assert(r["status"].str == "ok", "select failed: " ~ r.toString);
+        }
+        auto full = fetchCamera();
+        command("tool.set " ~ tool);
+        Thread.sleep(150.msecs);
+        double sx = full.vpX + full.width / 2 + at[0], sy = full.vpY + full.height / 2 + at[1];
+        if (part >= 0) {   // the handle's Single pixel (the tool draws Single now)
+            bool found;
+            foreach (p; getJson("/api/tool/handles")["handles"]["parts"].array)
+                if (p["part"].integer == part && p["screen"].type == JSONType.array) {
+                    sx = num(p["screen"].array[0]); sy = num(p["screen"].array[1]); found = true;
+                }
+            assert(found, format("%s rig: handle part %d is not on screen", tool, part));
+        }
+        int x = cast(int)(sx + 0.5), y = cast(int)(sy + 0.5);
+        if (quad) {
+            command("viewport.layout Quad");
+            Thread.sleep(150.msecs);
+            x = full.vpX + full.width / 2 + cast(int)((sx - full.vpX) / 2 + 0.5);
+            y = full.vpY + full.height / 2 + cast(int)((sy - full.vpY) / 2 + 0.5);
+            dx /= 2; dy /= 2;
+        }
+        playAndWait(buildDragLog(full.vpX, full.vpY, full.width, full.height, x, y, x + dx, y + dy, 12));
+        double[] v;
+        foreach (a; reads) v ~= attr(tool, a);
+        return v;
+    }
+    string[] failed;
+    {   // the pen: a click at the cell's centre lands on its focus
+        auto p = gesture(true, "pen", `{"empty":true}`, "", -1, [0, 0], 0, 0, "posX", "posY", "posZ");
+        if (!(p[0] * p[0] + p[1] * p[1] + p[2] * p[2] < 0.05 * 0.05))
+            failed ~= format("pen: the click must land on the cell's focus, got %s", p);
+    }
+    // The Single result first (the rig's own check), then the bottom-right cell.
+    void family(string tool, string select, int part, int[2] at, int dx, int dy, string read,
+                double floor) {
+        auto s = gesture(false, tool, `{"type":"cube"}`, select, part, at, dx, dy, read);
+        double mag = 0, d = 0;
+        foreach (c; s) mag += c * c;
+        assert(mag > floor * floor, format("%s rig: the Single gesture left %s at %s", tool, read, s));
+        auto q = gesture(true, tool, `{"type":"cube"}`, select, part, at, dx, dy, read);
+        foreach (i, c; s) d += (q[i] - c) * (q[i] - c);
+        if (!(d < 0.1 * 0.1 * mag))
+            failed ~= format("%s: the bottom-right press gave %s %s, Single %s", tool, read, q, s);
+    }
+    family("poly.extrude", `{"mode":"polygons","indices":[2]}`, 0, [0, 0], 0, -40, "distance", 0.01);
+    family("mesh.mirrorTool", "", -1, [120, 0], 0, 0, "center", 0.1);
+    assert(failed.length == 0, format("%-(%s\n%)", failed));
+}

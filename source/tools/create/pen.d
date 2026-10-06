@@ -707,7 +707,6 @@ private:
     /// in this frame's local space.
     WorkplaneFrame frame;
 
-    Viewport cachedVp;
     bool     meshChanged;
 
     // 6.9.1 vertex-edit state. dragArmed = true between LMB-down on a

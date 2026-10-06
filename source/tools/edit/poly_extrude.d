@@ -149,7 +149,6 @@ private:
     bool          topologyDormant;
     MeshSnapshot  before;
     PreviewRebuild preview_;       // the restore-and-rebuild seam (preview_rebuild.d)
-    Viewport      cachedVp;
 
     // Gizmo frame.
     bool gizmoValid;

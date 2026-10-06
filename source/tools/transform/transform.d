@@ -405,7 +405,6 @@ protected:
 
     int      dragAxis = -1;      // 0/1/2=X/Y/Z axis, -1=none (exact meaning varies per tool)
     int      lastMX, lastMY;     // mouse position at last motion event
-    Viewport cachedVp;           // viewport captured in draw(), reused in event handlers
     bool     centerManual;       // true = update() must not recompute handler center
     Vec3     cachedCenter;       // gizmo center, recomputed when selection hash changes
     bool     needsGpuUpdate;     // deferred GPU upload flag, flushed in draw()
