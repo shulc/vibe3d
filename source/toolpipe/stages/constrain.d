@@ -163,7 +163,7 @@ public:
         else org.z = vp.focus.z + sign * 10000.0f;
         SurfaceHit hit;
         if (!surfaceOnRay(org, dir, hit)) return result;
-        result.valuesWorld = offsetPoint(hit.point, hit.normal);
+        result.valuesWorld = offsetPoint(hit.productRoundedPoint, hit.normal);
         result.acceptedMask = surfaceComponentMask(incoming, result.valuesWorld, axis);
         return result;
     }

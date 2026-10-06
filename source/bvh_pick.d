@@ -54,7 +54,18 @@ struct SurfaceHit {
     float[2] bary   = [0, 0];   // dbvh_hit_t (u, v) at the hit triangle
     int      tri    = -1;       // raw BVH triangle index (debugging only)
     float    t      = float.infinity;
+    double   preciseT = double.infinity;
+    Vec3     productRoundedPoint = Vec3(0, 0, 0);
     int      source = -1;       // `BackgroundRayPicker.nearest`: the answering source's index
+}
+
+private double triangleRayParameter(Vec3 origin, Vec3 dir, Vec3 a, Vec3 b, Vec3 c)
+    pure nothrow @nogc @safe {
+    double[3] e = [cast(double)b.x - a.x, cast(double)b.y - a.y, cast(double)b.z - a.z];
+    double[3] f = [cast(double)c.x - a.x, cast(double)c.y - a.y, cast(double)c.z - a.z];
+    double[3] n = [e[1] * f[2] - e[2] * f[1], e[2] * f[0] - e[0] * f[2], e[0] * f[1] - e[1] * f[0]];
+    return ((cast(double)a.x - origin.x) * n[0] + (cast(double)a.y - origin.y) * n[1]
+            + (cast(double)a.z - origin.z) * n[2]) / (dir.x * n[0] + dir.y * n[1] + dir.z * n[2]);
 }
 
 /// Single-mesh BVH cache. App.d holds one instance for the active mesh.
@@ -110,6 +121,7 @@ private:
     // the wrong one.
     MeshDirtyKey _surfKey;
     uint[]  _surfTriToFace;
+    uint[3][] _surfTriVertices;
 
 public:
     /// Free the BVH handle and reset the cache key. Called automatically on
@@ -261,6 +273,16 @@ public:
         // world `org`/`dir` (untouched above) give the exact world point
         // directly — no local->world remap (and its extra rounding) needed.
         result.point = org + dir * hit.t;
+        import morph_target : displayPosition;
+        const corners = _surfTriVertices[hit.tri];
+        result.preciseT = triangleRayParameter(orgLocal, dirLocal,
+            displayPosition(&sourceMesh, corners[0]), displayPosition(&sourceMesh, corners[1]),
+            displayPosition(&sourceMesh, corners[2]));
+        const localProductPoint = Vec3(
+            cast(float)(cast(double)orgLocal.x + cast(float)(cast(double)dirLocal.x * result.preciseT)),
+            cast(float)(cast(double)orgLocal.y + cast(float)(cast(double)dirLocal.y * result.preciseT)),
+            cast(float)(cast(double)orgLocal.z + cast(float)(cast(double)dirLocal.z * result.preciseT)));
+        result.productRoundedPoint = ms.isIdentity ? localProductPoint : ms.toWorldPoint(localProductPoint);
 
         // Normal from the hit triangle's fan (face[0], face[i], face[i+1]) —
         // the SAME triangulation rebuildSurface used to build the BVH.
@@ -452,6 +474,7 @@ private:
 
         uint[] indices = new uint[](triCount * 3);
         _surfTriToFace  = new uint[](triCount);
+        _surfTriVertices = new uint[3][](triCount);
         uint ti = 0;
         foreach (fi, face; sourceMesh.faces) {
             if (face.length < 3 || hideSkipFace(sourceMesh, fi)) continue;
@@ -467,6 +490,7 @@ private:
                 indices[ti * 3 + 1] = face[i];
                 indices[ti * 3 + 2] = face[i + 1];
                 _surfTriToFace[ti]  = cageFace;
+                _surfTriVertices[ti] = [i0, face[i], face[i + 1]];
                 ++ti;
             }
         }
