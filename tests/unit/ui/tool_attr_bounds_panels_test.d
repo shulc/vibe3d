@@ -81,20 +81,28 @@ unittest { // the forms drag stops at the row's max; with no row it does not
 }
 
 
-private float typedOffset() {
+private final class FreeOffset : toolpipe.stages.constrain.ConstrainStage {
+    override string id() const { return "unbounded"; }
+}
+
+private float typedOffset(bool bounded = true) {
     import toolpipe.stages.constrain : ConstrainStage;
-    auto stage = new ConstrainStage;
+    ConstrainStage stage = bounded ? new ConstrainStage : new FreeOffset;
     stage.enabled = true;
+    stage.offset = 0.5f;
     auto session = new EditSession(() => cast(Tool)null, new CommandHistory(), () {});
     auto panel = new PropertyPanel;
     auto ui = openPanel(() { panel.drawProvider(stage, session); });
     scope (exit) ui.close();
     ui.frame();
-    ui.editRow(2, "-5");
+    // Enabled, Mode label, four separate radios, then Offset.
+    assert(stage.fullParams()[1].intEnumValues.length == 4, "constraint geometry row floor");
+    ui.editRow(6, "-5");
     return stage.offset;
 }
 
 unittest {
+    assert(typedOffset(false) == -5, "control: the stage Offset widget was not edited");
     assert(typedOffset() == 0, "the stage panel left -5 below the offset bound");
 }
 

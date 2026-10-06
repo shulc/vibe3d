@@ -168,6 +168,9 @@ private final class AxisStageProbe : toolpipe.stage.Stage {
     int axis = 2;
     override string id() const { return "prim.cube"; }
     override ubyte ordinal() const { return toolpipe.stage.ordCons; }
+    override toolpipe.stage.TaskCode taskCode() const pure nothrow @nogc @safe {
+        return toolpipe.stage.TaskCode.Cons;
+    }
     override Param[] params() {
         import params : IntEnumEntry;
         static immutable IntEnumEntry[] xyz = [IntEnumEntry(0, "x", "X"),
