@@ -146,13 +146,24 @@ PickGather pickDistances(int mx, int my, const(float[2])* v, const(float[2][2])*
 import mesh : Mesh;
 import math : Vec3, Viewport, ModelSpace, dot, cross, screenPointToRay,
     projectToWindowFull, eyeVectorAt, closestPointOnSegmentToRay, closestOnSegment2D,
-    rayTriangleIntersect;
+    rayTriangleIntersect, aimSpace;
 
 struct ToolPressSource { const(Mesh)* mesh; ModelSpace space; int layer = -1; }
 struct ToolPressTarget {
     int kind = -1, index = -1, source = -1;
     Vec3 pointWorld;
     ToolPressSource owner;
+    float reductionMetric = float.nan;
+}
+
+// Same-class restoration uses original array order only under exact final and
+// integer-reduction ties within one source slot (task9528; private phase0/tie evidence).
+bool toolPressCandidateWins(float incomingDistance, ToolPressTarget incoming,
+                            float currentDistance, ToolPressTarget current) {
+    return incomingDistance < currentDistance || (incomingDistance == currentDistance
+        && incoming.source == current.source
+        && incoming.reductionMetric == current.reductionMetric
+        && incoming.index < current.index);
 }
 __gshared ToolPressSource[] delegate() toolPressSourcesResolver;
 
@@ -306,15 +317,22 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp, ToolPressPoli
         if (src.mesh is null || !src.space.invertible) continue;
         const m = src.mesh;
         const s = support[si];
+        const aim = aimSpace(vp, src.space);
         foreach (vi, v; m.vertices) {
             if (!s.vertices[vi] || m.isVertexHidden(vi) || (facing && !s.vertexFront[vi] && !s.vertexBorder[vi])) continue;
             const p = src.space.toWorldPoint(v);
             float x, y, z;
             if (!projectToWindowFull(p, vp, x, y, z)) continue;
             const d = (((x - mx - 0.5f) ^^ 2) + ((y - my - 0.5f) ^^ 2)) ^^ 0.5f;
-            if (d <= reach && d < g.vertex && visible(p)) {
+            auto candidate = ToolPressTarget(kCascadeVertex, cast(int)vi, cast(int)si, p, src);
+            float ix, iy, iz;
+            if (projectToWindowFull(v, aim.vp, ix, iy, iz)) {
+                const dx = ix - cast(float)mx, dy = iy - cast(float)my;
+                candidate.reductionMetric = dx * dx + dy * dy;
+            }
+            if (d <= reach && toolPressCandidateWins(d, candidate, g.vertex, vertex) && visible(p)) {
                 g.vertex = d;
-                vertex = ToolPressTarget(kCascadeVertex, cast(int)vi, cast(int)si, p, src);
+                vertex = candidate;
             }
         }
         foreach (ei, e; m.edges) {
@@ -324,10 +342,16 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp, ToolPressPoli
             if (!projectToWindowFull(a, vp, ax, ay, az) || !projectToWindowFull(b, vp, bx, by, bz)) continue;
             const d = closestOnSegment2D(mx + 0.5f, my + 0.5f, ax, ay, bx, by, u);
             const p = closestPointOnSegmentToRay(a, b, org, dir);
-            if (d <= reach && d < g.edge && visible(p)) {
+            auto candidate = ToolPressTarget(kCascadeEdge, cast(int)ei, cast(int)si, p, src);
+            float iax, iay, iaz, ibx, iby, ibz, iu;
+            if (projectToWindowFull(m.vertices[e[0]], aim.vp, iax, iay, iaz) &&
+                projectToWindowFull(m.vertices[e[1]], aim.vp, ibx, iby, ibz))
+                candidate.reductionMetric = closestOnSegment2D(cast(float)mx, cast(float)my,
+                    iax, iay, ibx, iby, iu);
+            if (d <= reach && toolPressCandidateWins(d, candidate, g.edge, edge) && visible(p)) {
                 g.edge = d;
                 g.edgeMid = (((ax + bx) * 0.5f - mx - 0.5f) ^^ 2 + ((ay + by) * 0.5f - my - 0.5f) ^^ 2) ^^ 0.5f;
-                edge = ToolPressTarget(kCascadeEdge, cast(int)ei, cast(int)si, p, src);
+                edge = candidate;
             }
         }
     }
@@ -348,8 +372,8 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp, ToolPressPoli
                 subset = toolPressSupport(*policy.legacySource.mesh, policy.legacySource.space, vp);
         }
         const old = policy.legacy(subset.vertices, subset.edges, subset.faces);
-        if (old.distances.vertex < g.vertex) { g.vertex = old.distances.vertex; vertex = old.vertex; }
-        if (old.distances.edge < g.edge) { g.edge = old.distances.edge; g.edgeMid = old.distances.edgeMid; edge = old.edge; }
+        if (toolPressCandidateWins(old.distances.vertex, old.vertex, g.vertex, vertex)) { g.vertex = old.distances.vertex; vertex = old.vertex; }
+        if (toolPressCandidateWins(old.distances.edge, old.edge, g.edge, edge)) { g.edge = old.distances.edge; g.edgeMid = old.distances.edgeMid; edge = old.edge; }
         if (old.distances.polygon < g.polygon) { g.polygon = old.distances.polygon; polygon = old.polygon; }
     }
     switch (electElement(g)) {

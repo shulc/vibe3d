@@ -2402,7 +2402,8 @@ public:
     // the weld target is `weldTargetVertex`.
     package int findSourceVertex(int mx, int my, const ref Viewport vp,
                                  float thresholdPx = kTopoPenSnapAuto,
-                                 scope bool delegate(int, Vec3) admit = null) {
+                                 scope bool delegate(int, Vec3) admit = null, float* reductionMetric = null) {
+        if (reductionMetric !is null) *reductionMetric = float.nan;
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
@@ -2423,7 +2424,10 @@ public:
                 continue;
             bestD2 = d2; best = cast(int)vi;
         }
-        if (best >= 0 && bestD2 <= thresholdPx * thresholdPx) return best;
+        if (best >= 0 && bestD2 <= thresholdPx * thresholdPx) {
+            if (reductionMetric !is null) *reductionMetric = bestD2;
+            return best;
+        }
         return -1;
     }
 
@@ -3784,8 +3788,9 @@ public:
             if ((ordinaryE !is null && ordinaryE[i]) || m.isEdgeHidden(i) || !shown(p)) return false;
             edgePoint = p; return true;
         };
-        const vi = findSourceVertex(mx, my, vp, kTopoPenSnapAuto, admitV);
-        const ei = findRingSeedEdge(mx, my, vp, kTopoPenSnapAuto, admitE);
+        float vertexMetric = float.nan, edgeMetric = float.nan;
+        const vi = findSourceVertex(mx, my, vp, kTopoPenSnapAuto, admitV, &vertexMetric);
+        const ei = findRingSeedEdge(mx, my, vp, kTopoPenSnapAuto, admitE, &edgeMetric);
         const fi = occlusion ? pickPrimaryFace(mx, my, vp) : -1;
         const aim = aimSpace(vp, primary.space);
         bool at(uint v, out float[2] q) {
@@ -3798,8 +3803,8 @@ public:
             && (ordinaryF is null || !ordinaryF[fi]);
         result.distances = pickDistances(mx, my, vi >= 0 && at(vi, pv) ? &pv : null,
             ei >= 0 && at(m.edges[ei][0], pe[0]) && at(m.edges[ei][1], pe[1]) ? &pe : null, face);
-        if (vi >= 0) result.vertex = ToolPressTarget(kCascadeVertex, vi, source, primary.space.toWorldPoint(m.vertices[vi]), primary);
-        if (ei >= 0) result.edge = ToolPressTarget(kCascadeEdge, ei, source, primary.space.toWorldPoint(edgePoint), primary);
+        if (vi >= 0) result.vertex = ToolPressTarget(kCascadeVertex, vi, source, primary.space.toWorldPoint(m.vertices[vi]), primary, vertexMetric);
+        if (ei >= 0) result.edge = ToolPressTarget(kCascadeEdge, ei, source, primary.space.toWorldPoint(edgePoint), primary, edgeMetric);
         if (face) result.polygon = ToolPressTarget(kCascadePolygon, fi, source, Vec3.init, primary);
         return result;
     }
@@ -4560,7 +4565,8 @@ public:
     // vertex one now does.
     package int findRingSeedEdge(int mx, int my, const ref Viewport vp,
                                  float thresholdPx = kTopoPenSnapAuto,
-                                 scope bool delegate(int, Vec3) admit = null) {
+                                 scope bool delegate(int, Vec3) admit = null, float* reductionMetric = null) {
+        if (reductionMetric !is null) *reductionMetric = float.nan;
         if (meshSrc_ is null) return -1;
         auto m = mesh;
         if (m is null) return -1;
@@ -4590,7 +4596,10 @@ public:
                 continue;
             bestD = d; best = cast(int)ei;
         }
-        if (best >= 0 && bestD <= thresholdPx) return best;
+        if (best >= 0 && bestD <= thresholdPx) {
+            if (reductionMetric !is null) *reductionMetric = bestD;
+            return best;
+        }
         return -1;
     }
 

@@ -263,3 +263,23 @@ unittest {
     assert(pen.indexOf("other.source >= 0 && other.owner.mesh !is mesh") >= 0,
            "press-authoring: accepted secondary query cannot become empty-primary placement");
 }
+
+unittest {
+    import std.string : count;
+    const query=blankNonCode(readText(buildPath(repoRoot,"source/hover_state.d")));
+    const pen=blankNonCode(readText(buildPath(repoRoot,"source/tools/edit/topology_pen/tool.d")));
+    assert(query.count("toolPressCandidateWins(")==5,"tie-wiring: exactly four production comparisons and one declaration");
+    foreach(needle;["toolPressCandidateWins(d, candidate, g.vertex, vertex)","toolPressCandidateWins(d, candidate, g.edge, edge)",
+        "toolPressCandidateWins(old.distances.vertex, old.vertex, g.vertex, vertex)","toolPressCandidateWins(old.distances.edge, old.edge, g.edge, edge)",
+        "aimSpace(vp, src.space)","projectToWindowFull(v, aim.vp, ix, iy, iz)","projectToWindowFull(m.vertices[e[0]], aim.vp, iax, iay, iaz)",
+        "projectToWindowFull(m.vertices[e[1]], aim.vp, ibx, iby, ibz)","candidate.reductionMetric = dx * dx + dy * dy;",
+        "candidate.reductionMetric = closestOnSegment2D(cast(float)mx, cast(float)my,"]) {
+        assert(query.indexOf(needle)>=0,"tie-wiring: actual producer/query seam "~needle);
+    }
+    assert(pen.count("float* reductionMetric = null")==2 && pen.count("*reductionMetric = float.nan;")==2,
+        "tie-wiring: both optional helper outputs retain explicit absence");
+    foreach(needle;["*reductionMetric = bestD2;","*reductionMetric = bestD;","admitV, &vertexMetric)","admitE, &edgeMetric)",
+        "primary.space.toWorldPoint(m.vertices[vi]), primary, vertexMetric)","primary.space.toWorldPoint(edgePoint), primary, edgeMetric)"]) {
+        assert(pen.indexOf(needle)>=0,"tie-wiring: actual legacy metric transport "~needle);
+    }
+}

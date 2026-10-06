@@ -452,7 +452,9 @@ private Mesh mixedTieRig(bool edge, bool compatibilityFirst, float ordinaryX,
 unittest {
     import toolpipe.packets : SubjectPacket;
     const vp=viewport();auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
-    foreach(edge;[false,true])foreach(first;[true,false])foreach(mode;0..3)foreach(reciprocal;[false,true]) {
+    size_t population;
+    version(TieOrdinaryFirst)const orders=[false,true];else const orders=[true,false];
+    foreach(edge;[false,true])if(tieClass(edge))foreach(first;orders)foreach(mode;0..3)foreach(reciprocal;[false,true]) {
         const ox=mode==0?302.0f:reciprocal?297.0f:mode==1?304.0f:303.0f;
         const cx=mode==0?302.0f:reciprocal?(mode==1?304.0f:303.0f):297.0f;
         const y=mode==1?300.5f:300.0f;
@@ -468,5 +470,223 @@ unittest {
         writefln("TIE-PHASE0 class=%s first=%s mode=%s reciprocal=%s ordinary=%s compat=%s full=%s/%s subset=%s/%s metrics=%s/%s current=%s/%s",
             edge?"E":"V",first,mode,reciprocal,ordinary,compatibility,edge?full.edge.index:full.vertex.index,edge?full.distances.edge:full.distances.vertex,
             edge?subset.edge.index:subset.vertex.index,edge?subset.distances.edge:subset.distances.vertex,oMetric,cMetric,now.kind,now.index);
+        ++population;
+        float[2] op;float[2][2] oe;float px,py,pz;
+        if(edge) {
+            foreach(j;0..2){assert(projectToWindowFull(m.vertices[m.edges[ordinary][j]],vp,px,py,pz));oe[j]=[px,py];}
+        } else {assert(projectToWindowFull(m.vertices[ordinary],vp,px,py,pz));op=[px,py];}
+        const ordinaryDistances=pickDistances(300,300,edge?null:&op,edge?&oe:null,false);
+        const fd=edge?ordinaryDistances.edge:ordinaryDistances.vertex;
+        const cd=edge?subset.distances.edge:subset.distances.vertex;
+        assert(mode==2 ? fd!=cd && oMetric==cMetric : fd==cd,
+            "MIXED_PREMISE: exact final tie or integer-only tie before outcomes");
+        if(mode==1)assert(oMetric!=cMetric,"MIXED_FINAL_ONLY_PREMISE: actual integer metrics differ");
+        if(mode==0)assert(oMetric==cMetric,"MIXED_TIE_PREMISE: actual integer metrics coincide");
+        const oldTarget=edge?subset.edge:subset.vertex;
+        const expected=mode==0?(first?compatibility:ordinary):mode==1?ordinary:reciprocal?compatibility:ordinary;
+        assert(now.kind==(edge?kCascadeEdge:kCascadeVertex) && now.index==expected && now.source==0 && now.owner.mesh is &m,
+            format("%s_%s: actual query identity %s expected %s",mode==0?"MIXED_TIE":mode==1?"MIXED_FINAL_ONLY_TIE":"MIXED_UNEQUAL",edge?"E":"V",now.index,expected));
+        assert(oldTarget.index==compatibility && oldTarget.reductionMetric==cMetric,
+            edge?"MIXED_E: actual helper metric transport":"MIXED_V: actual helper metric transport");
+        const ordinaryOnly=toolPressAt(300,300,vp,[primary],true,false,false);
+        assert(ordinaryOnly.index==ordinary && ordinaryOnly.reductionMetric==oMetric,
+            edge?"MIXED_E: actual ordinary metric transport":"MIXED_V: actual ordinary metric transport");
+
+        import operator : VectorStack;
+        import bindbc.sdl;
+        loadSDL();auto eventTool=new TopologyPenTool();eventTool.meshSrc_=()=>&m;
+        import display_sync : activeMeshResolver;
+        Mesh offscreen;const savedDisplay=activeMeshResolver;scope(exit)activeMeshResolver=savedDisplay;
+        activeMeshResolver=()=>&offscreen;
+        VectorStack vts;vts.put(&subject);
+        SDL_MouseButtonEvent press;press.button=SDL_BUTTON_LEFT;press.x=300;press.y=300;
+        const saved=toolPressSourcesResolver;scope(exit)toolPressSourcesResolver=saved;
+        toolPressSourcesResolver=()=>[ToolPressSource(&m,ModelSpace.world())];
+        eventTool.onMouseButtonDown(press,vts);
+        const selected=edge?m.edges[expected][]:[cast(uint)expected];
+        assert(eventTool.moveArmed_ && eventTool.moveVerts_==selected,
+            edge?"MIXED_E_MOVE: actual selected endpoints":"MIXED_V_MOVE: actual selected vertex");
+        const before=m.vertices.dup;
+        SDL_MouseMotionEvent motion;motion.x=340;motion.y=300;motion.state=SDL_BUTTON_LMASK;
+        eventTool.onMouseMotion(motion,vts);
+        foreach(i,p;before) {
+            import std.algorithm : canFind;
+            assert((m.vertices[i]!=p)==selected.canFind(cast(uint)i),
+                edge?"MIXED_E_MOVE: actual moved subset":"MIXED_V_MOVE: actual moved subset");
+        }
+
+    }
+    version(TieVertex)assert(population==12,"tie-population: twelve V reciprocal query/Move cells");
+    else version(TieEdge)assert(population==12,"tie-population: twelve E reciprocal query/Move cells");
+    else assert(population==24,"tie-population: twenty-four reciprocal query/Move cells");
+}
+
+private bool tieClass(bool edge) {
+    version(TieVertex)return !edge;
+    else version(TieEdge)return edge;
+    else return true;
+}
+
+unittest {
+    const vp=viewport();Mesh m;auto t=new TopologyPenTool();t.meshSrc_=()=>&m;
+    float vMetric=123,eMetric=456;
+    assert(t.findSourceVertex(300,300,vp,8,null,&vMetric)==-1 && t.findRingSeedEdge(300,300,vp,8,null,&eMetric)==-1,
+        "MISSING_METRIC: empty helpers decline");
+    import std.math : isNaN;
+    assert(isNaN(vMetric) && isNaN(eMetric),"MISSING_METRIC: declined optional outputs explicitly absent");
+}
+
+unittest {
+    import document : ItemXform, primaryModelSpaceResolver;
+    import toolpipe.packets : SubjectPacket;
+    import math : aimSpace;
+    const vp=viewport();ItemXform transform;transform.pos=Vec3(.5f,1,-.5f);transform.scl=Vec3(2,4,.5f);
+    const ms=transform.modelSpace();const saved=primaryModelSpaceResolver;scope(exit)primaryModelSpaceResolver=saved;
+    primaryModelSpaceResolver=()=>ms;
+    foreach(edge;[false,true])if(tieClass(edge)) {
+        int ordinary,compatibility;auto m=mixedTieRig(edge,true,302,302,300,vp,ordinary,compatibility);
+        foreach(ref p;m.vertices)p=ms.toLocalPoint(p);
+        auto t=new TopologyPenTool();t.meshSrc_=()=>&m;const primary=ToolPressSource(&m,ms,11);
+        const support=toolPressSupport(m,ms,vp);const old=t.legacyPressGather(300,300,vp,false,primary,support.vertices,support.edges,support.faces);
+        const ordinaryHit=toolPressAt(300,300,vp,[primary],true,false,false);
+        SubjectPacket subject;subject.mesh=&m;subject.viewport=vp;subject.pickFacing=true;subject.pickFacesDrawn=false;
+        const now=t.queryPressTarget(300,300,vp,false,&subject);
+        writefln("TRANSFORMED-TIE class=%s old=%s/%s/%s ordinary=%s/%s final=%s source=%s local0=%s",edge?"E":"V",
+            edge?old.edge.index:old.vertex.index,edge?old.distances.edge:old.distances.vertex,edge?old.edge.reductionMetric:old.vertex.reductionMetric,
+            ordinaryHit.index,ordinaryHit.reductionMetric,now.index,now.source,m.vertices[0]);
+        assert(!ms.isIdentity && ordinaryHit.index==ordinary && ordinaryHit.reductionMetric==(edge?2:4),
+            edge?"TRANSFORMED_E: actual composed-local auxiliary metric":"TRANSFORMED_V: actual composed-local auxiliary metric");
+        assert((edge?old.edge.reductionMetric:old.vertex.reductionMetric)==ordinaryHit.reductionMetric,
+            "TRANSFORMED_TIE: independent producer metrics exactly coincide");
+        assert(now.index==compatibility && now.source==0 && now.owner.mesh is &m,
+            edge?"TRANSFORMED_E: actual mixed tie identity":"TRANSFORMED_V: actual mixed tie identity");
+    }
+}
+
+unittest {
+    import document : ItemXform;
+    const vp=viewport();ItemXform translated;translated.pos=Vec3(-.5f,0,0);
+    foreach(edge;[false,true])if(tieClass(edge)) {
+        Mesh m;const top=edge?270:300,bottom=edge?330:400;
+        foreach(x;[402.0f,302.0f])m.vertices~=[point(x,top,vp),point(x,bottom,vp),point(x+100,bottom,vp),point(x+100,top,vp)];
+        m.faces=[[0u,1u,2u,3u],[4u,5u,6u,7u]];m.rebuildEdgesFromFaces();m.buildLoops();
+        const sources=[ToolPressSource(&m,ModelSpace.world(),11),ToolPressSource(&m,translated.modelSpace(),22)];
+        const first=toolPressAt(300,300,vp,sources[0..1],false,false,false);
+        const second=toolPressAt(300,300,vp,sources[1..2],false,false,false);
+        const both=toolPressAt(300,300,vp,sources,false,false,false);
+        assert(first.index>second.index && first.reductionMetric==second.reductionMetric && first.owner.mesh is second.owner.mesh,
+            "SOURCE_SLOT_ALIAS: actual different transforms/local indices and integer tie");
+        assert(both.source==0 && both.index==first.index && both.owner.layer==11,
+            edge?"SOURCE_SLOT_ALIAS_E: earlier source slot retained":"SOURCE_SLOT_ALIAS_V: earlier source slot retained");
+        auto other=m;auto distinct=[ToolPressSource(&m,ModelSpace.world(),11),ToolPressSource(&other,ModelSpace.world(),22)];
+        foreach(reverse;[false,true]) {
+            if(reverse){auto temp=distinct[0];distinct[0]=distinct[1];distinct[1]=temp;}
+            const hit=toolPressAt(300,300,vp,distinct,false,false,false);
+            assert(hit.source==0 && hit.owner.mesh is distinct[0].mesh && hit.owner.layer==distinct[0].layer,
+                "SOURCE_TIE_ORDINARY: actual traversal incumbent in either source order");
+        }
+    }
+}
+
+unittest {
+    import std.math : isNaN;
+    const vp=viewport();foreach(edge;[false,true])if(tieClass(edge)) {
+        int ordinary,compatibility;auto m=mixedTieRig(edge,true,302,302,300,vp,ordinary,compatibility);
+        auto t=new TopologyPenTool();t.meshSrc_=()=>&m;const primary=ToolPressSource(&m,ModelSpace.world(),11);
+        const s=toolPressSupport(m,ModelSpace.world(),vp);
+        auto old=t.legacyPressGather(300,300,vp,false,primary,s.vertices,s.edges,s.faces);
+        if(edge)old.edge.reductionMetric=float.nan;else old.vertex.reductionMetric=float.nan;
+        assert(isNaN(edge?old.edge.reductionMetric:old.vertex.reductionMetric),"MISSING_METRIC: controlled provider declares absence");
+        ToolPressPolicy policy;policy.sources=[primary];policy.facing=true;policy.legacySource=primary;
+        policy.legacy=(const(bool)[] v,const(bool)[] e,const(bool)[] f)=>old;
+        const hit=toolPressAt(300,300,vp,policy);
+        assert(hit.index==ordinary && hit.source==0,
+            edge?"MIXED_TIE_METRIC_ABSENT_E: strict incumbent retained":"MIXED_TIE_METRIC_ABSENT_V: strict incumbent retained");
+        // Cross-source exact dual tie: compatibility lower index cannot replace secondary ordinary.
+        auto secondary=m;policy.sources=[ToolPressSource(&secondary,ModelSpace.world(),22)];
+        old=t.legacyPressGather(300,300,vp,false,primary,s.vertices,s.edges,s.faces,1);
+        policy.legacy=(const(bool)[] v,const(bool)[] e,const(bool)[] f)=>old;
+        const cross=toolPressAt(300,300,vp,policy);
+        assert(cross.index==ordinary && cross.source==0 && cross.owner.mesh is &secondary,
+            edge?"SOURCE_TIE_MIXED_E: secondary ordinary retains dual tie":"SOURCE_TIE_MIXED_V: secondary ordinary retains dual tie");
+    }
+}
+
+unittest {
+    import math : closestOnSegment2D;
+    const vp=viewport();int ordinary,compatibility;auto m=mixedTieRig(true,true,303.5f,303.5f,300,vp,ordinary,compatibility);
+    m.vertices[4]=point(303.5f,290,vp);m.vertices[5]=point(303.5f,311,vp);
+    // V final3.02 is between old/new midpoint sqrt9.25 and3.
+    m.vertices~=point(303.52f,300.5f,vp);
+    const primary=ToolPressSource(&m,ModelSpace.world(),11);auto t=new TopologyPenTool();t.meshSrc_=()=>&m;
+    const support=toolPressSupport(m,ModelSpace.world(),vp);
+    const old=t.legacyPressGather(300,300,vp,false,primary,support.vertices,support.edges,support.faces);
+    assert(old.edge.reductionMetric==3.5f && old.distances.edge==3 && old.distances.edgeMid==3,
+        "MIXED_EDGE_MID_DATUM: actual compatibility projected segment pair");
+    ToolPressPolicy policy;policy.sources=[primary];policy.facing=true;policy.legacySource=primary;
+    policy.legacy=(const(bool)[] v,const(bool)[] e,const(bool)[] f)=>old;
+    const hit=toolPressAt(300,300,vp,policy);
+    assert(hit.kind==kCascadeEdge && hit.index==compatibility && hit.reductionMetric==3.5f,
+        "MIXED_EDGE_MID_DATUM: winning edge carries its paired midpoint through final election");
+}
+
+unittest {
+    const vp=viewport();foreach(edge;[false,true])if(tieClass(edge)) {
+        int ordinary,compatibility;auto m=mixedTieRig(edge,true,edge?308.5f:307.5f,edge?308.0f:305.5f,300.5f,vp,ordinary,compatibility);
+        if(edge) {
+            const base=cast(uint)m.vertices.length;
+            foreach(p;[point(250,250,vp),point(350,250,vp),point(350,350,vp),point(250,350,vp)]) {
+                auto below=p;below.y=-1;m.vertices~=below;
+            }
+            m.faces~=[base,base+3,base+2,base+1];
+            // Preserve the loose target's original edge slot while adding actual surface support.
+            foreach(i;0..4)m.edges~=[base+cast(uint)i,base+cast(uint)((i+1)%4)];m.buildLoops();
+        } else {
+            const base=cast(uint)m.vertices.length;
+            m.vertices~=[point(306.5f,270.5f,vp),point(306.5f,330.5f,vp)];m.edges~=[base,base+1];
+        }
+        auto t=new TopologyPenTool();t.meshSrc_=()=>&m;const primary=ToolPressSource(&m,ModelSpace.world(),11);
+        const support=toolPressSupport(m,ModelSpace.world(),vp);
+        const old=t.legacyPressGather(300,300,vp,false,primary,support.vertices,support.edges,support.faces);
+        assert(edge?old.distances.edge==7.5f:old.distances.vertex==5 && old.distances.edgeMid==6,
+            "MIXED_DISTANCE_PREMISE: supplied winner/paired distances from actual geometry");
+        ToolPressPolicy policy;policy.sources=[primary];policy.facing=false;policy.facesDrawn=edge;policy.legacySource=primary;
+        policy.legacy=(const(bool)[] v,const(bool)[] e,const(bool)[] f)=>old;
+        const hit=toolPressAt(300,300,vp,policy);
+        assert(hit.kind==(edge?kCascadeEdge:kCascadeVertex) && hit.index==compatibility,
+            edge?"MIXED_DISTANCE_DATUM_E: new edge distance preserves final class":"MIXED_DISTANCE_DATUM_V: new vertex distance avoids midpoint veto");
+    }
+}
+
+unittest {
+    import std.algorithm : reverse;
+    const vp=viewport();foreach(edge;[false,true])if(tieClass(edge))foreach(reversed;[false,true]) {
+        Mesh m;const top=edge?270:300,bottom=edge?330:400;
+        foreach(i;0..2)m.vertices~=[point(302,top,vp),point(302,bottom,vp),point(402,bottom,vp),point(402,top,vp)];
+        m.faces=[[0u,1u,2u,3u],[4u,5u,6u,7u]];m.rebuildEdgesFromFaces();m.buildLoops();
+        if(reversed)reverse(m.edges);
+        int expected=0;
+        if(edge){expected=-1;foreach(i,e;m.edges)if((e==[0u,1u]||e==[1u,0u]||e==[4u,5u]||e==[5u,4u])&&expected<0)expected=cast(int)i;}
+        assert(expected>=0,"ORDINARY_TIE: reciprocal original target exists");
+        const hit=toolPressAt(300,300,vp,[ToolPressSource(&m,ModelSpace.world())],false,false,false);
+        assert(hit.kind==(edge?kCascadeEdge:kCascadeVertex) && hit.index==expected,
+            edge?"ORDINARY_TIE_E: original first-array identity":"ORDINARY_TIE_V: original first-array identity");
+    }
+}
+
+unittest {
+    import std.math : isNaN;
+    const vp=viewport();foreach(edge;[false,true])if(tieClass(edge)) {
+        int ordinary,compatibility;auto m=mixedTieRig(edge,true,300,300,300,vp,ordinary,compatibility);
+        auto t=new TopologyPenTool();t.meshSrc_=()=>&m;const primary=ToolPressSource(&m,ModelSpace.world());
+        const support=toolPressSupport(m,ModelSpace.world(),vp);
+        auto old=t.legacyPressGather(300,300,vp,false,primary,support.vertices,support.edges,support.faces);
+        if(edge)old.edge=ToolPressTarget(old.edge.kind,old.edge.index,old.edge.source,old.edge.pointWorld,old.edge.owner);
+        else old.vertex=ToolPressTarget(old.vertex.kind,old.vertex.index,old.vertex.source,old.vertex.pointWorld,old.vertex.owner);
+        ToolPressPolicy policy;policy.sources=[primary];policy.facing=true;policy.legacySource=primary;
+        policy.legacy=(const(bool)[] v,const(bool)[] e,const(bool)[] f)=>old;
+        const hit=toolPressAt(300,300,vp,policy);
+        assert(hit.index==ordinary && isNaN(edge?old.edge.reductionMetric:old.vertex.reductionMetric),
+            "MISSING_METRIC_DEFAULT: query-only datum absence cannot become a synthetic zero tie");
     }
 }

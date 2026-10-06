@@ -8,7 +8,7 @@ import std.file : write, remove, exists, tempDir;
 import std.path : buildPath;
 import std.process : thisProcessID, environment;
 import std.format : format;
-import std.math : abs;
+import std.math : abs, round;
 import std.algorithm : canFind;
 import std.array : split;
 
@@ -247,5 +247,71 @@ unittest {
     foreach(front;[false,true])foreach(filled;[false,true]) {
         const at=rig(meshText(vs,front?[[0u,3u,2u,1u]]:[[0u,1u,2u,3u]]),null,filled?"shaded":"wireframe");
         hover(at,filled?"face":"none",filled?0:-1);
+    }
+}
+
+// Dual-metric subset ties retain source/array identity through a real Move.
+unittest {
+    if(!runs("mixed_tie_v") && !runs("mixed_tie_e"))return;
+    foreach(edge;[false,true]) {
+        if(!runs(edge?"mixed_tie_e":"mixed_tie_v"))continue;
+        foreach(first;[true,false])foreach(mode;0..3)foreach(reciprocal;[false,true]) {
+            const ox=mode==0?2.0f:reciprocal?-3.0f:mode==1?4.0f:3.0f;
+            const cx=mode==0?2.0f:reciprocal?(mode==1?4.0f:3.0f):-3.0f;
+            const y=mode==1?.0025f:0.0f;
+            Vec3[] vs;uint[][] faces;bool[] marked;long ordinary,compatibility;
+            if(edge) {
+                const values=first?[cx,ox]:[ox,cx];
+                foreach(x;values)vs~=[Vec3(x/200,0,.15),Vec3(x/200,0,-.15),Vec3((x+100)/200,0,-.15),Vec3((x+100)/200,0,.15)];
+                faces=[[0u,3u,2u,1u],[4u,7u,6u,5u]];marked=first?[true,false]:[false,true];
+                compatibility=first?0:4;ordinary=first?4:0;
+            } else {
+                foreach(j;0..3)foreach(i;0..3)vs~=Vec3(ox/200+(i-1)*.3f,0,y+(j-1)*.3f);
+                faces=[[3u,4u,1u,0u],[4u,5u,2u,1u],[6u,7u,4u,3u],[7u,8u,5u,4u]];ordinary=4;
+                if(first){vs=[Vec3(cx/200,0,y)]~vs;foreach(ref f;faces)foreach(ref v;f)++v;compatibility=0;++ordinary;}
+                else{compatibility=vs.length;vs~=Vec3(cx/200,0,y);}
+            }
+            auto at=rig(meshText(vs,faces,null,marked));
+            import drag_helpers : viewportFromCameraMatrices, projectToWindow;
+            const vp=viewportFromCameraMatrices();
+            at=[300,300];
+            assert(at[0]>vp.x+60 && at[0]<vp.x+vp.width-110 && at[1]>vp.y+65 && at[1]<vp.y+vp.height-65,"MIXED_HTTP: discriminating press fits actual viewport");
+            // Build exact projected coordinates through the actual fixed orthographic lens.
+            foreach(ref p;vs) {
+                const gx=at[0]+cast(float)(round(p.x*400)*.5),gy=at[1]+cast(float)(round(p.z*400)*.5);
+                foreach(attempt;0..8) {
+                    float px,py;assert(projectToWindow(p,vp,px,py));
+                    if(px==gx && py==gy)break;
+                    p.x+=(gx-px)/(.5f*vp.width*vp.proj[0]);
+                    p.z+=(gy-py)/(.5f*vp.height*vp.proj[5]);
+                }
+                float px,py;assert(projectToWindow(p,vp,px,py) && px==gx && abs(py-gy)<=.0000611f,
+                    format("MIXED_HTTP_PROJECTION: exact fixture pixel %s,%s got%s,%s",gx,gy,px,py));
+            }
+            rig(meshText(vs,faces,null,marked));
+            assert(viewportFromCameraMatrices().view==vp.view && viewportFromCameraMatrices().proj==vp.proj,
+                "MIXED_HTTP_PROJECTION: loader retains actual camera used to construct fixture");
+            penCommand("tool.pipe.attr snap enabled false");
+            const before=getJson("/api/model");const selection=getJson("/api/selection");
+            assert(before["vertices"].array.length==vs.length && before["faces"].array.length==faces.length,
+                "MIXED_HTTP: loader preserves populated vertex/face arrays");
+            const expected=mode==0?(first?compatibility:ordinary):mode==1?ordinary:reciprocal?compatibility:ordinary;
+            long[] selected=edge?[expected,expected+1]:[expected];
+            event(at,"SDL_MOUSEBUTTONDOWN");const state=getJson("/api/tool/state");
+            assert(state["moveArmed"].type==JSONType.true_ && state["moveElem"].str==(edge?"edge":"vertex"),
+                "MIXED_HTTP: actual Move class arms");
+            if(!edge)assert(state["grabbedVert"].integer==expected,
+                format("MIXED_HTTP_V: actual identity mode%s first%s reciprocal%s got%s expected%s",mode,first,reciprocal,state["grabbedVert"],expected));
+            event([at[0]+30,at[1]],"SDL_MOUSEMOTION",1,30);event([at[0]+30,at[1]],"SDL_MOUSEBUTTONUP");
+            const after=readVerts();assert(after.length==vs.length,"MIXED_HTTP: final raw population unchanged");
+            foreach(i,v;after) {
+                const moved=selected.canFind(cast(long)i);
+                assert(abs(v.x-vs[i].x-(moved?.15f:0))<1e-4 && abs(v.y-vs[i].y)<1e-4 && abs(v.z-vs[i].z)<1e-4,
+                    format("MIXED_HTTP_%s: actual moved subset mode%s first%s reciprocal%s vertex%s got%s expected%s",edge?"E":"V",mode,first,reciprocal,i,v,moved));
+            }
+            const finalModel=getJson("/api/model");
+            assert(finalModel["faces"]==before["faces"] && finalModel["edges"]==before["edges"] && history()==1 && getJson("/api/selection")==selection,
+                "MIXED_HTTP: topology/selection and one established press row preserved");
+        }
     }
 }
