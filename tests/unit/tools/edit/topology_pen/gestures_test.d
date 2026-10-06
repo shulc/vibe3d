@@ -7733,6 +7733,51 @@ unittest {
     }
 }
 
+// The axis-held Move's arm (task 9528): every arm writes the lock from its
+// chord and clears the elected axis, so a plain press after a Ctrl one moves
+// freely and a second Ctrl drag elects afresh; a Ctrl press on empty space in
+// Point mode places nothing (the slide it replaced declined there too).
+unittest {
+    import mesh : makeGridPlane;
+    import toolpipe.packets : SubjectPacket;
+
+    Mesh m = makeGridPlane(3);
+    auto vp = makeGridPlaneTestViewport();
+    SubjectPacket subj;
+    subj.mesh     = &m;
+    subj.viewport = vp;
+    VectorStack vts;
+    vts.put(&subj);
+    ImVec2 p0;
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    SDL_MouseButtonEvent e;
+    e.x = cast(int)p0.x; e.y = cast(int)p0.y;
+
+    auto t = new TopologyPenTool();
+    t.meshSrc_ = () => &m;
+    t.moveAxis_ = 1;
+    assert(t.onToolAction(TopoPenChord.CtrlLmb, InputPhase.Down, e, vts) && t.moveArmed_,
+        "Ctrl+LMB on a vertex arms a Move");
+    assert(t.moveAxisLock_ && t.moveAxis_ == -1, "a Ctrl arm holds an axis, none elected yet");
+    t.onToolAction(TopoPenChord.CtrlLmb, InputPhase.Up, e, vts);
+    assert(t.onToolAction(TopoPenChord.Lmb, InputPhase.Down, e, vts) && t.moveArmed_);
+    assert(!t.moveAxisLock_, "a plain arm after a Ctrl one moves freely");
+    t.onToolAction(TopoPenChord.Lmb, InputPhase.Up, e, vts);
+
+    SDL_MouseButtonEvent empty;
+    empty.x = 5; empty.y = 5;
+    auto p = new TopologyPenTool();
+    p.meshSrc_ = () => &m;
+    p.penMode_ = PenMode.Point;
+    assert(p.onToolAction(TopoPenChord.Lmb, InputPhase.Down, empty, vts) && p.placeArmed_,
+        "control: a plain Point press on empty space places");
+    auto q = new TopologyPenTool();
+    q.meshSrc_ = () => &m;
+    q.penMode_ = PenMode.Point;
+    assert(!q.onToolAction(TopoPenChord.CtrlLmb, InputPhase.Down, empty, vts) && !q.placeArmed_,
+        "a Ctrl press on empty space places nothing");
+}
+
 // ---------------------------------------------------------------------------
 // The router's RELEASE leg follows the press, not the dropdown (task 0483):
 // a mode written mid-drag must not redirect the commit to a gesture nobody
@@ -12450,8 +12495,8 @@ unittest {
         }
     }
     // Floors first: an empty scan would satisfy both rules vacuously.
-    assert(blocks.length == 191 && histBlocks == 83 && calls == 79 && kernels == 65,
-        format("gestures census population changed: %d top-level blocks (191), %d read "
+    assert(blocks.length == 192 && histBlocks == 83 && calls == 79 && kernels == 65,
+        format("gestures census population changed: %d top-level blocks (192), %d read "
              ~ "history (83), %d bracketed-list calls in them (79), %d of them kernels (65)",
                blocks.length, histBlocks, calls, kernels));
     assert(bad.length == 0, "gestures census:\n" ~ bad.join("\n"));
