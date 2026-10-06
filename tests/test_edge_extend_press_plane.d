@@ -61,7 +61,7 @@ enum int[2][] kSel50 = [[2, 3], [6, 7], [10, 11], [14, 15], [18, 19], [22, 23], 
 /// (px, 0, pz), haul two (10, 5) px steps. Returns the U/R word over the
 /// selected source vertices in edge order (two letters per edge).
 string pinnedHaul(string cell, string verts, string faces, int[2][] sel, V3 cen, double rotY,
-                  double px, double pz) {
+                  double px, double pz, bool pinned = true) {
     auto r = postJson("/api/command", `{"id":"scene.reset"}`);
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmdId("scene.loadMesh", `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`);
@@ -69,8 +69,9 @@ string pinnedHaul(string cell, string verts, string faces, int[2][] sel, V3 cen,
     assert(nv == sel.length * 4, format("%s: rig did not load (%d v)", cell, nv));
     setSymmetryX(false);
     selectEdges(edgesOf(sel));
-    cmd(format("workplane.edit cenX:%s cenY:%s cenZ:%s rotX:0 rotY:%s rotZ:0", cen[0], cen[1], cen[2], rotY));
-    cmd("tool.pipe.attr symmetry useWorkplane true");
+    if (pinned)
+        cmd(format("workplane.edit cenX:%s cenY:%s cenZ:%s rotX:0 rotY:%s rotZ:0", cen[0], cen[1], cen[2], rotY));
+    cmd("tool.pipe.attr symmetry useWorkplane " ~ (pinned ? "true" : "false"));
     setSymmetryX(true);
     cmd("viewport.view Top");
     r = postJson("/api/camera", format(`{"focus":{"x":%s,"y":0,"z":%s},"distance":4.0}`, cen[0], cen[2]));
@@ -89,11 +90,15 @@ string pinnedHaul(string cell, string verts, string faces, int[2][] sel, V3 cen,
     Px end;
     increments(p, 10, 5, 2, end);
     release(end);
+    immutable Offset o = offset();
+    // Read the COMMITTED mesh: idle frames, then the drop commits the run
+    // from the tool's mirror as it stands then, not the preview's.
+    settle(250);
+    cmd("tool.set edge.extend off");
 
     auto m = model();
     assert(m["vertices"].array.length == nv + sel.length * 2,
         format("%s: expected %d vertices, got %d", cell, nv + sel.length * 2, m["vertices"].array.length));
-    immutable Offset o = offset();
     immutable V3 off = [o.x, o.y, o.z];
     immutable double a = rotY * PI / 180.0;
     immutable V3 refl = reflect(off, [cos(2 * a), 0, -sin(2 * a)]);
@@ -109,7 +114,6 @@ string pinnedHaul(string cell, string verts, string faces, int[2][] sel, V3 cen,
         assert(u + rr == 1, format("%s: source %d has %d unchanged and %d reflected ring vertices", cell, s, u, rr));
         word ~= u ? 'U' : 'R';
     }
-    cmd("tool.set edge.extend off");
     return word;
 }
 
@@ -118,6 +122,11 @@ void pinCell(string cell, string got, string want) {
 }
 
 // --- (1) rot 0, W centre (0.3, 0, 0) --------------------------------------
+
+unittest { // EX_Pc (control): no pin, symmetry X — both planes are world x = 0
+    pinCell("EX_Pc", pinnedHaul("EX_Pc", kVerts0, kFaces0, kSel0, [0, 0, 0], 0, 1.10065, 0.0, false),
+            "UUUUUURR");
+}
 
 unittest { // EX_P0v: the vertex plane is W(W(0)) (x 0.6): B at 0.45 is reflected
     pinCell("EX_P0v", pinnedHaul("EX_P0v", kVerts0, kFaces0, kSel0, [0.3, 0, 0], 0, 1.10033, 0.0),
@@ -285,4 +294,30 @@ unittest { // EX_R: Move and Rotate on — the ring press ROTATES; Move's haul d
     auto run = ringRun("EX_R", true, true);
     assert(run.bank == "rotate" && abs(run.rotX) > 0.1 && run.after == run.before,
         format("EX_R: bank %s, rotate X %s, offset %s -> %s", run.bank, run.rotX, run.before, run.after));
+}
+
+unittest { // a MISS is offered to every enabled bank: with Scale alone, an off-handle second press
+           // arms the bank's plane scale (part 7) — ours, kept as it was (no capture of this press)
+    auto r = postJson("/api/command", `{"id":"scene.reset"}`);
+    assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
+    loadPlaneRig();
+    setSymmetryX(false);
+    selectEdges(edgesOf([[7, 8]]));
+    r = postJson("/api/camera", `{"azimuth":0.571,"elevation":0.584,"distance":5.0,"focus":{"x":0.5,"y":0.3,"z":0},"roll":0}`);
+    assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
+    cmd("tool.set edge.extend on");
+    cmd("tool.attr edge.extend moveHandle false");
+    cmd("tool.attr edge.extend scaleHandle true");
+    cmd("history.clear");
+    settle(250);
+    auto c = viewCentre();
+    click(Px(c.x - 300, c.y + 250));   // opens the operation
+    assert(runStarted(), "scale-miss: the opening click did not open an operation");
+    immutable Px p = Px(c.x - 300, c.y - 250);
+    press(p);
+    auto s = toolState();
+    assert(s["dragBank"].str == "scale" && s["dragAxis"].integer == 7,
+        "scale-miss: an off-handle press with Scale alone did not reach the scale bank's plane scale: " ~ s.toString);
+    release(p);
+    cmd("tool.set edge.extend off");
 }
