@@ -2,7 +2,6 @@ module prepared_inherited_noop;
 
 import core.atomic : atomicOp;
 import tool : Tool;
-import tools.edit.drag_weld : DragWeldTool;
 import tools.create.arc : ArcTool;
 import tools.alignment.array_tool : ArrayTool;
 import tools.deform.bend : BendTool;
@@ -76,9 +75,10 @@ private:
 
 private shared ulong nextInheritedNoopOwner;
 
-/// Closed owner for the two base Tool no-op hooks whose sole effective
-/// factory product is exact DragWeldTool.  Install intentionally mutates no
-/// live state; consuming the validated token is the complete effect.
+/// Closed owner for the base Tool no-op `update`; the two lifecycle kinds
+/// admit no product since Drag Weld became a topology-pen preset (task 9525).
+/// Install intentionally mutates no live state; consuming the validated token
+/// is the complete effect.
 final class PreparedInheritedNoopOwner {
 private:
     Tool target_;
@@ -148,7 +148,7 @@ private:
             nothrow @nogc {
         if (target is null) return false;
         if (kind != PreparedInheritedNoopKind.Update)
-            return target.classinfo is DragWeldTool.classinfo;
+            return false;
         return target.classinfo is ArcTool.classinfo ||
             target.classinfo is ArrayTool.classinfo ||
             target.classinfo is BendTool.classinfo ||
@@ -158,7 +158,6 @@ private:
             target.classinfo is CloneTool.classinfo ||
             target.classinfo is ConeTool.classinfo ||
             target.classinfo is CylinderTool.classinfo ||
-            target.classinfo is DragWeldTool.classinfo ||
             target.classinfo is EdgeBevelTool.classinfo ||
             target.classinfo is EdgeExtrudeTool.classinfo ||
             target.classinfo is EdgeSliceTool.classinfo ||
@@ -217,10 +216,9 @@ version(unittest) unittest {
 
     Mesh mesh;
     GpuMesh gpu;
-    auto target = new DragWeldTool(() => &mesh, &gpu, LitShader.init);
+    auto target = new ArcTool(() => &mesh, &gpu, LitShader.init);
 
-    foreach (kind; [PreparedInheritedNoopKind.Activate,
-                    PreparedInheritedNoopKind.Deactivate]) {
+    foreach (kind; [PreparedInheritedNoopKind.Update]) {
         auto owner = PreparedInheritedNoopOwner.prepare(target, kind);
         auto context = new PreparedRecordContext(new CommandHistory(),
                                                   new RecordObserverHub());
@@ -233,15 +231,16 @@ version(unittest) unittest {
                context.installTraceForTest == [17, 8]);
     }
 
-    // A different factory product may also inherit Tool.update, but it is not
-    // admitted for the two lifecycle kinds owned by this tranche.
-    assert(PreparedInheritedNoopOwner.prepare(
-        new ArcTool(() => &mesh, &gpu, LitShader.init),
-        PreparedInheritedNoopKind.Activate) is null);
+    // No factory product inherits both lifecycle no-ops since Drag Weld became
+    // a topology-pen preset (task 9525): the two lifecycle kinds admit nothing.
+    assert(PreparedInheritedNoopOwner.prepare(target,
+               PreparedInheritedNoopKind.Activate) is null &&
+           PreparedInheritedNoopOwner.prepare(target,
+               PreparedInheritedNoopKind.Deactivate) is null);
 
     foreach (ownerIdentity; [false, true]) {
         auto wrong = PreparedInheritedNoopOwner.prepare(
-            target, PreparedInheritedNoopKind.Activate);
+            target, PreparedInheritedNoopKind.Update);
         assert(wrong.begin());
         wrong.corruptPreparedForTest(ownerIdentity);
         assert(!wrong.validate());
@@ -249,7 +248,7 @@ version(unittest) unittest {
         assert(wrong.consumedForTest);
 
         auto validated = PreparedInheritedNoopOwner.prepare(
-            target, PreparedInheritedNoopKind.Deactivate);
+            target, PreparedInheritedNoopKind.Update);
         assert(validated.begin() && validated.validate());
         validated.corruptValidatedForTest(ownerIdentity);
         validated.install();
@@ -259,7 +258,7 @@ version(unittest) unittest {
     }
 
     auto aborted = PreparedInheritedNoopOwner.prepare(
-        target, PreparedInheritedNoopKind.Activate);
+        target, PreparedInheritedNoopKind.Update);
     assert(aborted.begin());
     aborted.abort();
     assert(aborted.consumedForTest && !aborted.begin());
@@ -267,7 +266,7 @@ version(unittest) unittest {
     // A throw after begin is terminal for this owner and leaves no journal
     // entry.  Discard makes the old context inert; a fresh pair can retry.
     auto faultOwner = PreparedInheritedNoopOwner.prepare(
-        target, PreparedInheritedNoopKind.Deactivate);
+        target, PreparedInheritedNoopKind.Update);
     auto fault = new PreparedRecordContext(new CommandHistory(),
                                             new RecordObserverHub());
     PreparedRecordContext.failAfterResourceBeginForTest(true);
@@ -281,7 +280,7 @@ version(unittest) unittest {
     assert(!fault.validate());
 
     auto retryOwner = PreparedInheritedNoopOwner.prepare(
-        target, PreparedInheritedNoopKind.Deactivate);
+        target, PreparedInheritedNoopKind.Update);
     auto retry = new PreparedRecordContext(new CommandHistory(),
                                             new RecordObserverHub());
     assert(retry.prepareInheritedNoop(retryOwner) &&
@@ -291,8 +290,7 @@ version(unittest) unittest {
 
     // Dormant producer preserves zero-live/no-history behavior for both exact
     // effective roots and never validates or installs early.
-    foreach (kind; [PreparedInheritedNoopKind.Activate,
-                    PreparedInheritedNoopKind.Deactivate]) {
+    foreach (kind; [PreparedInheritedNoopKind.Update]) {
         auto producerContext = new PreparedRecordContext(new CommandHistory(),
             new RecordObserverHub());
         auto effect = prepareInheritedNoop(target, kind, producerContext);
@@ -322,7 +320,7 @@ version(unittest) unittest {
         new RecordObserverHub());
     PreparedRecordContext.failAfterResourceBeginForTest(true);
     threw = false;
-    try prepareInheritedNoop(target, PreparedInheritedNoopKind.Activate,
+    try prepareInheritedNoop(target, PreparedInheritedNoopKind.Update,
                              producerFault);
     catch (Exception) threw = true;
     PreparedRecordContext.failAfterResourceBeginForTest(false);
@@ -333,24 +331,12 @@ version(unittest) unittest {
     auto producerRetry = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub());
     auto retryEffect = prepareInheritedNoop(target,
-        PreparedInheritedNoopKind.Activate, producerRetry);
+        PreparedInheritedNoopKind.Update, producerRetry);
     assert(retryEffect.accepted &&
            retryEffect.owner == target.preparedLifecycleOwner &&
-           retryEffect.kind == PreparedInheritedNoopKind.Activate &&
+           retryEffect.kind == PreparedInheritedNoopKind.Update &&
            producerRetry.validate());
     producerRetry.install();
     producerRetry.install();
     assert(producerRetry.installTraceForTest == [17,8]);
-
-    auto arc = new ArcTool(() => &mesh, &gpu, LitShader.init);
-    auto updateContext = new PreparedRecordContext(new CommandHistory(),
-        new RecordObserverHub());
-    auto updateEffect = prepareInheritedNoop(arc,
-        PreparedInheritedNoopKind.Update, updateContext);
-    assert(updateEffect.accepted && updateEffect.kind ==
-           PreparedInheritedNoopKind.Update &&
-           updateEffect.owner == arc.preparedLifecycleOwner &&
-           updateContext.validate());
-    updateContext.install(); updateContext.install();
-    assert(updateContext.installTraceForTest == [17,8]);
 }

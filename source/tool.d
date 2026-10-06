@@ -70,6 +70,10 @@ enum ToolFlag : uint {
     // whatever centre is set by hand, so the answer is the PRESET's, never the
     // action-centre mode. Read by the session (`ToolSession.finishClose`).
     NoRearmAfterCommand = 1u << 6,
+    // Preset-applied (task 9525): the preset composes no background
+    // constraint, so the topology pen's activation leaves the CONS stage
+    // alone (Drag Weld; K-DW).
+    NoBackgroundConstraint = 1u << 7,
 }
 
 // ---------------------------------------------------------------------------

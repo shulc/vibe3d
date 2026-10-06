@@ -1,6 +1,7 @@
 module prepared_topology_pen_activation;
 
 import core.atomic : atomicOp;
+import tool : ToolFlag;
 import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
 import toolpipe.stage : TaskCode;
 import toolpipe.stages.snap : SnapStage, PreparedSnapPushProjection;
@@ -27,6 +28,7 @@ private:
     PreparedSnapPushProjection snapProjection_;
     PreparedConstrainCompositionProjection constrainProjection_;
     string snapOwner_;
+    bool composesConstraint_;
     immutable ulong owner_; ulong generation_;
     bool pending_, validated_, consumed_;
     PreparedTopologyPenActivationToken prepared_;
@@ -39,6 +41,7 @@ public:
         auto result = new PreparedTopologyPenActivationOwner(target);
         result.image_ = target.buildPreparedActivation();
         result.snapOwner_ = target.preparedSnapArmOwner();
+        result.composesConstraint_ = !target.hasFlag(ToolFlag.NoBackgroundConstraint);
         result.pipe_ = g_pipeCtx;
         if (result.pipe_ !is null) {
             result.snap_ = cast(SnapStage)
@@ -75,7 +78,8 @@ public:
             validatedToken_.generation != generation_) return;
         target_.installPreparedActivation(image_);
         if (snap_ !is null) snap_.installPreparedPushEnabled(snapOwner_, true);
-        if (constrain_ !is null && !constrainProjection_.userLocked)
+        if (constrain_ !is null && composesConstraint_ &&
+            !constrainProjection_.userLocked)
             constrain_.installPreparedPointComposition();
         consume();
     }

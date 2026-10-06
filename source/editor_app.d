@@ -76,7 +76,6 @@ import tools.create.arc;
 import tools.create.tube;
 import tools.create.pen;
 import tools.create.vertex_place : VertexTool;
-import tools.edit.drag_weld    : DragWeldTool;
 import tools.edit.edge_extrude : EdgeExtrudeTool;
 import tools.edit.edge_extend : EdgeExtendTool;
 import tools.slice.edge_slide : EdgeSlideTool;

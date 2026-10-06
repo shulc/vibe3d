@@ -11,6 +11,7 @@ import tools.transform.xfrm_transform : XfrmTransformTool;
 import tools.transform.rotate : OffGizmoRotateInput;
 import tools.deform.push : PushTool;
 import tools.deform.smooth_shift_tool : SmoothShiftTool;
+import tools.edit.topology_pen.tool : TopologyPenTool;
 import toolpipe.pipeline : g_pipeCtx;
 import params : Param, ParamProvider, injectParamsInto, parseInto;
 import toolpipe.attr_cache : NodeAttrs, recallNodeAttrs;
@@ -51,6 +52,7 @@ private uint parseToolFlag(string name) {
     switch (toLower(strip(name))) {
         case "immediate":  return ToolFlag.Immediate;
         case "brushreset": return ToolFlag.BrushReset;
+        case "nobackgroundconstraint": return ToolFlag.NoBackgroundConstraint;
         default: throw new Exception("tool_presets: unknown flag '" ~ name ~ "'");
     }
 }
@@ -458,6 +460,9 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 break;
             case "mesh.smoothShiftTool":
                 typedPresetFactory = makeFactory!SmoothShiftTool(p);
+                break;
+            case "mesh.topoPen":
+                typedPresetFactory = makeFactory!TopologyPenTool(p);
                 break;
             default:
                 throw new Exception(format(

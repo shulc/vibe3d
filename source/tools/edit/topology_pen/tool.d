@@ -2119,7 +2119,7 @@ public:
     // onto borders and not into the interior of a mesh. The reference's plain
     // pen button is in precisely that configuration; its Drag Weld preset —
     // the unqualified destructive one — additionally composes a vertex-mode
-    // snap tool and turns `innerSnap` on, and we ship no such preset.
+    // snap tool and turns `innerSnap` on; ours is the `mesh.dragWeld` preset.
     //
     // THE SAVE/RESTORE PAIR IS THE STAGE'S, not ours — see
     // `SnapStage.pushEnabled` for why the saved value cannot live on the tool

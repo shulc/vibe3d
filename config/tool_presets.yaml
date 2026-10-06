@@ -317,3 +317,13 @@ presets:
     attrs:
       thicken: "true"
       maxAngle: "90.115"
+
+  # Drag Weld (task 9525) — the topology pen in Move mode with Inner Snap on
+  # and no background constraint; activation arms the snap state as the
+  # pen's own does (captures K-W2, K-DW; snappreset_capture s6).
+  - id: mesh.dragWeld
+    base: mesh.topoPen
+    flags: [noBackgroundConstraint]
+    attrs:
+      mode: "0"          # PenMode.Move
+      innerSnap: "true"

@@ -14,7 +14,6 @@ import tools.alignment.radial_array_tool : RadialArrayTool;
 import tools.deform.magnet : MagnetTool;
 import tools.deform.smooth_shift_tool : SmoothShiftTool;
 import tools.deform.stroke_extrude_tool : StrokeExtrudeTool;
-import tools.edit.drag_weld : DragWeldTool;
 import tools.edit.edge_bevel : EdgeBevelTool;
 import tools.edit.edge_extend : EdgeExtendTool;
 import tools.edit.edge_extrude : EdgeExtrudeTool;
@@ -128,15 +127,6 @@ public:
 /// roles and narrow collaborators.
 void registerEditToolCommands(ref Registry reg, LiveSessionRole owner,
         LiveViewModeRole live, EditToolDeps deps) {
-    // Drag Weld — drag a source vertex onto a target vertex to weld them.
-    // LMB-down picks the source; LMB-up picks the target; one snapshot-undo
-    // entry per completed gesture. Gated to Vertices mode.
-    reg.registerTool("mesh.dragWeld", typedToolFactory!DragWeldTool(() {
-        auto t = new DragWeldTool(() => &owner.activeMesh(), deps.gpu(), deps.litShader());
-        t.setGestureBindings(deps.history(), deps.bevelEditFactory());
-        return t;
-    }));
-
     // Edge Extrude — interactive (drag → extrude/width) + headless
     // (tool.attr edge.extrude extrude/width; tool.doApply). Topology-creating
     // tool: own typed edit factory (MeshSessionEdit, not vxEditFactory),
@@ -241,7 +231,7 @@ void registerEditToolCommands(ref Registry reg, LiveSessionRole owner,
     // WHAT G8 DID SETTLE. The temptation the note warned about was "unify the
     // factory alias", and what made it dangerous was that `VertexEditFactory`
     // named TWO different delegate types in this tree (`MeshSessionEdit
-    // delegate()` in `vertex_place.d` / `drag_weld.d`, `MeshVertexEdit
+    // delegate()` in `vertex_place.d` / the deleted Drag Weld tool, `MeshVertexEdit
     // delegate()` in `transform.d` / `xfrm_transform.d`), so a swap re-typed
     // two tools and both kept compiling. Phases B and C deleted both
     // `MeshSessionEdit` spellings along with the binders that used them: two
