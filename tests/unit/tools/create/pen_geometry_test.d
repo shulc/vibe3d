@@ -88,6 +88,10 @@ unittest // exact rebuilt geometry and connectivity, including repeated corners
                  Vec3(0,.02,0), Vec3(0,0,.02), Vec3(.01,.01,.01)];
     assert(penMergeSources(pts, kShift, .0068) == [0u,0,2,3,4,5],
         "world box: all three axes must admit or refuse independently");
+    const float c = .70710677f;
+    const float[16] turn = [c,-c,0,0, c,c,0,0, 0,0,1,0, 0,0,0,1];
+    assert(penMergeSources([Vec3(0,0,0),Vec3(.005,.005,0)], turn, .0068) == [0u,1],
+        "world box must use the transformed world axes");
 }
 
 unittest // Make Quads facing: under the decided flip every quad faces the eye
