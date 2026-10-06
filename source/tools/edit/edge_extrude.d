@@ -795,7 +795,8 @@ public:
         extrudeAxis = Vec3(7,8,9); widthAxis = Vec3(10,11,12);
         gizmoSelHash = 13; dragLastMX = 14; dragLastMY = 15;
         dragStartMX = 16; dragStartMY = 17; dragBaseExtrude = 18;
-        dragBaseWidth = 19; freeHaul.begin(true); freeHaul.motion(1, 0); cachedVp.view[0] = 20;
+        dragBaseWidth = 19; freeHaul.begin(true); freeHaul.motion(1, 0);
+        cachedVp.view[0] = 20;
         before = MeshSnapshot.capture(oldMesh);
     }
     version(unittest) final bool preparedActivationDirtyForTest() const
@@ -805,7 +806,8 @@ public:
             extrudeAxis == Vec3(7,8,9) && widthAxis == Vec3(10,11,12) &&
             gizmoSelHash == 13 && dragLastMX == 14 && dragLastMY == 15 &&
             dragStartMX == 16 && dragStartMY == 17 && dragBaseExtrude == 18 &&
-            dragBaseWidth == 19 && freeHaul.pressedCtrl && freeHaul.axis == HaulAxis.horizontal && cachedVp.view[0] == 20;
+            dragBaseWidth == 19 && freeHaul.pressedCtrl &&
+            freeHaul.axis == HaulAxis.horizontal && cachedVp.view[0] == 20;
     }
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr, bool expectedValid,

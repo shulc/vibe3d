@@ -783,7 +783,8 @@ public:
             shiftAxis == expectedShift && insetAxis == expectedInset &&
             gizmoSelHash == expectedHash && dragStartMX == 14 &&
             dragStartMY == 15 && dragBaseShift == 16 && dragBaseInset == 17 &&
-            freeHaul.pressedCtrl && freeHaul.axis == HaulAxis.horizontal && freeShiftPerPixel == 18 &&
+            freeHaul.pressedCtrl && freeHaul.axis == HaulAxis.horizontal &&
+            freeShiftPerPixel == 18 &&
             freeInsetPerPixel == 19 && cachedVp.view[0] == 20;
     }
     version(unittest) final PreparedPolyBevelActivationImage
