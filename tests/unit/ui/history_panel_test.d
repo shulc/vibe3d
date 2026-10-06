@@ -443,3 +443,49 @@ unittest { // the History panel seam cannot silently grow EditorApp back
         assert(!editorAppSource.canFind(retired),
             "EditorApp regained retired History form pointer: " ~ retired);
 }
+
+unittest { // Real marker rows retain panel identity and an empty Copy argstring.
+    import tests.unit.command_history_test : ResidualRig;
+    import command_history : HistoryFlags;
+    auto harness = new HistoryPanelActionHarness();
+    auto r = new ResidualRig(false); r.h = harness.history;
+    r.h.recordToolLifecycle(r.activation);
+    r.first = r.press("probe.first", 1, true);
+    r.last = r.press("probe.last", 2, true);
+    r.field = r.press("probe.field", 3, false);
+    r.h.markEntryFold(r.field, HistoryFlags.JoinsBelow);
+    r.close(); assert(r.h.undo());
+    auto read = bindHistoryPanelRead(r.h);
+    assert(read.undoEntries().length == 3 && read.undoEntries()[2].commandName == "history.pressMarker",
+        "panel marker must retain its surfaced raw index");
+    assert(read.undoEntryCommandLine(1) == "probe.first", "panel ordinary canonical-line control");
+    assert(read.undoEntryCommandLine(2) == "", "panel Copy argstring reader must return exactly empty for real marker");
+    const gen = r.h.generation();
+    auto controller = harness.controller(new HistoryPanelState()); controller.replay(2);
+    assert(r.h.generation() == gen && r.h.undoEntries().length == 3
+        && harness.firstCalls == 0 && r.m.vertices[0].x == 1,
+        "panel marker replay invokes no factory and changes no geometry/history");
+    controller.replay(1);
+    assert(harness.firstCalls == 1 && r.h.undoEntries().length == 4,
+        "panel ordinary replay reaches the registered command positive control");
+}
+
+unittest { // A new pending edit responds before the marker underneath it.
+    import tests.unit.command_history_test : ResidualRig;
+    import command_history : HistoryFlags;
+    auto harness = new HistoryPanelActionHarness();
+    auto r = new ResidualRig(false); r.h = harness.history;
+    r.press("press", 1, true); r.close(); assert(r.h.undo());
+    auto pending = new HistoryPanelKeepAliveTool(); harness.activeTool = pending;
+    harness.session.noteArm("pending", 7);
+    auto controller = harness.controller(new HistoryPanelState());
+    const generation = r.h.generation();
+    assert(controller.navigate(true) && pending.cancels == 1 && !pending.editOpen
+        && r.h.undoEntries().length == 1 && (r.h.undoEntries()[0].flags & HistoryFlags.PressMarker)
+        && r.h.generation() == generation,
+        "pending new edit must cancel before consuming the marker below it");
+    const resyncs = pending.resyncs;
+    assert(controller.navigate(true) && r.h.undoEntries().length == 0
+        && pending.resyncs == resyncs && r.m.vertices[0].x == -0.5,
+        "actual marker navigation must skip attribute/basis settlement");
+}

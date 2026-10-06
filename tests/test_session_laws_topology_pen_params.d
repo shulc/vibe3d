@@ -632,9 +632,9 @@ unittest {
     z("absorb-then-drop z1");
     at("absorb-then-drop", "z1 (task row)", g1, false, r.hp + 4);
     z("absorb-then-drop z2");
-    at("absorb-then-drop", "z2 (drop plus press)", r.a0, true, r.hp + 2);
+    at("absorb-then-drop", "z2 (drop plus press)", r.a0, true, r.hp + 3);
     z("absorb-then-drop z3");
-    at("absorb-then-drop", "z3", r.a0, false, r.hp);
+    at("absorb-then-drop", "z3 (marker)", r.a0, true, r.hp + 2);
     writeln("PASS absorb-then-drop");
 }
 
@@ -1149,9 +1149,9 @@ unittest {
     at("fold-on-drop", "exit", w1, false, r.hp + 5);
     z("fold-on-drop z1");
     z("fold-on-drop z2");
-    at("fold-on-drop", "z2 (drop plus press and field)", r.a0, true, r.hp + 1);
+    at("fold-on-drop", "z2 (drop plus press and field)", r.a0, true, r.hp + 2);
     z("fold-on-drop z3");
-    at("fold-on-drop", "z3 (activation)", r.a0, false, r.hp);
+    at("fold-on-drop", "z3 (marker)", r.a0, true, r.hp + 1);
     writeln("PASS fold-on-drop");
 }
 

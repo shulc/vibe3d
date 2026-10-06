@@ -66,7 +66,7 @@ void registerHistoryCommands(ref Registry reg,
                 // Lifecycle rows have no registered factory and cannot replay,
                 // so script export keeps an independent replayability filter.
                 foreach (ref e; history.undoEntriesVisible()) {
-                    if (e.flags & HistoryFlags.ToolLifecycle) continue;
+                    if (e.flags & (HistoryFlags.ToolLifecycle | HistoryFlags.PressMarker)) continue;
                     lines ~= serializeCommandLine(e.commandName, e.args);
                 }
                 return lines;

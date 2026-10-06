@@ -116,6 +116,7 @@ enum HistoryFlags : uint {
                            // depth/count scans stop before it. Mirrors
                            // CmdFlags.UndoBoundary and marks scene.reset /
                            // file.new as the edge of the current session.
+    PressMarker = 1 << 17, // A payload-free, irreversible consumed press boundary.
     ToolLifecycle = 1 << 10, // Entry is a strict-LIFO tool-lifecycle step.
                              // Never counted in modelDepth / uiDepth, but surfaced
                              // by /api/history as the named step that it is.
@@ -135,6 +136,26 @@ enum HistoryFlags : uint {
     PreNavOpen = 1 << 16, // Written while the open block was a press or the
                           // activation; unclosed, it redoes only in the
                           // instance that wrote it (L2p, L53).
+}
+
+// A consumed press retains only its boundary identity (9508). This carrier
+// owns no edit image or producer; navigation and serializers read its role.
+final class DropPressMarkerCommand : Command {
+    private string pressName_;
+    this(ulong token, string pressName) {
+        import view : View;
+        import editmode : EditMode;
+        View emptyView;
+        super(null, emptyView, EditMode.Vertices);
+        markSession(token);
+        pressName_ = pressName;
+        noteUndoRecorded();
+    }
+    override string name() const { return "history.pressMarker"; }
+    override string label() const { return "Consumed press: " ~ pressName_; }
+    override CmdFlags cmdFlags() const { return CmdFlags.UndoForce; }
+    protected override bool applyImpl() { return false; }
+    protected override void revertImpl() {}
 }
 
 version (unittest) private HistoryEntry preparedTestEntry(Command cmd,
@@ -1909,7 +1930,7 @@ final class CommandHistory {
             // Stop counting at a session boundary (same scope as the scan).
             if (e.flags & HistoryFlags.UndoBoundary) break;
             if (!(e.flags & HistoryFlags.Undoable)) continue;
-            if (e.flags & HistoryFlags.ToolLifecycle) continue; // excluded from model/ui counts
+            if (e.flags & (HistoryFlags.ToolLifecycle | HistoryFlags.PressMarker)) continue; // excluded from payload counts
             if (e.flags & HistoryFlags.UiUndo) ++uiCount;
             else                                ++modelCount;
         }
@@ -1921,7 +1942,7 @@ final class CommandHistory {
         const uint tailFlags = undoStack[$ - 1].flags;
         return (tailFlags & HistoryFlags.Undoable) != 0
             && (tailFlags & HistoryFlags.UiUndo) == 0
-            && (tailFlags & HistoryFlags.ToolLifecycle) == 0;
+            && (tailFlags & (HistoryFlags.ToolLifecycle | HistoryFlags.PressMarker)) == 0;
     }
 
     /// Whether the next strict-LIFO undo step is a UI-class record.
@@ -1950,9 +1971,10 @@ final class CommandHistory {
         scope(exit) if (!generationDone) ++_generation;
         import commands.tool.lifecycle : ToolArmLifecyclePolicy;
         import commands.mesh.session_edit : MeshSessionEdit;
-        import tool : DropUndoExtent, DropRedoPopulation;
+        import tool : DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
         auto lifecycle = cast(ToolArmLifecyclePolicy) undoStack[$ - 1].cmd;
         const dropping = lifecycle !is null && lifecycle.dropRow();
+        const markerUndo = (undoStack[$ - 1].flags & HistoryFlags.PressMarker) != 0;
         size_t selected = 1;
         if (dropping && lifecycle.previousToken() != 0) {
             const policy = lifecycle.dropUndoPolicy();
@@ -1973,6 +1995,14 @@ final class CommandHistory {
                 }
             }
         }
+        // Freeze scalar identity before rearming; no original press is retained
+        // by the fresh carrier. Only a fully reverted selected block earns it.
+        const markerResidual = dropping && selected > 1 &&
+            lifecycle.dropUndoPolicy().residual == DropUndoResidualPopulation.pressMarker;
+        const pressToken = markerResidual ? undoStack[$ - selected].cmd.sessionToken() : 0;
+        const pressName = markerResidual ? undoStack[$ - selected].commandName : "";
+        const pressTimestamp = markerResidual ? undoStack[$ - selected].timestampMs : 0;
+        size_t reverted;
         {
             // Rearming can change session state, so selection above is frozen first.
             auto prev = _state;
@@ -1987,19 +2017,26 @@ final class CommandHistory {
                     if (i == 0) return false;
                     break;
                 }
+                ++reverted;
                 auto armPolicy = cast(ToolArmLifecyclePolicy) entry.cmd;
                 if (dropping) {
                     const population = lifecycle.dropUndoPolicy().redo;
                     if (population == DropRedoPopulation.selectedSuffix ||
                         (population == DropRedoPopulation.editRows && i != 0))
                         redoStack = [entry] ~ redoStack;
-                } else if (armPolicy !is null && !armPolicy.carriesRedoAfterUndo())
+                } else if (markerUndo) {}
+                else if (armPolicy !is null && !armPolicy.carriesRedoAfterUndo())
                     redoStack.length = 0;
                 else
                     redoStack = [entry] ~ redoStack;
             }
             if (dropping && lifecycle.dropUndoPolicy().redo == DropRedoPopulation.discard)
                 redoStack.length = 0;
+            if (markerResidual && reverted == selected) {
+                auto marker = new DropPressMarkerCommand(pressToken, pressName);
+                undoStack ~= HistoryEntry(marker.label, "", marker.name, marker,
+                    pressTimestamp, HistoryFlags.Succeeded | HistoryFlags.Undoable | HistoryFlags.PressMarker);
+            }
             ++_generation;
             generationDone = true;
         }
@@ -2104,7 +2141,7 @@ final class CommandHistory {
         // ToolLifecycle entries (tool.activate) are not registered as command
         // factories and cannot be replayed via uiCommandDelegate. Return ""
         // so both history.saveAsScript and the panel replay button skip them.
-        if (e.flags & HistoryFlags.ToolLifecycle) return "";
+        if (e.flags & (HistoryFlags.ToolLifecycle | HistoryFlags.PressMarker)) return "";
         return serializeCommandLine(e.commandName, e.args);
     }
 

@@ -351,9 +351,11 @@ struct ToolSessionLink {
 
 enum DropUndoExtent { none, newestPressBlock, wholeSession }
 enum DropRedoPopulation { editRows, discard, selectedSuffix }
+enum DropUndoResidualPopulation { removeSuffix, pressMarker }
 struct DropUndoPolicy {
     DropUndoExtent extent;
     DropRedoPopulation redo;
+    DropUndoResidualPopulation residual;
 }
 
 struct ToolSessionPolicy
@@ -528,10 +530,13 @@ bool postmodeStartsOnPressFor(in ToolSessionPolicy p) pure nothrow @nogc {
 class Tool : ParamProvider {
     private DropUndoPolicy dropUndoOverride_;
     private bool hasDropUndoOverride_;
+    private bool dropUndoSealed_;
     final void setDropUndoOverride(DropUndoPolicy policy) nothrow @nogc {
+        if (dropUndoSealed_) return;
         dropUndoOverride_ = policy;
         hasDropUndoOverride_ = true;
     }
+    final void sealDropUndoPolicy() nothrow @nogc { dropUndoSealed_ = true; }
     final DropUndoPolicy resolvedDropUndoPolicy() const nothrow @nogc {
         return hasDropUndoOverride_ ? dropUndoOverride_ : sessionPolicy().dropUndo;
     }

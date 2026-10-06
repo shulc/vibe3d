@@ -401,3 +401,136 @@ unittest {
     assert(empty.undo() && called == 1 && empty.undoEntries().length == 0 && empty.redoEntries().length == 0,
         "zero-block drop still completes once and discards redo");
 }
+
+// Shared real-producer fixture for the independent serializer witnesses.
+class ResidualPress : commands.mesh.session_edit.MeshSessionEdit {
+    size_t reverts;
+    bool refuse;
+    this(Mesh* m, ref View v, string id) { super(m, v, EditMode.Vertices, id, id); }
+    protected override void revertImpl() {
+        ++reverts;
+        if (refuse) { failRevert("residual fixture refusal"); return; }
+        super.revertImpl();
+    }
+}
+import commands.mesh.session_edit;
+import commands.tool.lifecycle : ToolActivationCommand;
+import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation, AttrImage, StepOrigin;
+import snapshot : MeshSnapshot;
+
+class ResidualRig {
+    Mesh m;
+    View v;
+    CommandHistory h;
+    ToolActivationCommand activation, drop;
+    ResidualPress first, last, field;
+    size_t completions;
+    bool armed;
+    this(bool populate = true) {
+        import mesh : makeCube;
+        m = makeCube(); v = new View(0, 0, 800, 600); h = new CommandHistory();
+        activation = new ToolActivationCommand(&m, v, EditMode.Vertices, "pen", "", false, false, false, 7);
+        if (populate) {
+            h.recordToolLifecycle(activation);
+            first = press("probe.first", 1, true);
+            last = press("probe.last", 2, true);
+            field = press("probe.field", 3, false);
+            h.markEntryFold(field, HistoryFlags.JoinsBelow | HistoryFlags.FoldBase | HistoryFlags.PreNavOpen);
+        }
+        drop = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "pen", false, false, false, 0, 7, true, false, false, true);
+        drop.setDropUndoPolicy(DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard, DropUndoResidualPopulation.pressMarker));
+        drop.onActivate = (string id) { armed = id == "pen"; };
+        drop.onCompleteDropUndo = (string id, ulong token) {
+            ++completions;
+            assert(armed && id == "pen" && token == 7 && h.state() == UndoState.Active,
+                "residual completion must restore identity outside Suspend");
+            if (last !is null && !last.refuse && !field.refuse)
+                assert(h.undoEntries()[$ - 1].flags & HistoryFlags.PressMarker,
+                    "residual completion must observe the rewritten marker tail");
+        };
+    }
+    ResidualPress press(string id, float x, bool base) {
+        auto c = new ResidualPress(&m, v, id);
+        auto before = MeshSnapshot.capture(m);
+        m.vertices[0].x = x;
+        auto after = MeshSnapshot.capture(m);
+        c.setSnapshots(before, after); c.markSession(7);
+        c.setTopologyStep(AttrImage.init, AttrImage.init, before, after, base, 1, StepOrigin.opens, 1);
+        h.record(c);
+        return c;
+    }
+    void close() { h.recordToolLifecycle(drop); }
+}
+
+unittest {
+    auto r = new ResidualRig(); r.close();
+    const gen = r.h.generation(); const epoch = r.h.undoEpoch();
+    assert(r.h.undo() && r.m.vertices[0].x == 1 && r.completions == 1,
+        "residual drop restores only the newest joined press");
+    auto rows = r.h.undoEntries();
+    assert(rows.length == 3 && rows[0].cmd is r.activation && rows[1].cmd is r.first,
+        "residual rewrite preserves older press and original activation identities");
+    auto marker = cast(const DropPressMarkerCommand) rows[2].cmd;
+    assert(marker !is null && marker !is r.last && marker !is r.field && marker.sessionToken() == 7 && (cast(Command)marker).meshPtr() is null,
+        "residual carrier must be fresh and payload-free");
+    assert(rows[2].flags == (HistoryFlags.Succeeded | HistoryFlags.Undoable | HistoryFlags.PressMarker)
+        && rows[2].runId == 0 && r.h.redoEntries().length == 0,
+        "residual marker has only its undo role and never retained redo");
+    assert(r.h.generation() == gen + 1 && r.h.undoEpoch() == epoch + 1,
+        "residual rewrite increments generation and epoch exactly once");
+    assert(r.h.undoEntriesVisible().length == 3 && r.h.canUndo() && !r.h.canUndoModel() && !r.h.canUndoUi(),
+        "residual visible strict-LIFO marker is not model/UI payload");
+    size_t model, ui; r.h.undoDepthCounts(model, ui);
+    assert(model == 1 && ui == 0, "residual depth excludes the marker and lifecycle");
+    assert(r.h.undoEntryCommandLine(1) == "probe.first", "ordinary canonical-line positive control");
+    assert(r.h.undoEntryCommandLine(2) == "", "real residual marker canonical line must be exactly empty");
+    assert(r.h.jumpToVisible(2) && r.m.vertices[0].x == 1 && r.last.reverts == 1 && r.field.reverts == 1,
+        "marker jump consumption never reverts the old press again");
+    assert(r.h.undoEntries().length == 2 && r.h.redoEntries().length == 0 && r.completions == 1
+        && r.h.generation() == gen + 2 && r.h.undoEpoch() == epoch + 2,
+        "marker consumption is one irreversible step without drop completion");
+}
+
+unittest {
+    // One press directly above activation must never pair with it.
+    auto r = new ResidualRig(false);
+    r.h.recordToolLifecycle(r.activation); r.press("single", 2, true); r.close();
+    assert(r.h.undo() && r.h.undoEntries().length == 2, "one press creates exactly one marker");
+    assert(r.h.undo() && r.h.undoEntries().length == 1 && r.h.undoEntries()[0].cmd is r.activation,
+        "one-press marker consumption preserves its activation");
+    foreach (kind; 0 .. 5) {
+        auto b = new ResidualRig(false);
+        if (kind != 0) b.press("older", 1, true);
+        Command barrier;
+        if (kind == 1 || kind == 4) { barrier = new _SessionRowCmd(9); }
+        if (kind == 2) barrier = new _SessionRowCmd(7);
+        if (kind == 3) barrier = b.activation;
+        if (barrier !is null) b.h.pushEntryForTest(barrier);
+        if (kind == 4) b.h.markEntryFold(barrier, HistoryFlags.JoinsBelow);
+        const depth = b.h.undoEntries().length;
+        b.close(); assert(b.h.undo(), "barrier drop undo succeeds");
+        assert(b.h.undoEntries().length == depth && b.h.redoEntries().length == 0,
+            "empty/foreign/non-press/lifecycle/folded barrier never manufactures a marker");
+        foreach (e; b.h.undoEntries()) assert(!(e.flags & HistoryFlags.PressMarker));
+    }
+    foreach (refuseBase; [false, true]) {
+        auto f = new ResidualRig(); if (refuseBase) f.last.refuse = true; else f.field.refuse = true;
+        f.close(); assert(f.h.undo());
+        foreach (e; f.h.undoEntries()) assert(!(e.flags & HistoryFlags.PressMarker),
+            "partial suffix revert cannot manufacture a successful marker");
+    }
+    auto full = new ResidualRig(false);
+    full.h.recordToolLifecycle(full.activation);
+    foreach (i; 0 .. 48) full.press("capacity", cast(float)i + 1, true);
+    full.close(); assert(full.h.undoEntries().length == 50, "capacity fixture reaches actual maxDepth");
+    assert(full.h.undo() && full.h.undoEntries().length == 49
+        && full.h.undoEntries()[0].cmd is full.activation, "marker rewrite cannot grow or evict older rows");
+    auto evicted = new ResidualRig(false); evicted.press("evicted", 1, true);
+    foreach (i; 0 .. 50) {
+        auto c = evicted.press("field", cast(float)i + 2, false);
+        evicted.h.markEntryFold(c, HistoryFlags.JoinsBelow);
+    }
+    evicted.close(); assert(evicted.h.undoEntries().length == 50);
+    assert(evicted.h.undo() && evicted.h.undoEntries().length == 49, "evicted base leaves drop-only undo");
+    foreach (e; evicted.h.undoEntries()) assert(!(e.flags & HistoryFlags.PressMarker), "evicted base cannot earn a marker");
+}

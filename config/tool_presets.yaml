@@ -323,7 +323,7 @@ presets:
   # pen's own does (captures K-W2, K-DW; snappreset_capture s6).
   - id: mesh.dragWeld
     base: mesh.topoPen
-    dropUndo: {extent: newestPressBlock, redo: selectedSuffix}
+    dropUndo: {extent: newestPressBlock, redo: selectedSuffix, residual: removeSuffix}
     flags: [noBackgroundConstraint]
     attrs:
       mode: "0"          # PenMode.Move

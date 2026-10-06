@@ -6,7 +6,7 @@ import std.json : JSONValue;
 import command_history : RunCloseMode, RecordedRunBoundaryMode, RunCloseScope;
 
 import registry         : Registry, ToolFactory, typedToolFactory;
-import tool             : Tool, ToolFlag, DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
+import tool             : Tool, ToolFlag, DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import tools.transform.rotate : OffGizmoRotateInput;
 import tools.deform.push : PushTool;
@@ -126,8 +126,18 @@ ToolPreset[] loadToolPresets(string path) {
                         case "selectedSuffix": p.dropUndo.redo = DropRedoPopulation.selectedSuffix; break;
                         default: throw new Exception("tool_presets: unknown dropUndo redo");
                     }
+                } else if (key == "residual") {
+                    switch (value.as!string) {
+                        case "removeSuffix": p.dropUndo.residual = DropUndoResidualPopulation.removeSuffix; break;
+                        case "pressMarker": p.dropUndo.residual = DropUndoResidualPopulation.pressMarker; break;
+                        default: throw new Exception("tool_presets: unknown dropUndo residual");
+                    }
                 } else throw new Exception("tool_presets: unknown dropUndo key " ~ key);
             }
+            if (p.dropUndo.residual == DropUndoResidualPopulation.pressMarker &&
+                (p.dropUndo.extent != DropUndoExtent.newestPressBlock ||
+                 p.dropUndo.redo != DropRedoPopulation.discard))
+                throw new Exception("tool_presets: incompatible dropUndo residual");
             p.hasDropUndo = true;
         }
         if (node.containsKey("runBoundary")) {

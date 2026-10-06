@@ -1279,7 +1279,7 @@ public:
             commandClose: CommandClose.uiDoor,
             sessionSteps: true, historyTopologySteps: true,
             dropWritesRow: true,
-            dropUndo: DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard),
+            dropUndo: DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard, DropUndoResidualPopulation.pressMarker),
             pressOpensOperation: true, foldsParamRowsIntoBlock: true,
             imageAttrs: ["middle", "mode", "loop", "slide", "smoothStrength",
                          "showVertex", "showEdge", "innerSnap", "keepVertex",

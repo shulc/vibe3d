@@ -18,7 +18,7 @@ import history_macro_registration : registerHistoryCommands;
 import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
 import macro_recorder : MacroRecorder;
 import mesh : Mesh, makeCube;
-import params : injectParamsInto;
+import params : Param, injectParamsInto;
 import registry : Registry;
 import session_owner : Session;
 import tool : Tool;
@@ -33,13 +33,16 @@ private final class RegistrationProbeCommand : Command {
     private string id_;
     private int* value_;
     private CmdFlags flags_;
+    private string tag_;
+    private bool noOp_;
 
     this(Mesh* mesh, ref View view, string id, int* value,
-         CmdFlags flags = CmdFlags.Model) {
+         CmdFlags flags = CmdFlags.Model, bool noOp = false) {
         super(mesh, view, EditMode.Polygons);
         id_ = id;
         value_ = value;
         flags_ = flags;
+        noOp_ = noOp;
     }
 
     override string name() const { return id_; }
@@ -47,12 +50,16 @@ private final class RegistrationProbeCommand : Command {
     override CmdFlags cmdFlags() const { return flags_; }
 
     protected override bool applyImpl() {
-        ++*value_;
+        if (!noOp_) ++*value_;
         noteUndoRecorded();
         return true;
     }
 
-    protected override void revertImpl() { --*value_; }
+    protected override void revertImpl() { if (!noOp_) --*value_; }
+    override Param[] params() {
+        return id_ == "probe.ordinary" || id_ == "probe.noop"
+            ? [Param.string_("tag", "Tag", &tag_, "")] : null;
+    }
 }
 
 private final class RegistrationKeepAliveTool : Tool {
@@ -294,4 +301,47 @@ unittest { // production wiring, scope fences, and the single panel owner
         && registration.count("new HistoryPanelState()") == 0
         && registrar.count("new HistoryPanelState()") == 0,
         "5810 panel ownership witness: production gained a duplicate panel state");
+}
+
+
+unittest { // Independent registered snapshot delegate sees the actual carrier.
+    import tests.unit.command_history_test : ResidualRig;
+    auto h = new RegistrationHarness();
+    foreach (id; ["probe.ordinary", "probe.noop"]) {
+        Command delegate() factory(string copy) {
+            return () => cast(Command)new RegistrationProbeCommand(
+                &h.session.editMesh(), h.camera, copy, &h.value, CmdFlags.Model, copy == "probe.noop");
+        }
+        h.registry.registerCommand(id, factory(id));
+        auto c = h.registry.makeCommand(id);
+        auto args = parseJSON(`{"tag":"` ~ (id == "probe.ordinary" ? "before" : "accepted") ~ `"}`);
+        injectParamsInto(c.params(), args);
+        assert(h.history.fire(c));
+    }
+    assert(h.value == 1 && h.history.undoEntries().length == 2,
+        "ordinary and registered accepted-no-op controls must both record");
+    auto r = new ResidualRig(false); r.h = h.history;
+    r.h.recordToolLifecycle(r.activation);
+    r.first = r.press("probe.first", 1, true);
+    r.last = r.press("probe.last", 2, true);
+    r.field = r.press("probe.field", 3, false);
+    r.h.markEntryFold(r.field, HistoryFlags.JoinsBelow);
+    r.close(); assert(r.h.undo());
+    auto rows = h.history.undoEntriesVisible();
+    assert(rows.length == 5 && rows[4].commandName == "history.pressMarker"
+        && (rows[4].flags & HistoryFlags.PressMarker), "export fixture requires real residual marker at index four");
+    assert(h.history.undoEntryCommandLine(0) == "probe.ordinary tag:before"
+        && h.history.undoEntryCommandLine(1) == "probe.noop tag:accepted",
+        "registered ordinary and accepted-no-op canonical lines remain byte-exact");
+    assert(h.history.undoEntryCommandLine(4) == "", "actual marker canonical serializer is independently empty");
+    const path = buildPath("/var/tmp", "vibe3d-residual-history.lxm");
+    scope(exit) if (exists(path)) remove(path);
+    auto save = h.registry.makeCommand("history.saveAsScript");
+    auto args = parseJSON(`{"path":"/var/tmp/vibe3d-residual-history.lxm"}`);
+    injectParamsInto(save.params(), args); assert(save.apply() && exists(path));
+    const bytes = readText(path);
+    assert(bytes == "#LXMacro#\nprobe.ordinary tag:before\nprobe.noop tag:accepted\nprobe.first\n"
+        && bytes.count('\n') == 4, "real marker export bytes and count must exclude only marker and lifecycle");
+    auto ordinary = h.registry.makeCommand("probe.ordinary");
+    assert(ordinary.apply() && h.value == 2, "ordinary replay positive control reaches its registered factory");
 }

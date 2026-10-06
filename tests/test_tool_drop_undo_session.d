@@ -391,7 +391,8 @@ unittest { // Design cell (uncaptured, gap row): a primary move between the
 
 unittest { // Two remaining presses: extent is shared, retention is preset data.
     foreach (id; ["mesh.topoPen", "mesh.dragWeld"])
-    foreach (door; ["navigation", "panel", "command"]) {
+    foreach (door; ["navigation", "panel", "command"])
+    foreach (walk; ["redo", "secondUndo"]) {
         rig("vertex");
         ui("tool.set " ~ id ~ " on");
         cmd("tool.pipe.attr snap enabled false");
@@ -408,12 +409,25 @@ unittest { // Two remaining presses: extent is shared, retention is preset data.
         keyQ();
         const dropped = depth();
         if (door == "navigation") undo();
-        else if (door == "panel") { auto r = postJson("/api/history/jump", format(`{"target":%s}`, depth() - 2)); assert(r["status"].str == "ok"); quiesce(); }
+        else if (door == "panel") { auto r = postJson("/api/history/jump", format(`{"target":%s}`, depth() - (id == "mesh.topoPen" ? 1 : 2))); assert(r["status"].str == "ok"); quiesce(); }
         else cmd("history.undo");
-        assert(tool() == id && quadGap(verts(), first) <= 1e-6 && depth() == dropped - 2,
+        assert(tool() == id && quadGap(verts(), first) <= 1e-6 && depth() == dropped - (id == "mesh.topoPen" ? 1 : 2),
             format("%s %s drop must revert only the newest press: %s", id, door, getJson("/api/history")));
         const token = getJson("/api/tool/state")["session"]["token"].integer;
         assert(tokenBefore > 0 && token == tokenBefore, "drop completion must adopt the original session token");
+        if (walk == "secondUndo") {
+            const beforeSecond = depth();
+            auto tail = getJson("/api/history")["undo"].array[$ - 1];
+            if (id == "mesh.topoPen") assert(tail["command"].str == "history.pressMarker" && tail["session"].integer == token,
+                "plain residual marker must surface with the restored owner token");
+            if (door == "navigation") undo();
+            else if (door == "panel") { auto result = postJson("/api/history/jump", format(`{"target":%s}`, depth() - 1)); assert(result["status"].str == "ok"); quiesce(); }
+            else cmd("history.undo");
+            assert(tool() == id && depth() == beforeSecond - 1 &&
+                (id == "mesh.topoPen" ? quadGap(verts(), first) <= 1e-6 : quadAtStart()),
+                format("%s %s residual second undo geometry and population", id, door));
+            continue;
+        }
         if (id == "mesh.dragWeld") {
             key(122, 29, 65);
             assert(tool() == id && quadGap(verts(), last) <= 1e-6,
@@ -432,7 +446,9 @@ unittest { // Two remaining presses: extent is shared, retention is preset data.
 
 unittest { // A restored tool uses the final mesh as its next press basis at every door.
     foreach (id; ["mesh.topoPen", "mesh.dragWeld"])
-    foreach (door; ["navigation", "panel", "command"]) {
+    foreach (door; ["navigation", "panel", "command"])
+    foreach (afterMarker; [false, true]) {
+        if (afterMarker && id != "mesh.topoPen") continue;
         rig("vertex");
         ui("tool.set " ~ id ~ " on");
         cmd("tool.pipe.attr snap enabled false");
@@ -444,9 +460,19 @@ unittest { // A restored tool uses the final mesh as its next press basis at eve
         assert(quadGap(verts(), first) > 0.05, "next-press floor: second gesture moved geometry");
         keyQ();
         if (door == "navigation") undo();
-        else if (door == "panel") { auto r = postJson("/api/history/jump", format(`{"target":%s}`, depth() - 2)); assert(r["status"].str == "ok"); quiesce(); }
+        else if (door == "panel") { auto r = postJson("/api/history/jump", format(`{"target":%s}`, depth() - (id == "mesh.topoPen" ? 1 : 2))); assert(r["status"].str == "ok"); quiesce(); }
         else cmd("history.undo");
         assert(quadGap(verts(), first) <= 1e-6 && tool() == id, "next-press floor: newest press reverted");
+        if (afterMarker) {
+            const stateBeforeMarker = getJson("/api/tool/state");
+            if (door == "navigation") undo();
+            else if (door == "panel") { auto result = postJson("/api/history/jump", format(`{"target":%s}`, depth() - 1)); assert(result["status"].str == "ok"); quiesce(); }
+            else cmd("history.undo");
+            assert(quadGap(verts(), first) <= 1e-6 && tool() == id,
+                "marker consumption must preserve next-press geometry and tool state");
+            assert(getJson("/api/tool/state")["session"]["token"].integer == stateBeforeMarker["session"]["token"].integer,
+                "marker consumption must preserve restored session token");
+        }
         dragPx(worldPixel(atFirst), -44, 0);
         const continued = verts();
         assert(quadGap(continued, first) > 0.05, "next press must apply from restored geometry");
@@ -470,11 +496,7 @@ unittest { // A restored tool uses the final mesh as its next press basis at eve
     }
 }
 
-unittest { // Optional diagnostic for the unresolved residual undo-row contract.
-    import std.process : environment;
-    import std.stdio : writeln;
-    if (environment.get("VIBE3D_DROP_SECOND_UNDO_PROBE", "") != "1") return;
-    writeln("DROP_SECOND_UNDO_PROBE: RUN");
+unittest { // A second undo consumes the plain pen residual boundary.
     rig("vertex");
     ui("tool.set mesh.topoPen on");
     cmd("tool.attr mesh.topoPen mode 0");
@@ -493,4 +515,51 @@ unittest { // Optional diagnostic for the unresolved residual undo-row contract.
     undo();
     assert(quadGap(verts(), first) <= 1e-6,
         format("plain second undo must traverse an inert residual row: got %s; first press %s", verts(), first));
+}
+
+unittest { // Actual HTTP replay/export readers see a visible consumed press.
+    import std.file : readText, exists, remove;
+    import std.algorithm : count;
+    rig("vertex");
+    cmd("mesh.transform kind:scale factor:{2,2,2}");
+    const scaled = verts();
+    cmd("mesh.transform kind:translate");
+    assert(quadGap(verts(), scaled) == 0 && depth() == 2,
+        "registered accepted-no-op geometry control must record without moving mesh");
+    ui("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen mode 0");
+    cmd("tool.attr mesh.topoPen innerSnap false");
+    cmd("tool.pipe.attr snap enabled false");
+    dragPx(worldPixel(Vec3(0, 0, 0)), 44, 0);
+    const first = verts();
+    dragPx(worldPixel(Vec3(cast(float)first[0][0], cast(float)first[0][1], cast(float)first[0][2])), 0, 44);
+    keyQ(); cmd("history.undo");
+    auto history = getJson("/api/history");
+    auto rows = history["undo"].array;
+    assert(rows.length == 5 && rows[4]["command"].str == "history.pressMarker"
+        && rows[4]["flags"].integer == 131089, "HTTP marker identity at its raw/visible index");
+    assert(rows[0]["args"].str == "kind:scale factor:{2,2,2}"
+        && rows[1]["args"].str == "kind:translate", "HTTP ordinary/no-op lines stay byte-exact");
+    const token = getJson("/api/tool/state")["session"]["token"].integer;
+    const state = getJson("/api/tool/state").toString;
+    const model = getJson("/api/model")["vertices"].toString;
+    const selection = getJson("/api/selection").toString;
+    auto replay = postJson("/api/history/replay", `{"index":4}`);
+    quiesce();
+    assert(replay["status"].str == "error" && getJson("/api/history").toString == history.toString
+        && getJson("/api/model")["vertices"].toString == model && getJson("/api/selection").toString == selection && getJson("/api/tool/state").toString == state,
+        "HTTP marker replay must keep geometry, selection, attrs, tool state and history");
+    const path = "/var/tmp/vibe3d-residual-http-history.lxm";
+    scope(exit) if (exists(path)) remove(path);
+    cmd("history.saveAsScript path:" ~ path);
+    const bytes = readText(path);
+    assert(bytes == "#LXMacro#\nmesh.transform kind:scale factor:{2,2,2}\nmesh.transform kind:translate\nmesh.topoPen_move\n"
+        && bytes.count('\n') == 4, "HTTP actual export bytes/count retain ordinary and accepted-no-op geometry");
+    cmd("history.undo");
+    assert(quadGap(verts(), first) <= 1e-6 && tool() == "mesh.topoPen"
+        && getJson("/api/tool/state")["session"]["token"].integer == token,
+        "raw marker undo keeps geometry and restored session identity");
+    auto ordinaryReplay = postJson("/api/history/replay", `{"index":0}`); quiesce();
+    assert(ordinaryReplay["status"].str == "ok" && quadGap(verts(), first) > 0.05,
+        "HTTP ordinary replay positive control reaches registered geometry command");
 }

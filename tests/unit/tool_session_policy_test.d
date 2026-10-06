@@ -436,8 +436,8 @@ unittest { // (3) the doors reach the tool session only through EditSession
     assert(squeeze(bodyAt(ts, "bool undo()")) == "{navBefore_=NavBefore(history_.undoEntries().length,"
            ~ "token_,boundModel_()&&postmodeArmed_);"
            ~ "constarmRow=latentArmRow_();constid=armedId_;"
-           ~ "constcompletionBefore=completedDropUndo_;constr=undoImpl_();if(r)openBlock_=null;"
-           ~ "if(r&&completedDropUndo_==completionBefore&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
+           ~ "markerConsumed_=false;constcompletionBefore=completedDropUndo_;constr=undoImpl_();if(r)openBlock_=null;"
+           ~ "if(r&&!markerConsumed_&&completedDropUndo_==completionBefore&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
            ~ "if(r&&armRow!=size_t.max&&history_.undoEntries().length<=armRow){"
            ~ "latentId_=id;latentGen_=history_.generation();}"
            ~ "returnr;}",
@@ -449,9 +449,9 @@ unittest { // (3) the doors reach the tool session only through EditSession
            format("S7a wiring census: edit_session.d names pruneRedoTop_() %s times, expected 2 "
                   ~ "(the declaration and the redo door)", es.count("pruneRedoTop_()")));
     // Nothing else in the module steps the history.
-    assert(es.count("history_.undo()") == 11 && es.count("history_.redo()") == 9,
+    assert(es.count("history_.undo()") == 12 && es.count("history_.redo()") == 9,
            format("M1 wiring census: edit_session.d steps the history %s/%s times, "
-                  ~ "expected undo 11 (closed-run replay, live recorded ladder, topology incl. its "
+                  ~ "expected undo 12 (press marker, closed-run replay, live recorded ladder, topology incl. its "
                   ~ "folded run, and prior ToolSession branches) and "
                   ~ "redo 9 (recorded first-step re-arm, recorded producer, topology incl. its folded "
                   ~ "run, the activation's folded run, the attribute-only row with its UI activation "
@@ -2277,7 +2277,7 @@ static assert(ToolSessionPolicy.init.toolSetDropRow == false);
 static assert(ToolSessionPolicy.init.armUndoLeavesToolLatent == false);
 
 unittest { // (10b)
-    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
+    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
     string[] dropRow, latent, extents;
     size_t scanned;
     foreach (m; ModuleInfo) {
@@ -2291,7 +2291,7 @@ unittest { // (10b)
             if (pol.armUndoLeavesToolLatent) latent ~= c.name;
             if (pol.dropUndo.extent != DropUndoExtent.none) extents ~= c.name;
             if (c.name == "tools.edit.topology_pen.tool.TopologyPenTool")
-                assert(pol.dropUndo == DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard),
+                assert(pol.dropUndo == DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard, DropUndoResidualPopulation.pressMarker),
                     "plain pen must discard redo of its newest press");
             else if (pol.toolSetDropRow)
                 assert(pol.dropUndo == DropUndoPolicy(DropUndoExtent.wholeSession, DropRedoPopulation.editRows),

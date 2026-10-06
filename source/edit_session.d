@@ -1003,10 +1003,11 @@ private struct ToolSession {
                                boundModel_() && postmodeArmed_);
         const armRow = latentArmRow_();
         const id = armedId_;
+        markerConsumed_ = false;
         const completionBefore = completedDropUndo_;
         const r = undoImpl_();
         if (r) openBlock_ = null;
-        if (r && completedDropUndo_ == completionBefore && history_.undoEntries().length != navBefore_.depth)
+        if (r && !markerConsumed_ && completedDropUndo_ == completionBefore && history_.undoEntries().length != navBefore_.depth)
             settleAfterNavigation_(true);
         // K-RD rule 3: the undo that removed the activation row left the tool latent.
         if (r && armRow != size_t.max && history_.undoEntries().length <= armRow) {
@@ -1307,6 +1308,11 @@ private struct ToolSession {
             }
             return true;
         }
+        const tail = history_.undoEntries();
+        if (tail.length && (tail[$ - 1].flags & HistoryFlags.PressMarker)) {
+            markerConsumed_ = history_.undo();
+            return markerConsumed_;
+        }
         // H1 + the session token (slice M4, gap 218): the record that closed
         // THIS session's first operation is undone together with the
         // activation row it joined, and the row's revert ends the tool.
@@ -1533,6 +1539,7 @@ private struct ToolSession {
         ++completedDropUndo_;
     }
     private ulong completedDropUndo_;
+    private bool markerConsumed_;
 
     // The one close routine (EditSession.closeOperation's body; plan R4.2).
     CloseOutcome close(CloseReason r, CommandDoor door, bool dropRow = false,
@@ -1649,6 +1656,7 @@ private struct ToolSession {
         postmodeArmed_ = postmodeArmed;
         endOperation_();
         if (t is null) return;
+        t.sealDropUndoPolicy();
         import commands.tool.lifecycle : ToolActivationCommand;
         auto arm = cast(ToolActivationCommand)undoTop_();
         if (history_.state() == UndoState.Suspend &&

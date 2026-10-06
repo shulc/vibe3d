@@ -72,7 +72,7 @@ unittest {
 }
 
 unittest {
-    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
+    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
     import tools.edit.topology_pen : TopologyPenTool;
     import registry : typedToolFactory;
     import mesh_gpu : GpuMesh;
@@ -96,7 +96,7 @@ unittest {
         auto candidate = reg.toolFactory("mesh.dragWeld")();
         assert(candidate.resolvedDropUndoPolicy() == policy, "preset factory must publish its resolved policy");
         assert(reg.toolFactory("mesh.topoPen")().resolvedDropUndoPolicy() ==
-            DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard),
+            DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard, DropUndoResidualPopulation.pressMarker),
             "preset retention must not change the base factory");
     }
     const path = "/var/tmp/vibe3d-drop-policy-" ~ to!string(thisProcessID) ~ ".yaml";
@@ -105,23 +105,62 @@ unittest {
     auto aliases = loadToolPresets(path);
     assert(aliases.length == 2 && aliases[0].hasDropUndo && aliases[1].hasDropUndo &&
         aliases[0].dropUndo == policy && aliases[1].dropUndo == policy, "alias inherits policy and presence");
-    size_t configurations;
+    registerToolPresets(reg, aliases);
+    assert(reg.toolFactory("alias")().resolvedDropUndoPolicy() == policy,
+        "actual alias factory transports immutable residual policy");
+    size_t configurations, accepted, rejected;
     foreach (extent; [DropUndoExtent.none, DropUndoExtent.newestPressBlock, DropUndoExtent.wholeSession])
-    foreach (redo; [DropRedoPopulation.editRows, DropRedoPopulation.discard, DropRedoPopulation.selectedSuffix]) {
-        write(path, "presets:\n  - id: valid\n    base: mesh.topoPen\n    dropUndo: {extent: " ~ extent.to!string ~ ", redo: " ~ redo.to!string ~ "}\n");
-        auto loaded = loadToolPresets(path);
+    foreach (redo; [DropRedoPopulation.editRows, DropRedoPopulation.discard, DropRedoPopulation.selectedSuffix])
+    foreach (residual; [DropUndoResidualPopulation.removeSuffix, DropUndoResidualPopulation.pressMarker]) {
+        write(path, "presets:\n  - id: valid\n    base: mesh.topoPen\n    dropUndo: {extent: " ~ extent.to!string ~ ", redo: " ~ redo.to!string ~ ", residual: " ~ residual.to!string ~ "}\n");
         ++configurations;
-        assert(loaded.length == 1 && loaded[0].hasDropUndo && loaded[0].dropUndo == DropUndoPolicy(extent, redo),
-            "all declared drop policy enum values must round-trip the loader");
+        const valid = residual == DropUndoResidualPopulation.removeSuffix ||
+            (extent == DropUndoExtent.newestPressBlock && redo == DropRedoPopulation.discard);
+        if (valid) {
+            auto loaded = loadToolPresets(path); ++accepted;
+            assert(loaded.length == 1 && loaded[0].hasDropUndo && loaded[0].dropUndo == DropUndoPolicy(extent, redo, residual),
+                "valid residual policy must round-trip");
+        } else {
+            ++rejected;
+            assert(collectExceptionMsg(loadToolPresets(path)) !is null, "incompatible residual policy must refuse");
+        }
     }
-    assert(configurations == 9, "drop configuration population");
-    foreach (config; ["{extent: wrong}", "{redo: wrong}", "{unexpected: discard}"]) {
+    assert(configurations == 18 && accepted == 10 && rejected == 8, "full residual policy matrix population");
+    foreach (config; ["{extent: wrong}", "{redo: wrong}", "{unexpected: discard}", "{residual: wrong}"]) {
         write(path, "presets:\n  - id: bad\n    base: mesh.topoPen\n    dropUndo: " ~ config ~ "\n");
         assert(collectExceptionMsg(loadToolPresets(path)) !is null, "invalid drop policy must refuse");
     }
-    write(path, "presets:\n  - id: bad\n    alias: canonical\n    dropUndo: {extent: none}\n");
-    assert(collectExceptionMsg(loadToolPresets(path)) !is null, "alias may not override policy");
+    write(path, "presets:\n  - id: bad\n    alias: canonical\n    dropUndo: {extent: none}\n  - id: canonical\n    base: mesh.topoPen\n");
+    const aliasError = collectExceptionMsg(loadToolPresets(path));
+    import std.algorithm.searching : canFind;
+    assert(aliasError !is null && aliasError.canFind("has 'alias' plus"), "alias may not override policy");
 }
 
 static assert(!__traits(isVirtualMethod, Tool.setDropUndoOverride));
 static assert(!__traits(isVirtualMethod, Tool.resolvedDropUndoPolicy));
+
+unittest {
+    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
+    import edit_session : EditSession;
+    import command_history : CommandHistory;
+    auto t = new Tool();
+    const policy = DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard, DropUndoResidualPopulation.pressMarker);
+    t.setDropUndoOverride(policy);
+    auto session = new EditSession(() => t, new CommandHistory(), () {});
+    session.noteArm("probe", 77);
+    t.setDropUndoOverride(DropUndoPolicy.init);
+    assert(t.resolvedDropUndoPolicy() == policy, "arming seals the copied drop policy against later replacement");
+}
+
+unittest { // Pin the real generic factory writer and the arm-time seal.
+    import std.file : readText;
+    import std.algorithm : count, canFind;
+    import std.string : indexOf;
+    const factory = readText("source/tool_presets.d");
+    const session = readText("source/edit_session.d");
+    enum writer = "if (presetCopy.hasDropUndo) t.setDropUndoOverride(presetCopy.dropUndo);";
+    assert(factory.count(writer) == 1 && factory.indexOf(writer) < factory.indexOf("applyToolAttrs(t, presetCopy.toolAttrs"),
+        "generic preset factory must configure drop policy before publishing/attribute defaults");
+    assert(session.count("t.sealDropUndoPolicy();") == 1,
+        "session arm must seal immutable preset data at the production reader");
+}
