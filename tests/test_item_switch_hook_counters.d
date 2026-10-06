@@ -1,5 +1,8 @@
 // Task 6355 secondary witness, isolated from the morph-state assertions so
 // druntime fail-fast cannot hide either reason a lost hook is wrong.
+// The layer channel is delivered at the FRAME flush, after /api/command has
+// answered, and /api/changes is read on the HTTP thread: S7b's baseline is read
+// after a frame fence, or it can miss its setup's own ActiveChanged (task 9521).
 
 import core.thread : Thread;
 import core.time : dur;
@@ -55,6 +58,7 @@ unittest { // S7b: imagePlane.add publishes both hook-owned counters
     command("layer.select", `{"index":0,"mode":"set"}`);
     command("layer.select", `{"index":1,"mode":"add"}`);
     command("layer.select", `{"index":0,"mode":"remove"}`);
+    settle(); // baseline after the setup's frame flush (task 9521)
     const active0 = count("totalLayerActive");
     const delivery0 = count("deliveryCount");
     command("imagePlane.add");
