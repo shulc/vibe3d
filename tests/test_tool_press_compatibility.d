@@ -67,6 +67,15 @@ private void hover(int[2] at,string kind,long index) {
         format("compatibility-hover: motion is passive; rows %s/%s move=%s place=%s before=%s after=%s",history(),rows,s["moveArmed"],s["placeArmed"],before,after));
 }
 
+// A measured ordinary-FACE positive precedes every filtered compatibility cell.
+unittest {
+    Vec3[] vs;uint[][] fs;
+    foreach(z;0..3)foreach(x;0..3)vs~=Vec3((x-1)*.5,0,(z-1)*.5);
+    foreach(z;0..2)foreach(x;0..2){const a=cast(uint)(z*3+x);fs~=[a,a+3,a+4,a+1];}
+    const at=rig(meshText(vs,fs),null,"shaded");arm(at,"vertex",4);event(at,"SDL_MOUSEBUTTONUP");
+    assert(readVerts()==vs && history()==1,"ordinary-control: real front-FACE stationary Move retains measured arm/geometry/row before legacy probes");
+}
+
 unittest {
     if(!runs("boundary_order")) return;
     size_t population;
@@ -212,12 +221,22 @@ unittest {
 unittest {
     if(!runs("secondary_rebind"))return;
     const secondary=meshText([Vec3(-.4,2,-.4),Vec3(.4,2,-.4),Vec3(.4,2,.4),Vec3(-.4,2,.4)],[[0u,3u,2u,1u]]);
-    const at=rig(meshText(null),secondary,"shaded");const selection=getJson("/api/selection");
-    event(at,"SDL_MOUSEBUTTONDOWN");assert(getJson("/api/tool/state")["moveArmed"].type==JSONType.false_,"secondary-rebind: queried secondary is refused by bound empty primary");
+    const at=rig(meshText(null),secondary,"shaded");penCommand("tool.attr mesh.topoPen mode point");const selection=getJson("/api/selection");
+    event(at,"SDL_MOUSEBUTTONDOWN");assert(getJson("/api/tool/state")["moveArmed"].type==JSONType.false_ && getJson("/api/tool/state")["placeArmed"].type==JSONType.false_,"secondary-rebind: queried secondary is refused by bound empty primary");
     event(at,"SDL_MOUSEBUTTONUP");assert(readVerts().length==0 && getJson("/api/selection")==selection && history()==1,"secondary-rebind: existing refused row, empty geometry and selection preserved");
     penCommand("layer.select index:1");penCommand("history.clear");const before=readVerts();
     assert(before.length==4,"secondary-rebind: the same actual source is now primary");
     arm(at,"face",0);event([at[0]+20,at[1]],"SDL_MOUSEMOTION",1,20);event([at[0]+20,at[1]],"SDL_MOUSEBUTTONUP");
     const after=readVerts();foreach(i,v;after)assert(abs(v.x-before[i].x-.1f)<1e-4 && abs(v.y-before[i].y)<1e-4,"secondary-rebind: bound source face authors its own populated mesh after rebinding");
     assert(history()==1,"secondary-rebind: one accepted Move row after rebind");
+}
+
+unittest {
+    if(!runs("midpoint_veto"))return;
+    const vs=[Vec3(-3.0f/200,0,0),Vec3(3.25f/200,0,-.15),Vec3(3.25f/200,0,.15)];
+    const at=rig(meshText(vs,null,[[1u,2u]]));hover(at,"edge",0);arm(at,"edge",0);
+    event([at[0]+20,at[1]],"SDL_MOUSEMOTION",1,20);event([at[0]+20,at[1]],"SDL_MOUSEBUTTONUP");
+    const after=readVerts();assert(after.length==3,"LEGACY_MIDPOINT: exact old gathered population");
+    assert(after[0]==vs[0] && abs(after[1].x-vs[1].x-.1f)<1e-4 && abs(after[2].x-vs[2].x-.1f)<1e-4,
+        "LEGACY_MIDPOINT: half-pixel veto carries the old edge, isolated vertex remains unchanged");
 }

@@ -26,6 +26,18 @@ private void projected(Vec3 p, float x, float y, const ref Viewport vp) {
 }
 
 unittest {
+    import toolpipe.packets : SubjectPacket;
+    import std.algorithm : reverse;
+    const vp=viewport();auto m=makeGridPlane(2);auto t=new TopologyPenTool();t.meshSrc_=()=>&m;
+    SubjectPacket subject;subject.mesh=&m;subject.viewport=vp;subject.pickFacing=true;subject.pickFacesDrawn=false;
+    int index;assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.None && index==-1,
+        "ordinary-control: captured back-FACE interior refuses before legacy probes");
+    foreach(ref f;m.faces)reverse(f);m.buildLoops();
+    assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.Vertex && index==4,
+        "ordinary-control: captured front-FACE interior admits before legacy probes");
+}
+
+unittest {
     const vp=viewport(); const ms=ModelSpace.world();
     Mesh isolated; isolated.vertices=[point(300,300,vp)];
     const iso=toolPressSupport(isolated,ms,vp);
@@ -322,4 +334,39 @@ unittest {
     foreach(i,e;m.edges)if((e[0]==0&&e[1]==1)||(e[0]==1&&e[1]==0))rawEdge=cast(int)i;
     assert(rawEdge>=0 && raw.edgeFaces[rawEdge]==3 && !raw.edges[rawEdge],"scope-nonmanifold-outcome: real raw three-face support");
     assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.Edge && index==rawEdge,"scope-nonmanifold-outcome: original raw edge survives ordinary back-FACE refusal");
+}
+
+unittest {
+    import document : ItemXform, primaryModelSpaceResolver;
+    import toolpipe.packets : SubjectPacket;
+    const vp=viewport();ItemXform xf;xf.pos=Vec3(.3,0,.2);xf.rot=Vec3(0,90,0);xf.scl=Vec3(2,3,.5);
+    const ms=xf.modelSpace();const saved=primaryModelSpaceResolver;scope(exit)primaryModelSpaceResolver=saved;primaryModelSpaceResolver=()=>ms;
+    auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
+    const savedSources=toolPressSourcesResolver;scope(exit)toolPressSourcesResolver=savedSources;
+    Mesh secondary;secondary.vertices=[point(305,270,vp),point(340,270,vp),point(340,330,vp),point(305,330,vp)];
+    secondary.faces=[[0u,1u,2u,3u]];secondary.rebuildEdgesFromFaces();secondary.buildLoops();
+    toolPressSourcesResolver=()=>[ToolPressSource(&m,ms,11),ToolPressSource(&secondary,ModelSpace.world(),22)];
+    SubjectPacket subject;subject.mesh=&m;subject.viewport=vp;subject.pickFacesDrawn=false;subject.pickFacing=false;
+    foreach(edge;[false,true]) {
+        m=Mesh.init;
+        if(edge){m.vertices=[ms.toLocalPoint(point(297,270,vp)),ms.toLocalPoint(point(297,330,vp))];m.edges=[[0u,1u]];}
+        else m.vertices=[ms.toLocalPoint(point(297,300,vp))];
+        const primary=ToolPressSource(&m,ms,11);const old=t.legacyPressGather(300,300,vp,false,primary);
+        assert(abs((edge?old.distances.edge:old.distances.vertex)-(edge?3.5f:3.5355339f))<1e-4,
+            "LEGACY_TRANSFORM_DATUM: original primary ModelSpace projects the final half-pixel datum");
+        int index;assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==(edge?MoveElem.Edge:MoveElem.Vertex)&&index==0,
+            "LEGACY_TRANSFORM_DATUM: transformed primary beats populated ordinary secondary, preserving bound identity");
+        assert(t.resolveGrabTarget(300,300,vp,index,false,null,ToolQueryIntent.legacyHover)==(edge?MoveElem.Edge:MoveElem.Vertex)&&index==0,
+            "LEGACY_TRANSFORM_DATUM: transformed primary hover keeps its old datum and identity");
+    }
+}
+
+unittest {
+    const vp=viewport();Mesh m;m.vertices=[point(297,300,vp),point(303.25f,270,vp),point(303.25f,330,vp)];m.edges=[[1u,2u]];
+    auto t=new TopologyPenTool();t.meshSrc_=()=>&m;const primary=ToolPressSource(&m,ModelSpace.world());
+    const old=t.legacyPressGather(300,300,vp,false,primary);
+    assert(old.vertex.index==0 && old.edge.index==0,"LEGACY_MIDPOINT: nonempty old same-query V/E gather");
+    assert(abs(old.distances.vertex-3.5355339f)<1e-4 && abs(old.distances.edgeMid-2.79508497f)<1e-4 && electElement(old.distances)==kCascadeEdge,
+        "LEGACY_MIDPOINT: half-pixel midpoint veto differs from integer final cascade");
+    int index;assert(t.resolveGrabTarget(300,300,vp,index,false)==MoveElem.Edge && index==0,"LEGACY_MIDPOINT: actual shared query retains old edge identity");
 }
