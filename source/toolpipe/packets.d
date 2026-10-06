@@ -71,6 +71,8 @@ struct SubjectPacket {
     // false under a style that draws no faces. Stamped by the main-thread
     // builder (`InputFrameState.buildToolVts`); read with the viewport.
     bool pickOcclusion = true;
+    bool pickFacing = false;
+    bool pickFacesDrawn = false;
 
     // The MORPH ROUTING TARGET (task 1069) — which mesh map an edit is
     // authored INTO, or none. Declared on the subject rather than on the

@@ -1075,3 +1075,14 @@ unittest { // resolveHoverTarget — stale candidate reset to -1 by the
         "a reset (-1) candidate must never resolve to a phantom origin vertex/edge");
     assert(t.vert == -1 && t.edge == -1);
 }
+
+/// A surface guide accepts the view-normal component when its remaining
+/// channels represent the incoming point; otherwise it accepts the whole point.
+ubyte surfaceComponentMask(Vec3 incoming, Vec3 resolved, int axis) pure nothrow @nogc @safe {
+    if (axis < 0 || axis > 2) return 0;
+    Vec3 restored = resolved;
+    if (axis == 0) restored.x = incoming.x;
+    else if (axis == 1) restored.y = incoming.y;
+    else restored.z = incoming.z;
+    return restored == incoming ? cast(ubyte)(1 << axis) : cast(ubyte)7;
+}

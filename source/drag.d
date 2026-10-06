@@ -1631,6 +1631,13 @@ struct DragFrame {
     Vec3 basisX = Vec3(1, 0, 0), basisY = Vec3(0, 1, 0), basisZ = Vec3(0, 0, 1);
 }
 
+/// Components accepted by a guide, in the client's projected world space.
+struct ComponentGuide {
+    ubyte acceptedMask;
+    Vec3 valuesWorld;
+}
+alias ComponentGuideResolver = ComponentGuide delegate(Vec3);
+
 /// A handle drag's client point: the handle at the press plus the pointer
 /// travel since the press, through the frame the handle supplies per event.
 /// It holds no snap and is never written after the press, so a snapped
@@ -1652,14 +1659,24 @@ struct HandleDrag {
     }
 
     Vec3 client(int px, int py, DragFrame f, const ref Viewport vp,
-                out bool skip) const
+                out bool skip, scope ComponentGuideResolver guide = null) const
     {
         import viewgrid : vectorSnap, viewVectorQuantum;
         immutable Vec3 t = travel(px, py, f, vp, skip);
         immutable float q = viewVectorQuantum(vp);
         final switch (f.kind) {
         case DragKind.axisArm:        return point + t;
-        case DragKind.viewPlane:      return point + (vectorSnap(point + t, q) - vectorSnap(point, q));
+        case DragKind.viewPlane: {
+            Vec3 u = vectorSnap(point + t, q);
+            const accepted = guide is null ? ComponentGuide.init : guide(u);
+            if (accepted.acceptedMask != 0) {
+                if (accepted.acceptedMask & 1) u.x = accepted.valuesWorld.x;
+                if (accepted.acceptedMask & 2) u.y = accepted.valuesWorld.y;
+                if (accepted.acceptedMask & 4) u.z = accepted.valuesWorld.z;
+                return u;
+            }
+            return point + (u - vectorSnap(point, q));
+        }
         // A plane handle presses at its centre (K-H3 H3_RING, K-CM).
         case DragKind.handlePlane:    return vectorSnap(point + t, q);
         case DragKind.screenAxis:

@@ -95,7 +95,7 @@ unittest { // production-text census
     electSites.sort();
     assert(electSites.length == 4, format("element-pick census: %d call sites", electSites.length));
     assert(electSites == ["InputFrameState.publishHover", "PenTool.hoverHoldsEdge",
-                          "TopologyPenTool.resolveGrabTarget", "resolveHoverTarget"],
+                          "resolveHoverTarget", "toolPressAt"],
            format("element-pick census: call-site roster changed: %s", electSites));
 
     // The pickers carry no reach of their own: two instantiations, no literal.
@@ -110,4 +110,101 @@ unittest { // production-text census
     assert(inst == 2, format("element-pick census: %d pickHover instantiations", inst));
     assert(ifs.indexOf("gpuSelect.pick(sm, mx, my, cast(int)kElementPickRadiusPx,") >= 0,
            "element-pick census: pickHover no longer picks at the element-pick reach");
+}
+
+// Tool-press facing is source-aware and independent of ordinary click selection.
+unittest {
+    import hover_state : ToolPressSource, toolPressAt, toolPressEdgeAdmitted,
+        toolPressVertexAdmitted, toolPressFaceAdmitted;
+    import mesh : Mesh, makeGridPlane;
+    import math : Vec3, Viewport, ModelSpace, lookAt, orthographicMatrix, projectToWindowFull;
+    import std.math : round;
+    import std.algorithm : reverse;
+    auto vp = Viewport(lookAt(Vec3(0, 5, 0), Vec3(0, 0, 0), Vec3(0, 0, -1)),
+        orthographicMatrix(1.5f, 1, 0.01f, 100), 600, 600, 0, 0, Vec3(0, 5, 0));
+    vp.focus = Vec3(0, 0, 0);
+    auto down = makeGridPlane(2); // geometric normal -Y
+    auto up = makeGridPlane(2);
+    foreach (ref f; up.faces) reverse(f);
+    up.buildLoops();
+    const ms = ModelSpace.world();
+    const interior = down.edgeIndex(1, 4), border = down.edgeIndex(0, 1);
+    assert(!toolPressFaceAdmitted(down, 0, ms, vp, true), "press-facing: back-facing face refused");
+    assert(!toolPressEdgeAdmitted(down, interior, ms, vp, true), "press-facing: back-facing interior edge refused");
+    assert(!toolPressVertexAdmitted(down, 4, ms, vp, true), "press-facing: back-facing interior vertex refused");
+    assert(toolPressEdgeAdmitted(down, border, ms, vp, true), "press-border: boundary edge admitted");
+    assert(toolPressVertexAdmitted(down, 0, ms, vp, true), "press-border: boundary vertex admitted");
+    assert(toolPressEdgeAdmitted(up, interior, ms, vp, true) && toolPressVertexAdmitted(up, 4, ms, vp, true),
+           "press-facing: reversed winding admits interior edge and vertex");
+    int[2] at(Vec3 p) {
+        float x, y, z;
+        assert(projectToWindowFull(p, vp, x, y, z));
+        return [cast(int)round(x), cast(int)round(y)];
+    }
+    const probes = [Vec3(0, 0, -0.5f), Vec3(0, 0, 0), Vec3(-0.5f, 0, -0.5f), Vec3(-0.5f, 0, -1)];
+    const kinds = [kCascadeEdge, kCascadeVertex, kCascadePolygon, kCascadeEdge];
+    size_t n;
+    foreach (i, p; probes) {
+        const xy = at(p);
+        const refused = toolPressAt(xy[0], xy[1], vp, [ToolPressSource(&down, ms)], true, true, true);
+        assert(refused.kind == (i == 3 ? kCascadeEdge : -1), "press-query: back-facing interior contrast");
+        const front = toolPressAt(xy[0], xy[1], vp, [ToolPressSource(&up, ms)], true, true, true);
+        assert(front.kind == kinds[i], "press-query: front-facing class contrast");
+        const both = toolPressAt(xy[0], xy[1], vp, [ToolPressSource(&down, ms)], false, true, true);
+        assert(both.kind == kinds[i], "press-query: both-sides preference bypasses facing");
+        const wire = toolPressAt(xy[0], xy[1], vp, [ToolPressSource(&down, ms)], false, false, false);
+        assert(wire.kind == (i == 2 ? -1 : kinds[i]), "press-query: wire admits components without polygon fill");
+        ++n;
+    }
+    assert(n == 4, "press-query: four classes exercised");
+    Mesh empty;
+    const xy = at(probes[0]);
+    const secondary = toolPressAt(xy[0], xy[1], vp, [ToolPressSource(&empty, ms, 10), ToolPressSource(&up, ms, 20)], true, true, true);
+    assert(secondary.kind == kCascadeEdge && secondary.source == 1, "press-source: secondary foreground retains source identity");
+    assert(toolPressAt(xy[0], xy[1], vp, [ToolPressSource(&empty, ms, 10)], true, true, true).kind == -1,
+           "press-source: excluded background is not queried");
+}
+
+unittest {
+    import hover_state : ToolPressSource, toolPressAt;
+    import mesh : makeGridPlane;
+    import math : Vec3, Viewport, ModelSpace, lookAt, orthographicMatrix;
+    import std.algorithm : reverse;
+    import core.time : MonoTime;
+    import std.stdio : writefln;
+    auto m = makeGridPlane(64);
+    foreach (ref f; m.faces) reverse(f);
+    m.buildLoops();
+    assert(m.vertices.length == 4225 && m.edges.length == 8320 && m.faces.length == 4096,
+           "press-cost: nontrivial mesh population");
+    auto vp = Viewport(lookAt(Vec3(0, 5, 0), Vec3(0, 0, 0), Vec3(0, 0, -1)),
+        orthographicMatrix(1.5f, 1, 0.01f, 100), 600, 600, 0, 0, Vec3(0, 5, 0));
+    const sources = [ToolPressSource(&m, ModelSpace.world())];
+    size_t n;
+    const start = MonoTime.currTime;
+    foreach (i; 0 .. 5) {
+        const hit = toolPressAt(300 + i, 300, vp, sources, true, true, true);
+        assert(hit.source == 0 && hit.kind >= 0, "press-cost: measured query must return a real candidate");
+        ++n;
+    }
+    assert(n == 5, "press-cost: five queries timed");
+    writefln("PRESS-COST faces=4096 vertices=4225 edges=8320 queries=%s elapsed_us=%s", n,
+             (MonoTime.currTime - start).total!"usecs");
+}
+
+unittest {
+    const app = blankNonCode(readText(buildPath(repoRoot, "source/app.d")));
+    const input = blankNonCode(readText(buildPath(repoRoot, "source/input_frame_state.d")));
+    const subject = blankNonCode(readText(buildPath(repoRoot, "source/toolpipe/subject.d")));
+    const pen = blankNonCode(readText(buildPath(repoRoot, "source/tools/edit/topology_pen/tool.d")));
+    assert(app.indexOf("toolPressSourcesResolver =") >= 0 && app.indexOf("document.foreground(layer)") >= 0,
+           "press-wiring: application installs foreground query population");
+    assert(input.indexOf("src.pickFacing = pickPolicy.facingTerm;") >= 0 &&
+           input.indexOf("src.pickFacesDrawn = resolveDrawPlan(") >= 0,
+           "press-wiring: event subject seeds actual cell facing and fill policy");
+    assert(subject.indexOf("subj.pickFacing = src.pickFacing;") >= 0 &&
+           subject.indexOf("subj.pickFacesDrawn = src.pickFacesDrawn;") >= 0,
+           "press-wiring: one subject funnel carries both tool-press terms");
+    assert(pen.indexOf("sources[hit.source].mesh !is m") >= 0,
+           "press-authoring: a source-aware query cannot index another mesh into the bound primary");
 }

@@ -17,7 +17,7 @@ import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, containsWo
     isIdentChar, symbolTokenHits;
 
 import math : Vec3, Viewport, lookAt, orthographicMatrix, perspectiveMatrix, projectToWindow;
-import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, planeDragDelta, planeJacobian;
+import drag : ComponentGuide, HandleDrag, DragFrame, DragKind, screenAxisDelta, planeDragDelta, planeJacobian;
 import viewgrid : vectorSnap;
 import tools.transform.move : MoveTool;
 import tools.create.box : BoxTool;
@@ -273,4 +273,35 @@ unittest {
 private string[] remove(string[] a, string key) {
     foreach (i, s; a) if (s == key) return a[0 .. i] ~ a[i + 1 .. $];
     assert(false, "narrowed receiver not among the press sites: " ~ key);
+}
+
+// The optional component guide changes the free form's anchor on ALL channels.
+unittest {
+    auto vp = topView();
+    HandleDrag g;
+    immutable h = Vec3(0.272742241f, 0, 0.297731015f);
+    g.press(h, 0, 0);
+    bool skip;
+    immutable f = DragFrame(DragKind.viewPlane);
+    const free = g.client(70, -42, f, vp, skip);
+    assert(!skip && (free - (h + Vec3(0.155f, 0, -0.1f))).length < 1e-6f,
+           "guide-miss: free client keeps its off-lattice residual");
+    size_t n;
+    foreach (mask; [ubyte(0), 1, 2, 4, 3, 5, 6, 7]) {
+        Vec3 input;
+        scope resolve = (Vec3 u) { input = u; return ComponentGuide(cast(ubyte)mask, Vec3(0.7f, -0.004882812f, -0.6f)); };
+        const got = g.client(70, -42, f, vp, skip, resolve);
+        assert(!skip && (input - Vec3(0.43f, 0, 0.2f)).length < 1e-6f,
+               "guide-input: resolver consumes q(H+travel) at the RAW anchor");
+        const want = mask == 0 ? free : Vec3(mask & 1 ? 0.7f : 0.43f,
+            mask & 2 ? -0.004882812f : 0, mask & 4 ? -0.6f : 0.2f);
+        assert((got - want).length < 1e-6f,
+               "guide-mask: replace accepted channels and subtract raw H for every channel");
+        ++n;
+    }
+    assert(n == 8, "guide-mask: eight masks exercised");
+    // A no-resolver Box-style planar client is independent of the optional free guide.
+    const planar = g.client(70, -42, DragFrame(DragKind.handlePlane), vp, skip);
+    assert((planar - Vec3(0.43f, 0, 0.2f)).length < 1e-6f,
+           "planar sibling: preserve the shared handle-plane form");
 }

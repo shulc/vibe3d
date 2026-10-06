@@ -1958,6 +1958,14 @@ void main(string[] args) {
     // resolver is uninstalled, so the two no-target paths agree.
     primaryModelSpaceResolver = () => document.hasEditTarget()
         ? document.primary.xform.modelSpace() : ModelSpace.world();
+    import hover_state : ToolPressSource, toolPressSourcesResolver;
+    toolPressSourcesResolver = () {
+        ToolPressSource[] sources;
+        foreach (i, layer; document.layers)
+            if (document.foreground(layer) && layer.hasMesh)
+                sources ~= ToolPressSource(layer.meshOrNull(), layer.xform.modelSpace(), cast(int)i);
+        return sources;
+    };
     writefln("Mesh: %d verts, %d edges, %d faces",
              mesh.vertices.length, mesh.edges.length, mesh.faces.length);
 

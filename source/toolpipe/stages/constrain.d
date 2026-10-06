@@ -147,6 +147,23 @@ public:
         return surfaceOnRay(org, dir, hit);
     }
 
+    /// Accepted surface components for a free orthographic handle client.
+    auto componentGuide(Vec3 incoming, const ref Viewport vp) {
+        import drag : ComponentGuide;
+        import math : lockedViewAxis, eyeVectorAt, dot;
+        import constraint : surfaceComponentMask;
+        ComponentGuide result;
+        const axis = lockedViewAxis(vp);
+        if (axis < 0) return result;
+        const dir = eyeVectorAt(vp, incoming);
+        const org = incoming + dir * dot(vp.eye - incoming, dir);
+        SurfaceHit hit;
+        if (!surfaceOnRay(org, dir, hit)) return result;
+        result.valuesWorld = offsetPoint(hit.point, hit.normal);
+        result.acceptedMask = surfaceComponentMask(incoming, result.valuesWorld, axis);
+        return result;
+    }
+
     /// `p` moved `offset` along the surface normal `n`.
     Vec3 offsetPoint(Vec3 p, Vec3 n) const {
         import constraint : applyOffset;

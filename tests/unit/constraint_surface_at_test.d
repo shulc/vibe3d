@@ -202,3 +202,32 @@ unittest {
     assert(near3(backFace, Vec3(0, 0, -1)),
            format("pass, Vector, double-sided: the far quad's back face (0, 0, -1); got %s", backFace));
 }
+
+unittest {
+    import constraint : surfaceComponentMask;
+    assert(surfaceComponentMask(Vec3(0.4f, 0, 0.2f), Vec3(0.4f, -0.2f, 0.2f), 1) == 2,
+           "surface-guide: a depth-only hit accepts the view-normal component");
+    assert(surfaceComponentMask(Vec3(0.4f, 0, 0.2f), Vec3(0.5f, -0.2f, 0.2f), 1) == 7,
+           "surface-guide: changed represented channels accept the whole point");
+    assert(surfaceComponentMask(Vec3(0.4f, 0, 0.2f), Vec3(0.4f, -0.2f, 0.2f), -1) == 0,
+           "surface-guide: missing orthographic axis does not claim a component producer");
+    auto background = quadAt(0, -1, 1, -1, 1);
+    setBackgroundSnapSources([cast(const(Mesh)*)&background], [ModelSpace.world()]);
+    scope(exit) setBackgroundSnapSources(null, null);
+    auto vp = orthoRig();
+    auto cs = new ConstrainStage();
+    cs.enabled = true;
+    const incoming = Vec3(0.4f, 0.2f, 0.3f);
+    auto guided = cs.componentGuide(incoming, vp);
+    assert(guided.acceptedMask == 4 && near3(guided.valuesWorld, Vec3(0.4f, 0.2f, 0)),
+           "surface-guide: gated hit resolves Z while keeping represented X/Y");
+    cs.handle = false;
+    assert(cs.componentGuide(incoming, vp).acceptedMask == 0,
+           "surface-guide: disabled handle refuses an otherwise hittable background");
+    cs.handle = true; cs.enabled = false;
+    assert(cs.componentGuide(incoming, vp).acceptedMask == 0,
+           "surface-guide: disabled constraint refuses an otherwise hittable background");
+    cs.enabled = true;
+    assert(cs.componentGuide(Vec3(4, 4, 0.3f), vp).acceptedMask == 0,
+           "surface-guide: remote background misses despite nonempty inventory");
+}

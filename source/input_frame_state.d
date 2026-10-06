@@ -261,7 +261,11 @@ final class InputFrameState {
         src.cursorX     = curX;
         src.cursorY     = curY;
         src.cursorValid = curValid;
-        src.pickOcclusion = app.vpm.pickVisibility().occlusionTerm;
+        const pickPolicy = app.vpm.pickVisibility();
+        src.pickOcclusion = pickPolicy.occlusionTerm;
+        src.pickFacing = pickPolicy.facingTerm;
+        import display_state : resolveDrawPlan;
+        src.pickFacesDrawn = resolveDrawPlan(app.vpm.views[app.vpm.activeId].display, false).styleFills;
         gestureSlot = gest;
         evaluateSubject(subj, vts, src, &gestureSlot);
     }

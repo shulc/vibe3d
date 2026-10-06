@@ -141,3 +141,133 @@ PickGather pickDistances(int mx, int my, const(float[2])* v, const(float[2][2])*
     if (polygon) g.polygon = 0.0f;
     return g;
 }
+
+// Tool presses have their own facing admission; ordinary selection keeps its policy.
+import mesh : Mesh;
+import mesh_ops.select_loop : isEdgeBorder;
+import math : Vec3, Viewport, ModelSpace, dot, cross, screenPointToRay,
+    projectToWindowFull, eyeVectorAt, closestPointOnSegmentToRay, closestOnSegment2D,
+    rayTriangleIntersect;
+
+struct ToolPressSource { const(Mesh)* mesh; ModelSpace space; int layer = -1; }
+struct ToolPressTarget {
+    int kind = -1, index = -1, source = -1;
+    Vec3 pointWorld;
+}
+__gshared ToolPressSource[] delegate() toolPressSourcesResolver;
+
+bool toolPressFaceAdmitted(const ref Mesh m, uint fi, ModelSpace space,
+                            const ref Viewport vp, bool facing) {
+    if (m.isFaceHidden(fi) || m.faces[fi].length < 3) return false;
+    if (!facing) return true;
+    const f = m.faces[fi];
+    const a = space.toWorldPoint(m.vertices[f[0]]);
+    Vec3 n = Vec3(0, 0, 0);
+    foreach (i; 1 .. f.length - 1)
+        n = n + cross(space.toWorldPoint(m.vertices[f[i]]) - a,
+                      space.toWorldPoint(m.vertices[f[i + 1]]) - a);
+    return dot(n, eyeVectorAt(vp, a)) <= 0;
+}
+
+bool toolPressEdgeAdmitted(const ref Mesh m, uint ei, ModelSpace space,
+                            const ref Viewport vp, bool facing) {
+    if (m.isEdgeHidden(ei)) return false;
+    if (!facing || m.isEdgeBorder(ei)) return true;
+    foreach (fi; m.facesAroundEdge(ei))
+        if (toolPressFaceAdmitted(m, fi, space, vp, true)) return true;
+    return false;
+}
+
+bool toolPressVertexAdmitted(const ref Mesh m, uint vi, ModelSpace space,
+                              const ref Viewport vp, bool facing) {
+    if (m.isVertexHidden(vi)) return false;
+    if (!facing) return true;
+    foreach (ei; m.edgesAroundVertex(vi)) if (m.isEdgeBorder(ei)) return true;
+    foreach (fi; m.facesAroundVertex(vi))
+        if (toolPressFaceAdmitted(m, fi, space, vp, true)) return true;
+    return false;
+}
+
+/// Read-only source-aware press election. Source ids never become edit-target ids.
+ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp,
+        const(ToolPressSource)[] sources, bool facing, bool occlusion, bool facesDrawn,
+        float reach = kElementPickRadiusPx) {
+    Vec3 org, dir;
+    screenPointToRay(mx + 0.5f, my + 0.5f, vp, org, dir);
+    float nearestSurface(Vec3 o, Vec3 d, out int source, out int face) {
+        float best = float.infinity;
+        source = face = -1;
+        foreach (si, src; sources) {
+            if (src.mesh is null || !src.space.invertible) continue;
+            const m = src.mesh;
+            foreach (fi, f; m.faces) {
+                if (!toolPressFaceAdmitted(*m, cast(uint)fi, src.space, vp, facing)) continue;
+                const a = src.space.toWorldPoint(m.vertices[f[0]]);
+                foreach (i; 1 .. f.length - 1) {
+                    float t, u, v;
+                    if (rayTriangleIntersect(o, d, a, src.space.toWorldPoint(m.vertices[f[i]]),
+                            src.space.toWorldPoint(m.vertices[f[i + 1]]), t, u, v)
+                            && t >= 0 && t < best) {
+                        best = t; source = cast(int)si; face = cast(int)fi;
+                    }
+                }
+            }
+        }
+        return best;
+    }
+    bool visible(Vec3 p) {
+        if (!occlusion) return true;
+        float x, y, z;
+        if (!projectToWindowFull(p, vp, x, y, z)) return false;
+        Vec3 o, d;
+        screenPointToRay(x, y, vp, o, d);
+        int si, fi;
+        const depth = nearestSurface(o, d, si, fi);
+        const t = dot(p - o, d) / dot(d, d);
+        return depth >= t - 1e-4f * (1 + t);
+    }
+    ToolPressTarget vertex, edge, polygon;
+    PickGather g;
+    foreach (si, src; sources) {
+        if (src.mesh is null || !src.space.invertible) continue;
+        const m = src.mesh;
+        foreach (vi, v; m.vertices) {
+            if (!toolPressVertexAdmitted(*m, cast(uint)vi, src.space, vp, facing)) continue;
+            const p = src.space.toWorldPoint(v);
+            float x, y, z;
+            if (!projectToWindowFull(p, vp, x, y, z)) continue;
+            const d = (((x - mx - 0.5f) ^^ 2) + ((y - my - 0.5f) ^^ 2)) ^^ 0.5f;
+            if (d <= reach && d < g.vertex && visible(p)) {
+                g.vertex = d;
+                vertex = ToolPressTarget(kCascadeVertex, cast(int)vi, cast(int)si, p);
+            }
+        }
+        foreach (ei, e; m.edges) {
+            if (!toolPressEdgeAdmitted(*m, cast(uint)ei, src.space, vp, facing)) continue;
+            const a = src.space.toWorldPoint(m.vertices[e[0]]), b = src.space.toWorldPoint(m.vertices[e[1]]);
+            float ax, ay, az, bx, by, bz, u;
+            if (!projectToWindowFull(a, vp, ax, ay, az) || !projectToWindowFull(b, vp, bx, by, bz)) continue;
+            const d = closestOnSegment2D(mx + 0.5f, my + 0.5f, ax, ay, bx, by, u);
+            const p = closestPointOnSegmentToRay(a, b, org, dir);
+            if (d <= reach && d < g.edge && visible(p)) {
+                g.edge = d;
+                g.edgeMid = (((ax + bx) * 0.5f - mx - 0.5f) ^^ 2 + ((ay + by) * 0.5f - my - 0.5f) ^^ 2) ^^ 0.5f;
+                edge = ToolPressTarget(kCascadeEdge, cast(int)ei, cast(int)si, p);
+            }
+        }
+    }
+    if (facesDrawn) {
+        int si, fi;
+        const t = nearestSurface(org, dir, si, fi);
+        if (si >= 0) {
+            g.polygon = 0;
+            polygon = ToolPressTarget(kCascadePolygon, fi, si, org + dir * t);
+        }
+    }
+    switch (electElement(g)) {
+        case kCascadeVertex: return vertex;
+        case kCascadeEdge: return edge;
+        case kCascadePolygon: return polygon;
+        default: return ToolPressTarget.init;
+    }
+}

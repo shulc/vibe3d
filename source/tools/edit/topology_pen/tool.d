@@ -3694,38 +3694,14 @@ public:
         // gesture in this tool, so a loop press is the only one of the two that
         // can be honoured.
         if (loop)  return stamp(onMoveLoopRmbDown(e, vts), PenGesture.MoveLoop, btn);
-        // The axis move (K-FH rule 5) is captured with no background; over
-        // one the slide laws L47/L49/L50 stand.
-        if (slide || axis && backgroundSourcesFull().length != 0)
+        if (slide)
             return stamp(onCtrlLmbDown(e, vts), PenGesture.Slide, btn);
 
         Viewport vp = viewportOf(vts);
-        int src = findSourceVertex(e.x, e.y, vp);
-
-        // Is this press on GEOMETRY at all? `||` short-circuits, so a press
-        // that resolved a vertex never pays for the `overPrimaryEdgeOrFace`
-        // scan — the same call pattern this handler has always had.
-        if (src >= 0 || overPrimaryEdgeOrFace(e.x, e.y, vp)) {
-            // The Move grab (task 0484). Resolve WHICH element is under the
-            // cursor by proximity — vertex, else edge, else the face the
-            // cursor is over — and arm that element's whole vertex set. A
-            // press on an edge or a face used to be DECLINED here
-            // (doc/tasks/done/0482-topopen-move-nonvertex.md: the behaviour
-            // was unmeasured, and inventing one would have been worse than
-            // the gap); the reference's own Move description settles it —
-            // Move slides "an element ... against the background surface",
-            // and is "useful in editing vertices, edges, and polygons".
-            //
-            // A press that lands on geometry the pick cannot resolve into any
-            // element still declines, for the reasons the old guard spelled
-            // out: with a tool active app.d gates every selection/camera
-            // branch on `!anyToolActive`, so a declined press changes no
-            // selection and mutates nothing (the press is still its one step), and the
-            // release is safe because `lmbPlaceOrMoveUp` trusts the arm BOOLS
-            // rather than the base's `armed_[]` slot (the documented
-            // arm-before-decline gap).
-            return armMoveElement(e, vts, vp, axis);
-        }
+        int grabbed;
+        const kind = resolveGrabTarget(e.x, e.y, vp, grabbed, pickOcclusionOf(vts), vts.get!SubjectPacket());
+        if (kind != MoveElem.None) return armMoveOn(kind, grabbed, e, axis);
+        if (findSourceVertex(e.x, e.y, vp) >= 0 || overPrimaryEdgeOrFace(e.x, e.y, vp)) return false;
         if (axis) return false;   // an axis move has nothing to place
 
         // Empty space. Only Point mode places here; Move mode has nothing to
@@ -3750,62 +3726,26 @@ public:
     // bare `dub test` (no GL) only the vertex and edge terms are live — the
     // face term is exercised by the HTTP tests, which have a real upload.
     package MoveElem resolveGrabTarget(int mx, int my, const ref Viewport vp, out int index,
-                                       bool occlusion) {
+                                       bool occlusion, const(SubjectPacket)* subject = null) {
+        import hover_state : ToolPressSource, toolPressSourcesResolver, toolPressAt,
+            kCascadeVertex, kCascadeEdge, kCascadePolygon;
         index = -1;
-        auto m = mesh;
+        const m = mesh;
         if (m is null) return MoveElem.None;
-
-        // The element-pick law (`hover_state.electElement`): the
-        // nearest VISIBLE vertex and edge within the reach, the polygon under
-        // the cursor only under a style that draws faces (K-P P9, P10), ranked
-        // by the cascade after the edge-midpoint veto. Hidden elements are
-        // never picked (K-D D5; the face BVH already skips hidden polygons).
-        import hover_state : electElement, pickDistances, kCascadeVertex,
-            kCascadeEdge, kCascadePolygon;
-        bool shown(Vec3 p) { return !occlusion || pressVisible(p, vp); }
-        scope admitV = (int i, Vec3 p) => !m.isVertexHidden(i) && shown(p);
-        scope admitE = (int i, Vec3 p) => !m.isEdgeHidden(i) && shown(p);
-        immutable int vi = findSourceVertex(mx, my, vp, kTopoPenSnapAuto, admitV);
-        immutable int ei = findRingSeedEdge(mx, my, vp, kTopoPenSnapAuto, admitE);
-        immutable int fi = occlusion ? pickPrimaryFace(mx, my, vp) : -1;
-
-        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
-        bool at(uint v, out float[2] q) {
-            ImVec2 p;
-            if (!projectLocalPt(m.vertices[v], vpAim, p)) return false;
-            q = [p.x, p.y];
-            return true;
+        const sources = toolPressSourcesResolver is null
+            ? [ToolPressSource(m, primaryModelSpace())] : toolPressSourcesResolver();
+        const hit = toolPressAt(mx, my, vp, sources,
+            subject !is null && subject.pickFacing, occlusion,
+            subject is null ? gpu_ !is null && occlusion : subject.pickFacesDrawn, topoPenPressPickPx(vp));
+        // Querying foreground sources does not widen this tool's bound authoring mesh.
+        if (hit.source < 0 || sources[hit.source].mesh !is m) return MoveElem.None;
+        index = hit.index;
+        switch (hit.kind) {
+            case kCascadeVertex: return MoveElem.Vertex;
+            case kCascadeEdge: return MoveElem.Edge;
+            case kCascadePolygon: return MoveElem.Face;
+            default: return MoveElem.None;
         }
-        float[2] pv;
-        float[2][2] pe;
-        const g = pickDistances(mx, my, vi >= 0 && at(vi, pv) ? &pv : null,
-            ei >= 0 && at(m.edges[ei][0], pe[0]) && at(m.edges[ei][1], pe[1]) ? &pe : null,
-            fi >= 0 && fi < cast(int)m.faces.length && m.faces[fi].length >= 3);
-        switch (electElement(g)) {
-            case kCascadeVertex:  index = vi; return MoveElem.Vertex;
-            case kCascadeEdge:    index = ei; return MoveElem.Edge;
-            case kCascadePolygon: index = fi; return MoveElem.Face;
-            default:              return MoveElem.None;
-        }
-    }
-
-    // K-P P9: a press takes the front-most element — a candidate point is
-    // pickable unless a primary polygon lies in front of it on its own eye ray.
-    private bool pressVisible(Vec3 pLocal, const ref Viewport vp) {
-        auto m = mesh;
-        if (m is null) return true;
-        if (removePick_ is null) removePick_ = new BvhPick();
-        const ms = primaryModelSpace();
-        const AimViewport vpAim = aimSpace(vp, ms);
-        ImVec2 q;
-        if (!projectLocalPt(pLocal, vpAim, q)) return true;
-        Vec3 org, dir;
-        screenPointToRay(q.x, q.y, vp, org, dir);
-        immutable Vec3 pw = ms.isIdentity ? pLocal : ms.toWorldPoint(pLocal);
-        immutable float tElem = dot(pw - org, dir) / dot(dir, dir);
-        SurfaceHit h;
-        if (!removePick_.pickSurfaceRay(org, dir, *m, ms, h)) return true;
-        return h.t >= tElem - 1e-4f * (1.0f + tElem);
     }
 
     // The hover indicator element `draw()` actually paints: the RESOLVED grab
@@ -3991,7 +3931,7 @@ public:
         if (m is null) return false;
 
         int index;
-        immutable MoveElem kind = resolveGrabTarget(e.x, e.y, vp, index, pickOcclusionOf(vts));
+        immutable MoveElem kind = resolveGrabTarget(e.x, e.y, vp, index, pickOcclusionOf(vts), vts.get!SubjectPacket());
         if (kind == MoveElem.None) return false;
         return armMoveOn(kind, index, e, axis);
     }
@@ -4124,12 +4064,18 @@ public:
         HandleDrag grab;
         grab.press(ms.toWorldPoint(anchorLocal), 0, 0);
         bool skip;
-        Vec3 toW = grab.client(dx, dy, DragFrame(DragKind.viewPlane), vp, skip);
+        auto cs = liveConstrainStage();
+        import drag : ComponentGuide;
+        scope guide = (Vec3 u) { return cs is null ? ComponentGuide.init : cs.componentGuide(u, vp); };
+        Vec3 toW = grab.client(dx, dy, DragFrame(DragKind.viewPlane), vp, skip, guide);
         if (skip) return false;
-        float qx, qy, qz;
-        Vec3 hitW;
-        if (projectToWindowFull(toW, vp, qx, qy, qz) && backgroundRayHit(qx, qy, vp, hitW))
-            toW = hitW;
+        // Preserve the existing non-axis-view path pending its guide producer capture.
+        import math : lockedViewAxis;
+        if (lockedViewAxis(vp) < 0) {
+            float qx, qy, qz;
+            Vec3 hitW;
+            if (projectToWindowFull(toW, vp, qx, qy, qz) && backgroundRayHit(qx, qy, vp, hitW)) toW = hitW;
+        }
         offLocal = ms.toLocalPoint(toW) - anchorLocal;
         return true;
     }
@@ -4401,7 +4347,7 @@ public:
         Viewport vp = viewportOf(vts);
         // The press pick (`resolveGrabTarget`); a polygon has no Duplicate gesture.
         int picked;
-        immutable MoveElem pressed = resolveGrabTarget(e.x, e.y, vp, picked, pickOcclusionOf(vts));
+        immutable MoveElem pressed = resolveGrabTarget(e.x, e.y, vp, picked, pickOcclusionOf(vts), vts.get!SubjectPacket());
         immutable int src = pressed == MoveElem.Vertex ? picked : -1;
         immutable int seedEi = pressed == MoveElem.Edge ? picked : -1;
         if (src < 0) {
@@ -4507,7 +4453,7 @@ public:
                             bool loop) {
         Viewport vp = viewportOf(vts);
         int idx;
-        final switch (resolveGrabTarget(e.x, e.y, vp, idx, pickOcclusionOf(vts))) {
+        final switch (resolveGrabTarget(e.x, e.y, vp, idx, pickOcclusionOf(vts), vts.get!SubjectPacket())) {
         case MoveElem.Vertex: removeVertexAt(idx);      break;
         case MoveElem.Edge:   removeEdgeAt(idx, loop);  break;
         case MoveElem.Face:   removeFaceAt(idx);        break;
@@ -5051,7 +4997,7 @@ public:
         Viewport vp = viewportOf(vts);
         slideVertex_ = -1;
         int grabbed;
-        if (resolveGrabTarget(e.x, e.y, vp, grabbed, pickOcclusionOf(vts)) == MoveElem.Vertex)
+        if (resolveGrabTarget(e.x, e.y, vp, grabbed, pickOcclusionOf(vts), vts.get!SubjectPacket()) == MoveElem.Vertex)
             return armVertexSlide(e, grabbed);
         int seed = findRingSeedEdge(e.x, e.y, vp);
         if (seed < 0) return false;
