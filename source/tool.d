@@ -706,7 +706,7 @@ public:
     /// The viewport a tool's handlers resolve under: `draw` caches the drawn
     /// cell's, and the router overwrites it with the event's own cell
     /// (`SubjectPacket.viewport`) before every mouse handler, so a Quad press
-    /// never reads the last-drawn cell (tasks 0209, 9498). A subclass that
+    /// never reads the last-drawn cell. A subclass that
     /// declares its own `cachedVp` hides this field and is not synced.
     Viewport cachedVp;
     final void syncEventViewport(const ref Viewport vp) { cachedVp = vp; }

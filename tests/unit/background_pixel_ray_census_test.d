@@ -296,17 +296,26 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
     foreach (f; files) {
         immutable code = blankNonCode(readText(buildPath(root, "source", f)));
         foreach (h; symbolTokenHits(code, f, "syncEventViewport(")) syncSites ~= f ~ ":" ~ h.key;
-        if (f.length > 13 && f[0 .. 13] == "tools/create/"
-            && matchAll(code, regex(`\bViewport\s+cachedVp\s*;`)).array.length)
+        if (f != "tool.d" && matchAll(code, regex(`\bViewport\s+cachedVp\s*;`)).array.length)
             ownViewport ~= f;
     }
     sort(syncSites);
     assert(syncSites == ["input_router.d:InputRouter.toolEventVts", "tool.d:Tool"],
         format("syncEventViewport must be the router's one call and its declaration: %s", syncSites));
-    // The pen keeps its own field (frozen file, task 9498 follow-up): it hides
-    // the synced one. Every other create tool reads the synced base field.
-    assert(ownViewport == ["tools/create/pen.d"],
-        format("a create tool declaring its own cachedVp hides the router-synced one: %s", ownViewport));
+    // A tool declaring its own `cachedVp` HIDES the synced base field (D allows
+    // it silently), so the router sync never reaches it. Exact roster, measured
+    // (18 files); it may only shrink, as each tool drops its field (task 9524).
+    sort(ownViewport);
+    assert(ownViewport == [
+        "tools/alignment/array_tool.d", "tools/alignment/clone_tool.d", "tools/alignment/mirror.d",
+        "tools/alignment/radial_array_tool.d", "tools/alignment/radial_sweep_tool.d",
+        "tools/common/command_wrapper.d", "tools/create/pen.d", "tools/deform/smooth_shift_tool.d",
+        "tools/edit/edge_bevel.d", "tools/edit/edge_extend.d", "tools/edit/edge_extrude.d",
+        "tools/edit/poly_bevel.d", "tools/edit/poly_extrude.d", "tools/edit/poly_inset_tool.d",
+        "tools/edit/vert_merge_tool.d", "tools/edit/vertex_bevel_tool.d",
+        "tools/edit/vertex_extrude_tool.d", "tools/transform/transform.d"],
+        format("tools declaring their own cachedVp (hiding the router-synced one) must be exactly the "
+               ~ "recorded 18, which may only shrink: %s", ownViewport));
     immutable vertexTool = blankNonCode(readText(buildPath(root, "source", "tools/create/vertex_place.d")));
     assert(tokenAt(vertexTool, "kGuideTypes").length == 0,
         "the vertex tool passes no guide mask: after the guide-block deletion it has no candidate to strip");

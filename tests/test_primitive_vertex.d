@@ -492,16 +492,42 @@ unittest { // the drag gesture: one record, at the release
     }
 
     if (wanted("R6")) {
-        // R6: a switch to another tool during the drag is refused; the release records.
+        // R6: a switch to another tool during the drag records the live vertex
+        // where it stands, as a drop does (R5); later events move nothing.
         begin();
         play(pressAndDrag());
+        const switched = verts();
         auto sw = postJson("/api/command", "tool.set prim.cube");
-        check(sw["status"].str == "error", "R6: a switch during the drag must be refused: " ~ sw.toString);
-        play(ev("up", 10, X + STEP * N, Y));
-        check(undoDepth() == 1 && verts().length == 1,
-              format("R6: the release still records: depth %d, %d vertices", undoDepth(), verts().length));
+        check(sw["status"].str == "ok", "R6: the switch during the drag failed: " ~ sw.toString);
+        play(ev("motion", 10, X, Y), ev("up", 20, X, Y));
+        // The gesture is over in the tool too: a re-arm and a drop record nothing more.
+        postJson("/api/command", "tool.set prim.cube off");
+        activateVertex();
+        deactivateTool();
+        size_t rows;
+        foreach (e; getJson("/api/history")["undo"].array) if (e["label"].str == "Add Vertex") ++rows;
+        check(rows == 1 && verts() == switched,
+              format("R6: the switch records %s once; got %d Add Vertex row(s), %s", switched, rows, verts()));
         postJson("/api/command", "tool.set prim.cube off");
         deactivateTool();
+    }
+
+    if (wanted("R6b")) {
+        // R6b: a switch to a tool that writes an activation row keeps the
+        // vertex tool as its predecessor; the undo of that row brings the SAME
+        // instance back, whose gesture the switch must have ended: a drop then
+        // records nothing more.
+        begin();
+        play(pressAndDrag());
+        auto sw = postJson("/api/command", "tool.set mesh.edgeSliceTool");
+        check(sw["status"].str == "ok", "R6b: the switch failed: " ~ sw.toString);
+        play(ev("motion", 10, X, Y), ev("up", 20, X, Y));
+        postJson("/api/command", commandBody("history.undo"));
+        deactivateTool();
+        string[] labels;
+        foreach (e; getJson("/api/history")["undo"].array) labels ~= e["label"].str;
+        check(labels == ["Add Vertex"],
+              format("R6b: one Add Vertex row after the restored tool's drop, got %s", labels));
     }
 
     if (wanted("R8")) {
@@ -564,7 +590,7 @@ unittest { // the drag gesture: one record, at the release
         deactivateTool();
     }
 
-    assert(ran == (cells.length ? cells.split(",").length : 8),
-           format("cell groups: %d run of %s", ran, cells.length ? cells : "all 8"));
+    assert(ran == (cells.length ? cells.split(",").length : 9),
+           format("cell groups: %d run of %s", ran, cells.length ? cells : "all 9"));
     assert(fails.length == 0, format("%-(%s\n%)", fails));
 }

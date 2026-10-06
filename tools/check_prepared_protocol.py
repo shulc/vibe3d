@@ -8171,9 +8171,12 @@ def p10c_door_capability_gate(context, sources, xfrm):
             return False
     for path, aggregate in vertex_door_clients.items():
         body = sources[path]
+        # Idle: the snap clear and no history; during the drag (task 9499) the
+        # live vertex's Plain row.
         if f"class {aggregate} : Tool, PreparedToolDoorClient" not in body or \
-                body.count("context.prepareSnapClear(new SnapOverlayOwner()) &&\n"
-                           "                   context.markNoHistoryInstall()") != 1 or \
+                body.count("if (ok) ok = context.prepareSnapClear(new SnapOverlayOwner());") != 1 or \
+                body.count("recorded ? context.markHistoryInstall() : context.markNoHistoryInstall()") != 1 or \
+                body.count("context.prepare(cmd, PreparedHistoryKind.Plain).accepted") != 1 or \
                 body.count("const ok = context.markNoHistoryInstall();") != 1 or \
                 body.count("if (!ok) context.discard();") != 2:
             return False
@@ -8290,7 +8293,7 @@ for target, old, new, label in (
      "override bool prepareDoorInitialPose(ref VectorStack vts,\n            PreparedRecordContext context, Layer layer,\n            ulong threadIdentity, ulong contextIdentity) {\n        auto upload = new GpuUploadOwner(null, threadIdentity, contextIdentity);",
      "drop pose GPU subject identity"),
     (next(iter(vertex_door_clients)),
-     "context.prepareSnapClear(new SnapOverlayOwner()) &&", "",
+     "if (ok) ok = context.prepareSnapClear(new SnapOverlayOwner());", "",
      "drop Vertex snap clear"),
     (next(iter(typed_context_door_clients)),
      "return prepareDeactivate(context).resourceAccepted;",

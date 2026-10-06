@@ -23,6 +23,7 @@ import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap, SnapOverlayOwner;
 import operator : VectorStack;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import command_history : PreparedHistoryKind;
 import document : Layer;
 
 // ---------------------------------------------------------------------------
@@ -34,7 +35,8 @@ import document : Layer;
 // snap) and selects only it. The drag moves it live: every motion re-resolves
 // the free point at q(q(press) + travel) under the same gate (K-C5, gap 573).
 // The release records ONE undo entry for the gesture; until then the vertex is
-// the tool's uncommitted edit (Ctrl+Z / RMB remove it, a drop records it).
+// the tool's uncommitted edit (Ctrl+Z / RMB remove it, a drop or a switch
+// records it).
 // Vertices are isolated: no auto-edge, no auto-face. The headless geometry
 // contract for vertex creation is mesh.addVertex (task 0131).
 // ---------------------------------------------------------------------------
@@ -71,15 +73,27 @@ public:
         clearLastSnap();
     }
 
-    // Idle, the tool keeps no private state (its snap is `g_lastSnap`): a
-    // switch away enlists only the snap clear, an arm nothing. A switch during
-    // the drag (a script door; keys wait for the release) is refused.
+    // A switch away enlists the snap clear; during the drag it also records
+    // the live vertex where it stands (the "Add Vertex" row, as `deactivate`
+    // does). The outgoing instance is never armed again (a re-arm or an
+    // activation-row undo builds a new one by id), so its gesture needs no
+    // clearing.
     override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
             ulong, ulong) {
         if (context is null) return false;
-        const ok = !hasUncommittedEdit() &&
-                   context.prepareSnapClear(new SnapOverlayOwner()) &&
-                   context.markNoHistoryInstall();
+        scope(failure) context.discard();
+        bool ok = true, recorded;
+        if (hasUncommittedEdit() && history !is null && gestureFactory !is null && pre_.filled) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd is null) ok = context.prepareGestureCarrierMismatch();
+            else {
+                cmd.setSnapshots(pre_, MeshSnapshot.capture(*mesh), "Add Vertex");
+                recorded = ok = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+                if (ok) sessionTagPreparedCompleted(cmd);
+            }
+        }
+        if (ok) ok = recorded ? context.markHistoryInstall() : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareSnapClear(new SnapOverlayOwner());
         if (!ok) context.discard();
         return ok;
     }
@@ -169,7 +183,8 @@ public:
         return true;
     }
 
-    // The drag moves the live vertex (version-silent, Position class); with no
+    // The drag moves the live vertex (version-silent, Position class: the
+    // delivery re-uploads the display); with no
     // gesture, the snap preview shows where the next press would land.
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e,
                                 ref VectorStack vts)
@@ -188,7 +203,6 @@ public:
             placeFreePoint(t, e.x, e.y, cachedVp, frame_, *mesh, sr, self[]));
         publishLastSnap(sr);
         mesh.publishChange(MeshEditScope.Position);
-        refreshDisplay(mesh, gpu_);
         return true;
     }
 

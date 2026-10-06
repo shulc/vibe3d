@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 575
-task-citation-lines 5216
+task-citation-lines 5215
 citing-files 455
 long-comment-runs 262
 files-with-long-runs 141
@@ -346,7 +346,7 @@ allow source/subpatch_worker.d 2
 allow source/subpatch_worker_web.d 1
 allow source/symmetry.d 13
 allow source/symmetry_pick.d 4
-allow source/tool.d 34
+allow source/tool.d 33
 allow source/tool_activation_ownership.d 6
 allow source/tool_disarm.d 3
 allow source/tool_lifecycle_registration.d 1
