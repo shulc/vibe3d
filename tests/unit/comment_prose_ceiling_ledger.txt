@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 574
-task-citation-lines 5214
+task-citation-lines 5213
 citing-files 455
 long-comment-runs 262
 files-with-long-runs 141
