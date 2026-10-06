@@ -282,3 +282,42 @@ unittest { // 9513: opposite purposes, both, and query-owned registry isolation
         liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
     assert(!refused.snapped && rank.asked == 0, "client refusal precedes registered guide ranking");
 }
+
+unittest { // 9513: background placement and edited-only weld are distinct elections
+    import toolpipe.guide : SnapPurpose, SnapGuideScope, SnapQueryPolicy;
+    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import toolpipe.stages.snap : SnapStage, liveSnapGuides;
+    import tools.edit.topology_pen.snap_guide : PenSnapGuide;
+    import snap : editedVertexAt, setBackgroundSnapSources;
+    import toolpipe.packets : SnapMode;
+
+    auto saved = g_pipeCtx;
+    scope(exit) { g_pipeCtx = saved; setBackgroundSnapSources(null, null); invalidateSnapGrids(); }
+    setBackgroundSnapSources(null, null);
+    auto ctx = new ToolPipeContext;
+    auto st = new SnapStage;
+    ctx.pipeline.add(st); g_pipeCtx = ctx;
+    Viewport vp = rigView();
+    Mesh edited, background;
+    edited.vertices = [Vec3(0.075f, 0, 0)]; // six pixels from cursor
+    background.vertices = [Vec3(2, 0, 0), Vec3(0, 0, 0)];
+    float x, y, z;
+    assert(projectToWindowFull(background.vertices[1], vp, x, y, z));
+    const sx = cast(int)round(x), sy = cast(int)round(y);
+    SnapPacket cfg; cfg.enabled = true; cfg.enabledTypes = SnapType.Vertex; cfg.snapScope = SnapMode.Global;
+    auto guide = new PenSnapGuide;
+    guide.retarget(&edited, true, true);
+    st.addGuide(guide);
+    const ownedWeld = SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned);
+    invalidateSnapGrids();
+    assert(editedVertexAt(sx, sy, vp, edited, ModelSpace.world(), cfg, 24, ownedWeld) == 0,
+        "control: edited weld query accepts the primary vertex within reach");
+    setBackgroundSnapSources([cast(const(Mesh)*)&background], [ModelSpace.world()]);
+    invalidateSnapGrids();
+    auto placed = snapCursor(Vec3(0, 0, 0), sx, sy, vp, edited, ModelSpace.world(), cfg, null, null,
+        liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
+    assert(placed.snapped && placed.targetSource == 1 && placed.targetIndex == 1,
+        "background placement wins independently of the registered edited-mesh weld guide");
+    assert(editedVertexAt(sx, sy, vp, edited, ModelSpace.world(), cfg, 24, ownedWeld) == 0,
+        "edited-only weld cannot elect the nearer background vertex");
+}
