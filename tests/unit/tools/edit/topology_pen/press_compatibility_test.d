@@ -748,13 +748,13 @@ unittest {
         import std.datetime.stopwatch : StopWatch, AutoStart;
         cs.enabled=true;cs.handle=true;cs.geom=ConstrainGeom.Point;pen.moveAxisLock_=true;
         setBackgroundSnapSources([cast(const(Mesh)*)&background],[ModelSpace.world()]);
-        Vec3 off;bool accepted;
-        assert(pen.grabOffset(h,70,0,vp,off,accepted));
+        Vec3 costOff;bool costAccepted;
+        assert(pen.grabOffset(h,70,0,vp,costOff,costAccepted));
         cs.queries=0;const allocated=GC.stats().allocatedInCurrentThread;auto clock=StopWatch(AutoStart.yes);
-        size_t events;foreach(i;1..36) {assert(pen.grabOffset(h,2*i,0,vp,off,accepted));++events;}
+        size_t costEvents;foreach(i;1..36) {assert(pen.grabOffset(h,2*i,0,vp,costOff,costAccepted));++costEvents;}
         const elapsed=clock.peek.total!"usecs";const bytes=GC.stats().allocatedInCurrentThread-allocated;
-        assert(events==35&&cs.queries==35,"GUIDE_COST_POPULATION: original 35 evaluated events issue 35 surface queries");
-        writefln("GUIDE-COST bg_vertices=%s bg_faces=%s events=%s queries=%s bytes=%s elapsed_us=%s final_offset=%s accepted=%s",background.vertices.length,background.faces.length,events,cs.queries,bytes,elapsed,off,accepted);
+        assert(costEvents==35&&cs.queries==35,"GUIDE_COST_POPULATION: original 35 evaluated costEvents issue 35 surface queries");
+        writefln("GUIDE-COST bg_vertices=%s bg_faces=%s costEvents=%s queries=%s bytes=%s elapsed_us=%s final_offset=%s costAccepted=%s",background.vertices.length,background.faces.length,costEvents,cs.queries,bytes,elapsed,costOff,costAccepted);
         return;
     }
     size_t population;

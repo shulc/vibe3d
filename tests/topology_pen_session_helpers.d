@@ -407,6 +407,12 @@ void perspectiveCtrlBackgroundPoint(ushort portOffset = 0) {
     foreach(i;0..3)assert(abs(after.pos[13][i]-want[i])<2e-6,"ORBIT_GEOMETRY: independent nearestBG(H+Offset), not guide P");
     assert(getJson("/api/model?layer=1")["vertices"]==bg,"ORBIT_BACKGROUND: no authored BG write");
     assert(penHistoryLen()==history+1,"ORBIT_HISTORY: exactly one press row");
+    const output=environment.get("VIBE3D_OBSERVATION_OUTPUT","");
+    if(output.length) {
+        import std.file : write;
+        write(output,format(`{"camera":%s,"press":[%s,%s],"firstZ":%s,"finalZ":%s,"held":%s,"foregroundAfter":%s,"backgroundAfter":%s}`,
+            camera,x,y,-.01110023379,offset("offsetZ"),held,getJson("/api/model"),getJson("/api/model?layer=1")));
+    }
     penCtrlZ("perspective Ctrl undo1");penCtrlZ("perspective Ctrl undo2");
     assert(penMesh()==before,"ORBIT_UNDO: full foreground restored after captured sequence");
 }
