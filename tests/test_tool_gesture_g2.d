@@ -953,11 +953,9 @@ unittest {
     // --- (d) ArrayTool. Records INSIDE the gesture, at `onMouseButtonUp`, so
     //     its `liveEntryNames` is already populated before the tool is dropped
     //     and the drop itself records nothing more. No drawn handle: the haul
-    //     is the free handle law (extrapolated from K-H3 H3_NT, linear
-    //     generator; uncaptured here, see C-NT-off), anchored at the
-    //     centroid wherever the press lands, so the press is the viewport
-    //     centre by construction — the same drive
-    //     `tests/test_tool_overlay_item_space.d` block 5 uses.
+    //     is the free handle law pressed at P0 - (c + off0), P0 the snapped
+    //     press hit (K-FH C-NT-off); the press is the viewport centre — the
+    //     same drive `tests/test_tool_overlay_item_space.d` block 5 uses.
     cells ~= runCell("array/centre-haul", "mesh.arrayTool",
         "source/tools/alignment/array_tool.d ArrayTool.recordTopologyStep (from onMouseButtonUp)",
         "Plain", "MeshSessionEdit",
