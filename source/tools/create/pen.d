@@ -596,10 +596,25 @@ version(unittest) unittest {
     assert(weldCandidate.faces[$ - 1] == [weldBase+1,weldBase+2,weldBase+3,weldBase],
         "frozen candidate order consumption");
     assert(weldCandidate.vertices[weldBase+2] == Vec3(.23,1,.23), "cached candidate geometry consumption");
-    weldPen.installPreparedParam(weldParam);
-    assert(weldPen.geometryPoints_[2] == Vec3(.23,1,.23) &&
-        weldParam.expectedGeometryPoints.length == 0 &&
-        weldParam.nextGeometryPoints.length == 0, "cached parameter geometry installation");
+    weldPen.params_.currentPoint = 2;
+    weldPen.params_.posX = .26; weldPen.params_.posY = 1; weldPen.params_.posZ = .26;
+    auto positionImage = weldPen.buildPreparedParamImage("posX");
+    assert(positionImage.nextGeometryPoints == positionImage.nextVertices &&
+        positionImage.nextGeometryPoints[2] == Vec3(.26,1,.26), "cached typed geometry reset");
+    weldPen.installPreparedParam(positionImage);
+    assert(weldPen.geometryPoints_[2] == Vec3(.26,1,.26) &&
+        positionImage.expectedGeometryPoints.length == 0 &&
+        positionImage.nextGeometryPoints.length == 0, "cached parameter geometry installation");
+    weldPen.params_.posX = .27;
+    weldPen.onParamChanged("posX");
+    assert(weldPen.geometryPoints_ == weldPen.vertices_ &&
+        weldPen.geometryPoints_[2].x == .27, "cached live typed geometry reset");
+    weldPen.geometryPoints_[2].x = .28;
+    weldPen.appendVertex(Vec3(.4,1,.4), -1);
+    assert(weldPen.geometryPoints_ == weldPen.vertices_, "cached append geometry reset");
+    weldPen.geometryPoints_[2].x = .28;
+    weldPen.insertVertexAfter(0, Vec3(.3,1,.3), -1);
+    assert(weldPen.geometryPoints_ == weldPen.vertices_, "cached insert geometry reset");
     weldPen.clearStroke();
     assert(weldPen.sources_.length == 0 && weldPen.order_.length == 0 &&
         weldPen.geometryPoints_.length == 0,
