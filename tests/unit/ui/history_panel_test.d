@@ -3,7 +3,7 @@ module tests.unit.ui.history_panel_test;
 import application_command_binding : ApplicationCommandBinding;
 import command : Command;
 import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode;
+import command_history : CommandHistory, RecordMode, HistoryFlags;
 import edit_session : EditSession;
 import tool : ToolSessionPolicy;
 import editmode : EditMode;
@@ -518,7 +518,7 @@ unittest { // A real residual row cannot settle another bound model client.
     r.first = r.press("probe.first", 1, true);
     r.last = r.press("probe.last", 2, true);
     r.field = r.press("probe.field", 3, false);
-    r.h.markEntryFold(r.field, command_history.HistoryFlags.JoinsBelow);
+    r.h.markEntryFold(r.field, HistoryFlags.JoinsBelow);
     r.close(); assert(r.h.undo());
     auto model = new HistoryPanelModelTool(); model.mesh = &r.m;
     harness.activeTool = model; harness.session.noteArm("model", 7, false);
