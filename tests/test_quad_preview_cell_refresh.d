@@ -227,8 +227,12 @@ unittest { // tools without their own viewport field resolve a bottom-right pres
     }
     string[] failed;
     {   // the pen: a click at the cell's centre lands on its focus
-        auto p = gesture(true, "pen", `{"empty":true}`, "", -1, [0, 0], 0, 0, "posX", "posY", "posZ");
-        if (!(p[0] * p[0] + p[1] * p[1] + p[2] * p[2] < 0.05 * 0.05))
+        auto p = gesture(true, "pen", `{"empty":true}`, "", -1, [0, 0], 0, 0,
+                         "currentPoint", "posX", "posY", "posZ");
+        // A refused click keeps the reset state (point -1 at zeros): the point must exist.
+        if (!(p[0] >= 0))
+            failed ~= format("pen: the click in the cell placed no point (currentPoint %s)", p[0]);
+        else if (!(p[1] * p[1] + p[2] * p[2] + p[3] * p[3] < 0.05 * 0.05))
             failed ~= format("pen: the click must land on the cell's focus, got %s", p);
     }
     // The Single result first (the rig's own check), then the bottom-right cell.

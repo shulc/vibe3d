@@ -3020,8 +3020,8 @@ public:
     // against now arrives WITH the event, via SubjectPacket.viewport
     // (app.d's buildToolVts stamps `vpm.inputSnapshot()` — the hovered cell
     // outside a gesture, the drag-origin cell throughout one). Sync it into
-    // `cachedVp` (this tool's own, plus every sub-tool's) as the FIRST
-    // statement of every mouse handler so the hit-test/drag math below never
+    // every sub-tool's `cachedVp` (the router already wrote this tool's) as the
+    // FIRST statement of every mouse handler so the hit-test/drag math below never
     // depends on a stale value left by the last DRAW pass (which only ran for
     // the previous owner cell). During a drag `inputSnapshot()` returns the
     // constant drag-origin vp for the whole gesture, so this is a no-op
@@ -3030,7 +3030,6 @@ public:
     // `dragRefDir`) are untouched.
     private void syncInputViewport(ref VectorStack vts) {
         if (auto sp = vts.get!SubjectPacket()) {
-            cachedVp           = sp.viewport;
             moveSub.cachedVp   = sp.viewport;
             rotateSub.cachedVp = sp.viewport;
             scaleSub.cachedVp  = sp.viewport;
