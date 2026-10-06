@@ -3371,7 +3371,7 @@ unittest {
         override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
             static immutable ToolSessionPolicy p = { activationRow: true, sessionSteps: true,
                 historyTopologySteps: true, opensAt: OpensAt.arm };
-            auto policy = p;
+            ToolSessionPolicy policy = p;
             policy.foldsParamRowsIntoBlock = folded;
             return policy;
         }
