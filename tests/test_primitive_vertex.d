@@ -22,9 +22,8 @@ import camera_lens_control_helpers;
 //   Case A  az=0.0,           el=0.2  →  Z-dominant camera  →  all vertices z ≈ 0
 //   Case B  az=π/2 ≈ 1.5708,  el=0.1  →  X-dominant camera  →  all vertices x ≈ 0
 //
-// Exact world triples are intentionally NOT asserted (camera-dependent).
-// That contract lives with mesh.addVertex (task 0131), which takes an
-// absolute position.
+// The first cell also pins lens-dependent triples using an independent
+// camera ray, the existing Z=0 construction plane and the view lattice.
 //
 // Viewport recording reference: (150,28  650×544, fovY=0.785398)
 
@@ -36,7 +35,7 @@ import std.string : format, split;
 import std.algorithm : canFind;
 import std.process : environment;
 import std.conv : to;
-import std.math : fabs, PI;
+import std.math : fabs, PI, sin, cos, tan, round;
 import core.thread : Thread;
 import core.time : msecs;
 
@@ -117,6 +116,25 @@ unittest {
     resetEmpty();
     setCamera(0.0, 0.2, 3.0);
     applyLensControl(controlLens);
+    import drag_helpers : fetchCamera;
+    import create_law_helpers : viewAnchorSteps;
+    const placementCamera = fetchCamera();
+    assert(placementCamera.fovY == controlLens, "VERTEX_LENS_BEFORE_PLACEMENT");
+    assert(placementCamera.vpX == 150 && placementCamera.vpY == 28 &&
+           placementCamera.width == 650 && placementCamera.height == 544,
+           "VERTEX_PLACEMENT_PANE");
+    const q = viewAnchorSteps()[0];
+    assert(cast(float)q == 0.005f, format("VERTEX_PLACEMENT_LATTICE q=%.9g", q));
+    const focal = 544.0 / (2.0 * tan(cast(double)controlLens / 2));
+    double[3] placement(int x, int y) {
+        const rx = (x - 475.0) / focal, ry = (300.0 - y) / focal;
+        // R=(1,0,0), U=(0,cos(el),-sin(el)), B=(0,sin(el),cos(el)).
+        const dz = -cos(0.2) - ry * sin(0.2);
+        const t = -3.0 * cos(0.2) / dz;
+        return [round(t * rx / q) * q,
+                round((3.0 * sin(0.2) + t * (ry * cos(0.2) - sin(0.2))) / q) * q, 0.0];
+    }
+    const expectedPositions = [placement(350, 280), placement(430, 280), placement(390, 340)];
     activateVertex();
 
     string log = LOG_HEADER ~ "\n"
@@ -137,6 +155,12 @@ unittest {
     assert(m["edges"].array.length == 0,
         "isolation: expected 0 edges, got "
         ~ m["edges"].array.length.to!string);
+    foreach (i, v; m["vertices"].array) {
+        foreach (axis; 0 .. 3)
+            assert(fabs(v.array[axis].floating - expectedPositions[i][axis]) < 2e-6,
+                format("VERTEX_LENS_PLACEMENT vertex=%s axis=%s expected=%.9g actual=%.9g",
+                       i, axis, expectedPositions[i][axis], v.array[axis].floating));
+    }
     }
     applyLensControl(defaultLensControl);
 

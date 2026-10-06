@@ -267,3 +267,63 @@ unittest { // a falloff handle's centre box is a free handle, the DQ form from t
         ~ `tool.pipe.attr falloff end "-0.4,0,-0.35"` ~ "\n", [0, 0], [58, 23], [0.2364, 0, 0.1063]);
     cell("radial", "center", radial, [30, 0], [40, 0], [0.1014 + 40.0 / 440, 0, 0.0513]);
 }
+
+
+unittest { // Perspective FalloffEndpoint centre: independent K-FH C-FO map.
+    import http_client : getJson, postJson;
+    import std.format : format;
+    import std.string : split;
+    import std.math : tan, round;
+    import create_law_helpers : viewAnchorSteps;
+    import core.thread : Thread;
+    import core.time : msecs;
+    foreach (controlLens; [defaultLensControl, explicitLensControl]) {
+        auto r = postJson("/api/command", commandBody("scene.reset"));
+        assert(r["status"].str == "ok", "FALLOFF_ENDPOINT_RESET");
+        r = postJson("/api/command", commandBody("scene.loadMesh",
+            `{"vertices":[[-0.6,-0.6,0],[-0.4,-0.6,0],[-0.4,-0.4,0],[-0.6,-0.4,0]],"faces":[[0,1,2,3]]}`));
+        assert(r["status"].str == "ok", "FALLOFF_ENDPOINT_MESH");
+        r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
+        assert(r["status"].str == "ok", "FALLOFF_ENDPOINT_SELECTION");
+        r = postJson("/api/camera", `{"projKind":"Perspective","azimuth":0,"elevation":0,"distance":3,"focus":{"x":0,"y":0,"z":0}}`);
+        assert(r["status"].str == "ok", "FALLOFF_ENDPOINT_CAMERA");
+        applyLensControl(controlLens);
+        const cam = fetchCamera();
+        assert(cam.fovY == controlLens, "FALLOFF_ENDPOINT_LENS_BEFORE_DRAG");
+        r = postJson("/api/script", "tool.set move\n" ~
+            "tool.pipe.attr falloff type radial\n" ~
+            `tool.pipe.attr falloff center "0.1014,0.0513,0"` ~ "\n" ~
+            `tool.pipe.attr falloff size "0.3,0.3,0.3"` ~ "\n");
+        assert(r["status"].str == "ok", "FALLOFF_ENDPOINT_SETUP");
+        Thread.sleep(300.msecs);
+        double[3] centre() {
+            foreach (st; getJson("/api/toolpipe")["stages"].array) {
+                if (st["task"].str != "WGHT") continue;
+                const p = st["attrs"]["center"].str.split(",");
+                assert(p.length == 3, "FALLOFF_ENDPOINT_PARAMETER_POPULATION");
+                return [p[0].to!double, p[1].to!double, p[2].to!double];
+            }
+            assert(false, "FALLOFF_ENDPOINT_STAGE");
+        }
+        const h0 = centre();
+        assert(h0 == [0.1014, 0.0513, 0.0], "FALLOFF_ENDPOINT_TYPED_CONTROL");
+        assert(getJson("/api/model")["vertices"].array.length == 4,
+            "FALLOFF_ENDPOINT_MESH_POPULATION");
+        const q = viewAnchorSteps()[0];
+        assert(cast(float)q == 0.005f, format("FALLOFF_ENDPOINT_LATTICE q=%.9g", q));
+        const focal = cam.height / (2.0 * tan(cast(double)controlLens / 2));
+        const px = cast(int)round(cam.vpX + cam.width / 2.0 + focal * h0[0] / 3.0);
+        const py = cast(int)round(cam.vpY + cam.height / 2.0 - focal * h0[1] / 3.0);
+        const double[3] expectedCentre = [
+            h0[0] + round((h0[0] + 58.0 * 3.0 / focal) / q) * q - round(h0[0] / q) * q,
+            h0[1] + round((h0[1] - 23.0 * 3.0 / focal) / q) * q - round(h0[1] / q) * q, 0.0];
+        playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+            px, py, px + 58, py + 23, 12));
+        const actualCentre = centre();
+        foreach (axis; 0 .. 3)
+            assert(approx(actualCentre[axis], expectedCentre[axis], 1e-4),
+                format("FALLOFF_ENDPOINT_LENS_OUTCOME axis=%s expected=%.9g actual=%.9g",
+                    axis, expectedCentre[axis], actualCentre[axis]));
+    }
+    applyLensControl(defaultLensControl);
+}

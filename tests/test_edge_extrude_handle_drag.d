@@ -46,7 +46,7 @@ import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
-import std.math : abs;
+import std.math : abs, sin, cos, tan, sqrt;
 import std.format : format;
 import std.net.curl : get, post;
 
@@ -194,6 +194,9 @@ unittest {
         ~ `"focus":{"x":0,"y":0,"z":0}}`);
     assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
 
+    applyLensControl(controlLens, BASE);
+    const selectedCamera = fetchCamera(BASE);
+    assert(selectedCamera.fovY == controlLens, "EDGE_EXTRUDE_EXPLICIT_LENS_BEFORE_DRAG");
     cmd("tool.set " ~ TOOL ~ " on");
 
     import core.thread : Thread;
@@ -206,8 +209,31 @@ unittest {
 
     // 1. the WIDTH box. Without it the kernel affects zero edges no matter how
     //    far the extrude arrow is hauled.
+    // Independent cube/frame oracle: averaged normal (X-Z)/sqrt(2),
+    // oriented edge tangent from the unchanged two endpoint population.
+    const modelBefore = getJson("/api/model");
+    const edge = modelBefore["edges"].array[ei].array;
+    const a = modelBefore["vertices"].array[edge[0].integer].array;
+    const b = modelBefore["vertices"].array[edge[1].integer].array;
+    assert(modelBefore["vertices"].array.length == 8 && edge.length == 2,
+        "EDGE_WIDTH_CUBE_POPULATION");
+    const signY = b[1].floating > a[1].floating ? 1.0 : -1.0;
+    const ax = signY / sqrt(2.0), az = signY / sqrt(2.0);
+    const focal = selectedCamera.height / (2.0 * tan(cast(double)controlLens / 2));
+    double[2] screen(double x, double z) {
+        const depth = 4.0 - sin(0.4) * cos(1.1) * x - cos(0.4) * cos(1.1) * z;
+        return [focal * (cos(0.4) * x - sin(0.4) * z) / depth,
+                focal * sin(1.1) * (sin(0.4) * x + cos(0.4) * z) / depth];
+    }
+    const origin = screen(0.5, -0.5), tip = screen(0.5 + ax, -0.5 + az);
+    const dx = tip[0] - origin[0], dy = tip[1] - origin[1];
+    assert(dx * dx + dy * dy > 1, "EDGE_WIDTH_PROJECTED_AXIS_POPULATION");
+    const expectedWidth = -40.0 * dx / (dx * dx + dy * dy);
+    assert(expectedWidth > 0, "EDGE_WIDTH_POSITIVE_CONTROL");
     int wx, wy; handlePx(1, wx, wy);
     drag(wx, wy, wx - 40, wy);
+    assert(abs(queryWidth() - expectedWidth) < 2e-5,
+        format("EDGE_WIDTH_LENS_OUTCOME expected=%.9g actual=%.9g", expectedWidth, queryWidth()));
     immutable string firstImage = planes();
     assert(firstImage != planesBefore, "first handle drag changed no mesh plane");
 
@@ -227,7 +253,7 @@ unittest {
 
     // A motionless Middle press clones the current operation on the selected
     // ridge. It is a row of its own and its undo restores the prior group.
-    applyLensControl(controlLens,BASE);
+    handlePx(0, ex, ey);
     auto cam = fetchCamera(BASE);
     playAndWaitLensControl(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
         ex, ey, ex, ey, 1, 0, 2), BASE);
