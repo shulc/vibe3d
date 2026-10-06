@@ -322,7 +322,7 @@ unittest {
     View v = new View(0, 0, 800, 600);
     MeshSessionEdit press(ulong token) {
         auto p = new MeshSessionEdit(&m, v, EditMode.Vertices, "test.press", "Press");
-        const image = MeshSnapshot.capture(m);
+        auto image = MeshSnapshot.capture(m);
         p.setSnapshots(image, image);
         p.markSession(token);
         p.setTopologyStep(AttrImage.init, AttrImage.init, image, image, true, 1, StepOrigin.opens, 1);

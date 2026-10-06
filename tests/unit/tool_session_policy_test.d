@@ -436,8 +436,8 @@ unittest { // (3) the doors reach the tool session only through EditSession
     assert(squeeze(bodyAt(ts, "bool undo()")) == "{navBefore_=NavBefore(history_.undoEntries().length,"
            ~ "token_,boundModel_()&&postmodeArmed_);"
            ~ "constarmRow=latentArmRow_();constid=armedId_;"
-           ~ "constr=undoImpl_();if(r)openBlock_=null;"
-           ~ "if(r&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
+           ~ "constcompletionBefore=completedDropUndo_;constr=undoImpl_();if(r)openBlock_=null;"
+           ~ "if(r&&completedDropUndo_==completionBefore&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
            ~ "if(r&&armRow!=size_t.max&&history_.undoEntries().length<=armRow){"
            ~ "latentId_=id;latentGen_=history_.generation();}"
            ~ "returnr;}",

@@ -391,7 +391,7 @@ unittest { // Design cell (uncaptured, gap row): a primary move between the
 
 unittest { // Two remaining presses: extent is shared, retention is preset data.
     foreach (id; ["mesh.topoPen", "mesh.dragWeld"])
-    foreach (door; ["navigation", "api", "command"]) {
+    foreach (door; ["navigation", "panel", "command"]) {
         rig("vertex");
         ui("tool.set " ~ id ~ " on");
         if (id == "mesh.topoPen") cmd("tool.attr " ~ id ~ " mode 0");
@@ -406,7 +406,7 @@ unittest { // Two remaining presses: extent is shared, retention is preset data.
         keyQ();
         const dropped = depth();
         if (door == "navigation") undo();
-        else if (door == "api") { auto r = postJson("/api/undo", "{}"); assert(r["status"].str == "ok"); quiesce(); }
+        else if (door == "panel") { auto r = postJson("/api/history/jump", format(`{"target":%s}`, depth() - 1)); assert(r["status"].str == "ok"); quiesce(); }
         else cmd("history.undo");
         assert(tool() == id && quadGap(verts(), first) <= 1e-6 && depth() == dropped - 2,
             format("%s %s drop must revert only the newest press: %s", id, door, getJson("/api/history")));
@@ -425,5 +425,41 @@ unittest { // Two remaining presses: extent is shared, retention is preset data.
             assert(tool() == id && quadGap(verts(), first) <= 1e-6,
                 "plain drop redo cannot restore the discarded press");
         }
+    }
+}
+
+unittest { // A restored tool uses the final mesh as its next press basis at every door.
+    foreach (id; ["mesh.topoPen", "mesh.dragWeld"])
+    foreach (door; ["navigation", "panel", "command"]) {
+        rig("vertex");
+        ui("tool.set " ~ id ~ " on");
+        if (id == "mesh.topoPen") cmd("tool.attr " ~ id ~ " mode 0");
+        dragPx(worldPixel(Vec3(0, 0, 0)), 44, 0);
+        const first = verts();
+        auto atFirst = Vec3(cast(float)first[0][0], cast(float)first[0][1], cast(float)first[0][2]);
+        dragPx(worldPixel(atFirst), 0, 44);
+        assert(quadGap(verts(), first) > 0.05, "next-press floor: second gesture moved geometry");
+        keyQ();
+        if (door == "navigation") undo();
+        else if (door == "panel") { auto r = postJson("/api/history/jump", format(`{"target":%s}`, depth() - 1)); assert(r["status"].str == "ok"); quiesce(); }
+        else cmd("history.undo");
+        assert(quadGap(verts(), first) <= 1e-6 && tool() == id, "next-press floor: newest press reverted");
+        dragPx(worldPixel(atFirst), 44, 0);
+        const continued = verts();
+        assert(quadGap(continued, first) > 0.05, "next press must apply from restored geometry");
+        // A fresh arm on that same final mesh is an independent basis oracle.
+        rig("vertex");
+        auto scene = JSONValue.emptyObject;
+        JSONValue[] points;
+        foreach (point; first) points ~= JSONValue([JSONValue(point[0]), JSONValue(point[1]), JSONValue(point[2])]);
+        scene["vertices"] = JSONValue(points);
+        scene["faces"] = JSONValue([JSONValue([JSONValue(0), JSONValue(3), JSONValue(2), JSONValue(1)])]);
+        cmd(commandBody("scene.loadMesh", scene.toString));
+        cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));
+        ui("tool.set " ~ id ~ " on");
+        if (id == "mesh.topoPen") cmd("tool.attr " ~ id ~ " mode 0");
+        dragPx(worldPixel(atFirst), 44, 0);
+        assert(quadGap(continued, verts()) <= 1e-6,
+            format("%s %s restored next press must match a fresh arm's basis", id, door));
     }
 }
