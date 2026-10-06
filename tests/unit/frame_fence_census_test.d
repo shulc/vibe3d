@@ -199,6 +199,11 @@ unittest
             ~ "raw /api/changes JSON to a frame-published reader evades the needle",
             rawHelpers));
 
+    const lensReader = blankComments(readText(buildPath(repoRoot, "tests",
+        "test_retopology_lines_dots.d")));
+    assert(countOccurrences(lensReader, "settledChanges(") == 2,
+        "9526: retopology lens baseline and after reads must each reach settledChanges");
+
     // ---- 4. structural: the helper fences before it reads ---------------
     const client = readText(buildPath(repoRoot, "tests", "http_client.d"));
     const helper = blankComments(bodyAfter(client, "JSONValue settledChanges("));
