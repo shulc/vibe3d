@@ -733,7 +733,6 @@ unittest { // the THREE measured numbers, and the two refutations behind them
 /// `HoverTargetKind.None`; a hit that is behind the camera when projected
 /// (should not normally happen — the hit itself came from a ray through
 /// the same viewport) also degrades to `None` rather than asserting.
-// Packet-only fixture adaptor; production supplies explicit pixel/source admission.
 version(unittest) HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
                                const ref Viewport vp, float thPx)
 {
