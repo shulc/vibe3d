@@ -551,31 +551,40 @@ version(unittest) unittest {
     // either changing after preparation. These need private stroke state.
     auto weldPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
     weldPen.state = PenState.Drawing; weldPen.frame.toWorld = commitPen.frame.toWorld;
-    weldPen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0), Vec3(.005,0,0)];
-    weldPen.links_ = [-1,-1,-1,-1]; weldPen.sources_ = [0,1,2,0];
-    weldPen.order_ = [0,1,2];
+    weldPen.vertices_ = [Vec3(-.2,1,-.2), Vec3(-.195,1,.2),
+        Vec3(.2,1,.2), Vec3(-.2,1,.2), Vec3(-.195,1,-.2)];
+    weldPen.links_ = [-1,-1,-1,-1,-1]; weldPen.sources_ = [0,1,2,3,0];
+    // Built before p1 moved; recomputing this order from the moved points differs.
+    weldPen.order_ = [1,2,3,0];
     auto weldDrop = weldPen.buildPreparedDeactivateState();
     assert(weldPen.preparedDeactivateStateMatches(weldDrop), "frozen drop control");
-    weldPen.sources_[3] = 3;
+    weldPen.sources_[4] = 4;
     assert(!weldPen.preparedDeactivateStateMatches(weldDrop), "frozen drop source changed");
-    weldPen.sources_[3] = 0; weldPen.order_ = [0,2,1];
+    weldPen.sources_[4] = 0; weldPen.order_ = [0,2,1,3];
     assert(!weldPen.preparedDeactivateStateMatches(weldDrop), "frozen drop order changed");
-    weldPen.order_ = [0,1,2];
+    weldPen.order_ = [1,2,3,0];
     auto weldParam = weldPen.buildPreparedParamImage("flip");
     assert(weldPen.preparedParamMatches(weldParam) &&
-        weldParam.nextPreview.vertices.length == 3 &&
-        weldParam.nextPreview.faces == [[0u,1,2]], "frozen param control");
-    weldPen.sources_[3] = 3;
+        weldParam.nextPreview.vertices.length == 4 &&
+        weldParam.nextPreview.faces == [[1u,2,3,0]], "frozen param control");
+    weldPen.sources_[4] = 4;
     assert(!weldPen.preparedParamMatches(weldParam), "frozen param source changed");
-    weldPen.sources_[3] = 0; weldPen.order_ = [0,2,1];
+    weldPen.sources_[4] = 0; weldPen.order_ = [0,2,1,3];
     assert(!weldPen.preparedParamMatches(weldParam), "frozen param order changed");
-
-    weldPen.sources_[3] = 0; weldPen.order_ = [0,1,2];
+    weldPen.sources_[4] = 0; weldPen.order_ = [1,2,3,0];
     weldPen.previewGpu.suppressCageUpload = true;
     foreach (v; weldPen.vertices_) weldPen.vertHandlers ~= weldPen.vertMarker(v);
     weldPen.onParamChanged("flip");
-    assert(weldPen.previewMesh.vertices.length == 3 &&
-        weldPen.previewMesh.faces == [[0u,1,2]], "frozen live preview control");
+    assert(weldPen.previewMesh.vertices.length == 4 &&
+        weldPen.previewMesh.faces == [[1u,2,3,0]], "frozen live preview control");
+    Mesh weldCandidate; MeshSnapshot weldPre; uint weldFlags, weldDomains;
+    const uint weldBase = cast(uint)mesh.vertices.length;
+    assert(weldPen.buildPreparedDeactivateCandidate(weldDrop, weldCandidate,
+        weldPre, weldFlags, weldDomains), "frozen candidate refused");
+    assert(weldCandidate.vertices.length == weldBase + 4,
+        "frozen candidate source consumption");
+    assert(weldCandidate.faces[$ - 1] == [weldBase+1,weldBase+2,weldBase+3,weldBase],
+        "frozen candidate order consumption");
     weldPen.clearStroke();
     assert(weldPen.sources_.length == 0 && weldPen.order_.length == 0,
         "frozen topology survived stroke clear");
