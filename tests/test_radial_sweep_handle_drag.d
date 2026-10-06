@@ -222,7 +222,8 @@ unittest { // dragging the Start Angle handle moves `startAngle` off zero
       ~ "(task 1903 §5.8).");
 }
 
-unittest { // the axis ends are free handles, quantised (K-H3 H3_NT): front ortho
+unittest { // the axis ends are free handles, quantised — extrapolated from K-H3
+    // H3_NT (linear generator); this generator is uncaptured, see C-RS / C-NT-off. Front ortho
     // view at 440 px/m (T = pixels / 440), q 0.005, axis (0, 0.5, 0) so the ends
     // S, E = (0, -/+0.5, 0) sit on the lattice. Hauling E by (70, -42) px writes
     // E' = E + q(E + T) - q(E) = (0.16, 0.595, 0), S planted; then S by (-70, 42)

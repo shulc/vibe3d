@@ -210,7 +210,8 @@ unittest { // a free centre haul arrays face 4 and records exactly one entry
         ~ "does not invert the array it claims to own");
 }
 
-unittest { // the offset haul is a free handle, quantised (K-H3 H3_NT): top ortho
+unittest { // the offset haul is a free handle, quantised — extrapolated from K-H3
+    // H3_NT (linear generator); this generator is uncaptured, see C-NT-off. Top ortho
     // view at 440 px/m (T = pixels / 440), q 0.005, the top face's centroid A
     // (0, 0.5, 0) on the lattice; a (70, -42) px haul writes q(A + T) - q(A) =
     // (0.16, 0, -0.095). RAW is (0.159091, 0, -0.095455).

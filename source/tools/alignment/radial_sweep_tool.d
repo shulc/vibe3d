@@ -339,6 +339,7 @@ private:
     int         dragPart = -1;
     int         lastMX, lastMY;
     HandleDrag  grab;      // an axis end: the end at the press + travel
+    Vec3        planted;   // the other axis end, frozen at the press
     Viewport    cachedVp;
 
     version(unittest) MeshSnapshot lastPreparedCommitImage_;
@@ -979,6 +980,7 @@ public:
         lastMX   = e.x;
         lastMY   = e.y;
         grab.press(params_.center + (hit == 0 ? -params_.axis : params_.axis), e.x, e.y);
+        planted = params_.center + (hit == 0 ? params_.axis : -params_.axis);
         return true;
     }
 
@@ -994,17 +996,15 @@ public:
         if (dragPart < 0) return false;
 
         if (dragPart == 0 || dragPart == 1) {
-            // Axis endpoint drag: the DRAGGED end is a free handle (K-H3
-            // H3_NT, its residual kept); the OTHER end stays planted (see
-            // the field-block comment on axisStartH/axisEndH).
-            Vec3 other = params_.center + (dragPart == 0 ? params_.axis : -params_.axis);
+            // Axis endpoint drag: the DRAGGED end is a free handle, its
+            // residual kept (extrapolated from K-H3 H3_NT, linear generator;
+            // this generator is uncaptured, see C-RS / C-NT-off); the OTHER
+            // end stays planted (see the field-block comment on axisStartH).
             bool skip;
-            DragFrame f;
-            f.kind = DragKind.viewPlane;
-            immutable Vec3 c = grab.client(e.x, e.y, f, cachedVp, skip);
+            immutable Vec3 c = grab.client(e.x, e.y, DragFrame(DragKind.viewPlane), cachedVp, skip);
             if (!skip) {
-                params_.center = (c + other) * 0.5f;
-                params_.axis   = (dragPart == 0 ? other - c : c - other) * 0.5f;
+                params_.center = (c + planted) * 0.5f;
+                params_.axis   = (dragPart == 0 ? planted - c : c - planted) * 0.5f;
                 params_.axisPreset = 3;   // handle drag -> Custom
                 engaged = true;
                 evaluate();

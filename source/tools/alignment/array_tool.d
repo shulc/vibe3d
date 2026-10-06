@@ -71,8 +71,9 @@ import core.stdc.string : memcmp;
 // in-plane axes (confirmed live: a pure horizontal screen drag moved BOTH
 // Offset X and Offset Y, Offset Z untouched — an oblique combination the
 // toolcard itself flags as camera/Work-Plane-position-dependent, not a
-// fixed rule). The haul is a free handle (`HandleDrag`, view plane, K-H3
-// H3_NT) like CloneTool's, and folds the FULL resulting world delta into
+// fixed rule). The haul is a free handle (`HandleDrag`, view plane) like
+// CloneTool's — extrapolated from K-H3 H3_NT (linear generator); this
+// generator is uncaptured, see C-NT-off — and folds the FULL world delta into
 // all three Offset X/Y/Z params. An
 // axis whose Count is 1 (e.g. the captured default Count Y=1) never shows
 // visible new geometry from its own offset regardless, same as the
@@ -417,11 +418,10 @@ public:
 
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || !dragging) return false;
-        // A free handle: the centroid's residual is kept (K-H3 H3_NT).
+        // A free handle, the centroid's residual kept: extrapolated from K-H3
+        // H3_NT (linear generator); this generator is uncaptured, see C-NT-off.
         bool skip;
-        DragFrame f;
-        f.kind = DragKind.viewPlane;
-        immutable Vec3 c = grab.client(e.x, e.y, f, cachedVp, skip);
+        immutable Vec3 c = grab.client(e.x, e.y, DragFrame(DragKind.viewPlane), cachedVp, skip);
         if (!skip) {
             // WORLD in, LAYER out (task 0645): offX_/offY_/offZ_ are the
             // per-copy offset `arrayFacesGrid` adds to layer-space vertices.
