@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 575
-task-citation-lines 5214
+task-citation-lines 5213
 citing-files 456
 long-comment-runs 262
 files-with-long-runs 141
@@ -241,7 +241,7 @@ allow source/imgui_event_gate.d 3
 allow source/imgui_flag_boundary.d 1
 allow source/input_context.d 3
 allow source/input_frame_state.d 36
-allow source/input_router.d 66
+allow source/input_router.d 65
 allow source/input_zones.d 1
 allow source/io/assimp_wire.d 1
 allow source/io/browser_pick_resume.d 2

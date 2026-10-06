@@ -174,3 +174,17 @@ unittest {
         ++row;
     }
 }
+
+unittest { // recording-start versus actual SIZE_CHANGED metadata producer
+    if(!selected("resize"))return;
+    auto rig=PerspectiveCameraRig.launch();scope(exit)rig.stop();const base=rig.base;
+    playAndWait(kPaceLine~`{"t":1,"type":"SDL_KEYDOWN","sym":1073741882,"mod":0,"repeat":0}`~"\n",base);
+    assert(postJson("/api/camera",`{"fovY":0.9026584025557545}`,base)["status"].str=="ok");
+    playAndWait(kPaceLine~`{"t":1,"type":"SDL_WINDOWEVENT","sub":6,"w":1302,"h":1030}`~"\n"~
+        `{"t":2,"type":"SDL_KEYDOWN","sym":1073741883,"mod":0,"repeat":0}`~"\n",base);
+    size_t metas;double lens;
+    foreach(line;(cast(string)keepAliveGet(base~"/api/recorded-events")).splitLines) {
+        const e=parseJSON(line);if(e["type"].str=="VIEWPORT"){++metas;lens=num(e["fovY"]);}
+    }
+    assert(metas==2&&abs(lens-.9026584025557545)<3e-8,"HTTP_RESIZE_METADATA_CURRENT_LENS");
+}

@@ -402,11 +402,8 @@ struct InputRouter {
     // app.d's main() -- only the free-name resolution changed (main()
     // locals -> InputRouter fields / `with (app)` EditorApp fields).
     //
-    // NOT covered by any test: every fixture in tests/events/*.log that
-    // carries an SDL_WINDOWEVENT uses a sub-event other than
-    // SDL_WINDOWEVENT_SIZE_CHANGED (task 0781 Log has the grep) -- the
-    // comment already inside this handler says why ("--test never resizes
-    // the window"). Recorded here rather than silently assumed green.
+    // camera_intrinsics reaches SIZE_CHANGED metadata without claiming a
+    // physical window resize; SDL-free dimensions have window_metrics tests.
     void handleWindowEvent(ref SDL_WindowEvent we) {
         import eventlog : setReplayCurrentViewport;
         import handles.gl_util : initThickLineProgram;
