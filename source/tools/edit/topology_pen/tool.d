@@ -636,7 +636,7 @@ private:
     package SnapPacket dragSnap_;
     // The view at the last press: the constraint's geometry pass (`passLocal`)
     // runs in it, the step's re-apply included.
-    package Viewport pressVp_;
+    Viewport pressVp_;
 
     // The key this tool's startup snap arming is filed under in the stage's
     // single push slot (`SnapStage.pushEnabled`). The reference keys its own
@@ -4036,7 +4036,7 @@ public:
         moveVerts_   = uniq;
         moveBase_.length = uniq.length;
         foreach (i, vi; uniq) moveBase_[i] = m.vertices[vi];
-        moveAnchor_  = pressAnchor(kind, index, e.x, e.y);
+        moveAnchor_  = pressAnchor(kind, index, e.x, e.y, pressVp_);
         moveStartX_  = e.x;
         moveStartY_  = e.y;
         moveDirty_   = false;
@@ -4052,16 +4052,16 @@ public:
     // element point UNDER the press pixel — a vertex itself, the edge point
     // nearest the press ray, the polygon's plane under it (rule 2's "probably
     // the same" for a polygon); the corner mean when that ray misses.
-    package Vec3 pressAnchor(MoveElem kind, int index, int px, int py) {
+    package Vec3 pressAnchor(MoveElem kind, int index, int px, int py, const ref Viewport vp) {
         auto m = mesh;
         if (kind == MoveElem.Vertex) return moveBase_[0];
         if (kind == MoveElem.Edge) {
             const a = m.vertices[m.edges[index][0]], b = m.vertices[m.edges[index][1]];
-            return a + (b - a) * ratioOnSegment(px, py, pressVp_, a, b);
+            return a + (b - a) * ratioOnSegment(px, py, vp, a, b);
         }
         const Vec3 mean = meanOf(moveBase_);
         Vec3 o, d, hit;
-        screenPointToLocalRay(cast(float) px, cast(float) py, pressVp_, primaryModelSpace(), o, d);
+        screenPointToLocalRay(cast(float) px, cast(float) py, vp, primaryModelSpace(), o, d);
         return rayPlaneIntersect(o, d, mean, m.faceNormal(cast(uint) index), hit) ? hit : mean;
     }
 

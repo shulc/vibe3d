@@ -9801,7 +9801,6 @@ unittest {
     Mesh m = makeGridPlane(3);
     t.meshSrc_ = () => &m;
     auto vp = makeGridPlaneTestViewport();
-    t.pressVp_ = vp;
     int[2] pixelOf(Vec3 w) {
         float x, y, z;
         assert(projectToWindowFull(w, vp, x, y, z), "the rig point must project");
@@ -9812,7 +9811,7 @@ unittest {
     const Vec3 q1 = a + (b - a) * 0.25f;
     t.moveBase_ = [a, b];
     const pe = pixelOf(q1);
-    const Vec3 ea = t.pressAnchor(MoveElem.Edge, 0, pe[0], pe[1]);
+    const Vec3 ea = t.pressAnchor(MoveElem.Edge, 0, pe[0], pe[1], vp);
     assert((ea - q1).length < 0.02f * (b - a).length,
         format("an edge pressed at 1/4 anchors there (%s), not at its mean; got %s", q1, ea));
 
@@ -9822,13 +9821,35 @@ unittest {
     foreach (p; t.moveBase_) mean = mean + p * (1.0f / t.moveBase_.length);
     const Vec3 off = mean + (t.moveBase_[0] - mean) * 0.6f;   // on the planar face, off its centre
     const pf = pixelOf(off);
-    const Vec3 fa = t.pressAnchor(MoveElem.Face, 0, pf[0], pf[1]);
+    const Vec3 fa = t.pressAnchor(MoveElem.Face, 0, pf[0], pf[1], vp);
     assert((fa - off).length < 0.02f * (b - a).length,
         format("a polygon pressed off its centre anchors on its plane under the press (%s); got %s", off, fa));
 
     t.moveBase_ = [a];
-    assert(t.pressAnchor(MoveElem.Vertex, cast(int) m.edges[0][0], pe[0], pe[1]) == a,
+    assert(t.pressAnchor(MoveElem.Vertex, cast(int) m.edges[0][0], pe[0], pe[1], vp) == a,
         "a vertex press anchors on the vertex itself");
+
+    // On a moved and turned layer (local != world) the polygon's press ray is
+    // the LOCAL one: the anchor is the local point under the press, on the
+    // polygon's local plane.
+    import document : ItemXform, primaryModelSpaceResolver;
+    import math : dot;
+    import std.math : abs;
+    ItemXform xf;
+    xf.pos = Vec3(0.3f, 0.7f, -0.2f);
+    xf.rot = Vec3(20.0f, 35.0f, 0.0f);
+    const ModelSpace ms = xf.modelSpace();
+    auto saved = primaryModelSpaceResolver;
+    scope(exit) primaryModelSpaceResolver = saved;
+    primaryModelSpaceResolver = () => ms;
+    t.moveBase_ = null;
+    foreach (vi; m.faces[0]) t.moveBase_ ~= m.vertices[vi];
+    const pm = pixelOf(ms.toWorldPoint(off));
+    const Vec3 ma = t.pressAnchor(MoveElem.Face, 0, pm[0], pm[1], vp);
+    const Vec3 n = m.faceNormal(0);
+    assert(abs(dot(ma - mean, n)) < 1e-4f && (ma - off).length < 0.02f * (b - a).length,
+        format("on a moved layer a polygon press anchors on its local plane under the press (%s); got %s "
+               ~ "(%.6f off the plane)", off, ma, dot(ma - mean, n)));
 }
 
 // ---------------------------------------------------------------------------
