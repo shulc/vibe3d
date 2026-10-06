@@ -14,6 +14,8 @@ unittest {
     foreach(consumer;["evPlay.tick();","httpServer.tickEventPlayer();"]) {
         assert(app.canFind("setReplayCurrentLens(recordingLens());\n                    "~consumer),"LENS_REFRESH_BEFORE_PLAYER: "~consumer);
     }
+    assert(app.canFind("return cam.projKind == ProjKind.Ortho ? View.defaultFovY : cam.fovY;"),"LENS_METADATA_APP_VALUE");
+    assert(input.canFind("return cam.projKind == ProjKind.Ortho ? View.defaultFovY : cam.fovY;"),"LENS_METADATA_INPUT_VALUE");
     assert(app.canFind("vpm.views[vpm.overlayOwnerId()].camera")&&input.canFind("app.vpm.views[app.vpm.overlayOwnerId()].camera"),"LENS_METADATA_INPUT_OWNER");
     assert(input.canFind("setReplayCurrentViewport(layout.vpX, layout.vpY,\n                                         layout.vpW, layout.vpH, recordingLens());"),"LENS_METADATA_RESIZE_COPY");
     assert(input.canFind("recLog.writeViewportMeta(layout.vpX, layout.vpY,\n                                             layout.vpW, layout.vpH, recordingLens());"),"LENS_METADATA_F1_HEADER");

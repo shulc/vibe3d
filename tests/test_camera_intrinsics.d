@@ -39,7 +39,9 @@ unittest {
     auto vp=viewportFromCameraMatrices(base);float x,y;
     assert(projectToWindow(h,vp,x,y));
     assert(abs(x-521.5579634664997)<.002&&abs(y-452.5187742230622)<.002,"HTTP_ORBIT_INTRINSIC_FIRST_SEAM");
-    auto transported=viewportFromCamera(fetchCamera(base));
+    const fetched=fetchCamera(base);
+    assert(fetched.fovY==cast(float)num(c["fovY"]),"HTTP_HELPER_LENS_TRANSPORT");
+    auto transported=viewportFromCamera(fetched);
     assert(transported.view==vp.view&&transported.proj==vp.proj,"HTTP_HELPER_FULL_MATRIX_TRANSPORT");
     // Independent focal/basis projection precedes the finite-difference map.
     const double[3] right=[.2004414573445789,.5011036433614473,-.8418541208472314];
@@ -189,4 +191,22 @@ unittest { // SIZE_CHANGED reaches current metadata; journal header stays at sta
     assert(metas==1&&cast(float)lens==cast(float)(45.0f*PI/180.0f),"HTTP_RESIZE_RECORDING_START_HEADER_RETAINED");
     const c=getJson("/api/camera",base);
     assert(c["width"].integer==1152&&c["height"].integer==974&&abs(num(c["fovY"])-.9026584025557545)<3e-8,"HTTP_SIZE_EVENT_ACTUAL_PANE_LENS_RETAINED");
+}
+
+unittest { // an ortho recording keeps the historical projection-kind placeholder
+    if(!selected("ortho"))return;
+    auto rig=PerspectiveCameraRig.launch();scope(exit)rig.stop();const base=rig.base;
+    assert(postJson("/api/camera",`{"fovY":0.9026584025557545}`,base)["status"].str=="ok");
+    rig.command("viewport.view Top");
+    const c=getJson("/api/camera",base);
+    assert(c["projKind"].str=="Ortho"&&abs(num(c["fovY"])-.9026584025557545)<3e-8,"HTTP_RECORDING_ORTHO_RETAINED_LENS");
+    playAndWait(kPaceLine~`{"t":1,"type":"SDL_KEYDOWN","sym":1073741882,"mod":0,"repeat":0}`~"\n"~
+        `{"t":2,"type":"SDL_KEYDOWN","sym":1073741883,"mod":0,"repeat":0}`~"\n",base);
+    size_t metas;
+    foreach(line;(cast(string)keepAliveGet(base~"/api/recorded-events")).splitLines) {
+        const e=parseJSON(line);if(e["type"].str=="VIEWPORT") {
+            ++metas;assert(cast(float)num(e["fovY"])==cast(float)(45.0f*PI/180.0f),"HTTP_RECORDING_ORTHO_PLACEHOLDER");
+        }
+    }
+    assert(metas==1,"HTTP_RECORDING_ORTHO_HEADER_POPULATION");
 }
