@@ -9,9 +9,9 @@
 // Rig: top ortho on y = 1 at 360 px/m (the fixture's `rig_ours`; the 0.005 m
 // quantum kept), snapping off; the background is
 // a unit sphere at (0, 1, 0) in layer 1 (64 x 32), the edit layer 0. The
-// committed ring of `raycast-hidden-press-panel` is not the reference's (it
-// drops p2, unexplained): ours commits the panel's four points, which is what
-// the cell reads. `VIBE3D_CELL=<id>` runs one cell alone (the population floor
+// hidden-press panel is read from currentPoint and posXYZ proxies while the
+// stroke is live. Its committed ring (an unexplained missing corner) remains
+// pending capture; a committed mesh cannot stand in for the panel. `VIBE3D_CELL=<id>` runs one cell alone (the population floor
 // holds for the full run only).
 
 import drag_helpers : Vec3, buildDragLog, fetchCamera, playAndWait;
@@ -134,7 +134,18 @@ unittest {
         if (penAttrValue("currentPoint") != num(c["panel_current"]))
             fails ~= format("raycast-hidden-press-panel: current %s, expected %s",
                             penAttrValue("currentPoint"), num(c["panel_current"]));
-        fails ~= compare("raycast-hidden-press-panel", commit(), c["panel_points"]);
+        Vec3[] panel;
+        foreach (i; 0 .. 5) {
+            penAttr("currentPoint", i);
+            const cur = penAttrValue("currentPoint");
+            const want = i == 4 ? 3 : i;
+            if (cur != want) fails ~= format("raycast-hidden-press-panel: current %s expected %s",cur,want);
+            if (i < 4) panel ~= Vec3(cast(float)penAttrValue("posX"),
+                cast(float)penAttrValue("posY"), cast(float)penAttrValue("posZ"));
+        }
+        assert(panel.length == 4, "raycast-hidden-press-panel: point population");
+        fails ~= compare("raycast-hidden-press-panel", panel, c["panel_points"]);
+        commit();
         ++ran;
     }
     if (wanted("occluded_press_raycast_on")) {

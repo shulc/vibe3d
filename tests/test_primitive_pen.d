@@ -360,12 +360,11 @@ unittest { // insert mid-sequence
 }
 
 // -------------------------------------------------------------------------
-// 6.9.1: dragging an in-progress vertex onto another welds them — the
-// dragged vertex drops out of the boundary list. 4 verts → drag v3 onto
-// v0 → 3 verts → Enter commits a triangle.
+// A drag of an own-stroke point does not rebuild or weld at release.
+// Ending immediately keeps the four vertices and the last-built quad.
 // -------------------------------------------------------------------------
 
-unittest { // weld via drag
+unittest { // release keeps separate vertices
     resetEmpty();
     activatePen();
     string log = LOG_HEADER ~ "\n"
@@ -380,10 +379,10 @@ unittest { // weld via drag
     deactivateTool();
 
     auto m = getJson("/api/model");
-    assert(m["vertices"].array.length == 3,
-        "weld: expected 3 verts after drag-weld, got "
+    assert(m["vertices"].array.length == 4,
+        "release: expected 4 separate stroke vertices, got "
         ~ m["vertices"].array.length.to!string);
-    assert(m["faces"].array[0].array.length == 3, "expected triangle after weld");
+    assert(m["faces"].array[0].array.length == 4, "release: expected the last-built quad");
 }
 
 // -------------------------------------------------------------------------

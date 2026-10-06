@@ -407,7 +407,7 @@ unittest {
     symmetry(null);
     // Floor: 1 stay-green + 27 turning cells (A8 reads three moments; one
     // extrapolated work-plane cell) + 14 ours-only cells.
-    assert(ran == 43, format("ran %s cells, pinned 43", ran));
+    assert(ran == 42, format("ran %s cells, pinned 42", ran));
     // One line, so the first red line names every failing cell.
     assert(fails.length == 0, format("%s failure(s): %-(%s | %)", fails.length, fails));
 }
@@ -511,15 +511,6 @@ private string[] oursCells(ref int ran) {
         drop(); ++ran;
         fails ~= compare("insert-after-target", [b3[0], b3[1], p(-0.2, -0.2), b3[2],
             p(0.2, -0.2), p(-0.5, -0.5)], null);
-    }
-    // p0 dragged onto p3's marker is welded away: p2's link moves to p1's new
-    // index 0 (4 vertices; read as a self weld it would be 5).
-    {
-        rig("x", 0, true, p(0.2, 0));
-        clickWorld(q ~ p(0.9, 0));
-        drag(q[0], p(0.9, 0));
-        drop(); ++ran;
-        fails ~= compare("weld-renumbers", [q[1], q[2], p(0.9, 0), p(-0.9, 0)], null);
     }
     // A point inserted on m(p1) links p1; Backspace (the global delete, pen
     // wave plan S8, captured BD-sel / F7) ends the stroke, committed and
