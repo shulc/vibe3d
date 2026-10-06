@@ -931,10 +931,9 @@ private struct ToolSession {
     // redo of a parameter row the press or activation below it (L55). A
     // script-door arm opens nothing (C1-F3).
     private Rebindable!(const Command) openBlock_;
-    // K-RD rule 3: the latent tool and the history state its arm-undo left.
+    // K-RD rule 3: the latent tool and the undo top its arm-undo left.
     private string latentId_;
     private Rebindable!(const Command) latentTop_;
-    private size_t latentDepth_;
 
     this(Tool delegate() tool, CommandHistory history,
          void delegate() dropTool,
@@ -1004,11 +1003,9 @@ private struct ToolSession {
         if (r && history_.undoEntries().length != navBefore_.depth)
             settleAfterNavigation_(true);
         // K-RD rule 3: the undo that removed the activation row left the tool latent.
-        if (r && armRow != size_t.max && tool_() is null &&
-                history_.undoEntries().length <= armRow) {
+        if (r && armRow != size_t.max && history_.undoEntries().length <= armRow) {
             latentId_ = id;
             latentTop_ = undoTop_();
-            latentDepth_ = history_.undoEntries().length;
         }
         return r;
     }
@@ -1029,13 +1026,12 @@ private struct ToolSession {
     }
 
     /// A plain viewport press with no tool armed re-arms the latent tool (no
-    /// row), while the history is where its activation's undo left it.
+    /// row), while the undo top is where its activation's undo left it.
     bool armLatent() {
         const id = latentId_;
         latentId_ = null;
         if (id.length == 0 || tool_() !is null || rearmClosedTool_ is null ||
-            undoTop_() !is latentTop_.get ||
-            history_.undoEntries().length != latentDepth_) return false;
+            undoTop_() !is latentTop_.get) return false;
         history_.replayWithoutRecord(() => rearmClosedTool_(id));
         return tool_() !is null;
     }
@@ -1520,7 +1516,7 @@ private struct ToolSession {
     CloseOutcome close(CloseReason r, CommandDoor door, bool dropRow = false,
                        DropContext ctx = DropContext.init) {
         // A new close starts a new account, whatever an unfinished one left.
-        if (r != CloseReason.command) latentId_ = null;
+        latentId_ = null;
         pendingMark_ = false;
         pendingDropRow_ = false;
         closedRow_ = null;

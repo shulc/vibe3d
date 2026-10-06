@@ -232,6 +232,10 @@ unittest { // Ours, uncaptured (gap row): what forgets the latent tool, and whic
     latentRig();
     auto c = fetchCamera();
     const p = worldPixel(Vec3(0.15f, 0, 0.15f));
+    playAndWait(buildDragLog(c.vpX, c.vpY, c.width, c.height, p[0], p[1], p[0] + 40, p[1], 10, 0, 3));
+    quiesce();
+    assert(quadAtStart() && tool() == "", "a right press does not arm the latent tool");
+    latentRig();
     playAndWait(buildDragLog(c.vpX, c.vpY, c.width, c.height, p[0], p[1], p[0] + 40, p[1], 10, 1));
     quiesce();
     assert(quadAtStart() && tool() == "", "a Shift press does not arm the latent tool");
@@ -239,13 +243,13 @@ unittest { // Ours, uncaptured (gap row): what forgets the latent tool, and whic
     assert(!quadAtStart() && tool() == "move", "the plain press after it still does");
 }
 
-unittest { // Ours, uncaptured (gap row): Space and a type FLIP still write no drop row
-    foreach (door; ["space", "flip"]) {
+unittest { // Ours, uncaptured (gap row): Space and a type FLIP (geometry or Items) still write no drop row
+    foreach (door; ["space", "flip", "items"]) {
         rig("vertex");
         key(119, 26);
         dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
         const rows = depth();
-        if (door == "space") key(32, 44); else key(50, 31);
+        if (door == "space") key(32, 44); else if (door == "flip") key(50, 31); else key(53, 34);
         assert(tool() == "" && depth() == rows && topLabel() != "Tool Drop",
             format("%s: no drop row (depth %s -> %s, top '%s')", door, rows, depth(), topLabel()));
     }

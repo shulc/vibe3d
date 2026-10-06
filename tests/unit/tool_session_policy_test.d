@@ -438,9 +438,8 @@ unittest { // (3) the doors reach the tool session only through EditSession
            ~ "constarmRow=latentArmRow_();constid=armedId_;"
            ~ "constr=undoImpl_();if(r)openBlock_=null;"
            ~ "if(r&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
-           ~ "if(r&&armRow!=size_t.max&&tool_()is"~"null&&"
-           ~ "history_.undoEntries().length<=armRow){latentId_=id;"
-           ~ "latentTop_=undoTop_();latentDepth_=history_.undoEntries().length;}"
+           ~ "if(r&&armRow!=size_t.max&&history_.undoEntries().length<=armRow){"
+           ~ "latentId_=id;latentTop_=undoTop_();}"
            ~ "returnr;}",
            "S7a wiring census: ToolSession.undo body changed: " ~ squeeze(bodyAt(ts, "bool undo()")));
     inOrder(squeeze(bodyAt(ts, "bool redo()")),
