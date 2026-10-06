@@ -79,6 +79,7 @@ unittest {
         "scope-nonmanifold: raw three-face incidence is not a border witness");
 }
 
+version(TieFocused) {} else {
 // Compatibility observations execute the original c35 helpers with a subset
 // callback before reduction; the shared query then consumes their datums.
 unittest {
@@ -417,6 +418,8 @@ unittest {
     int index;assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.Vertex && index==0,"scope-all-vertex-raw-faces: actual primary compatibility point survives ordinary back-FACE refusal");
 }
 
+}
+
 private Mesh mixedTieRig(bool edge, bool compatibilityFirst, float ordinaryX,
                          float compatibilityX, float y, const ref Viewport vp,
                          out int ordinary, out int compatibility) {
@@ -449,12 +452,13 @@ private Mesh mixedTieRig(bool edge, bool compatibilityFirst, float ordinaryX,
     return m;
 }
 
-unittest {
+version(TieDatum) {} else version(TieTransformed) {} else unittest {
     import toolpipe.packets : SubjectPacket;
     const vp=viewport();auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
     size_t population;
     version(TieOrdinaryFirst)const orders=[false,true];else const orders=[true,false];
-    foreach(edge;[false,true])if(tieClass(edge))foreach(first;orders)foreach(mode;0..3)foreach(reciprocal;[false,true]) {
+    version(TieReciprocal)const reciprocals=[true,false];else const reciprocals=[false,true];
+    foreach(edge;[false,true])if(tieClass(edge))foreach(mode;0..3)foreach(first;orders)foreach(reciprocal;reciprocals) {
         const ox=mode==0?302.0f:reciprocal?297.0f:mode==1?304.0f:303.0f;
         const cx=mode==0?302.0f:reciprocal?(mode==1?304.0f:303.0f):297.0f;
         const y=mode==1?300.5f:300.0f;
@@ -485,7 +489,7 @@ unittest {
         const oldTarget=edge?subset.edge:subset.vertex;
         const expected=mode==0?(first?compatibility:ordinary):mode==1?ordinary:reciprocal?compatibility:ordinary;
         assert(now.kind==(edge?kCascadeEdge:kCascadeVertex) && now.index==expected && now.source==0 && now.owner.mesh is &m,
-            format("%s_%s: actual query identity %s expected %s",mode==0?"MIXED_TIE":mode==1?"MIXED_FINAL_ONLY_TIE":"MIXED_UNEQUAL",edge?"E":"V",now.index,expected));
+            format("%s_%s_%s: actual query identity %s expected %s",mode==0?"MIXED_TIE":mode==1?"MIXED_FINAL_ONLY_TIE":"MIXED_UNEQUAL",edge?"E":"V",first?"COMPAT_FIRST":"ORDINARY_FIRST",now.index,expected));
         assert(oldTarget.index==compatibility && oldTarget.reductionMetric==cMetric,
             edge?"MIXED_E: actual helper metric transport":"MIXED_V: actual helper metric transport");
         const ordinaryOnly=toolPressAt(300,300,vp,[primary],true,false,false);
@@ -563,7 +567,7 @@ unittest {
     }
 }
 
-unittest {
+version(TieMixedSource) {} else unittest {
     import document : ItemXform;
     const vp=viewport();ItemXform translated;translated.pos=Vec3(-.5f,0,0);
     foreach(edge;[false,true])if(tieClass(edge)) {
