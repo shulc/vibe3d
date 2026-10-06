@@ -157,9 +157,10 @@ struct ToolPressTarget {
 }
 
 // Same-class restoration uses original array order only under exact final and
-// integer-reduction ties within one source slot (task9528; private phase0/tie evidence).
-bool toolPressCandidateWins(float incomingDistance, ToolPressTarget incoming,
-                            float currentDistance, ToolPressTarget current) {
+// integer-reduction ties within one source slot (task9528;
+// doc/tasks/9528-evidence/shared_query_guide_continuation/phase0.md).
+bool toolPressCandidateWins(float incomingDistance, const ref ToolPressTarget incoming,
+                            float currentDistance, const ref ToolPressTarget current) pure nothrow @nogc @safe {
     return incomingDistance < currentDistance || (incomingDistance == currentDistance
         && incoming.source == current.source
         && incoming.reductionMetric == current.reductionMetric

@@ -259,11 +259,12 @@ unittest {
             const ox=mode==0?2.0f:reciprocal?-3.0f:mode==1?4.0f:3.0f;
             const cx=mode==0?2.0f:reciprocal?(mode==1?4.0f:3.0f):-3.0f;
             const y=mode==1?.0025f:0.0f;
-            Vec3[] vs;uint[][] faces;bool[] marked;long ordinary,compatibility;
+            Vec3[] vs;uint[][] faces,wires;bool[] marked;long ordinary,compatibility;
             if(edge) {
                 const values=first?[cx,ox]:[ox,cx];
                 foreach(x;values)vs~=[Vec3(x/200,0,.15),Vec3(x/200,0,-.15),Vec3((x+100)/200,0,-.15),Vec3((x+100)/200,0,.15)];
-                faces=[[0u,3u,2u,1u],[4u,7u,6u,5u]];marked=first?[true,false]:[false,true];
+                faces=first?[[0u,3u,2u,1u],[4u,7u,6u,5u]]:[[0u,3u,2u,1u]];
+                marked=first?[true,false]:[false];if(!first)wires=[[4u,5u]];
                 compatibility=first?0:4;ordinary=first?4:0;
             } else {
                 foreach(j;0..3)foreach(i;0..3)vs~=Vec3(ox/200+(i-1)*.3f,0,y+(j-1)*.3f);
@@ -271,7 +272,7 @@ unittest {
                 if(first){vs=[Vec3(cx/200,0,y)]~vs;foreach(ref f;faces)foreach(ref v;f)++v;compatibility=0;++ordinary;}
                 else{compatibility=vs.length;vs~=Vec3(cx/200,0,y);}
             }
-            auto at=rig(meshText(vs,faces,null,marked));
+            auto at=rig(meshText(vs,faces,wires,marked));
             import drag_helpers : viewportFromCameraMatrices, projectToWindow;
             const vp=viewportFromCameraMatrices();
             at=[300,300];
@@ -288,11 +289,21 @@ unittest {
                 float px,py;assert(projectToWindow(p,vp,px,py) && px==gx && abs(py-gy)<=.0000611f,
                     format("MIXED_HTTP_PROJECTION: exact fixture pixel %s,%s got%s,%s",gx,gy,px,py));
             }
-            rig(meshText(vs,faces,null,marked));
+            rig(meshText(vs,faces,wires,marked));
             assert(viewportFromCameraMatrices().view==vp.view && viewportFromCameraMatrices().proj==vp.proj,
                 "MIXED_HTTP_PROJECTION: loader retains actual camera used to construct fixture");
             penCommand("tool.pipe.attr snap enabled false");
             const before=getJson("/api/model");const selection=getJson("/api/selection");
+            if(edge) {
+                long ordinaryEdge=-1,compatibilityEdge=-1;
+                foreach(i,e;before["edges"].array) {
+                    const a=e.array[0].integer,b=e.array[1].integer;
+                    if((a==ordinary&&b==ordinary+1)||(b==ordinary&&a==ordinary+1))ordinaryEdge=i;
+                    if((a==compatibility&&b==compatibility+1)||(b==compatibility&&a==compatibility+1))compatibilityEdge=i;
+                }
+                assert(ordinaryEdge>=0 && compatibilityEdge>=0 && (compatibilityEdge<ordinaryEdge)==first,
+                    "MIXED_HTTP_E: actual loader preserves the intended original segment order");
+            }
             assert(before["vertices"].array.length==vs.length && before["faces"].array.length==faces.length,
                 "MIXED_HTTP: loader preserves populated vertex/face arrays");
             const expected=mode==0?(first?compatibility:ordinary):mode==1?ordinary:reciprocal?compatibility:ordinary;
