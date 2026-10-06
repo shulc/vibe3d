@@ -608,7 +608,7 @@ version(unittest) unittest {
     weldPen.params_.posX = .27;
     weldPen.onParamChanged("posX");
     assert(weldPen.geometryPoints_ == weldPen.vertices_ &&
-        weldPen.geometryPoints_[2].x == .27, "cached live typed geometry reset");
+        weldPen.geometryPoints_[2].x == .27f, "cached live typed geometry reset");
     weldPen.geometryPoints_[2].x = .28;
     weldPen.appendVertex(Vec3(.4,1,.4), -1);
     assert(weldPen.geometryPoints_ == weldPen.vertices_, "cached append geometry reset");
