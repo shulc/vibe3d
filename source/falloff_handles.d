@@ -181,8 +181,7 @@ class FalloffEndpointHandle {
         scope (exit) { lastMX = mx; lastMY = my; }
         if (dragAxis == 3)
             return grab.client(mx, my, DragFrame(DragKind.viewPlane), vp, skip);
-        skip = dragAxis < 0 || dragAxis > 2;
-        return skip ? pos : pos + screenAxisDelta(mx, my, lastMX, lastMY, pos, AXES[dragAxis], vp, skip);
+        return pos + screenAxisDelta(mx, my, lastMX, lastMY, pos, AXES[dragAxis], vp, skip);
     }
 }
 

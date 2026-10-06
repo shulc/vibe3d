@@ -215,33 +215,40 @@ unittest { // the offset haul (K-FH C-NT-off Array, fixtures K-FH.json KFH_NT_AR
     // q 0.005, one quad at y 0 with the off-lattice centroid c (0.2977, 0, 0.1979),
     // off0 (0.2, 0, 0.2), the press at c's pixel (P0 = q(hit) = (0.3, 0, 0.2)), a
     // (70, -42) px haul: offset (0.36, 0, 0.105). ABSOLUTE misses by 0.0023, RAW by
-    // 0.0007, REPLACE by 0.2.
+    // 0.0007, REPLACE by 0.2. The captured off0 sits on the lattice, so the second
+    // haul (the same law, no capture) takes off0.x 0.2044: H.x -0.2021 rounds the
+    // travel to 0.155, where H without off0, or without the press snap, gives 0.16.
     import core.thread : Thread;
     import core.time : dur;
     import pen_rig_helpers : penCameraAt, worldPixel;
-    auto r = postJson("/api/command", commandBody("scene.loadMesh",
-        `{"vertices":[[0.1977,0,0.0979],[0.3977,0,0.0979],[0.3977,0,0.2979],[0.1977,0,0.2979]],`
-        ~ `"faces":[[0,1,2,3]]}`));
-    assert(r["status"].str == "ok", "load failed: " ~ r.toString);
-    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
-    assert(r["status"].str == "ok", "select failed: " ~ r.toString);
-    cmd("viewport.view Top");
-    penCameraAt(Vec3(0, 0, 0), 440.0);
-    assert(getJson("/api/camera")["projKind"].str == "Ortho",
-        "rig: the top view must be orthographic");
-    cmd("tool.set " ~ TOOL ~ " on");
-    cmd("tool.attr " ~ TOOL ~ " offX 0.2");
-    cmd("tool.attr " ~ TOOL ~ " offY 0");
-    cmd("tool.attr " ~ TOOL ~ " offZ 0.2");
-    Thread.sleep(dur!"msecs"(300));
-    immutable int[2] p = worldPixel(Vec3(0.2977f, 0, 0.1979f));
-    auto cam = fetchCamera(BASE);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-        p[0], p[1], p[0] + 70, p[1] - 42, 12), BASE);
-    Thread.sleep(dur!"msecs"(200));
-    immutable double[3] o = [attrOf("offX"), attrOf("offY"), attrOf("offZ")];
-    assert(abs(o[0] - 0.36) <= 1e-4 && abs(o[1]) <= 1e-4 && abs(o[2] - 0.105) <= 1e-4,
-        format("array-offset C-NT-off: expected (0.36, 0, 0.105), got (%.6f, %.6f, %.6f)",
-               o[0], o[1], o[2]));
-    cmd("tool.set " ~ TOOL ~ " off");
+    void haul(double offX0, double[3] want) {
+        auto r = postJson("/api/command", commandBody("scene.loadMesh",
+            `{"vertices":[[0.1977,0,0.0979],[0.3977,0,0.0979],[0.3977,0,0.2979],[0.1977,0,0.2979]],`
+            ~ `"faces":[[0,1,2,3]]}`));
+        assert(r["status"].str == "ok", "load failed: " ~ r.toString);
+        r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
+        assert(r["status"].str == "ok", "select failed: " ~ r.toString);
+        cmd("viewport.view Top");
+        penCameraAt(Vec3(0, 0, 0), 440.0);
+        assert(getJson("/api/camera")["projKind"].str == "Ortho",
+            "rig: the top view must be orthographic");
+        cmd("tool.set " ~ TOOL ~ " on");
+        cmd(format("tool.attr %s offX %s", TOOL, offX0));
+        cmd("tool.attr " ~ TOOL ~ " offY 0");
+        cmd("tool.attr " ~ TOOL ~ " offZ 0.2");
+        Thread.sleep(dur!"msecs"(300));
+        immutable int[2] p = worldPixel(Vec3(0.2977f, 0, 0.1979f));
+        auto cam = fetchCamera(BASE);
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+            p[0], p[1], p[0] + 70, p[1] - 42, 12), BASE);
+        Thread.sleep(dur!"msecs"(200));
+        immutable double[3] o = [attrOf("offX"), attrOf("offY"), attrOf("offZ")];
+        assert(abs(o[0] - want[0]) <= 1e-4 && abs(o[1] - want[1]) <= 1e-4
+            && abs(o[2] - want[2]) <= 1e-4,
+            format("array-offset C-NT-off (off0.x %s): expected %s, got (%.6f, %.6f, %.6f)",
+                   offX0, want, o[0], o[1], o[2]));
+        cmd("tool.set " ~ TOOL ~ " off");
+    }
+    haul(0.2, [0.36, 0, 0.105]);
+    haul(0.2044, [0.3594, 0, 0.105]);
 }
