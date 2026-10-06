@@ -438,9 +438,9 @@ struct ToolSessionPolicy {
     bool armRestoresWholeImage;
     /// A user drop (`tool_activation_ownership.dropWritesRowFor`) writes a
     /// DROP lifecycle row whose undo re-arms the tool (wave plan 8640 S6;
-    /// captured X-esc/X-space/X-q/X-sel for the Topology Pen). The reference
-    /// loses the gesture on that undo; we keep it (L8, a deliberate
-    /// divergence, gap row (a)). Every other tool: no row, by data.
+    /// captured X-esc/X-space/X-q/X-sel for the Topology Pen). The current
+    /// pen policy keeps the gesture (L8 divergence, gap 419; conflicts with
+    /// the later reference-default instruction). Other row doors are policy data.
     bool dropWritesRow;
     /// A `tool.set` drop — Q / `tool.set <id> off`, or the current type's
     /// selection key (`DropContext.toolSetDoor`) — writes a drop row whose
