@@ -1584,7 +1584,8 @@ void slideUnderCamera(string id) {
 
 unittest {
     if (!cell("chord-slide-vertex-orbit")) return;
-    slideUnderCamera("chord-slide-vertex-orbit");
+    import topology_pen_session_helpers : perspectiveCtrlBackgroundPoint;
+    perspectiveCtrlBackgroundPoint(5);
 }
 
 unittest {

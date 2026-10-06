@@ -36,7 +36,7 @@ private Viewport orthoRig() {
                     orthographicMatrix(1.0f, 2.0f, 0.01f, 100.0f), 400, 200, 0, 0, eye);
 }
 
-unittest {
+version (PerspectiveGuideFocused) {} else unittest {
     Mesh far  = quadAt(-1.0f, -1.5f, 1.5f,    -0.75f,   0.75f);
     Mesh near = quadAt( 0.0f, -1.0f, 1.2025f, -0.6025f, 0.6f);
     setBackgroundSnapSources([cast(const(Mesh)*)&far, cast(const(Mesh)*)&near],
@@ -203,7 +203,7 @@ unittest {
            format("pass, Vector, double-sided: the far quad's back face (0, 0, -1); got %s", backFace));
 }
 
-unittest {
+version (PerspectiveGuideFocused) {} else unittest {
     import constraint : surfaceComponentMask, guideComponentEqual;
     assert(surfaceComponentMask(Vec3(0.4f, 0, 0.2f), Vec3(0.4f, -0.2f, 0.2f), 1) == 2,
            "surface-guide: a depth-only hit accepts the view-normal component");
@@ -233,7 +233,7 @@ unittest {
            "surface-guide: remote background misses despite nonempty inventory");
 }
 
-unittest {
+version (PerspectiveGuideFocused) {} else unittest {
     import constraint : guideComponentEqual, surfaceComponentMask;
     assert(guideComponentEqual(0, 0.9e-10), "guide-compare: absolute floor admits a smaller residual");
     assert(!guideComponentEqual(0, 1e-10) && !guideComponentEqual(0, -1e-10),
@@ -268,7 +268,7 @@ unittest {
     assert(changed == 6, "guide-mask: six represented-channel contrasts exercised");
 }
 
-unittest {
+version (PerspectiveGuideFocused) {} else unittest {
     import drag : HandleDrag, DragFrame, DragKind;
     import std.math : fabs;
     auto vp = Viewport(lookAt(Vec3(0, 5, 0), Vec3(0, 0, 0), Vec3(0, 0, -1)),
@@ -309,4 +309,61 @@ unittest {
         ++n;
     }
     assert(n == 2, "guided-depth: shallow and deep producer values exercised");
+}
+
+// Perspective point guide: original rolled camera and faceted surface (9528).
+unittest {
+    import view : View;
+    import math : Orientation;
+    import drag : HandleDrag, DragFrame, DragKind;
+    import toolpipe.packets : ConstrainGeom;
+    import std.file : readText;
+    import std.json : parseJSON;
+    const fixture=parseJSON(readText("tests/fixtures/topology_pen_session_rig.v3d"));
+    auto data=fixture["layers"][1]["mesh"];
+    Mesh background;
+    foreach(v;data["vertices"].array)background.vertices~=Vec3(cast(float)v[0].floating,cast(float)v[1].floating,cast(float)v[2].floating);
+    foreach(f;data["faces"].array){uint[] face;foreach(i;f.array)face~=cast(uint)i.integer;background.faces~=face;}
+    assert(background.vertices.length==482 && background.faces.length==512,"ORBIT_GUIDE_POPULATION: original background");
+    setBackgroundSnapSources([cast(const(Mesh)*)&background],[ModelSpace.world()]);
+    scope(exit)setBackgroundSnapSources(null,null);
+    auto camera=new View(0,0,1152,974);
+    camera.distance=4;camera.focus=Vec3(0,0,0);camera.setFovY(.9026584025557545);
+    camera.setOrientation(Orientation.fromBasis(Vec3(.2004414573f,.5011036434f,-.8418541208f),
+        Vec3(-.9284766909f,.3713906764f,0),Vec3(.3126567713f,.7816419283f,.5397051410f)));
+    auto vp=camera.viewport();
+    auto cs=new ConstrainStage();cs.enabled=true;cs.geom=ConstrainGeom.Point;
+    const u=Vec3(-.11f,.3f,.71f);
+    auto guided=cs.componentGuide(u,vp);
+    assert(guided.acceptedMask==7,"ORBIT_GUIDE_MASK: actual perspective BACK success accepts all components");
+    // Propagated binary32 projection/ray error, capture ray residual 8.1e-8.
+    assert((guided.valuesWorld-Vec3(.00826900759f,.5456922998f,.8359350448f)).length<2e-6f,
+        format("ORBIT_GUIDE_P: continuous projected U on original facets; got %s",guided.valuesWorld));
+    HandleDrag grab;const h=Vec3(-.1f,.3f,.9486833215f);grab.press(h,0,0);bool skip;
+    scope resolve=(Vec3 input){return cs.componentGuide(input,vp);};
+    const first=grab.client(4,0,DragFrame(DragKind.viewPlane),vp,skip,resolve)-h;
+    assert((first-Vec3(.00285084405f,.00596616715f,-.01110023379f)).length<2e-6f,"ORBIT_GUIDE_FIRST: first accepted motion elects Z");
+    const delta=grab.client(70,0,DragFrame(DragKind.viewPlane),vp,skip,resolve)-h;
+    assert((delta-Vec3(.1082690091f,.2456922878f,-.1127482767f)).length<2e-6f,"ORBIT_GUIDE_DELTA: accepted mask subtracts raw H");
+    const placed=cs.pass(h+Vec3(0,0,delta.z),vp);
+    assert((placed-Vec3(-.1092237979f,.3284087181f,.9295859933f)).length<2e-6f,"ORBIT_GEOMETRY: separate nearest pass consumes H+Z offset");
+    const ordinary=cs.guideEnvironment(false,vp);
+    assert(!ordinary.supported()&&cs.componentGuide(u,ordinary).acceptedMask==0,"ORBIT_REQUEST_OFF: ordinary free client does not request component guide");
+    foreach(geometry;[ConstrainGeom.Off,ConstrainGeom.Screen,ConstrainGeom.Vector]) {
+        cs.geom=geometry;const unsupported=cs.guideEnvironment(true,vp);
+        assert(!unsupported.supported()&&cs.componentGuide(u,unsupported).acceptedMask==0,"ORBIT_GEOMETRY_SCOPE: only captured perspective point geometry supported");
+    }
+    cs.geom=ConstrainGeom.Point;
+    auto ortho=orthoRig();const orthoOn=cs.guideEnvironment(true,ortho);
+    assert(!orthoOn.supported()&&cs.componentGuide(u,orthoOn).acceptedMask==0,"ORTHO_GEOMETRY_ON: preserve old recast scope");
+    cs.handle=false;assert(cs.componentGuide(u,vp).acceptedMask==0,"ORBIT_HANDLE_OFF: same hittable guide declines");
+    cs.handle=true;cs.enabled=false;assert(cs.componentGuide(u,vp).acceptedMask==0,"ORBIT_DISABLED: same hittable guide declines");
+    cs.enabled=true;assert(cs.componentGuide(Vec3(20,20,.71f),vp).acceptedMask==0,"ORBIT_MISS: real miss never accepts mask7");
+    import math : translationMatrix;
+    const shift=Vec3(2,-3,4);auto local=background;
+    local.vertices=background.vertices.dup;foreach(ref v;local.vertices)v=v-shift;
+    ModelSpace space;space.m=translationMatrix(shift);space.mInv=translationMatrix(-shift);space.isIdentity=false;
+    setBackgroundSnapSources([cast(const(Mesh)*)&local],[space]);
+    const transformed=cs.componentGuide(u,vp);
+    assert(transformed.acceptedMask==7&&(transformed.valuesWorld-guided.valuesWorld).length<2e-6f,"ORBIT_SOURCE_SPACE: equivalent transformed background resolves in world");
 }

@@ -226,6 +226,21 @@ unittest {
                  "source/tools/create/primitive_create_tool.d", "source/tools/create/create_common.d"])
         assert(f in code, "census walk missed " ~ f);
 
+    string[] clientFiles, guideFiles;
+    foreach (f,c;code) {
+        foreach (_;0..symbolTokenHits(c,f,".client").length)clientFiles~=f;
+        foreach (_;0..symbolTokenHits(c,f,".componentGuide").length)guideFiles~=f;
+    }
+    sort(clientFiles);sort(guideFiles);
+    assert(clientFiles == ["source/falloff_handles.d","source/tools/alignment/array_tool.d",
+        "source/tools/alignment/clone_tool.d","source/tools/alignment/mirror.d",
+        "source/tools/alignment/radial_sweep_tool.d","source/tools/create/box.d",
+        "source/tools/create/create_common.d","source/tools/create/primitive_create_tool.d",
+        "source/tools/edit/topology_pen/tool.d","source/tools/transform/move.d"],
+        "FREE_CLIENT_CENSUS: ten actual consuming calls retain their established frame/request policy");
+    assert(guideFiles == ["source/tools/edit/topology_pen/tool.d"],
+        "GUIDE_CONSUMER_CENSUS: only the evidenced requested pen policy activates this provider");
+
     // 2. Needles: every spelling of each deleted copy's identifier.
     foreach (f, c; code)
         foreach (w; ["snapClient", "dragRaw_", "handleMoverDrag", "moverHitTest"])
@@ -321,6 +336,7 @@ unittest {
     const h=Vec3(-.10000000149011612f,.30000001192092896f,.94868332147598267f);
     auto camera=new View(0,0,1152,974);camera.focus=Vec3(0,0,0);
     camera.distance=4;camera.setOrientation(Orientation.fromBasis(r,u,b));
+    camera.setFovY(.9026584025557545);
     auto actual=camera.viewport();auto independent=actual;
     independent.proj=perspectiveMatrix(cast(float)(2*atan(487/1004.7545731629976)),1152.0f/974,.001f,100);
     assert((actual.eye-Vec3(1.2506270853317702f,3.1265677133294263f,2.1588205639655564f)).length<1e-6f,
@@ -328,13 +344,22 @@ unittest {
     foreach(vp;[actual,independent]) {
         writefln("ORBIT-MATRICES view=%(%.9g,%) proj=%(%.9g,%)",vp.view[],vp.proj[]);
         float x,y,z;assert(projectToWindowFull(h,vp,x,y,z),"ORBIT_PRESS_MAP: populated raw handle projects");
+        assert(abs(x-371.5579634664997)<.002 && abs(y-424.5187742230622)<.002,
+            "ORBIT_PRESS_MAP: actual full-basis camera reproduces captured raw H landmark");
         const map=preparePlaneDrag(h,3,vp);assert(map.valid,"ORBIT_FROZEN_TRAVEL: real shared map exists");
+        assert(abs(10*viewWorldPerPixel(vp)-.031848573644)<2e-8 && abs(viewVectorQuantum(vp)-.005)<1e-9,"ORBIT_FROZEN_TRAVEL: captured finite step and quantum");
+        assert(abs(map.jacobian.i00+.0034355038038)<1e-8&&abs(map.jacobian.i01-.0005170967435)<1e-8&&abs(map.jacobian.i10+.0001271207562)<1e-8&&abs(map.jacobian.i11-.0036045987610)<1e-8,"ORBIT_FROZEN_TRAVEL: actual shared inverse of captured M");
         assert(map.jacobian.axisU==Vec3(0,0,1) && map.jacobian.axisV==Vec3(1,0,0),
             "ORBIT_FROZEN_TRAVEL: actual automatic world frame is Z/X");
         auto g=HandleDrag();g.press(h,0,0);bool skip;
         foreach(dx;[4,70]) {
             const t=h+map.jacobian.apply(dx,0);const rounded=vectorSnap(t,viewVectorQuantum(vp));
             const dq=g.client(dx,0,DragFrame(DragKind.viewPlane),vp,skip)-h;
+            if(dx==70) {
+                assert((t-Vec3(-.1088984544f,.3000000119f,.7081980552f)).length<2e-6f, "ORBIT_FROZEN_TRAVEL: frozen raw-H finite difference travel");
+                assert((rounded-Vec3(-.11f,.3f,.71f)).length<1e-6f, "ORBIT_FROZEN_TRAVEL: target quantum precedes guide");
+                assert((dq-Vec3(-.01f,0,-.24f)).length<1e-6f, "ORBIT_NO_GUIDE_ARITHMETIC: captured arithmetic oracle, no native OFF claim");
+            }
             Vec3 org,dir;float qx,qy,qz;assert(projectToWindowFull(rounded,vp,qx,qy,qz));
             screenPointToRay(qx,qy,vp,org,dir);
             writefln("ORBIT-PHASE0 lens=%s rect=%s,%s,%s,%s H=%s projection=%s,%s eye=%s focus=%s focal=%.9g k=%.9g q=%.9g inverse=%.9g,%.9g,%.9g,%.9g dx=%s T=%s U=%s DQ=%s guideRay=%s/%s",

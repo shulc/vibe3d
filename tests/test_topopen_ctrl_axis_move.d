@@ -315,3 +315,9 @@ unittest {
     if(output.length)write(output,format(`{"camera":%s,"before":%s,"pipe":%s,"press":[%s,%s],"outcome":%s,"after":%s}`,raw,before,pipe,x,y,outcome,getJson("/api/model")));
     assert(penMesh().nv==16,"ORBIT_PRESS_MAP: original populated foreground retained");
 }
+
+unittest {
+    if (!runs("perspective_ctrl_bg_point")) return;
+    import topology_pen_session_helpers : perspectiveCtrlBackgroundPoint;
+    perspectiveCtrlBackgroundPoint();
+}

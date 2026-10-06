@@ -349,3 +349,64 @@ void penArmUi(const PenRig rig) {
 }
 
 string penIdx(const long[] xs) { return "[" ~ xs.to!(string[]).join(",") ~ "]"; }
+
+// Exact matched pane, real Ctrl Move, separate nearest-surface geometry (9528).
+void perspectiveCtrlBackgroundPoint(ushort portOffset = 0) {
+    import perspective_camera_rig_helpers : PerspectiveCameraRig;
+    import std.path : buildPath, dirName;
+    import std.conv : to;
+    import std.process : environment;
+    import std.math : abs, round;
+    import http_client : postJson;
+    import std.stdio : writeln;
+    const originalPort=environment["VIBE3D_TEST_PORT"];
+    const allocatedPort=environment.get("VIBE3D_GUIDE_PORT","0").to!ushort;
+    auto editor=PerspectiveCameraRig.launch(allocatedPort ? cast(ushort)(allocatedPort+portOffset) : 0, allocatedPort ? 5 : 1);
+    scope(exit)editor.stop();
+    environment["VIBE3D_TEST_PORT"]=editor.port.to!string;
+    scope(exit)environment["VIBE3D_TEST_PORT"]=originalPort;
+    const r=penRigLoad(buildPath(dirName(__FILE_FULL_PATH__),"fixtures/topology_pen_session_rig.v3d"));
+    penArmUi(r);
+    const reply=postJson("/api/camera", `{"orientation":[0.2004414573445789,0.5011036433614473,-0.8418541208472314,-0.9284766908852593,0.37139067635410367,0,0.3126567713329426,0.7816419283323567,0.5397051409913891],"distance":4,"focus":{"x":0,"y":0,"z":0},"fovY":0.9026584025557545}`);
+    assert(reply["status"].str=="ok","ORBIT_PRESS_MAP: matched camera takes full pose/lens");
+    const camera=getJson("/api/camera");
+    assert(camera["width"].integer==1152&&camera["height"].integer==974,"ORBIT_PRESS_MAP: actual matched layout");
+    const before=penMesh();const history=penHistoryLen();
+    const bg=getJson("/api/model?layer=1")["vertices"];
+    assert(before.nv==16&&before.nf==9&&before.edges==24&&bg.array.length==482,"ORBIT_POPULATION: original FG/BG rig");
+    const vp=viewportFromCameraMatrices();float x,y;
+    assert(projectToWindow(Vec3(-.1f,.3f,.9486833215f),vp,x,y));
+    assert(abs(x-521.5579634664997)<.002&&abs(y-452.5187742230622)<.002,"ORBIT_PRESS_MAP: original raw H landmark");
+    size_t policies;
+    foreach(stage;getJson("/api/toolpipe")["stages"].array)if(stage["task"].str=="CONS") {
+        assert(stage["attrs"]["enabled"].str=="true"&&stage["attrs"]["handle"].str=="true"&&stage["attrs"]["geometry"].str=="point","ORBIT_POLICY: effective point/handle guide after activation");
+        ++policies;
+    }
+    assert(policies==1,"ORBIT_POLICY: exactly one actual stage");
+    const at=[cast(int)round(x),cast(int)round(y)];
+    penPlay(penMotion(20,at[0],at[1],0,PEN_KMOD_LCTRL)~"\n"~penButton(40,true,1,at[0],at[1],PEN_KMOD_LCTRL),"perspective Ctrl press");
+    const press=getJson("/api/tool/state");
+    assert(press["moveArmed"].type==typeof(press["moveArmed"].type).true_&&press["slideArmed"].type==typeof(press["slideArmed"].type).false_,"ORBIT_MOVE_ARM: Ctrl requests actual Move, not legacy option");
+    assert(press["grabbedVert"].integer==13,"ORBIT_GRAB: original vertex13 authors the Move");
+    double offset(string channel) {
+        const reply=penPost("/api/command","tool.attr mesh.topoPen "~channel~" ?");
+        assert(reply["status"].str=="ok","ORBIT_OFFSET: actual parameter read");
+        return reply["value"].type==JSONType.string ? reply["value"].str.to!double : penNum(reply["value"]);
+    }
+    penPlay(penMotion(60,at[0]+2,at[1],1,PEN_KMOD_LCTRL)~"\n"~penMotion(80,at[0]+4,at[1],1,PEN_KMOD_LCTRL),"first eligible Ctrl election");
+    assert(abs(offset("offsetX"))<1e-7&&abs(offset("offsetY"))<1e-7&&abs(offset("offsetZ")+.01110023379)<2e-6,"ORBIT_FIRST_Z: first eligible guided motion publishes only Z");
+    string motions;foreach(i;3..36)motions~=penMotion(40+20*i,at[0]+2*i,at[1],1,PEN_KMOD_LCTRL)~"\n";
+    penPlay(motions,"35 acknowledged Ctrl motions");
+    const held=getJson("/api/tool/state");writeln("ORBIT-CTRL-HELD ",held);
+    assert(abs(offset("offsetX"))<1e-7&&abs(offset("offsetY"))<1e-7&&abs(offset("offsetZ")+.11274827668678489)<2e-6,"ORBIT_FINAL_OFFSET: latched Z scalar precedes independent geometry");
+    penPlay(penButton(780,false,1,at[0]+70,at[1],PEN_KMOD_LCTRL),"perspective Ctrl release");
+    const state=getJson("/api/tool/state");writeln("ORBIT-CTRL-RELEASE ",state);
+    const after=penMesh();
+    assert(penMoved(after,before)==[13L]&&after.faces==before.faces&&after.edges==24,"ORBIT_SUBSET: only captured v13 moves, topology fixed");
+    const want=[-.10922379791736603,.32840871810913086,.9295859932899475];
+    foreach(i;0..3)assert(abs(after.pos[13][i]-want[i])<2e-6,"ORBIT_GEOMETRY: independent nearestBG(H+Offset), not guide P");
+    assert(getJson("/api/model?layer=1")["vertices"]==bg,"ORBIT_BACKGROUND: no authored BG write");
+    assert(penHistoryLen()==history+1,"ORBIT_HISTORY: exactly one press row");
+    penCtrlZ("perspective Ctrl undo1");penCtrlZ("perspective Ctrl undo2");
+    assert(penMesh()==before,"ORBIT_UNDO: full foreground restored after captured sequence");
+}

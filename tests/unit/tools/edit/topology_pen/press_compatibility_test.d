@@ -25,7 +25,7 @@ private void projected(Vec3 p, float x, float y, const ref Viewport vp) {
         format("legacy-rig: projected (%s,%s), expected (%s,%s)",px,py,x,y));
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import toolpipe.packets : SubjectPacket;
     import std.algorithm : reverse;
     const vp=viewport();auto m=makeGridPlane(2);auto t=new TopologyPenTool();t.meshSrc_=()=>&m;
@@ -37,7 +37,7 @@ unittest {
         "ordinary-control: captured front-FACE interior admits before legacy probes");
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     const vp=viewport(); const ms=ModelSpace.world();
     Mesh isolated; isolated.vertices=[point(300,300,vp)];
     const iso=toolPressSupport(isolated,ms,vp);
@@ -82,7 +82,7 @@ unittest {
 version(TieFocused) {} else {
 // Compatibility observations execute the original c35 helpers with a subset
 // callback before reduction; the shared query then consumes their datums.
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     const vp=viewport(); const ms=ModelSpace.world();
     auto t=new TopologyPenTool(); Mesh m; t.meshSrc_=()=>&m;
     const primary=ToolPressSource(&m,ms);
@@ -136,7 +136,7 @@ unittest {
     }
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import document : ItemXform, primaryModelSpaceResolver;
     import math : closestPointOnSegmentToRay, dot;
     import bvh_pick : BvhPick, SurfaceHit;
@@ -194,7 +194,7 @@ unittest {
     writefln("LEGACY-LOCAL-BASELINE local_t=%s world_t=%s local_world=%s world_point=%s local_visible=false world_visible=true",localT,worldT,oldWorld,wp);
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import toolpipe.packets : SubjectPacket;
     const vp=viewport(); const ms=ModelSpace.world();
     SubjectPacket subject; subject.pickFacing=true; subject.pickFacesDrawn=false;
@@ -240,7 +240,7 @@ unittest {
         "scope-island: unrelated subdivision does not admit back-facing ordinary interior");
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import toolpipe.packets : SubjectPacket;
     const vp=viewport(); const ms=ModelSpace.world();
     auto t=new TopologyPenTool(); Mesh m; t.meshSrc_=()=>&m;
@@ -265,7 +265,7 @@ unittest {
     }
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import operator : VectorStack;
     import toolpipe.packets : SubjectPacket;
     import bindbc.sdl;
@@ -288,7 +288,7 @@ unittest {
     writefln("PRESS-EVENT-BASELINE foreground_queries=1 queried_sources=2 support_preparations=2 idle_foreground_queries=0 idle_support_preparations=0");
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import toolpipe.packets : SubjectPacket;
     const vp=viewport(); const ms=ModelSpace.world();
     auto t=new TopologyPenTool(); Mesh m; t.meshSrc_=()=>&m;
@@ -317,7 +317,7 @@ unittest {
 }
 
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     alias Marks = Mesh.Marks;
     import toolpipe.packets : SubjectPacket;
     const vp=viewport();auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
@@ -337,7 +337,7 @@ unittest {
     assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.Edge && index==rawEdge,"scope-nonmanifold-outcome: original raw edge survives ordinary back-FACE refusal");
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import document : ItemXform, primaryModelSpaceResolver;
     import toolpipe.packets : SubjectPacket;
     const vp=viewport();ItemXform xf;xf.pos=Vec3(.3,0,.2);xf.rot=Vec3(0,90,0);xf.scl=Vec3(2,3,.5);
@@ -362,7 +362,7 @@ unittest {
     }
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     const vp=viewport();Mesh m;m.vertices=[point(297,300,vp),point(303.25f,270,vp),point(303.25f,330,vp)];m.edges=[[1u,2u]];
     auto t=new TopologyPenTool();t.meshSrc_=()=>&m;const primary=ToolPressSource(&m,ModelSpace.world());
     const old=t.legacyPressGather(300,300,vp,false,primary);
@@ -372,7 +372,7 @@ unittest {
     int index;assert(t.resolveGrabTarget(300,300,vp,index,false)==MoveElem.Edge && index==0,"LEGACY_MIDPOINT: actual shared query retains old edge identity");
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import document : ItemXform, primaryModelSpaceResolver;
     import math : closestPointOnSegmentToRay, dot;
     const vp=viewport();ItemXform xf;xf.rot=Vec3(0,0,45);xf.scl=Vec3(3,.3,.1);const ms=xf.modelSpace();
@@ -389,14 +389,14 @@ unittest {
     assert(t.resolveGrabTarget(300,305,vp,index,true,null,ToolQueryIntent.legacyHover)==MoveElem.Edge && index==4,"LEGACY_LOCAL_WORLD_DATUM: actual legacy hover preserves admitted edge identity");
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     const vp=viewport();Mesh m;m.vertices=[Vec3(-.5,0,-.5),Vec3(.5,0,-.5),Vec3(.5,0,.5),Vec3(-.5,0,.5)];
     m.faces=[[0u,3u,2u,1u]];m.rebuildEdgesFromFaces();m.buildLoops();auto t=new TopologyPenTool();t.meshSrc_=()=>&m;
     int index;assert(t.resolveGrabTarget(300,300,vp,index,true,null,ToolQueryIntent.legacyHover)==MoveElem.None && index==-1,
         "LEGACY_GPU_AVAILABILITY: original primary face gather is unavailable without its GPU provider");
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import toolpipe.packets : SubjectPacket;
     const vp=viewport();auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
     const saved=toolPressSourcesResolver;scope(exit)toolPressSourcesResolver=saved;toolPressSourcesResolver=()=>cast(ToolPressSource[])null;
@@ -408,7 +408,7 @@ unittest {
     assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.Vertex && index==0,"press-preparation: c35 primary compatibility eligibility survives absent foreground sources");
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import toolpipe.packets : SubjectPacket;
     // Raw face incidence remains authoritative when an input has no edge array.
     const vp=viewport();Mesh m;m.vertices=[Vec3(0,0,0),Vec3(.15,0,-.05),Vec3(.15,0,.05)];m.faces=[[0u],[0u,1u,2u]];
@@ -452,7 +452,7 @@ private Mesh mixedTieRig(bool edge, bool compatibilityFirst, float ordinaryX,
     return m;
 }
 
-version(TieDatum) {} else version(TieTransformed) {} else unittest {
+version(TieDatum) {} else version(TieTransformed) {} else version (PerspectivePenFocused) {} else unittest {
     import toolpipe.packets : SubjectPacket;
     const vp=viewport();auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
     size_t population;
@@ -531,7 +531,7 @@ private bool tieClass(bool edge) {
     else return true;
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     const vp=viewport();Mesh m;auto t=new TopologyPenTool();t.meshSrc_=()=>&m;
     float vMetric=123,eMetric=456;
     assert(t.findSourceVertex(300,300,vp,8,null,&vMetric)==-1 && t.findRingSeedEdge(300,300,vp,8,null,&eMetric)==-1,
@@ -540,7 +540,7 @@ unittest {
     assert(isNaN(vMetric) && isNaN(eMetric),"MISSING_METRIC: declined optional outputs explicitly absent");
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import document : ItemXform, primaryModelSpaceResolver;
     import toolpipe.packets : SubjectPacket;
     import math : aimSpace;
@@ -567,7 +567,7 @@ unittest {
     }
 }
 
-version(TieMixedSource) {} else unittest {
+version(TieMixedSource) {} else version (PerspectivePenFocused) {} else unittest {
     import document : ItemXform;
     const vp=viewport();ItemXform translated;translated.pos=Vec3(-.5f,0,0);
     foreach(edge;[false,true])if(tieClass(edge)) {
@@ -592,7 +592,7 @@ version(TieMixedSource) {} else unittest {
     }
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import std.math : isNaN;
     const vp=viewport();foreach(edge;[false,true])if(tieClass(edge)) {
         int ordinary,compatibility;auto m=mixedTieRig(edge,true,302,302,300,vp,ordinary,compatibility);
@@ -616,7 +616,7 @@ unittest {
     }
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import math : closestOnSegment2D;
     const vp=viewport();int ordinary,compatibility;auto m=mixedTieRig(true,true,303.5f,303.5f,300,vp,ordinary,compatibility);
     m.vertices[4]=point(303.5f,290,vp);m.vertices[5]=point(303.5f,311,vp);
@@ -634,7 +634,7 @@ unittest {
         "MIXED_EDGE_MID_DATUM: winning edge carries its paired midpoint through final election");
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     const vp=viewport();foreach(edge;[false,true])if(tieClass(edge)) {
         int ordinary,compatibility;auto m=mixedTieRig(edge,true,edge?308.5f:307.5f,edge?308.0f:305.5f,300.5f,vp,ordinary,compatibility);
         if(edge) {
@@ -676,7 +676,7 @@ unittest {
     }
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import std.algorithm : reverse;
     const vp=viewport();foreach(edge;[false,true])if(tieClass(edge))foreach(reversed;[false,true]) {
         Mesh m;const top=edge?270:300,bottom=edge?330:400;
@@ -692,7 +692,7 @@ unittest {
     }
 }
 
-unittest {
+version (PerspectivePenFocused) {} else unittest {
     import std.math : isNaN;
     const vp=viewport();foreach(edge;[false,true])if(tieClass(edge)) {
         int ordinary,compatibility;auto m=mixedTieRig(edge,true,300,300,300,vp,ordinary,compatibility);
@@ -707,4 +707,80 @@ unittest {
         assert(hit.index==ordinary && isNaN(edge?old.edge.reductionMetric:old.vertex.reductionMetric),
             "MISSING_METRIC_DEFAULT: query-only datum absence cannot become a synthetic zero tie");
     }
+}
+
+// Shared provider policy reaches the actual pen call, including old fallback.
+unittest {
+    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import toolpipe.stages.constrain : ConstrainStage;
+    import toolpipe.packets : ConstrainGeom;
+    import snap : setBackgroundSnapSources, backgroundSourcesFull;
+    import view : View;
+    import math : Orientation, translationMatrix;
+    import drag : HandleDrag, DragFrame, DragKind;
+    import bvh_pick : SurfaceHit;
+    import std.file : readText;
+    import std.json : parseJSON;
+    auto data=parseJSON(readText("tests/fixtures/topology_pen_session_rig.v3d"))["layers"][1]["mesh"];
+    Mesh background;
+    foreach(v;data["vertices"].array)background.vertices~=Vec3(cast(float)v[0].floating,cast(float)v[1].floating,cast(float)v[2].floating);
+    foreach(f;data["faces"].array){uint[] face;foreach(i;f.array)face~=cast(uint)i.integer;background.faces~=face;}
+    assert(background.vertices.length==482&&background.faces.length==512,"PEN_GUIDE_POPULATION: original actual source");
+    auto camera=new View(0,0,1152,974);camera.distance=4;camera.focus=Vec3(0,0,0);camera.setFovY(.9026584025557545);
+    camera.setOrientation(Orientation.fromBasis(Vec3(.2004414573f,.5011036434f,-.8418541208f),
+        Vec3(-.9284766909f,.3713906764f,0),Vec3(.3126567713f,.7816419283f,.5397051410f)));
+    const vp=camera.viewport();const h=Vec3(-.1f,.3f,.9486833215f);
+    auto saved=g_pipeCtx;scope(exit)g_pipeCtx=saved;
+    import constraint : BackgroundSource;
+    class CountingConstrain : ConstrainStage {
+        size_t queries;
+        override bool rayHit(Vec3 org,Vec3 dir,out SurfaceHit hit,const(BackgroundSource)[] sources,bool productPoint=false) {
+            ++queries;
+            return super.rayHit(org,dir,hit,sources,productPoint);
+        }
+    }
+    auto ctx=new ToolPipeContext();auto cs=new CountingConstrain();ctx.pipeline.add(cs);g_pipeCtx=ctx;
+    scope(exit)setBackgroundSnapSources(null,null);
+    Mesh foreground;foreground.vertices=[h];
+    auto pen=new TopologyPenTool();pen.meshSrc_=()=>&foreground;
+    version (GuideCostObservation) {
+        import core.memory : GC;
+        import std.datetime.stopwatch : StopWatch, AutoStart;
+        cs.enabled=true;cs.handle=true;cs.geom=ConstrainGeom.Point;pen.moveAxisLock_=true;
+        setBackgroundSnapSources([cast(const(Mesh)*)&background],[ModelSpace.world()]);
+        Vec3 off;bool accepted;
+        assert(pen.grabOffset(h,70,0,vp,off,accepted));
+        cs.queries=0;const allocated=GC.stats().allocatedInCurrentThread;auto clock=StopWatch(AutoStart.yes);
+        size_t events;foreach(i;1..36) {assert(pen.grabOffset(h,2*i,0,vp,off,accepted));++events;}
+        const elapsed=clock.peek.total!"usecs";const bytes=GC.stats().allocatedInCurrentThread-allocated;
+        assert(events==35&&cs.queries==35,"GUIDE_COST_POPULATION: original 35 evaluated events issue 35 surface queries");
+        writefln("GUIDE-COST bg_vertices=%s bg_faces=%s events=%s queries=%s bytes=%s elapsed_us=%s final_offset=%s accepted=%s",background.vertices.length,background.faces.length,events,cs.queries,bytes,elapsed,off,accepted);
+        return;
+    }
+    size_t population;
+    foreach(which;0..7) {
+        cs.enabled=which!=2;cs.handle=which!=3;cs.geom=which==4?ConstrainGeom.Screen:ConstrainGeom.Point;
+        pen.moveAxisLock_=which!=1;
+        setBackgroundSnapSources(which==5?null:[cast(const(Mesh)*)&background],which==5?null:[ModelSpace.world()]);
+        if(which==6) {
+            ModelSpace remote;remote.m=translationMatrix(Vec3(30,0,0));remote.mInv=translationMatrix(Vec3(-30,0,0));remote.isIdentity=false;
+            setBackgroundSnapSources([cast(const(Mesh)*)&background],[remote]);
+        }
+        Vec3 off;bool accepted;cs.queries=0;
+        assert(pen.grabOffset(h,70,0,vp,off,accepted),"PEN_GUIDE_MAP: actual translator valid");
+        assert(cs.queries==(which>=5?2:1),"PEN_GUIDE_QUERY_COUNT: one supported success or preserved recast; failed perspective attempt adds one query");
+        if(which==0) {
+            assert(accepted&&(off-Vec3(.1082690091f,.2456922878f,-.1127482767f)).length<2e-6f,"PEN_GUIDE_ACCEPTED: actual production provider before election");
+        } else {
+            HandleDrag grab;grab.press(h,0,0);bool skip;
+            auto old=grab.client(70,0,DragFrame(DragKind.viewPlane),vp,skip);
+            float x,y,z;Vec3 org,dir;SurfaceHit hit;
+            assert(projectToWindowFull(old,vp,x,y,z),"PEN_FALLBACK_PROJECTION: old client valid");
+            screenPointToRay(x,y,vp,org,dir);if(cs.rayHit(org,dir,hit,backgroundSourcesFull()))old=hit.point;
+            assert(!accepted&&(off-(old-h)).length<2e-6f,
+                format("PEN_FALLBACK_%s: ordinary/disabled/handle/geometry/absent/remote retain old recast, got %s expected %s",which,off,old-h));
+        }
+        ++population;
+    }
+    assert(population==7,"PEN_GUIDE_POPULATION: positive plus six independent exclusions");
 }

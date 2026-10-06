@@ -222,8 +222,17 @@ unittest {
     if(!runs("secondary_rebind"))return;
     const secondary=meshText([Vec3(-.4,2,-.4),Vec3(.4,2,-.4),Vec3(.4,2,.4),Vec3(-.4,2,.4)],[[0u,3u,2u,1u]]);
     const at=rig(meshText(null),secondary,"shaded");penCommand("tool.attr mesh.topoPen mode point");const selection=getJson("/api/selection");
+    const primaryBefore=getJson("/api/model?layer=0"), secondaryBefore=getJson("/api/model?layer=1");
     event(at,"SDL_MOUSEBUTTONDOWN");assert(getJson("/api/tool/state")["moveArmed"].type==JSONType.false_ && getJson("/api/tool/state")["placeArmed"].type==JSONType.false_,"secondary-rebind: queried secondary is refused by bound empty primary");
     event(at,"SDL_MOUSEBUTTONUP");assert(readVerts().length==0 && getJson("/api/selection")==selection && history()==1,"secondary-rebind: existing refused row, empty geometry and selection preserved");
+    const refused=getJson("/api/tool/state");
+    assert(refused["moveArmed"].type==JSONType.false_&&refused["placeArmed"].type==JSONType.false_,"SECONDARY_UNARMED: refused release remains unarmed");
+    foreach(layer;0..2) {
+        const after=getJson(format("/api/model?layer=%s",layer));const before=layer==0?primaryBefore:secondaryBefore;
+        foreach(key;["vertices","faces","edges"])assert(after[key]==before[key],"SECONDARY_FULL_MESH: both sources preserve all geometry after refusal");
+    }
+    const rows=getJson("/api/history")["undo"].array;
+    assert(rows.length==1&&rows[0]["label"].str=="Topology Place",format("SECONDARY_L5_ROW: exactly one existing refused-press row identity: %s",rows));
     penCommand("layer.select index:1");penCommand("history.clear");const before=readVerts();
     assert(before.length==4,"secondary-rebind: the same actual source is now primary");
     arm(at,"face",0);event([at[0]+20,at[1]],"SDL_MOUSEMOTION",1,20);event([at[0]+20,at[1]],"SDL_MOUSEBUTTONUP");

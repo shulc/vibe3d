@@ -102,6 +102,19 @@ unittest {
            "prepared constrain projection omitted the remembered state");
 }
 
+// Requested free component guide plus effective provider state; policy is data.
+struct GuideEnvironment {
+    bool requested;
+    ConstrainGeom geometry;
+    Viewport viewport;
+    bool supported() const {
+        import math : isOrtho, lockedViewAxis;
+        return requested && (isOrtho(viewport)
+            ? geometry == ConstrainGeom.Off && lockedViewAxis(viewport) >= 0
+            : geometry == ConstrainGeom.Point);
+    }
+}
+
 class ConstrainStage : Stage, Operator, ToolSwitchTransient {
 private:
     ConstrainPacket _publishedPacket;
@@ -147,14 +160,37 @@ public:
         return surfaceOnRay(org, dir, hit);
     }
 
-    /// Accepted surface components for a free orthographic handle client.
+    GuideEnvironment guideEnvironment(bool requested, const ref Viewport vp) const {
+        return GuideEnvironment(requested, geom, vp);
+    }
+
     auto componentGuide(Vec3 incoming, const ref Viewport vp) {
+        const env = guideEnvironment(true, vp);
+        return componentGuide(incoming, env);
+    }
+
+    // The successful perspective BACK producer accepts all components; the
+    // orthographic producer retains its represented-component comparison
+    // (9528, doc/tool_perspective_component_guide_amendment_2026-10-06.md).
+    auto componentGuide(Vec3 incoming, const ref GuideEnvironment env) {
         import drag : ComponentGuide;
-        import math : lockedViewAxis, eyeVectorAt;
+        import math : lockedViewAxis, eyeVectorAt, isOrtho, projectToWindowFull, screenPointToRay;
         import constraint : surfaceComponentMask;
         ComponentGuide result;
+        if (!env.supported()) return result;
+        const vp = env.viewport;
+        if (!isOrtho(vp)) {
+            float x, y, z;
+            Vec3 org, dir;
+            if (!projectToWindowFull(incoming, vp, x, y, z)) return result;
+            screenPointToRay(x, y, vp, org, dir);
+            SurfaceHit hit;
+            if (!surfaceOnRay(org, dir, hit)) return result;
+            result.valuesWorld = offsetPoint(hit.point, hit.normal);
+            result.acceptedMask = 7;
+            return result;
+        }
         const axis = lockedViewAxis(vp);
-        if (axis < 0) return result;
         const dir = eyeVectorAt(vp, incoming);
         Vec3 org = incoming;
         immutable float sign = axis == 0 ? -dir.x : axis == 1 ? -dir.y : -dir.z;

@@ -383,6 +383,7 @@ private:
     // The edge/polygon Move's shared offset at the last evaluation (zero on a
     // click or a miss): what the release writes to the Offset (L18).
     package Vec3         moveOffset_ = Vec3(0, 0, 0);
+    private bool         movePerspectiveGuideAccepted_;
     // The axis move (K-FH rule 5): the offset keeps ONE world axis
     // (`moveAxis_`, -1 until elected), chosen once by `onElectedAxis`.
     package bool         moveAxisLock_ = false;
@@ -4108,7 +4109,7 @@ public:
         immutable int dx = px - moveStartX_, dy = py - moveStartY_;
         moveOffset_ = Vec3(0, 0, 0);
         Vec3 off;
-        if (releaseIsClick(dx, dy) || !grabOffset(moveAnchor_, dx, dy, vp, off))
+        if (releaseIsClick(dx, dy) || !grabOffset(moveAnchor_, dx, dy, vp, off, movePerspectiveGuideAccepted_))
             return moveBase_.dup;
         if (moveAxisLock_) off = onElectedAxis(off);
         moveOffset_ = off;
@@ -4130,25 +4131,38 @@ public:
         return ms.toLocalPoint(aW + kW) - moveAnchor_;
     }
 
-    // Ctrl-axis Move with geometry OFF consumes the gated ortho component
-    // guide before world-axis election (9528, K-DW2/GUIDE_PRECISION_10660).
-    // Ordinary Move and geometry ON retain their captured recast route.
+    // Requested component guides precede world-axis election; accepted
+    // perspective point guides skip the legacy recast, then the independent
+    // geometry pass consumes H+Offset (9528, perspective guide amendment).
     package bool grabOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
                             out Vec3 offLocal) {
+        bool accepted;
+        return grabOffset(anchorLocal, dx, dy, vp, offLocal, accepted);
+    }
+
+    package bool grabOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
+                            out Vec3 offLocal, out bool acceptedPerspective) {
         const ms = primaryModelSpace();
         HandleDrag grab;
         grab.press(ms.toWorldPoint(anchorLocal), 0, 0);
         bool skip;
         auto cs = liveConstrainStage();
         import drag : ComponentGuideResolver;
-        import math : lockedViewAxis;
-        const guidedRoute = moveAxisLock_ && cs !is null && cs.geom == ConstrainGeom.Off
-            && lockedViewAxis(vp) >= 0;
+        import math : isOrtho;
+        const env = cs is null ? typeof(cs.guideEnvironment(false, vp)).init
+                               : cs.guideEnvironment(moveAxisLock_, vp);
+        const guidedRoute = cs !is null && env.supported();
+        bool acceptedGuide;
         scope ComponentGuideResolver guide;
-        if (guidedRoute) guide = (Vec3 u) { return cs.componentGuide(u, vp); };
+        if (guidedRoute) guide = (Vec3 u) {
+            const result = cs.componentGuide(u, env);
+            acceptedGuide = result.acceptedMask != 0;
+            return result;
+        };
         Vec3 toW = grab.client(dx, dy, DragFrame(DragKind.viewPlane), vp, skip, guide);
         if (skip) return false;
-        if (!guidedRoute) {
+        acceptedPerspective = acceptedGuide && !isOrtho(vp);
+        if (!guidedRoute || (!isOrtho(vp) && !acceptedGuide)) {
             float qx, qy, qz;
             Vec3 hitW;
             if (projectToWindowFull(toW, vp, qx, qy, qz) && backgroundRayHit(qx, qy, vp, hitW)) toW = hitW;
@@ -4292,10 +4306,11 @@ public:
 
     // The live Offset of a Move (S7a): for an edge or a polygon the shared
     // offset its kernel applied (`moveOffset_`, L18: anchor + offset is ON the
-    // background); for a vertex its travel since the press. Raw: no
+    // background); an accepted perspective guide publishes the elected offset,
+    // and other vertex routes publish travel since the press. Raw: no
     // notification, no row.
     private void noteMoveOffset() {
-        if (moveElem_ != MoveElem.Vertex) { writeOffset(moveOffset_); return; }
+        if (moveElem_ != MoveElem.Vertex || movePerspectiveGuideAccepted_) { writeOffset(moveOffset_); return; }
         auto m = mesh;
         if (m is null || moveVerts_.length == 0 || moveBase_.length != moveVerts_.length)
             return;

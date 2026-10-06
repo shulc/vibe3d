@@ -5,7 +5,7 @@ import core.time : msecs;
 import std.process : Pid, Config, spawnProcess, wait, tryWait, thisProcessID, kill;
 import std.socket : Socket,AddressFamily,SocketType,ProtocolType,InternetAddress,SocketOptionLevel,SocketOption;
 import std.stdio : File,stdin;
-import std.file : mkdirRecurse,rmdirRecurse,exists,readText,getcwd,symlink;
+import std.file : mkdirRecurse,rmdirRecurse,exists,readText,getcwd,symlink,readLink;
 import std.path : buildPath;
 import std.conv : to;
 import http_client : getJson,postJson;
@@ -14,10 +14,15 @@ struct PerspectiveCameraRig {
     string base,root,logPath;
     ushort port;
     Pid pid;
-    static PerspectiveCameraRig launch() {
+    static PerspectiveCameraRig launch(ushort requestedPort = 0, ushort portCount = 1) {
         PerspectiveCameraRig r;
         auto s=new Socket(AddressFamily.INET,SocketType.STREAM,ProtocolType.TCP);
-        s.bind(new InternetAddress(InternetAddress.ADDR_ANY,0));
+        bool bound;
+        foreach(offset;0..portCount) {
+            try {s.bind(new InternetAddress(InternetAddress.ADDR_ANY,requestedPort ? cast(ushort)(requestedPort+offset) : 0));bound=true;break;}
+            catch(Exception e) {if(offset+1==portCount)throw e;}
+        }
+        assert(bound,"OWNED_CAMERA_PORT: strict bind in requested allocation");
         r.port=(cast(InternetAddress)s.localAddress).port;s.close();
         r.base="http://127.0.0.1:"~r.port.to!string;
         r.root=buildPath("/tmp","vibe3d_perspective_camera_"~thisProcessID().to!string~"_"~r.port.to!string);
@@ -39,6 +44,7 @@ struct PerspectiveCameraRig {
             Thread.sleep(25.msecs);
         }
         assert(ready,"OWNED_CAMERA_REGISTRY: "~readText(r.logPath));
+        assert(readLink("/proc/"~r.pid.processID.to!string~"/exe")==buildPath(repo,"vibe3d"),"OWNED_CAMERA_EXE: queried editor is this built worktree executable");
         const c=getJson("/api/camera",r.base);
         assert(c["width"].integer==1152&&c["height"].integer==974&&
                c["vpX"].integer==150&&c["vpY"].integer==28,"OWNED_CAMERA_REAL_LAYOUT");
