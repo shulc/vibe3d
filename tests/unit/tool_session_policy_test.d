@@ -2307,6 +2307,9 @@ unittest { // (10b)
     assert(dropRow == ["tools.edit.poly_bevel.PolyBevelTool",
                        "tools.transform.xfrm_transform.XfrmTransformTool"],
            format("9508 policy classes: toolSetDropRow declared by %s", dropRow));
+    const completion = squeeze(blankNonCode(readText("source/app.d")));
+    assert(completion.count("row.onCompleteDropUndo=(stringid,ulongtoken){session.completeDropUndo(id,token);};") == 1,
+        "drop completion must be wired exactly once by the production lifecycle factory");
     assert(latent == ["tools.transform.xfrm_transform.XfrmTransformTool"],
            format("9508 policy classes: armUndoLeavesToolLatent declared by %s", latent));
     auto app = blankNonCode(readText("source/app.d"));

@@ -458,6 +458,8 @@ unittest { // A restored tool uses the final mesh as its next press basis at eve
         scene["vertices"] = JSONValue(points);
         scene["faces"] = JSONValue([JSONValue([JSONValue(0), JSONValue(3), JSONValue(2), JSONValue(1)])]);
         cmd(commandBody("scene.loadMesh", scene.toString));
+        cmd("viewport.view Top");
+        penCameraAt(Vec3(0.15f, 0, 0.15f), 440);
         cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));
         ui("tool.set " ~ id ~ " on");
         cmd("tool.pipe.attr snap enabled false");
