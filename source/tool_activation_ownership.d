@@ -243,6 +243,9 @@ struct DropContext {
     bool clearsTask;
     bool flipsSelType;
     SelType selBefore;
+    /// The drop is a `tool.set` off / flush (K-CD4 CD4cQ, CD_SAME_UNDO): Q or
+    /// `tool.set <id> off`, or a selection-type key to the current type.
+    bool toolSetDoor;
 }
 
 /// Task 5911, "re-arm doors after a break": fresh user arms install every slot

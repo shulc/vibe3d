@@ -2780,8 +2780,9 @@ void main(string[] args) {
         // the row the close wrote.
         // S6: whether this drop writes a drop row — read BEFORE the door
         // destroys the tool (its policy, and the transition's table row).
-        const bool dropRow = activeTool !is null &&
-            activeTool.sessionPolicy().dropWritesRow && dropWritesRowFor(why);
+        const bool dropRow = activeTool !is null && dropWritesRowFor(why) &&
+            (activeTool.sessionPolicy().dropWritesRow ||
+             (activeTool.sessionPolicy().toolSetDropRow && ctx.toolSetDoor));
         // A close or door that throws dropped no tool: no drop row from it.
         scope(failure) if (session !is null) session.abandonDropRow();
         if (session !is null)
@@ -2847,7 +2848,8 @@ void main(string[] args) {
         const t = geometrySelType(mode);
         const before = currentSelType(selTypeOrder);   // S6: the drop row's restore
         const flipped = sessionOwner.switchGeometryType(mode);
-        dropActiveToolWith(ToolTransition.selTypeFlipDrop, DropContext(false, true, before));
+        dropActiveToolWith(ToolTransition.selTypeFlipDrop,
+            DropContext(false, true, before, !flipped));
         if (flipped) noteCurrentType(t);  // current-type changed (bus, drained at flush)
     }
 
@@ -2916,7 +2918,8 @@ void main(string[] args) {
         import change_bus : noteCurrentType;
         const before = currentSelType(selTypeOrder);   // S6: the drop row's restore
         const flipped = sessionOwner.switchItemType();
-        dropActiveToolWith(ToolTransition.selTypeFlipDrop, DropContext(false, true, before));
+        dropActiveToolWith(ToolTransition.selTypeFlipDrop,
+            DropContext(false, true, before, !flipped));
         if (flipped) noteCurrentType(SelType.Item);
     }
 
@@ -3917,7 +3920,9 @@ void main(string[] args) {
         }
     };
     toolHost.deactivate = () {
-        dropActiveTool(ToolTransition.explicitDrop);
+        DropContext ctx;
+        ctx.toolSetDoor = true;   // Q / `tool.set <id> off` (task 9508)
+        dropActiveToolWith(ToolTransition.explicitDrop, ctx);
     };
 
     // TASK 3130 — the DOCUMENT-REPLACE disarm seam (source/tool_disarm.d).

@@ -2969,8 +2969,7 @@ public:
         static immutable ToolSessionPolicy defaults = {
             activationRow: true, commandClose: CommandClose.allDoors,
             sessionSteps: true, historyRecordedSteps: true,
-            dropWritesRow: true, dropUndoRevertsSession: true,
-            armUndoLeavesToolLatent: true };
+            toolSetDropRow: true, armUndoLeavesToolLatent: true };
         ToolSessionPolicy policy = defaults;
         policy.activationRow = activationHistoryRow;
         policy.recordedFirstUndoEndsTool = recordedFirstUndoEndsTool;

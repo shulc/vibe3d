@@ -769,7 +769,7 @@ struct DropRowSpec {
     string previousId;
     ulong previousToken;
     DropContext ctx;
-    bool revertsSession;   // the policy's `dropUndoRevertsSession`
+    bool revertsSession;   // the policy's `toolSetDropRow`
 }
 
 /// What a navigation saw BEFORE it ran: the undo depth, so the settle after
@@ -1530,7 +1530,7 @@ private struct ToolSession {
         if (dropRow && r == CloseReason.drop && t is bound_ && armedId_.length) {
             pendingDropRow_ = true;
             pendingDrop_ = DropRowSpec(armedId_.idup, closingToken_, ctx,
-                t.sessionPolicy().dropUndoRevertsSession);
+                t.sessionPolicy().toolSetDropRow);
         }
         if (topologyPending_ && reporting_(t) &&
             t.sessionPolicy().historyTopologySteps)
