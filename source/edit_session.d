@@ -1623,7 +1623,6 @@ private struct ToolSession {
     }
 
     void noteArm(string id, ulong token, bool postmodeArmed = true) {
-        latentId_ = null;
         auto t = tool_();
         bound_ = t;
         instanceActive_ = false;   // every bind is a new instance (M-init)

@@ -1935,34 +1935,35 @@ final class CommandHistory {
         if (_lockout) return false;
         if (undoStack.length == 0) return false;
 
-        auto entry = undoStack[$ - 1];
-        undoStack.length -= 1;
-
         // Suspend to keep internal sub-commands off the stack.
         auto prev = _state;
         _state = UndoState.Suspend;
         scope(exit) _state = prev;
 
-        // The failed entry has already been removed and no redo entry is
-        // created. This preserves the old stuck-stack avoidance for the new
-        // one-record step; revert()==false still makes undo() return false.
-        if (!entry.cmd.revert()) return false;
-
+        // K-RD rule 2: a drop row that reverts its session takes the dropped
+        // session's rows below it in the same step (`session`, to redo).
         import commands.tool.lifecycle : ToolArmLifecyclePolicy;
-        auto armPolicy = cast(ToolArmLifecyclePolicy)entry.cmd;
-        if (armPolicy !is null && !armPolicy.carriesRedoAfterUndo())
-            redoStack.length = 0;
-        else
-            redoStack = [entry] ~ redoStack;
-        // K-RD rule 2: a drop row that reverts its session takes
-        // the dropped session's rows below it in the same step (to redo).
-        while (armPolicy !is null && armPolicy.revertsSession() && undoStack.length &&
-               !(undoStack[$ - 1].flags & HistoryFlags.ToolLifecycle) &&
-               undoStack[$ - 1].cmd.sessionToken() == armPolicy.previousToken()) {
-            auto row = undoStack[$ - 1];
+        ulong session;
+        for (bool first = true; undoStack.length; first = false) {
+            auto entry = undoStack[$ - 1];
+            if (!first && ((entry.flags & HistoryFlags.ToolLifecycle) ||
+                           entry.cmd.sessionToken() != session)) break;
             undoStack.length -= 1;
-            if (!row.cmd.revert()) break;
-            redoStack = [row] ~ redoStack;
+            // The failed entry has already been removed and no redo entry is
+            // created. This preserves the old stuck-stack avoidance for the new
+            // one-record step; revert()==false still makes undo() return false.
+            if (!entry.cmd.revert()) {
+                if (first) return false;
+                break;
+            }
+            auto armPolicy = cast(ToolArmLifecyclePolicy)entry.cmd;
+            if (armPolicy !is null && !armPolicy.carriesRedoAfterUndo())
+                redoStack.length = 0;
+            else
+                redoStack = [entry] ~ redoStack;
+            if (first && armPolicy !is null && armPolicy.revertsSession())
+                session = armPolicy.previousToken();
+            if (session == 0) break;
         }
 
         ++_undoEpoch;  // bump exactly once per successful undo

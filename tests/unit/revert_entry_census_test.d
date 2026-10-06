@@ -553,12 +553,10 @@ private static immutable LedgerRow[] kRecorded = [
       ~ "renamed the enclosing function: `Command.revert` is `final` now and "
       ~ "`revertImpl` is the override point, so the `func` column moved with "
       ~ "it. The call itself did not move and is still inside undo()'s batch."),
-    LedgerRow("CommandHistory.undo", 2,
+    LedgerRow("CommandHistory.undo", 1,
         "undo(), task 3694 common strict-LIFO tail — replaces the retired "
       ~ "ToolLifecycle / Case A / Case B calls and remains inside undo()'s "
-      ~ "single beginDeliveryBatchGlobal(); task 9508 adds the second: a drop "
-      ~ "row that reverts its session reverts the dropped session's rows below "
-      ~ "it in the same step, inside the same batch"),
+      ~ "single beginDeliveryBatchGlobal()"),
     LedgerRow("CommandHistory.fire", 1,
         "fire()'s live-command revert before the re-fire's apply — inside "
       ~ "fire()'s own beginDeliveryBatchGlobal() at :1507"),

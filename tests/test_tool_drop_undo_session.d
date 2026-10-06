@@ -208,13 +208,47 @@ unittest { // RD_DROP_Z0D: after the undo that removes the arming the tool is la
     assert(quadGap(verts(), moved) <= 1.5 / 440.0 && tool() == "move" && gizmoDrawn(),
         format("RD_DROP_Z0D: the drag runs a new move session (%s, tool '%s', gizmo %s)",
             verts(), tool(), gizmoDrawn()));
-    // Control: a latent tool is only re-armed by a viewport press — a reset
-    // forgets it, so a drag after a reset moves nothing.
-    undo();
-    undo();
+}
+
+/// The latent state of RD_DROP_Z0D: W, one drag, Ctrl+Z ×2.
+private void latentRig() {
     rig("vertex");
+    key(119, 26);
+    dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
+    undo();
+    undo();
+    assert(quadAtStart() && tool() == "" && depth() == 0, "latent rig: drag and arming undone");
+}
+
+unittest { // Ours, uncaptured (gap row): what forgets the latent tool, and which press arms it
+    latentRig();
+    rig("vertex");   // a reset (a drop door with no tool) forgets it
     dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
     assert(quadAtStart() && tool() == "", "a reset forgets the latent tool");
+    latentRig();
+    cmd(commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));   // a new row
+    dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
+    assert(quadAtStart() && tool() == "", "a recorded command forgets the latent tool");
+    latentRig();
+    auto c = fetchCamera();
+    const p = worldPixel(Vec3(0.15f, 0, 0.15f));
+    playAndWait(buildDragLog(c.vpX, c.vpY, c.width, c.height, p[0], p[1], p[0] + 40, p[1], 10, 1));
+    quiesce();
+    assert(quadAtStart() && tool() == "", "a Shift press does not arm the latent tool");
+    dragPx(p, 40, 0);
+    assert(!quadAtStart() && tool() == "move", "the plain press after it still does");
+}
+
+unittest { // Ours, uncaptured (gap row): Space and a type FLIP still write no drop row
+    foreach (door; ["space", "flip"]) {
+        rig("vertex");
+        key(119, 26);
+        dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
+        const rows = depth();
+        if (door == "space") key(32, 44); else key(50, 31);
+        assert(tool() == "" && depth() == rows && topLabel() != "Tool Drop",
+            format("%s: no drop row (depth %s -> %s, top '%s')", door, rows, depth(), topLabel()));
+    }
 }
 
 unittest { // CD_Q_TM_R, ours: a GET read is no command (cdCell reads between the
