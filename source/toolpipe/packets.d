@@ -879,7 +879,7 @@ struct ConstrainHitPacket {
 enum HoverTargetKind { None, Vertex, Edge, Face }
 
 /// `vert`/`edge` are indices into the WINNING background layer's own mesh
-/// (`ConstrainHitPacket.layer`/`.nearestVert`/`.nearestEdge`) — meaningful
+/// (`HoverTarget.layer`), independently of the hit face's source — meaningful
 /// only for the matching `kind` (e.g. `vert` is -1 whenever `kind !=
 /// Vertex`).
 struct HoverTarget {

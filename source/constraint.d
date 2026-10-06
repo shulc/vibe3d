@@ -733,6 +733,7 @@ unittest { // the THREE measured numbers, and the two refutations behind them
 /// `HoverTargetKind.None`; a hit that is behind the camera when projected
 /// (should not normally happen — the hit itself came from a ray through
 /// the same viewport) also degrades to `None` rather than asserting.
+// Packet-only fixture adaptor; production supplies explicit pixel/source admission.
 version(unittest) HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
                                const ref Viewport vp, float thPx)
 {
@@ -745,7 +746,8 @@ version(unittest) HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
 
     // The hit polygon's nearest vertex and edge within `thPx`, ranked by the
     // shared element-pick comparator (`hover_state.electElement`).
-    import hover_state : PickGather, electElement, kCascadeVertex, kCascadeEdge;
+    import hover_state : PickGather, toolPressAt, ToolPressPolicy, ToolQueryIntent,
+        LegacyPressGather, ToolPressTarget, kCascadeVertex, kCascadeEdge;
     PickGather g;
     float vx, vy, vz, ea0, ea1, ea2, eb0, eb1, eb2;
     if (h.nearestVert >= 0 && projectToWindowFull(h.nearestVertPos, vp, vx, vy, vz)) {
@@ -761,7 +763,16 @@ version(unittest) HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
             g.edgeMid = (((ea0 + eb0) * 0.5f - ax) ^^ 2 + ((ea1 + eb1) * 0.5f - ay) ^^ 2) ^^ 0.5f;
         }
     }
-    switch (electElement(g)) {
+    ToolPressPolicy policy;
+    policy.intent = ToolQueryIntent.legacyHover;
+    policy.legacy = (const(bool)[] vertices, const(bool)[] edges, const(bool)[] faces) {
+        LegacyPressGather old;
+        old.distances = g;
+        old.vertex = ToolPressTarget(kCascadeVertex, h.nearestVert);
+        old.edge = ToolPressTarget(kCascadeEdge, h.nearestEdge);
+        return old;
+    };
+    switch (toolPressAt(0, 0, vp, policy).kind) {
         case kCascadeVertex: r.kind = HoverTargetKind.Vertex; r.vert = h.nearestVert; break;
         case kCascadeEdge:   r.kind = HoverTargetKind.Edge;   r.edge = h.nearestEdge; break;
         default: break;
