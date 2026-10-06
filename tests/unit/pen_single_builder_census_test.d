@@ -22,7 +22,7 @@ import std.path : buildPath, dirName;
 
 import mesh : Mesh;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
-    countOccurrences, isIdentChar;
+    countOccurrences, isIdentChar, balancedSpan;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -195,11 +195,31 @@ unittest // the facing is decided at one site; the builder orders every ring ali
         "PenBuildPurpose.Commit &&") == 1, "literal counter is blind");
     assert(countOccurrences(gcode, "PenBuildPurpose.Commit &&") == 0,
         "pen_geometry.d gates the flip on the Commit purpose again");
-    const purposeReads = countIdent(gcode, "purpose");
+    // Builder purpose excludes the actual SnapGuide aggregate's separate
+    // protocol. Pin its population and meaning, rather than exempting a file.
+    import std.string : indexOf;
+    import tools.create.pen_geometry : LineGuide;
+    import toolpipe.guide : SnapGuide, SnapPurpose;
+    static assert(is(LineGuide : SnapGuide));
+    static assert(is(typeof((new LineGuide).purpose()) == SnapPurpose));
+    enum guideHead = "class " ~ __traits(identifier, LineGuide) ~ " : SnapGuide";
+    assert(countOccurrences(gcode, guideHead) == 1,
+        "polygon SnapGuide aggregate population: expected one actual LineGuide");
+    const guideAt = gcode.indexOf(guideHead);
+    const guideOpen = gcode.indexOf('{', guideAt);
+    const guide = balancedSpan(gcode, guideOpen, '{', '}');
+    assert(guide.length > 100,
+        "polygon SnapGuide aggregate scope is missing or truncated");
+    const builderCode = gcode[0 .. guideAt] ~ gcode[guideOpen + guide.length .. $];
+    const purposeReads = countIdent(builderCode, "purpose");
     assert(purposeReads == 5, format("pen_geometry.d names `purpose` %s times; "
         ~ "expected 5 (parameter + the selectNew marks, S8; its hand-off to the "
         ~ "non-wall shapes, S9: argument + parameter; the sub-minimum Commit "
         ~ "face)", purposeReads));
+    assert(countIdent(guide, "purpose") == 1,
+        "polygon SnapGuide purpose population: expected one protocol getter");
+    assert((new LineGuide).purpose() == SnapPurpose.placement,
+        "polygon SnapGuide protocol must declare placement purpose");
     // The ring routine is the builder's: one definition, one call.
     assert(countIdent(gcode, "penRingOrder") == 3, format("pen_geometry.d names "
         ~ "penRingOrder %s times; expected 3 (definition, click order, uncaptured-mode fallback)", countIdent(gcode, "penRingOrder")));
