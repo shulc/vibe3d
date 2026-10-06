@@ -7,6 +7,7 @@ module tests.unit.tool_attr_bounds_test;
 import params : Param, ParamFlags;
 import tool_attr_bounds : applyToolAttrBound, clampStoredToBounds, kToolAttrBounds;
 import toolpipe.stages.constrain;
+import toolpipe.stage;
 
 unittest { // population floor: the table's row count, measured
     assert(kToolAttrBounds.length == 65, "rows: measured 65");
@@ -157,4 +158,42 @@ unittest { // normalization respects a stage override's refusal boundary
     assert(stage.received.length && stage.received.to!float == 0,
            "the stage setter did not receive the normalized offset");
     assert(stage.offset == 0.75f, "normalizing a refused write changed the live stage");
+    command.setAttrValue("0.123456789");
+    assertThrown!Exception(command.apply());
+    assert(stage.received.to!float == 0.123456789f,
+           "an in-range offset lost precision during normalization");
+}
+
+private final class AxisStageProbe : toolpipe.stage.Stage {
+    int axis = 2;
+    override string id() const { return "prim.cube"; }
+    override ubyte ordinal() const { return toolpipe.stage.ordCons; }
+    override Param[] params() {
+        import params : IntEnumEntry;
+        static immutable IntEnumEntry[] xyz = [IntEnumEntry(0, "x", "X"),
+            IntEnumEntry(1, "y", "Y"), IntEnumEntry(2, "z", "Z")];
+        return [Param.intEnum_("axis", "Axis", &axis, xyz, 2)];
+    }
+}
+
+unittest { // numeric enum rows retain the wire tag the stage setter expects
+    import commands.tool.pipe : ToolPipeAttrCommand;
+    import commands.tool.host : ToolHost;
+    import editmode : EditMode;
+    import mesh : makeCube;
+    import view : View;
+    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    auto saved = g_pipeCtx;
+    scope(exit) g_pipeCtx = saved;
+    g_pipeCtx = new ToolPipeContext;
+    auto stage = new AxisStageProbe;
+    g_pipeCtx.pipeline.add(stage);
+    auto mesh = makeCube();
+    auto view = new View(0, 0, 800, 600);
+    auto command = new ToolPipeAttrCommand(&mesh, view, EditMode.Vertices, ToolHost.init);
+    command.setStageId(stage.id());
+    command.setAttrName("axis");
+    command.setAttrValue("y");
+    assert(command.apply() && stage.axis == 1,
+           "a normalized enum row lost its stage setter's wire tag");
 }

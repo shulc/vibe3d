@@ -8,10 +8,10 @@ import commands.tool.host : ToolHost;
 
 import toolpipe.pipeline : g_pipeCtx, noteUserStageChoice;
 import toolpipe.stage    : Stage;
-import params : Param, paramToJson, parseInto, stringifyParam, wireArgs;
+import params : Param, paramToJson, parseInto, wireArgs;
 import tool_attr_bounds : applyToolAttrBound;
 
-import std.json : JSONValue;
+import std.json : JSONValue, JSONType;
 
 // ---------------------------------------------------------------------------
 // ToolPipeAttrCommand — `tool.pipe.attr <stageId> <name> <value>`.
@@ -122,7 +122,9 @@ class ToolPipeAttrCommand : Command {
             p.iptr = &storage.i;
             if (!parseInto(p, attrValue_))
                 throw new Exception("tool.pipe.attr: invalid bounded value '" ~ attrValue_ ~ "'");
-            attrValue_ = stringifyParam(p);
+            const normalized = paramToJson(p);
+            attrValue_ = normalized.type == JSONType.string
+                ? normalized.str : normalized.toString();
             break;
         }
         if (!matched.setAttr(attrName_, attrValue_))

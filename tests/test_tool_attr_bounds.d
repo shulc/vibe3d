@@ -319,6 +319,10 @@ unittest { // pipe writes clamp even a hidden config row; other stages stay free
     ok("tool.pipe.attr constrain enabled true");
     assert(num(cmd("tool.pipe.attr constrain offset ?")["value"]) == 0,
            "hidden constraint offset did not clamp to 0");
+    ok("tool.pipe.attr constrain offset 0.123456789");
+    assert(abs(num(cmd("tool.pipe.attr constrain offset ?")["value"])
+        - cast(double)0.123456789f) < 1e-14,
+           "an in-range offset lost precision at the stage door");
     ok("tool.pipe.attr constrain offset 1000000");
     assert(num(cmd("tool.pipe.attr constrain offset ?")["value"]) == 1000000,
            "constraint offset acquired an upper bound");
