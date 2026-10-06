@@ -687,6 +687,7 @@ tools.edit.topology_pen.gestures_test
 tools.edit.topology_pen.reapply_test
 tools.harness.hostspace
 tools.harness.runslots
+tools.slice.slice_tool
 tools.transform.arcball
 tools.transform.item_xform_kernels
 tools.transform.morph_route
