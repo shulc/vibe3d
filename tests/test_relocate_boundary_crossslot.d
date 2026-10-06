@@ -28,6 +28,7 @@ import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
 import std.conv : to;
+import std.format : format;
 
 import drag_helpers;
 
@@ -43,6 +44,11 @@ void cmd(string line) {
 
 long undoCount() {
     return getJson("/api/history")["undo"].array.length;
+}
+
+string armedTool() {
+    auto t = getJson("/api/input/context")["tool"];
+    return t.type == JSONType.string ? t.str : "";
 }
 
 void settle() {
@@ -256,47 +262,42 @@ unittest {
     settle();
     auto v6Run2 = vert(6);
 
-    // Drop ⇒ commits Move run 2.
+    // Drop ⇒ commits Move run 2 and writes ONE drop row (K-RD CD_Q_TM, task 9508).
     postJson("/api/script", "tool.set Transform off");
     settle();
 
     long stackAfter = undoCount();
-    assert(stackAfter == stackBefore + 3,
-        "drag + (RZ attr) + relocate + drag + drop should produce THREE undo "
-        ~ "entries (Move run 1, Rotate run, Move run 2); got "
+    assert(stackAfter == stackBefore + 4,
+        "drag + (RZ attr) + relocate + drag + drop should produce THREE run "
+        ~ "entries (Move run 1, Rotate run, Move run 2) and the drop row; got "
         ~ (stackAfter - stackBefore).to!string);
 
-    // PROVENANCE of the FIRST Move run via geometry across the Ctrl+Z chain.
-    // The undo stack top-to-bottom is: Move run 2, Rotate run, Move run 1.
-    //   Ctrl+Z #1 pops Move run 2  → v6 back to the post-rotate state.
-    //   Ctrl+Z #2 pops the Rotate run.
-    //   Ctrl+Z #3 pops Move run 1  → v6 back to the pristine cube corner.
-    // The first Move run's +X displacement therefore survives until the LAST
-    // pop — it did NOT leak across the rotate boundary. A regression where the
-    // wrapper Move commit silently no-ops would mis-stage this geometry, not
-    // just the count.
-    postJson("/api/command", commandBody("history.undo"));   // pop Move run 2
+    // Ctrl+Z #1 undoes the drop with the whole session (K-RD CD_Q2_TM): the
+    // cube is pristine and the preset is armed again.
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6Undo1 = vert(6);
-    assert(fabs(v6Undo1[0] - v6AfterRot[0]) < 1e-3 &&
-           fabs(v6Undo1[1] - v6AfterRot[1]) < 1e-3 &&
-           fabs(v6Undo1[2] - v6AfterRot[2]) < 1e-3,
-        "Ctrl+Z #1 should pop Move run 2 (back to the post-rotate state); got ("
+    assert(fabs(v6Undo1[0] - 0.5) < 1e-3 &&
+           fabs(v6Undo1[1] - 0.5) < 1e-3 &&
+           fabs(v6Undo1[2] - 0.5) < 1e-3 && armedTool() == "Transform",
+        "Ctrl+Z #1 should revert the whole session and re-arm (K-RD CD_Q2_TM); got ("
         ~ v6Undo1[0].to!string ~ "," ~ v6Undo1[1].to!string ~ ","
-        ~ v6Undo1[2].to!string ~ ") want ("
-        ~ v6AfterRot[0].to!string ~ "," ~ v6AfterRot[1].to!string ~ ","
-        ~ v6AfterRot[2].to!string ~ ")");
+        ~ v6Undo1[2].to!string ~ ") tool '" ~ armedTool() ~ "'");
 
-    postJson("/api/command", commandBody("history.undo"));   // pop Rotate run
-    settle();
-
-    postJson("/api/command", commandBody("history.undo"));   // pop Move run 1
-    settle();
-    auto v6Undo3 = vert(6);
-    assert(fabs(v6Undo3[0] - 0.5) < 1e-3 &&
-           fabs(v6Undo3[1] - 0.5) < 1e-3 &&
-           fabs(v6Undo3[2] - 0.5) < 1e-3,
-        "Ctrl+Z #3 should pop Move run 1 (geometry back to the pristine cube); "
-        ~ "got (" ~ v6Undo3[0].to!string ~ "," ~ v6Undo3[1].to!string ~ ","
-        ~ v6Undo3[2].to!string ~ ")");
+    // PROVENANCE of the three runs, replayed oldest first from the redo stack:
+    //   redo #1 = Move run 1 → v6 at its post-run-1 position;
+    //   redo #2 = the Rotate run → the post-rotate state;
+    //   redo #3 = Move run 2 → the final state.
+    // The first Move run's +X displacement is its own row — it did NOT leak
+    // across the rotate boundary. A regression where the wrapper Move commit
+    // silently no-ops would mis-stage this geometry, not just the count.
+    const double[3][3] wants = [v6Run1, v6AfterRot, v6Run2];
+    foreach (i, want; wants) {
+        postJson("/api/command", commandBody("history.redo"));
+        settle();
+        auto got = vert(6);
+        assert(fabs(got[0] - want[0]) < 1e-3 && fabs(got[1] - want[1]) < 1e-3 &&
+               fabs(got[2] - want[2]) < 1e-3,
+            format("redo #%s should restage run %s; got %s want %s", i + 1, i + 1, got, want));
+    }
 }

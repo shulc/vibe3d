@@ -66,6 +66,11 @@ long undoCount() {
     return getJson("/api/history")["undo"].array.length;
 }
 
+string armedTool() {
+    auto t = getJson("/api/input/context")["tool"];
+    return t.type == JSONType.string ? t.str : "";
+}
+
 void cmd(string line) {
     auto r = postJson("/api/command", line);
     assert(r["status"].str == "ok", "/api/command '" ~ line ~ "' failed: "
@@ -288,38 +293,37 @@ unittest {
         v6AfterRun2[0].to!string ~ "," ~ v6AfterRun2[1].to!string ~ "," ~
         v6AfterRun2[2].to!string ~ ")");
 
-    // Drop -> commits run 2.
+    // Drop -> commits run 2 and writes ONE drop row (K-RD CD_Q_TM, task 9508).
     postJson("/api/script", "tool.set xfrm.elementMove off");
     settle();
 
     long stackAfter = undoCount();
-    assert(stackAfter == stackBefore + 2,
-        "on-handle drag + element-pick+haul + drop should produce TWO undo " ~
-        "entries; got " ~ (stackAfter - stackBefore).to!string);
+    assert(stackAfter == stackBefore + 3,
+        "on-handle drag + element-pick+haul + drop should produce TWO run " ~
+        "entries and the drop row; got " ~ (stackAfter - stackBefore).to!string);
 
-    // Ctrl+Z #1 reverts only run 2 (the haul): v6 back to post-run-1.
+    // Ctrl+Z #1 undoes the drop WITH the whole session (K-RD CD_Q2_TM, task
+    // 9508): both runs are reverted and xfrm.elementMove is armed again.
     postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6undo1 = vert(6);
-    assert(fabs(v6undo1[0] - v6AfterRun1[0]) < 1e-3 &&
-           fabs(v6undo1[1] - v6AfterRun1[1]) < 1e-3 &&
-           fabs(v6undo1[2] - v6AfterRun1[2]) < 1e-3,
-        "Ctrl+Z #1 should revert only the haul (back to post-run-1); got (" ~
+    assert(fabs(v6undo1[0] - 0.5) < 1e-3 &&
+           fabs(v6undo1[1] - 0.5) < 1e-3 &&
+           fabs(v6undo1[2] - 0.5) < 1e-3 && armedTool() == "xfrm.elementMove",
+        "Ctrl+Z #1 should revert both runs and re-arm (K-RD CD_Q2_TM); got (" ~
         v6undo1[0].to!string ~ "," ~ v6undo1[1].to!string ~ "," ~
-        v6undo1[2].to!string ~ ") want (" ~
-        v6AfterRun1[0].to!string ~ "," ~ v6AfterRun1[1].to!string ~ "," ~
-        v6AfterRun1[2].to!string ~ ")");
+        v6undo1[2].to!string ~ ") tool '" ~ armedTool() ~ "'");
 
-    // Ctrl+Z #2 reverts run 1: v6 back to the pristine cube corner.
+    // Ctrl+Z #2 removes the arming (CD_Q2_TM_z2): the cube stays, no tool armed.
     postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6undo2 = vert(6);
     assert(fabs(v6undo2[0] - 0.5) < 1e-3 &&
            fabs(v6undo2[1] - 0.5) < 1e-3 &&
-           fabs(v6undo2[2] - 0.5) < 1e-3,
-        "Ctrl+Z #2 should revert run 1 (back to cube); got (" ~
+           fabs(v6undo2[2] - 0.5) < 1e-3 && armedTool() == "",
+        "Ctrl+Z #2 should remove the arming (K-RD CD_Q2_TM_z2); got (" ~
         v6undo2[0].to!string ~ "," ~ v6undo2[1].to!string ~ "," ~
-        v6undo2[2].to!string ~ ")");
+        v6undo2[2].to!string ~ ") tool '" ~ armedTool() ~ "'");
 }
 
 // ---------------------------------------------------------------------------

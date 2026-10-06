@@ -64,6 +64,11 @@ long undoCount() {
     return getJson("/api/history")["undo"].array.length;
 }
 
+string armedTool() {
+    auto t = getJson("/api/input/context")["tool"];
+    return t.type == JSONType.string ? t.str : "";
+}
+
 void settle() {
     import core.thread : Thread;
     import core.time   : msecs;
@@ -269,36 +274,37 @@ unittest {
                               xc, yc, xd, yd, 10));
     settle();
 
-    // Drop -> commits run 2.
+    // Drop -> commits run 2 and writes ONE drop row (K-RD CD_Q_TM, task 9508).
     postJson("/api/script", "tool.set move off");
     settle();
 
     long stackAfter = undoCount();
-    assert(stackAfter == stackBefore + 2,
+    assert(stackAfter == stackBefore + 3,
         "drag + off-gizmo click + drag + drop in actr.select should produce " ~
-        "TWO undo entries; got " ~ (stackAfter - stackBefore).to!string);
+        "TWO run entries and the drop row; got " ~ (stackAfter - stackBefore).to!string);
 
-    // Ctrl+Z #1 reverts run 2 only: v6 back to post-run-1.
+    // Ctrl+Z #1 undoes the drop WITH the whole session (K-RD CD_Q2_TM, task
+    // 9508): both runs are reverted and move is armed again.
     postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6undo1 = vert(6);
-    assert(fabs(v6undo1[0] - v6AfterRun1[0]) < 1e-3 &&
-           fabs(v6undo1[1] - v6AfterRun1[1]) < 1e-3 &&
-           fabs(v6undo1[2] - v6AfterRun1[2]) < 1e-3,
-        "Ctrl+Z #1 should revert only run 2 (back to post-run-1); got (" ~
+    assert(fabs(v6undo1[0] - 0.5) < 1e-3 &&
+           fabs(v6undo1[1] - 0.5) < 1e-3 &&
+           fabs(v6undo1[2] - 0.5) < 1e-3 && armedTool() == "move",
+        "Ctrl+Z #1 should revert both runs and re-arm (K-RD CD_Q2_TM); got (" ~
         v6undo1[0].to!string ~ "," ~ v6undo1[1].to!string ~ "," ~
-        v6undo1[2].to!string ~ ")");
+        v6undo1[2].to!string ~ ") tool '" ~ armedTool() ~ "'");
 
-    // Ctrl+Z #2 reverts run 1: v6 back to the pristine cube corner.
+    // Ctrl+Z #2 removes the arming (CD_Q2_TM_z2): the cube stays, no tool armed.
     postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6undo2 = vert(6);
     assert(fabs(v6undo2[0] - 0.5) < 1e-3 &&
            fabs(v6undo2[1] - 0.5) < 1e-3 &&
-           fabs(v6undo2[2] - 0.5) < 1e-3,
-        "Ctrl+Z #2 should revert run 1 (back to cube); got (" ~
+           fabs(v6undo2[2] - 0.5) < 1e-3 && armedTool() == "",
+        "Ctrl+Z #2 should remove the arming (K-RD CD_Q2_TM_z2); got (" ~
         v6undo2[0].to!string ~ "," ~ v6undo2[1].to!string ~ "," ~
-        v6undo2[2].to!string ~ ")");
+        v6undo2[2].to!string ~ ") tool '" ~ armedTool() ~ "'");
 }
 
 // ---------------------------------------------------------------------------
@@ -343,16 +349,16 @@ unittest {
                               xc, yc, xd, yd, 10));
     settle();
 
-    // Drop.
+    // Drop: ONE drop row above the run (K-RD CD_Q_TM, task 9508).
     postJson("/api/script", "tool.set move off");
     settle();
 
     long stackAfter = undoCount();
-    assert(stackAfter == stackBefore + 1,
+    assert(stackAfter == stackBefore + 2,
         "two ON-handle drags with NO off-gizmo click between should COALESCE " ~
-        "to ONE entry; got " ~ (stackAfter - stackBefore).to!string);
+        "to ONE entry under the drop row; got " ~ (stackAfter - stackBefore).to!string);
 
-    // One Ctrl+Z reverts BOTH drags to the pristine cube corner.
+    // One Ctrl+Z reverts BOTH drags to the pristine cube corner (K-RD CD_Q2_TM).
     postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6 = vert(6);
@@ -413,9 +419,9 @@ unittest {
     settle();
 
     long stackAfter = undoCount();
-    assert(stackAfter == stackBefore + 1,
+    assert(stackAfter == stackBefore + 2,
         "a single drag+drop after the inert click should produce EXACTLY one " ~
-        "entry; got " ~ (stackAfter - stackBefore).to!string);
+        "run entry and the drop row (K-RD CD_Q_TM); got " ~ (stackAfter - stackBefore).to!string);
 }
 
 // ---------------------------------------------------------------------------
