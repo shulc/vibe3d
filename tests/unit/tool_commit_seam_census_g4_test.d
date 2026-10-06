@@ -122,8 +122,9 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private alias stripCommentsAndStrings = blankNonCode;
 
 // ---------------------------------------------------------------------------
-// THE FAMILY. All eleven G4 tools live in ONE directory, `source/tools/edit/`
-// — the eight edit kernels plus Bridge, DragWeld and Tack — which is why
+// THE FAMILY. All ten G4 tools live in ONE directory, `source/tools/edit/`
+// — the eight edit kernels plus Bridge and Tack (Drag Weld is a topology-pen
+// preset since task 9525) — which is why
 // member 1 can DERIVE the file set from a walk instead of trusting a table.
 // The directory is not the family, though: four more `.d` files sit beside
 // them and are named below with the reason each is not a G4 member.
@@ -133,7 +134,7 @@ private alias stripCommentsAndStrings = blankNonCode;
 // scan below is vacuous.
 // ---------------------------------------------------------------------------
 private enum string[] kG4Files = [
-    "bridge_tool.d", "drag_weld.d", "edge_bevel.d", "poly_bevel.d",
+    "bridge_tool.d", "edge_bevel.d", "poly_bevel.d",
     "poly_extrude.d", "poly_inset_tool.d", "reduce.d", "tack.d",
     "vert_merge_tool.d", "vertex_bevel_tool.d", "vertex_extrude_tool.d",
 ];
@@ -275,8 +276,6 @@ private enum LedgerRow[] kCallRoster = [
     LedgerRow("Tool.refuseGestureRecord|replaceTail", 1, "tail refusal belt"),
     LedgerRow("BridgeTool.commitBridgeEdit|call", 1, "tool commit"),
     LedgerRow("BridgeTool.commitBridgeEdit|plain", 1, "plain mode"),
-    LedgerRow("DragWeldTool.onMouseButtonUp|call", 1, "tool commit"),
-    LedgerRow("DragWeldTool.onMouseButtonUp|plain", 1, "plain mode"),
     LedgerRow("PolyBevelTool.commitEdit|call", 1, "tool commit"),
     LedgerRow("PolyBevelTool.commitEdit|plain", 1, "plain mode"),
     LedgerRow("ReductionTool.commitEdit|call", 1, "tool commit"),
@@ -300,8 +299,9 @@ unittest {
     const problems = reconcile(kCallRoster, hits);
     assert(problems.length == 0,
         "G4 census: the seam's call sites changed.\n" ~ problems);
-    // Task 9429: six topology-step records moved to the shared mixin (G1's census).
-    assert(totalCalls == 6,
+    // Task 9429: six topology-step records moved to the shared mixin (G1's census);
+    // task 9525 deleted Drag Weld's inline record.
+    assert(totalCalls == 5,
         "G4 census: recordGestureEdit population changed");
 }
 
@@ -352,7 +352,7 @@ unittest {
 //    function and meet each other at the rebase.
 // ---------------------------------------------------------------------------
 private enum string[] kG4WireIds = [
-    "mesh.tack", "mesh.bridgeTool", "mesh.dragWeld", "poly.extrude",
+    "mesh.tack", "mesh.bridgeTool", "poly.extrude",
     "poly.bevel", "mesh.polyInsetTool", "edge.bevel", "mesh.vertexBevel",
     "mesh.vertexExtrude", "vert.merge", "mesh.reduceTool",
 ];
@@ -408,9 +408,9 @@ unittest {
                   ~ " of " ~ kG4WireIds.length.to!string ~ " registration "
                   ~ "blocks. The scan is reading the wrong file — every per-id "
                   ~ "row above then passes by never running";
-    if (createChecked != 2 || editChecked != 9)
+    if (createChecked != 2 || editChecked != 8)
         problems ~= "    · NON-VACUITY: expected create/edit registration "
-                  ~ "populations 2/9";
+                  ~ "populations 2/8";
     assert(problems.length == 0,
         "G4 census: a registration left the base binder.\n" ~ joinLines(problems));
 }

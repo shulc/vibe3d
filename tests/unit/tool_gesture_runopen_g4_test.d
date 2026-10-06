@@ -40,10 +40,10 @@
 // body (`PrimitiveCreateTool.commitEdit`) is `protected`, so a derived probe
 // class could call it. In G4 every one of the eight `commitEdit()` bodies sits
 // after a `private:` label, and D's `private` is MODULE-scope: no test module
-// and no derived class in another module can call them. The remaining three
-// sites are a `private` `commitBridgeEdit`, a `private` `commitTackEdit`, and
-// a record INLINED in `DragWeldTool.onMouseButtonUp`. The behavioural witness
-// of the eleven sites is therefore the frozen plane fixture
+// and no derived class in another module can call them. The remaining two
+// sites are a `private` `commitBridgeEdit` and a `private` `commitTackEdit`
+// (Drag Weld's inline record left with the tool, task 9525). The behavioural
+// witness of the ten sites is therefore the frozen plane fixture
 // `tests/fixtures/tool_gesture/g4.json` (read by
 // `tests/test_tool_gesture_g4.d`), driven over `/api/play-events`.
 //

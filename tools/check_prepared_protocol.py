@@ -288,12 +288,12 @@ module_alias = {module: f"m{i}" for i, module in enumerate(modules)}
 # set has a closed prepared admission path; this table prevents both the old
 # "there is no exact Tool product" false closure and accidental widening.
 BASE_TOOL_EFFECTIVE_PRODUCTS = {
-    "activate": {"DragWeldTool", "VertexTool"},
-    "deactivate": {"DragWeldTool"},
+    "activate": {"VertexTool"},
+    "deactivate": set(),
     "update": {
         "ArcTool", "ArrayTool", "BendTool", "BoxTool", "BridgeTool",
         "CapsuleTool", "CloneTool", "ConeTool", "CylinderTool",
-        "DragWeldTool", "EdgeBevelTool", "EdgeExtrudeTool",
+        "EdgeBevelTool", "EdgeExtrudeTool",
         "EdgeSliceTool", "EdgeSlideTool", "LinearAlignTool",
         "LoopSliceTool", "MagnetTool", "MirrorTool",
         "PolyBevelTool", "PolyExtrudeTool", "PolyInsetTool", "PushTool",
@@ -354,8 +354,8 @@ with tempfile.TemporaryDirectory(prefix="vibe3d-writer-traits-") as td:
         fail("P1.0b.0 compiler-backed owner/signature census failed:\n" + compile_traits.stdout)
     # Named potency mutations: flip one measured member on each lifecycle axis
     # and require the compiler census itself (not a name table) to redden.
-    for hook, aggregate in (("activate", "DragWeldTool"),
-                            ("deactivate", "DragWeldTool"),
+    for hook, aggregate in (("activate", "VertexTool"),
+                            ("deactivate", "ArcTool"),
                             ("update", "ArcTool")):
         original, inverted = effective_assertions[(hook, aggregate)]
         mutant_lines = list(lines)
@@ -770,7 +770,6 @@ for path, text in prepared_source_texts.items():
             "tools.alignment.radial_align_tool",
             "tools.deform.bend", "tools.deform.push",
             "tools.deform.stroke_extrude_tool",
-            "tools.edit.drag_weld",
             "tools.edit.vert_merge_tool",
             "tools.edit.poly_inset_tool",
             "tools.edit.poly_extrude"}:
@@ -7873,8 +7872,9 @@ for old, new, label in (
         fail(f"EdgeExtend update mutation did not RED: {label}")
 
 # Closed inherited base-noop owner infrastructure.  The effective product
-# table above proves DragWeldTool is the sole activate/deactivate admission;
-# this tranche deliberately has no producer or ledger claim yet.
+# table above proves no product inherits both lifecycle no-ops (Drag Weld is a
+# topology-pen preset), so those two kinds admit nothing; this tranche
+# deliberately has no producer or ledger claim yet.
 inherited_noop_owner = prepared_module_source("prepared_inherited_noop")
 def inherited_noop_gate(owner, context):
     production = without_unittests(owner)
@@ -7894,14 +7894,13 @@ def inherited_noop_gate(owner, context):
     admit_body = production[admit_match.end():balanced_source(
         production, admit_match.end())-1]
     admitted = re.findall(r"target\.classinfo is (\w+)\.classinfo", admit_body)
-    expected_admitted = sorted(list(BASE_TOOL_EFFECTIVE_PRODUCTS["update"]) +
-                               ["DragWeldTool"])
+    expected_admitted = sorted(BASE_TOOL_EFFECTIVE_PRODUCTS["update"])
     return (
         has_final_class(owner, "PreparedInheritedNoopOwner") and
         has_prepared_token_pair(owner, "InheritedNoop") and
         not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "if (kind != PreparedInheritedNoopKind.Update)\n"
-        "            return target.classinfo is DragWeldTool.classinfo;" in owner and
+        "            return false;" in owner and
         sorted(admitted) == expected_admitted and
         "prepared_.owner != owner_" in owner and
         "prepared_.generation != generation_" in owner and
@@ -7960,7 +7959,7 @@ free_call_mutant[next(iter(free_call_mutant))] += \
 if inherited_free_producer_call_count(free_call_mutant) == 2:
     fail("Inherited base-noop free-producer escape mutation did not RED")
 for target, old, new, label in (
-    ("owner", "return target.classinfo is DragWeldTool.classinfo;", "return true;", "broaden lifecycle admission"),
+    ("owner", "if (kind != PreparedInheritedNoopKind.Update)\n            return false;", "if (kind != PreparedInheritedNoopKind.Update)\n            return true;", "broaden lifecycle admission"),
     ("owner", "target.classinfo is ArcTool.classinfo ||", "", "drop update admission"),
     ("owner", "prepared_.owner != owner_", "false", "drop prepared owner"),
     ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),

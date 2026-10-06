@@ -87,7 +87,8 @@ private immutable Row[] kTable = [
     Row("mesh.arrayTool", "ArrayTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.bridgeTool", "BridgeTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
     Row("mesh.clone", "CloneTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.inferred),
-    Row("mesh.dragWeld", "DragWeldTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    // A topology-pen preset since task 9525: the pen's policy, carried.
+    Row("mesh.dragWeld", "TopologyPenTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.edgeSliceTool", "EdgeSliceTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
     Row("mesh.loopSliceTool", "LoopSliceTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.captured),
     Row("mesh.mirrorTool", "MirrorTool", true, Prov.captured, CommandClose.none, CloseProv.notCaptured),
@@ -234,9 +235,9 @@ unittest { // (1) id -> policy, over every registered id
         ++presetIds;
     }
     // Population floors: measured, not derived from the table.
-    assert(staticIds == 48 && presetIds == 23,
+    assert(staticIds == 47 && presetIds == 24,
            format("M1 policy table: registry population changed: %s static + %s presets, "
-                  ~ "measured 48 + 23", staticIds, presetIds));
+                  ~ "measured 47 + 24", staticIds, presetIds));
     assert(kTable.length == 71 && classOf.length == 71,
            format("M1 policy table: %s table rows, %s registered ids, measured 71",
                   kTable.length, classOf.length));
@@ -286,10 +287,11 @@ unittest { // (1) id -> policy, over every registered id
                   replacesIds));
     // Measured on the M2 tree (`grep -c 'CommandClose.<value>, CloseProv'` over this file);
     // S7a round 3 moved mesh.topoPen none -> uiDoor (L57, capture C5); pen
-    // wave S8 moved pen none -> uiDoor (BD-sel, UC-close, UC1-end).
-    assert(closeCount == [20, 26, 25],
+    // wave S8 moved pen none -> uiDoor (BD-sel, UC-close, UC1-end); task 9525
+    // moved mesh.dragWeld none -> uiDoor (a topology-pen preset).
+    assert(closeCount == [19, 27, 25],
            format("M2 policy table: commandClose none/uiDoor/allDoors on %s ids, recorded "
-                  ~ "20/26/25", closeCount));
+                  ~ "19/27/25", closeCount));
     // The M7 ratchet, only down: ids whose arm writes no activation row yet
     // (gap 369). M3b ported poly.bevel: 42 (38) -> 41 (37); M4 ported
     // edge.extend: -> 40 (36). Growth is a new id born off the H1 law, or a
@@ -312,17 +314,17 @@ unittest { // (1) id -> policy, over every registered id
 /// not ported (the rest have no counterpart or an unsure one), and ids whose
 /// session does not own their gesture steps (H2 not ported). Measured on the
 /// M7 tree; each only falls.
-private enum size_t kActivationRowFalseCeiling = 18;
-private enum size_t kNotPortedCeiling = 14;
+private enum size_t kActivationRowFalseCeiling = 17;
+private enum size_t kNotPortedCeiling = 13;
 private enum size_t kSessionStepsFalseCeiling = 0;
 
 /// Task 8250: these existing command producers now use the same completed
-/// History-row owner as Transform: 17 rows, since the Topology Pen (plan 8646)
-/// and the polygon pen (task 9369) left for their own step protocols. The
-/// other rows retain image/topology policies; this exact set catches a silent
-/// class-wide policy spill.
+/// History-row owner as Transform: 16 rows, since the Topology Pen (plan 8646),
+/// the polygon pen (task 9369) and Drag Weld (task 9525) left for their own
+/// step protocols. The other rows retain image/topology policies; this exact
+/// set catches a silent class-wide policy spill.
 private immutable string[] kAdditionalHistoryRows = [
-    "edge.slide", "mesh.bridgeTool", "mesh.dragWeld", "mesh.radialSweepTool",
+    "edge.slide", "mesh.bridgeTool", "mesh.radialSweepTool",
     "mesh.reduceTool", "mesh.tack", "prim.arc",
     "prim.capsule", "prim.cone", "prim.cube", "prim.cylinder",
     "prim.ellipsoid", "prim.sphere", "prim.torus", "prim.tube",
@@ -343,8 +345,8 @@ unittest { // (2) tool classes that declare the activation row
     }
     // Measured 2026-09-25 (the same under `dmd -i` and the gate: the three
     // registration imports above pull every production tool module in).
-    assert(scanned == 48, format("M1 policy classes: scanned %s concrete tools.* classes, "
-                                 ~ "measured 48", scanned));
+    assert(scanned == 47, format("M1 policy classes: scanned %s concrete tools.* classes, "
+                                 ~ "measured 47", scanned));
     sort(declared);
     assert(declared == kActivationRowClasses,
            format("M1 policy classes: activationRow declared by %s, expected %s",
@@ -539,6 +541,11 @@ private immutable StepRow[] kStepTable = [
             ["middle", "mode", "loop", "slide", "smoothStrength", "showVertex",
              "showEdge", "innerSnap", "keepVertex", "range", "quadOnly", "backFace",
              "offsetX", "offsetY", "offsetZ", "stepKind", "stepVerts", "stepOrig"]),
+    // Task 9525: Drag Weld is a topology-pen preset, the pen's image.
+    StepRow("mesh.dragWeld", OpensAt.firstPress, false,
+            ["middle", "mode", "loop", "slide", "smoothStrength", "showVertex",
+             "showEdge", "innerSnap", "keepVertex", "range", "quadOnly", "backFace",
+             "offsetX", "offsetY", "offsetZ", "stepKind", "stepVerts", "stepOrig"]),
 ];
 
 unittest { // (4)
@@ -628,7 +635,7 @@ unittest { // (4)
                     "M3 step table: %s haul drifted from its full parameter image", row.id));
             // Wave plan 8640 S7a: the pen's haul is its operation context, the
             // six names a press resets and M-H keeps to the recording instance.
-            if (row.id == "mesh.topoPen")
+            if (row.id == "mesh.topoPen" || row.id == "mesh.dragWeld")
                 assert(pol.haulAttrs == ["offsetX", "offsetY", "offsetZ", "stepKind",
                                          "stepVerts", "stepOrig"],
                     format("S7a step table: the pen's haul is %s", pol.haulAttrs));
@@ -648,8 +655,8 @@ unittest { // (4)
     assert(stepsFalse == kSessionStepsFalseCeiling,
            format("M7 ratchet: sessionSteps=false fell to %s ids, ceiling %s: lower the ceiling "
                   ~ "in the same commit", stepsFalse, kSessionStepsFalseCeiling));
-    assert(recordedSteps == 51,
-           format("history-owned rows %s, expected 51", recordedSteps));
+    assert(recordedSteps == 50,   // 51 until Drag Weld became a pen preset (task 9525)
+           format("history-owned rows %s, expected 50", recordedSteps));
     // No registered id is session-less (the M7 ceiling is 0): the session-less
     // policies are the base `Tool`'s default and the command-wrapper family's.
     assert(!ToolSessionPolicy.init.stepsParamWrites(),
@@ -663,17 +670,18 @@ unittest { // (4)
     assert(paramArmIds == ["edge.extend", "mesh.edgeSliceTool", "mesh.loopSliceTool",
                            "mesh.sliceTool", "pen", "poly.bevel"],
            format("UND2: the attribute arm (a parameter write is a step) is %s", paramArmIds));
-    // Image-producing population floors: 20 ids, 152 image names, 3 Action triggers
+    // Image-producing population floors: 21 ids, 172 image names, 3 Action triggers
     // on them (chainArm; insertAt, removeCurrent), 1 arm attribute (M3b).
     sort(imageStepIds);
     assert(imageStepIds == ["edge.bevel", "edge.extend", "edge.extrude",
-                       "mesh.arrayTool", "mesh.clone", "mesh.edgeSliceTool", "mesh.loopSliceTool",
+                       "mesh.arrayTool", "mesh.clone", "mesh.dragWeld", "mesh.edgeSliceTool",
+                       "mesh.loopSliceTool",
                        "mesh.mirrorTool", "mesh.polyInsetTool", "mesh.radialArrayTool",
                        "mesh.sliceTool", "mesh.smoothShiftTool",
                        "mesh.thickenTool", "mesh.topoPen", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "pen", "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: image-step ids %s", imageStepIds));
-    assert(checkedNames == 154, format("M3 step table: %s image names checked, measured 154",
+    assert(checkedNames == 172, format("M3 step table: %s image names checked, measured 172",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "
@@ -689,7 +697,8 @@ unittest { // (4)
 // Order (form item 2): floor -> needles -> structural; the pin is block (5).
 // ---------------------------------------------------------------------------
 
-/// The model's ids, literal: the 14 history-topology ids less the pen.
+/// The model's ids, literal: the 15 history-topology ids less the pen and its
+/// Drag Weld preset (task 9525).
 private immutable string[] kModelIds = [
     "edge.bevel", "edge.extrude", "mesh.arrayTool", "mesh.clone", "mesh.mirrorTool",
     "mesh.polyInsetTool", "mesh.radialArrayTool", "mesh.smoothShiftTool",
@@ -819,10 +828,10 @@ unittest { // (4b)
     assert(es.count(".tupleof") == 0 && es.count("getMember") == 0 && es.count("mixin(") == 0,
            "S2a needle: edit_session.d reaches a field by .tupleof / getMember / mixin");
 
-    // STRUCTURAL: among the 14 history-topology ids exactly four open at the arm
-    // (the pen is outside the model: `false`).
-    assert(topo.length == 14,
-           format("S2a structural: %s history-topology ids, measured 14", topo.length));
+    // STRUCTURAL: among the 15 history-topology ids exactly four open at the arm
+    // (the pen and its Drag Weld preset are outside the model: `false`).
+    assert(topo.length == 15,
+           format("S2a structural: %s history-topology ids, measured 15", topo.length));
     assert(armModel == ["edge.bevel", "edge.extrude", "mesh.vertexBevel", "mesh.vertexExtrude"],
            format("S2a structural: opensAtArm among the model ids is %s", armModel));
     // The two derived answers over the whole registry: the 13 model ids (S5b: the
@@ -2001,8 +2010,8 @@ unittest { // (5)
             if (pol.recordCarriesActivation) carries ~= c.name;
         }
     }
-    assert(scanned == 48, format("M4 policy classes: scanned %s concrete tools.* classes, "
-                                 ~ "measured 48", scanned));
+    assert(scanned == 47, format("M4 policy classes: scanned %s concrete tools.* classes, "
+                                 ~ "measured 47", scanned));
     sort(keep);
     sort(carries);
     assert(keep == kKeepAliveClasses,
@@ -2152,7 +2161,7 @@ unittest { // (6c) exactly one class anchors its handle on its own operation
                 declared ~= c.name;
         }
     }
-    assert(scanned == 48, format("M6 policy classes: scanned %s, measured 48", scanned));
+    assert(scanned == 47, format("M6 policy classes: scanned %s, measured 47", scanned));
     assert(declared == ["tools.edit.edge_extend.EdgeExtendTool"],
            format("M6 policy classes: handleAnchor opBasePlusAttr declared by %s", declared));
 }
@@ -2199,7 +2208,7 @@ unittest { // (8)
             if (blit(c).sessionPolicy().armRestoresWholeImage) declared ~= c.name;
         }
     }
-    assert(scanned == 48, format("M7 policy classes: scanned %s, measured 48", scanned));
+    assert(scanned == 47, format("M7 policy classes: scanned %s, measured 47", scanned));
     assert(declared == ["tools.slice.loop_slice_tool.LoopSliceTool"],
            format("M7 policy classes: armRestoresWholeImage declared by %s", declared));
     auto pt = squeeze(blankNonCode(readText("source/prepared_tool_transition.d")));
@@ -2235,7 +2244,7 @@ unittest { // (10)
             if (blit(c).sessionPolicy().dropWritesRow) declared ~= c.name;
         }
     }
-    assert(scanned == 48, format("S6 policy classes: scanned %s, measured 48", scanned));
+    assert(scanned == 47, format("S6 policy classes: scanned %s, measured 47", scanned));
     assert(declared == ["tools.edit.topology_pen.tool.TopologyPenTool"],
            format("S6 policy classes: dropWritesRow declared by %s, expected the pen only", declared));
     auto app = squeeze(bodyAt(blankNonCode(readText("source/app.d")),
@@ -2277,10 +2286,11 @@ unittest { // (12)
     }
     assert(visited == kTable.length && kTable.length == 71,
            format("S7a policy table: visited %s of %s rows, measured 71", visited, kTable.length));
-    assert(opens == ["mesh.topoPen"],
+    // The pen and its Drag Weld preset (task 9525), one class.
+    assert(opens == ["mesh.dragWeld", "mesh.topoPen"],
            format("S7a policy table: pressOpensOperation declared by %s, expected the pen only",
                   opens));
-    assert(folds == ["mesh.topoPen"],
+    assert(folds == ["mesh.dragWeld", "mesh.topoPen"],
            format("S7a policy table: foldsParamRowsIntoBlock declared by %s, expected the pen only",
                   folds));
 }
@@ -2305,7 +2315,7 @@ private enum string[] kToolClassModules = [
     "tools.create.pen", "tools.create.sphere", "tools.create.torus", "tools.create.tube",
     "tools.create.vertex_place", "tools.deform.bend", "tools.deform.magnet",
     "tools.deform.push", "tools.deform.smooth_shift_tool", "tools.deform.stroke_extrude_tool",
-    "tools.edit.bridge_tool", "tools.edit.drag_weld", "tools.edit.edge_bevel",
+    "tools.edit.bridge_tool", "tools.edit.edge_bevel",
     "tools.edit.edge_extend", "tools.edit.edge_extrude", "tools.edit.poly_bevel",
     "tools.edit.poly_extrude", "tools.edit.poly_inset_tool", "tools.edit.reduce",
     "tools.edit.tack", "tools.edit.topology_pen.tool", "tools.edit.vert_merge_tool",
@@ -2356,8 +2366,8 @@ static assert(kToolComposition[kToolBar + 1 .. $] == kPinnedToolInterfaces,
     ~ "], pinned [" ~ kPinnedToolInterfaces.join(", ") ~ "]: express a per-tool capability as "
     ~ "ToolSessionPolicy data or a Tool operation (doc/tool_session_model_plan_2026-09-24.md), "
     ~ "not a new interface");
-// Population floor: the pin read the 48 classes block (8) scans.
-static assert(kToolBar == 48, "M7 tool pin: read concrete tool classes, measured 48");
+// Population floor: the pin read the 47 classes block (8) scans.
+static assert(kToolBar == 47, "M7 tool pin: read concrete tool classes, measured 47");
 
 unittest { // Tasks 7990/8030: production topology R wiring, not a helper replica.
     auto es = blankNonCode(readText("source/edit_session.d"));

@@ -35,7 +35,7 @@
 // THAT LAST ONE IS THE POINT OF MEMBER 4, so it is worth saying plainly. The
 // plan (card 1905, §1) recorded `VertexEditFactory` as ONE NAME FOR TWO
 // DIFFERENT DELEGATE TYPES — `MeshSessionEdit delegate()` in `vertex_place.d`
-// and `drag_weld.d`, `MeshVertexEdit delegate()` in `transform.d` and
+// and the Drag Weld tool, `MeshVertexEdit delegate()` in `transform.d` and
 // `xfrm_transform.d` — and warned that "unify the alias" RE-TYPES two tools
 // and both keep compiling. Phases B and C deleted the two `MeshSessionEdit`
 // spellings as a side effect of migrating their tools, so on this tree the
@@ -95,7 +95,7 @@
 //      which is the honest statement of what member 5 adds: it is the only
 //      watcher of the half of the tree the per-family files cannot see.
 //   6. swap one registration's `bevelEditFactory` for `loopSliceEditFactory`
-//      -> member 6, reddening TWO rows in one run (24 -> 23 and 1 -> 2). Both
+//      -> member 6, reddening TWO rows in one run (23 -> 22 and 1 -> 2). Both
 //      are `MeshSessionEdit delegate()`, so it compiles and records a bevel
 //      under the wire name and label of a loop slice.
 //
@@ -261,10 +261,10 @@ private struct Row {
 }
 
 private enum Row[] kSessionRows = [
-    Row("bevelEditFactory", "mesh.bevel_edit", "Bevel", "", 24,
-        "the shared snapshot carrier: TWENTY-FOUR tool registrations bind it "
-      ~ "under ONE wire name, which is why anything done to this row lands on "
-      ~ "all twenty-four at once and why G5's mutations key on plane dumps "
+    Row("bevelEditFactory", "mesh.bevel_edit", "Bevel", "", 23,
+        "the shared snapshot carrier: TWENTY-THREE tool registrations bind it "
+      ~ "under ONE wire name (Drag Weld left for the pen, task 9525), which is "
+      ~ "why anything done to this row lands on all of them at once and why G5's mutations key on plane dumps "
       ~ "rather than on entryNames for the pair it moved"),
     Row("loopSliceEditFactory", "mesh.loop_slice_edit", "Loop Slice", "", 1,
         "mesh.loopSliceTool"),
@@ -621,7 +621,7 @@ unittest {
                   ~ kPenRows.length.to!string;
 
     // Wire names must be pairwise distinct EXCEPT that they simply are today —
-    // the sharing happens at the BINDING (bevelEditFactory serves 24
+    // the sharing happens at the BINDING (bevelEditFactory serves 23
     // registrations), never at the table.
     {
         string[] wires;
@@ -863,10 +863,10 @@ unittest {
     if (penHits.length != 1)
         problems ~= "    · `topoPenFactories` is spent "
                   ~ penHits.length.to!string ~ " time(s), roster says 1";
-    if (identHits(editSrc, "deps.bevelEditFactory()").length < 9
+    if (identHits(editSrc, "deps.bevelEditFactory()").length < 8
         || identHits(createSrc, "deps.bevelEditFactory()").length != 15)
         problems ~= "    · NON-VACUITY: bevel-edit per-file populations "
-                  ~ "must remain at least edit/create 9/15";
+                  ~ "must remain at least edit/create 8/15";
     // `mesh.topoPen` has one `setPenFactories` argument; the thirteen pen
     // factories travel as this one value (task 6352).
 

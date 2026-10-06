@@ -215,20 +215,16 @@ unittest // one vertex finder for the topology tools (tasks 9407, 9437); the pen
     foreach (needle; ["snapCursor(", "SnapMode.Global", "outerRangePx", "slot == 0"])
         assert(countOccurrences(finder, needle) == 1,
             format("editedVertexAt must contain `%s` once", needle));
-    // Its callers: the pen's weld target and Drag Weld's one finder, nothing else.
+    // Its callers: the pen's weld target, nothing else (Drag Weld is a pen preset, task 9525).
     string[] callers;
     foreach (f; productionSources())
         foreach (_; wordsAt(blankUnittestBodies(blankNonCode(f[1])), "editedVertexAt"))
             callers ~= f[0];
     callers.sort();
-    assert(callers.length == 5, format("editedVertexAt mentions: %s %s", callers.length, callers));
-    assert(callers == ["source/snap.d", "source/tools/edit/drag_weld.d",
-                       "source/tools/edit/drag_weld.d", "source/tools/edit/topology_pen/tool.d",
+    assert(callers.length == 3, format("editedVertexAt mentions: %s %s", callers.length, callers));
+    assert(callers == ["source/snap.d", "source/tools/edit/topology_pen/tool.d",
                        "source/tools/edit/topology_pen/tool.d"],
-        format("editedVertexAt roster (declaration + import + call per client): %s", callers));
-    const weld = code("source/tools/edit/drag_weld.d");
-    assert(wordsAt(weld, "findVertex").length == 3 && wordsAt(weld, "projectToWindowFull").length == 0,
-        "Drag Weld: the press and the release reach the one finder, and nothing projects on its own");
+        format("editedVertexAt roster (declaration + import + call): %s", callers));
     const pen = code("source/tools/edit/topology_pen/tool.d");
     assert(countOccurrences(body(pen, "int weldTargetVertex("), "editedVertexAt(") == 1,
         "the pen's weld target must be the shared finder");

@@ -232,7 +232,7 @@ version(unittest) unittest {
     }
 
     // No factory product inherits both lifecycle no-ops since Drag Weld became
-    // a topology-pen preset (task 9525): the two lifecycle kinds admit nothing.
+    // a topology-pen preset: the two lifecycle kinds admit nothing.
     assert(PreparedInheritedNoopOwner.prepare(target,
                PreparedInheritedNoopKind.Activate) is null &&
            PreparedInheritedNoopOwner.prepare(target,

@@ -26,8 +26,8 @@
 // is carried anyway, and both cells freeze it EMPTY: both tools record from
 // `deactivate`, so nothing stands on the ledger between gesture and drop. That
 // empty list is a pin, not a placeholder — a member that started recording
-// synchronously inside its own event handler (the shape `mesh.dragWeld` and
-// `mesh.tack` have in G4) would redden it.
+// synchronously inside its own event handler (the shape `mesh.tack` has in
+// G4) would redden it.
 //
 // THE CARD'S "RISKIEST BATCHLESS PREVIEW" NOTE IS STALE, and this lane
 // re-measured it rather than repeating it. Plan §6 already says G3 carries zero

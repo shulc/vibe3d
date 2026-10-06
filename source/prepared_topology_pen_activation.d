@@ -159,6 +159,21 @@ version(unittest) unittest {
     assert(lockedSnap.enabled && lockedSnap.hasPushedEnabled("mesh.topoPen") &&
         !locked.enabled && locked.geom == ConstrainGeom.Vector && locked.userLocked);
 
+    // The Drag Weld preset's flag: the snap arms, the constraint stays as it was.
+    auto weldPipe = new ToolPipeContext();
+    auto weldSnap = new SnapStage(); auto weldCons = new ConstrainStage();
+    weldPipe.pipeline.add(weldSnap); weldPipe.pipeline.add(weldCons);
+    weldCons.enabled = false; weldCons.geom = ConstrainGeom.Screen; g_pipeCtx = weldPipe;
+    auto weldTool = new TopologyPenTool();
+    weldTool.presetFlags = ToolFlag.NoBackgroundConstraint;
+    auto weldContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(weldTool.prepareActivate(weldContext).accepted && weldContext.validate());
+    weldContext.install();
+    assert(weldSnap.enabled && weldSnap.hasPushedEnabled("mesh.topoPen") &&
+        !weldCons.enabled && weldCons.geom == ConstrainGeom.Screen,
+        "a no-background-constraint preset must not compose the constraint");
+
     g_pipeCtx = null;
     auto noPipeTool = new TopologyPenTool(); noPipeTool.seedPreparedActivationForTest();
     auto noPipeContext = new PreparedRecordContext(new CommandHistory(),

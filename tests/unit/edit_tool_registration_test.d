@@ -19,7 +19,6 @@ private struct ExpectedBinding {
 }
 
 private enum ExpectedBinding[] kEditBindings = [
-    ExpectedBinding("mesh.dragWeld", "bevelEditFactory"),
     ExpectedBinding("edge.extrude", "edgeExtrudeEditFactory"),
     ExpectedBinding("poly.extrude", "polyExtrudeEditFactory"),
     ExpectedBinding("mesh.radialArrayTool", "radialArrayEditFactory"),
@@ -62,7 +61,7 @@ private LiveRegistrationRig registeredRig() {
 // The production composition root owns the complete edit-family population,
 // and every retained gesture factory is its own named collaborator.
 unittest {
-    static assert(kEditBindings.length == 20);
+    static assert(kEditBindings.length == 19);
     auto rig = registeredRig();
     foreach (binding; kEditBindings) {
         assert(rig.registry.hasTool(binding.id),

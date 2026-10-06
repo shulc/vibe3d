@@ -156,15 +156,6 @@
     },
     {
       "aggregate": "<module>",
-      "id": "mesh.dragWeld",
-      "product_types": [
-        "DragWeldTool"
-      ],
-      "semantic_sha256": "462f811985364917e0a9d0a989ccc296418aff3fad6022ba3ddb773e762a83f3",
-      "symbol": "registerTool(\"mesh.dragWeld\")"
-    },
-    {
-      "aggregate": "<module>",
       "id": "edge.extrude",
       "product_types": [
         "EdgeExtrudeTool"
@@ -447,6 +438,7 @@
       "id": "<generated:p.id>",
       "preset_bases": [
         "mesh.smoothShiftTool",
+        "mesh.topoPen",
         "move",
         "rotate",
         "scale",
@@ -456,6 +448,7 @@
       "product_types": [
         "PushTool",
         "SmoothShiftTool",
+        "TopologyPenTool",
         "XfrmTransformTool"
       ],
       "semantic_sha256": "21003c109ad2c66a5a5430ffcd65c5a729d9a34ea480133022234d094f7e3c82",
@@ -1608,13 +1601,6 @@
       "symbol": "params"
     },
     {
-      "aggregate": "DragWeldTool",
-      "module": "tools.edit.drag_weld",
-      "semantic_sha256": "c7221e1192cef51aa9d2ab86a2200fac852bd254ed01b295bd47b2923204ecc5",
-      "signature": "Param[]()",
-      "symbol": "params"
-    },
-    {
       "aggregate": "EdgeBevelTool",
       "module": "tools.edit.edge_bevel",
       "semantic_sha256": "7ced8306f894bf9aae75eab6610bf151b7f3f45cc33042da73ef30f006117a7a",
@@ -1780,12 +1766,6 @@
       "aggregate": "CylinderTool",
       "module": "tools.create.cylinder",
       "signature": "CylinderTool",
-      "symbol": "factoryProduct"
-    },
-    {
-      "aggregate": "DragWeldTool",
-      "module": "tools.edit.drag_weld",
-      "signature": "DragWeldTool",
       "symbol": "factoryProduct"
     },
     {

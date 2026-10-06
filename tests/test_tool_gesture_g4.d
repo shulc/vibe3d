@@ -1,5 +1,5 @@
 // test_tool_gesture_g4 — task 1905, lane G0-G4: the FROZEN plane fixture for
-// group G4 (the eleven `edit`-family tools), driven by REAL GESTURES.
+// group G4 (the ten `edit`-family tools; Drag Weld left for the topology pen, task 9525), driven by REAL GESTURES.
 //
 // WHY IT EXISTS, and why neither of the other two G4 witnesses can replace it.
 // The text census (plan §5.1) sees WHO calls a history primitive; the wire-name
@@ -14,9 +14,9 @@
 //   postRedo  against the POST-COMMIT dump.
 //
 // G4 SHARES THE SINGLE-WIRE-NAME PROPERTY THE G1 LANE FOUND, and only just.
-// Measured while freezing this file: NINE of the eleven cells record under the
-// one name `mesh.bevel_edit` (the 24 `bevelEditFactory` registrations seen from
-// the wire side). Only `poly.extrude` (`mesh.face_extrude_edit`) and
+// Measured while freezing this file: NINE of the eleven cells (eight of today's
+// ten) record under the one name `mesh.bevel_edit` (the 24 `bevelEditFactory`
+// registrations seen from the wire side). Only `poly.extrude` (`mesh.face_extrude_edit`) and
 // `mesh.reduceTool` (`mesh.reduce_edit`) stand apart. So a mutation that has to
 // redden EXACTLY ONE cell of this group cannot key on `entryNames` either — the
 // same correction the G1 lane forced on plan §5.5. `liveEntryNames` is carried
@@ -68,12 +68,12 @@
 // `runCell`.
 //
 // `built` IS NOT A UNIVERSAL CHANNEL IN THIS GROUP — measured. Only
-// `edge.bevel` and `poly.bevel` publish it to `/api/tool/state`; the other nine
+// `edge.bevel` and `poly.bevel` publish it to `/api/tool/state`; the other eight
 // publish nothing (`{}`) or a tool-specific object without it. So the cells that
 // CAN assert `built` do, and the rest lean on the geometric anti-vacuity in
 // `runCell` plus named element-count checks for both historical misses.
 //
-// RESIDUALS ARE FROZEN EXACTLY, NEVER TOLERATED. All eleven cells round-trip
+// RESIDUALS ARE FROZEN EXACTLY, NEVER TOLERATED. All ten cells round-trip
 // byte-for-byte in both directions on this tree, so every residual list is
 // frozen EMPTY — and an empty list pinned exactly is still a pin: a residual
 // that APPEARS reddens. Had one been non-empty it would have been frozen as its
@@ -777,13 +777,6 @@ int findEdgeMid(double mx, double my, double mz) {
     assert(false, format("no cube edge with midpoint (%g,%g,%g)", mx, my, mz));
 }
 
-/// Two disjoint triangles — the drag-weld operand. The source (v3) and the
-/// target (v0) share no face, which is what makes the weld legal.
-enum string kTwoTriangles = `{
-    "vertices":[[-0.5,0,0],[0,0,1],[0.5,0,0],[-0.5,0,2],[0,0,3],[0.5,0,2]],
-    "faces":[[0,1,2],[3,4,5]]
-}`;
-
 /// Two coaxial unit squares — the bridge operand (the `test_bridge.d` stand).
 enum string kTwoCaps = `{
     "vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]],
@@ -1044,32 +1037,6 @@ unittest {
         },
         { interactiveAttr("tool.attr mesh.reduceTool ratio 0.5"); settle(300); },
         { cmd("tool.set mesh.reduceTool off"); });
-
-    // --- (i) DragWeldTool: the record is INLINE in `onMouseButtonUp`, so the
-    //     entry is already on the stack BEFORE the drop. That is what
-    //     `liveEntryNames` reads, and it is the field that separates this cell
-    //     (and tack's) from the nine that record at `deactivate`.
-    cells ~= runCell("drag.weld/vertex-onto-vertex", "mesh.dragWeld",
-        "source/tools/edit/drag_weld.d DragWeldTool.onMouseButtonUp (inline history_.record)",
-        "Plain", "MeshSessionEdit",
-        {
-            resetEmpty(); loadMesh(kTwoTriangles);
-            setCamera(0.0, 0.6, 6.0, 0.0, 0.0, 1.0);
-            // The target search runs only with snapping on (task 9437).
-            cmd("tool.pipe.attr snap enabled true");
-            cmd("history.clear"); cmd("tool.set mesh.dragWeld on"); settle(250);
-        },
-        {
-            auto vp = viewportFromCamera(fetchCamera(BASE));
-            float sx, sy, tx, ty;
-            assert(projectToWindow(Vec3(-0.5f, 0, 2), vp, sx, sy),
-                "drag.weld: source vertex projects off-screen");
-            assert(projectToWindow(Vec3(-0.5f, 0, 0), vp, tx, ty),
-                "drag.weld: target vertex projects off-screen");
-            dragPixels(cast(int) sx, cast(int) sy, cast(int) tx, cast(int) ty, 20);
-            gDrove ~= driveDragNoOffset(20);
-        },
-        { cmd("tool.set mesh.dragWeld off"); cmd("tool.pipe.attr snap enabled false"); });
 
     // --- (j) TackTool: the record is synchronous with the mouse-DOWN, and
     //     `hasUncommittedEdit()` is hard-coded FALSE, so a seam keyed on that
