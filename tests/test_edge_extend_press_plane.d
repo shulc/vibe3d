@@ -11,6 +11,8 @@
 //     the captured U/R word against our own offset. EX_PP0a / EX_PP50c are
 //     the cells where the work-plane press plane and the world one disagree;
 //     EX_P0v puts vertex B (x 0.45) between W(0) (x 0.3) and W(W(0)) (x 0.6).
+//     EX_P0p is left out: its press (world x 0.45) is + under every candidate
+//     press plane, so it cannot discriminate (EX_P0v already pins its word).
 // (2) A scripted apply mirrors with the press side −X (no press); an
 //     unselected partner is not extended (EX_S, EX_S1; control EX_Sc).
 // (3) With Move and Rotate on, a second press on the X ring ROTATES (EX_R);

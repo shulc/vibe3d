@@ -1033,9 +1033,11 @@ public:
         immutable bool first = !runStarted();
         if (first) handleBase_ = extendHandleBase(vts);
 
-        // Bank dispatch — same try-in-order priority the wrapper uses (T→R→S).
-        // A bank "owns" the drag only when it consumed the click AND landed on a
-        // real handle (dragAxis>=0); a click-relocate (dragAxis<0) does not start
+        // Bank dispatch — arbiter first, as the wrapper: only the bank whose
+        // handle the arbiter hit is offered the press; a miss offers Move,
+        // Rotate, Scale in turn. A bank "owns" the drag only when it consumed
+        // the click AND landed on a real handle (dragAxis>=0); a click-relocate
+        // (dragAxis<0) does not start
         // a host drag. Rotate/Scale onMouseButtonDown return true even on a
         // relocate-miss, so gate on dragAxis, not the bool.
         //
@@ -1329,7 +1331,8 @@ private:
     private int liveAuthoringSide() {
         import toolpipe.stages.symmetry : liveSymmetryStage;
         auto sy = liveSymmetryStage();
-        return sy is null ? -1 : sy.authoringSide(/*throughPin=*/false);
+        import std.typecons : No;
+        return sy is null ? -1 : sy.authoringSide(No.throughPin);
     }
 
     // Pivot fed to the kernel for every INTERACTIVE evaluation — a bank drag
