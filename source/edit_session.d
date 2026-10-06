@@ -2698,7 +2698,11 @@ private struct ToolSession {
         const row = ue[first].cmd;
         if (cast(const ToolActivationCommand) row !is null) return;
         closedRow_ = row;
-        history_.markEntrySession(row, closingToken_);
+        // Every row the close wrote is the session's (one per operation, e.g.
+        // Bevel's Shift-opened ones): the drop's undo takes them all (K-RD rule 2).
+        foreach (ref e; ue[first .. $])
+            if (!(e.flags & HistoryFlags.ToolLifecycle) && e.cmd.sessionToken() == 0)
+                history_.markEntrySession(e.cmd, closingToken_);
     }
 
     private bool sessionWroteRow_(ulong token) {

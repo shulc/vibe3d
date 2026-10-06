@@ -318,15 +318,20 @@ unittest {
     assert(getJson("/api/model")["vertexCount"].integer == vFirst + 4,
         "the Shift operation must stand on the KEPT first bevel (+4, a zero-width ring)");
 
-    // One row per operation at the close: two undos back to the cube.
+    // One row per operation at the close, under the drop row: the drop's undo
+    // takes the whole session back to the cube (findings_K-RD rule 2, CD_Q_BV /
+    // CD_Q2_TM; task 9508), and the redo replays the two operations one by one.
     cmd("tool.set poly.bevel off");
     auto undo = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo")));
     assert(undo["status"].str == "ok", "undo failed");
-    assert(getJson("/api/model")["vertexCount"].integer == vFirst,
-        "the first undo must peel the Shift operation alone");
-    post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(getJson("/api/model")["vertexCount"].integer == 8,
-        "the second undo must restore the cube (each operation is its own step)");
+        "the drop's undo must restore the cube (the whole session)");
+    post(BASE ~ "/api/command", commandBody("history.redo"));
+    assert(getJson("/api/model")["vertexCount"].integer == vFirst,
+        "the first redo must replay the first operation alone");
+    post(BASE ~ "/api/command", commandBody("history.redo"));
+    assert(getJson("/api/model")["vertexCount"].integer == vFirst + 4,
+        "the second redo must replay the Shift operation (each operation is its own step)");
 }
 
 // Series of bevels: two Shift+click applies ⇒ two DISCRETE undo steps, never a
@@ -360,16 +365,21 @@ unittest {
 
     // Three operations at the close (slice M3b): the first haul, the second
     // (opened by Shift #1, hauled), and the zero-width one Shift #2 opened.
+    // The drop's undo takes all three back (findings_K-RD rule 2, CD_Q_BV;
+    // task 9508); the redo replays them one by one (steps must not collapse).
     cmd("tool.set poly.bevel off");
     post(BASE ~ "/api/command", commandBody("history.undo"));
-    assert(getJson("/api/model")["vertexCount"].integer == v1,
-        "first undo did not peel exactly the trailing Shift operation (steps must not collapse)");
-    post(BASE ~ "/api/command", commandBody("history.undo"));
-    assert(getJson("/api/model")["vertexCount"].integer == v1 - 4,
-        "second undo did not peel exactly the second bevel");
-    post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(getJson("/api/model")["vertexCount"].integer == 8,
-        "third undo did not restore the cube (each operation is its own undo step)");
+        "the drop's undo did not restore the cube (the whole session)");
+    post(BASE ~ "/api/command", commandBody("history.redo"));
+    assert(getJson("/api/model")["vertexCount"].integer == v1 - 4,
+        "first redo did not replay exactly the first bevel");
+    post(BASE ~ "/api/command", commandBody("history.redo"));
+    assert(getJson("/api/model")["vertexCount"].integer == v1,
+        "second redo did not replay exactly the second bevel");
+    post(BASE ~ "/api/command", commandBody("history.redo"));
+    assert(getJson("/api/model")["vertexCount"].integer == v2,
+        "third redo did not replay the trailing Shift operation (each operation is its own step)");
 }
 
 // Post-mode finalize (task 0463): firing a Model (scene-mutating) command —
@@ -448,13 +458,19 @@ unittest {
     assert(haul["built"].type == JSONType.true_, "new haul did not build a preview");
     play(button("SDL_MOUSEBUTTONUP", EX, EY - 80, LSHIFT));
 
-    // One committed (#1) + one standing (#2, committed on tool-drop) ⇒ two
-    // discrete undo steps back to the cube.
+    // One committed (#1) + one standing (#2, committed on tool-drop): the
+    // drop's undo takes both back (findings_K-RD rule 2, CD_Q_BV; task 9508)
+    // and the redo replays #1 alone first — two discrete steps.
+    const both = getJson("/api/model")["vertexCount"].integer;
     cmd("tool.set poly.bevel off");
-    post(BASE ~ "/api/command", commandBody("history.undo")); // peel #2
-    assert(getJson("/api/model")["vertexCount"].integer > 8,
-        "first undo overshot — combined-gesture steps collapsed");
-    post(BASE ~ "/api/command", commandBody("history.undo")); // peel #1
+    post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(getJson("/api/model")["vertexCount"].integer == 8,
-        "combined gesture did not yield two discrete undo steps");
+        "the drop's undo did not restore the cube (the whole session)");
+    post(BASE ~ "/api/command", commandBody("history.redo")); // #1
+    const one = getJson("/api/model")["vertexCount"].integer;
+    assert(one > 8 && one < both,
+        "first redo overshot — combined-gesture steps collapsed");
+    post(BASE ~ "/api/command", commandBody("history.redo")); // #2
+    assert(getJson("/api/model")["vertexCount"].integer == both,
+        "combined gesture did not yield two discrete steps");
 }
