@@ -70,6 +70,55 @@ private bool applyRegistered(LiveRegistrationRig rig, Command c) {
     return rig.executor.applyOrRefire(c, command_history.RecordMode.Record, null);
 }
 
+unittest { // Pin the actual production factory, independently of the local rig.
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.string : count;
+    import std.algorithm : filter;
+    import std.array : array;
+    import std.ascii : isWhite;
+    import tests.unit.census_symbols : blankNonCode;
+    enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    const code = blankNonCode(readText(buildPath(root,
+        "source", "tool_lifecycle_registration.d")))
+        .filter!(c => !isWhite(c)).array;
+    assert(code.count("newToolDoApplyCommand(") == 1,
+        "L1 production document census population: expected one doApply factory");
+    assert(code.count("newToolDoApplyCommand(&owner.activeMesh(),live.view(),live.mode,host.read(),owner.document())") == 1,
+        "L1 production document binding: doApply must resolve owner.document()");
+}
+
+unittest { // Change only document identity, keeping all other receipt keys stable.
+    auto rig = sourceRig(true);
+    auto t = cast(SourceTool)rig.activeTool;
+    auto m = &rig.session.editMesh();
+    int firstDocument, replacementDocument;
+    const x = m.vertices[0].x;
+    bool invoke(const(void)* document) {
+        return rig.editSession.invokeHeadless(t, *m, document,
+            rig.session.editMode, () => t.applyHeadless());
+    }
+    assert(invoke(&firstDocument) && m.vertices[0].x == x + 2,
+        "L1 document source control: cold invocation must accept current input");
+    t.amount = 5;
+    assert(invoke(&firstDocument) && m.vertices[0].x == x + 5,
+        "L1 document source control: same identity must retain original input");
+    assert(t.headlessSourcePositions(m.vertices).ptr == m.vertices.ptr,
+        "L1 document source control: invocation must release its borrow");
+    t.amount = 7;
+    auto policy = t.sessionPolicy();
+    assert(m.vertices[0].x == x + 5 && t.calls == 2,
+        "L1 document source control: attribute/policy queries must stay inert");
+    assert(invoke(&replacementDocument));
+    assert(m.vertices[0].x == x + 12,
+        "L1 retained document identity: replacement must bypass stale retained input");
+    t.amount = 9;
+    assert(invoke(&replacementDocument) && m.vertices[0].x == x + 14,
+        "L1 document refresh: replacement input must become the retained source");
+    assert(t.headlessSourcePositions(m.vertices).ptr == m.vertices.ptr,
+        "L1 document refresh: invocation must release its borrow");
+}
+
 unittest { // Retained input and immediate inverse are independent images.
     auto rig = sourceRig(true);
     auto t = cast(SourceTool)rig.activeTool;
