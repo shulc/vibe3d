@@ -108,7 +108,7 @@ unittest { // Radial Align — center/radius auto-compute law, BIT-EXACT
     assert(abs(center.y - (-0.5f))   < 1e-6f, "center.y mismatch");
     assert(abs(center.z - 0.125f)    < 1e-6f, "center.z mismatch");
 
-    auto result = radialAlignTargets(source, false, 4, 0.0f, 0.0f);
+    auto result = radialAlignTargets(source, false, 4, 0.0f, 0);
     assert(result.length == 4);
     foreach (p; result) {
         Vec3 d = p - center;
@@ -130,7 +130,7 @@ unittest { // Radial Align — center/radius auto-compute law, BIT-EXACT
     // angle=0 result. Verified here against OUR OWN angle=0 result (the
     // absolute base-anchor value is unverified, but this additive
     // property is guaranteed by construction for any anchor choice).
-    auto result90 = radialAlignTargets(source, false, 4, 90.0f, 0.0f);
+    auto result90 = radialAlignTargets(source, false, 4, 90.0f, 0);
     foreach (i; 0 .. 4) {
         Vec3 a = result90[i], b = result[(i + 1) % 4];
         assert(abs(a.x - b.x) < 1e-3f && abs(a.y - b.y) < 1e-3f && abs(a.z - b.z) < 1e-3f,
@@ -148,8 +148,8 @@ unittest { // Radial Align — N-Sided(4) uses the SAME center + radius as
         Vec3( 0.5f,     -0.5f,  0.5f),
         Vec3(-0.5f,     -0.5f,  0.5f),
     ];
-    auto circle = radialAlignTargets(source, false, 4, 0.0f, 0.0f);
-    auto nside4 = radialAlignTargets(source, true, 4, 0.0f, 0.0f);
+    auto circle = radialAlignTargets(source, false, 4, 0.0f, 0);
+    auto nside4 = radialAlignTargets(source, true, 4, 0.0f, 0);
     assert(circle.length == nside4.length);
     // Same radius from the same (shared) center for every point.
     Vec3 center = Vec3(0, 0, 0);
@@ -176,7 +176,7 @@ unittest { // Radial Align — weight blend uses the same lerp law as
 unittest { // Radial Align — degenerate single-vertex "chain" is a no-op
            // (no circle can be defined from one point).
     Vec3[] source = [Vec3(1, 2, 3)];
-    auto r = radialAlignTargets(source, false, 4, 0.0f, 0.0f);
+    auto r = radialAlignTargets(source, false, 4, 0.0f, 0);
     assert(r.length == 1);
     assert(abs(r[0].x - 1.0f) < 1e-6f && abs(r[0].y - 2.0f) < 1e-6f && abs(r[0].z - 3.0f) < 1e-6f);
 }
@@ -187,12 +187,12 @@ unittest { // Radial Align — `side`/effSides DoS clamp: an absurd `sides`
     Vec3[] source = [
         Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(-1, 0, 0), Vec3(0, -1, 0),
     ];
-    auto r1 = radialAlignTargets(source, true, 2_000_000_000, 0.0f, 0.0f);
+    auto r1 = radialAlignTargets(source, true, 2_000_000_000, 0.0f, 0);
     assert(r1.length == 4);
     foreach (p; r1) {
         assert(p.x == p.x && p.y == p.y && p.z == p.z, "NaN in clamped-sides result"); // NaN check
     }
-    auto r2 = radialAlignTargets(source, true, -5, 0.0f, 0.0f);
+    auto r2 = radialAlignTargets(source, true, -5, 0.0f, 0);
     assert(r2.length == 4);
     foreach (p; r2) {
         assert(p.x == p.x && p.y == p.y && p.z == p.z, "NaN in negative-sides result");

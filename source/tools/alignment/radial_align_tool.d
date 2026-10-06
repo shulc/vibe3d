@@ -31,25 +31,16 @@ import prepared_tool_effect : PreparedTransformActivationEffect,
 /// Bend/Push's existing headless-attr-driven precedent rather than
 /// inventing an undocumented drag gesture.
 ///
-/// Algorithm (measured by live reference-editor capture, task 0361 — see
-/// `tools/align_kernels.d`'s module doc comment for the full law).
-/// CONFIRMED: the reference tool has NO cylinder/sphere mode — only
-/// planar `circle` / `nside` (this is the direct answer to this task's
-/// "confirm cylinder-mode presence" question). Extracts an ordered vertex
-/// CHAIN from the current selection (same extraction as Linear Align),
-/// then distributes it at equal `360/N`-degree slots around a circle
-/// (center = mean chain position, radius = mean distance from center,
-/// both auto-computed — no interactive override, see `params()`'s doc
-/// comment). `angle`/`rotate` additively rotate the slot framework;
-/// `weight` blends `lerp(source, aligned, weight * falloff(aligned))` — the
-/// falloff read at the TARGET (capture K-F2, task 9446).
+/// Shared target law (tasks 9490, 20261040): Circle retains its start/search;
+/// N-sided uses integer knot ownership and double chords. Weight blends source
+/// to target with falloff evaluated at the target (task 9446, K-F2).
 class RadialAlignTool : TransformTool, PreparedToolDoorClient {
 private:
     // "circle" / "nside" — see align_kernels.radialAlignTargets's doc
     // comment (CONFIRMED no cylinder/sphere mode exists).
     string headlessMode   = "circle";
     int    headlessSide   = 4;
-    float  headlessRotate = 0.0f;   // N-Sided-only slot offset
+    int    headlessRotate = 0;   // N-Sided-only slot offset
     float  headlessAngle  = 0.0f;   // Circle (and, composed, N-Sided) offset
     float  headlessWeight = 1.0f;
 
@@ -106,7 +97,7 @@ public:
             Param.enum_("mode", "Mode", &headlessMode,
                 [["circle", "Circle"], ["nside", "N-Sided"]], "circle"),
             Param.int_("side", "Side", &headlessSide, 4),
-            Param.float_("rotate", "Rotate", &headlessRotate, 0.0f).angle(),
+            Param.int_("rotate", "Rotate", &headlessRotate, 0),
             Param.float_("angle", "Angle", &headlessAngle, 0.0f).angle(),
             Param.float_("weight", "Weight", &headlessWeight, 1.0f),
         ];

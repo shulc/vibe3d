@@ -270,6 +270,18 @@ Vec3[] linearAlignTargets(const(Vec3)[] source, bool uniform) pure nothrow @safe
 /// (Param-level `.max().enforceBounds()` PLUS this kernel-level clamp) as
 /// every other count-like Param in this codebase.
 enum int MAX_ALIGN_SIDES = 1024;
+private enum double radialPi = cast(double)PI;
+
+// Task 20261040: N-sided phase and corners use the C binary64 evaluation
+// policy; retain residuals and cross the Vec3 boundary only after chords.
+private double radialSin(double angle) pure nothrow @safe @nogc {
+    import core.stdc.math : cSin = sin;
+    return cSin(angle);
+}
+private double radialCos(double angle) pure nothrow @safe @nogc {
+    import core.stdc.math : cCos = cos;
+    return cCos(angle);
+}
 
 /// Edge-neighbours of every chain vertex that lie OUTSIDE the operand set
 /// (`Mesh.operandVertexMask`), as positions indexed like `chain`. These are
@@ -291,20 +303,12 @@ Vec3[][] alignOutsideNeighbours(Mesh* mesh, EditMode editMode, const(uint)[] cha
     return result;
 }
 
-/// Radial Align target positions — mode=circle/nside, in chain order.
-/// Center = mean source position, radius = mean distance from it, equal
-/// 360/N slots in chain order, turning positively about `ringNormal` (capture,
-/// task 0361). PHASE (task 9490, read from the reference and reproduced on
-/// its circle, N-Sided and no-outside-neighbour cells; evidence in the
-/// private toolcard `radial_align_anchor`): the slot ring starts at the
-/// chain vertex chosen by `radialAlignStart` and puts it at its OWN angle;
-/// Circle mode then turns the whole ring by `radialAlignSearch` against
-/// `outside` (`alignOutsideNeighbours`); `angleDeg` (and N-Sided's
-/// `rotateDeg`) add on top. `sides` is clamped to `[1, MAX_ALIGN_SIDES]`;
-/// with fewer points than sides the points take the first slots (the
-/// reference interpolates extra corners — not ported). Computed in double.
+/// Shared radial target authority. Circle retains the captured start/search
+/// schedule (task 9490); N-sided uses integer knot ownership and double chords
+/// (task 20261040, frozen radial_nsided_original fixture). Initialization rotates
+/// source order before integer Rotate; only final targets cross the Vec3 seam.
 Vec3[] radialAlignTargets(const(Vec3)[] source, bool nsideMode, int sides,
-                          float angleDeg, float rotateDeg,
+                          float angleDeg, int rotate,
                           const(Vec3[])[] outside = null) pure nothrow @safe {
     immutable size_t n = source.length;
     Vec3[] result = new Vec3[](n);
@@ -323,6 +327,61 @@ Vec3[] radialAlignTargets(const(Vec3)[] source, bool nsideMode, int sides,
 
     const D3 normal = ringNormal(p, center);
     const size_t start = radialAlignStart(p, center, normal);
+    if (nsideMode) {
+        import workplane_fit : PlaneFrame, planeFrame;
+        int cappedSides = sides;
+        if (cappedSides < 1) cappedSides = 1;
+        else if (cappedSides > MAX_ALIGN_SIDES) cappedSides = MAX_ALIGN_SIDES;
+        const size_t count = n < cappedSides ? n : cappedSides;
+        const long m = cast(long)n;
+        const size_t a = cast(size_t)((cast(long)rotate % m + m) % m);
+        auto ordered = new D3[](n);
+        foreach (k; 0 .. n) ordered[k] = p[(start + k) % n];
+        PlaneFrame frame;
+        if (!planeFrame([normal.x, normal.y, normal.z], frame))
+            frame.M = [[-1.0, 0, 0], [0.0, 1, 0], [0.0, 0, -1]];
+        const D3 delta = ordered[a] - center;
+        const D3 direction = delta * (1.0 / delta.len);
+        const uv = frame.toPlane([direction.x, direction.y, direction.z]);
+        const double nominalStep = (2.0 * radialPi) / cast(double)n;
+        const double nominalArgument = nominalStep * cast(double)a;
+        const double nominal = xyAngle(radialCos(nominalArgument), radialSin(nominalArgument));
+        const double correction = xyAngle(uv[0], uv[1]) - nominal;
+        const double angleRadians = cast(double)angleDeg * (radialPi / 180.0);
+        const double alpha = angleRadians + correction;
+        const size_t q = n / count, remainder = n - q * count;
+        auto corners = new D3[](count);
+        auto knots = new size_t[](count);
+        foreach (j; 0 .. count) {
+            knots[j] = (a + j * q + (j < remainder ? j : remainder)) % n;
+            const double cornerStep = (2.0 * radialPi) / cast(double)count;
+            const double cornerOffset = cast(double)j * cornerStep;
+            const double phi = alpha + cornerOffset;
+            const world = frame.fromPlane(radius * radialCos(phi), radius * radialSin(phi), 0);
+            corners[j] = center + D3(world[0], world[1], world[2]);
+        }
+        auto targets = new D3[](n);
+        foreach (j; 0 .. count) {
+            targets[knots[j]] = corners[j];
+            const size_t gap = q + (j < remainder ? 1 : 0);
+            foreach (t; 1 .. gap)
+                targets[(knots[j] + t) % n] = corners[j] +
+                    (corners[(j + 1) % count] - corners[j]) * (cast(double)t / gap);
+        }
+        // Static orientation pass; captured positive cells constrain its output,
+        // without asserting runtime reachability of negative odd winding.
+        if ((targets[0] - center).cross(targets[1] - center).dot(normal) < 0) {
+            foreach (i; 1 .. n / 2) {
+                const D3 saved = targets[i];
+                targets[i] = targets[n - i];
+                targets[n - i] = saved;
+            }
+        }
+        foreach (k, target; targets)
+            result[(start + k) % n] = Vec3(cast(float)target.x,
+                cast(float)target.y, cast(float)target.z);
+        return result;
+    }
     D3 u = p[start] - center;
     u = u - normal * u.dot(normal);
     if (u.len < 1e-9) {
@@ -333,7 +392,7 @@ Vec3[] radialAlignTargets(const(Vec3)[] source, bool nsideMode, int sides,
     u = u * (1.0 / u.len);
     const D3 v = normal.cross(u);
 
-    int effSides = nsideMode ? sides : cast(int)n;
+    int effSides = cast(int)n;
     if (effSides < 1) effSides = 1;
     else if (effSides > MAX_ALIGN_SIDES) effSides = MAX_ALIGN_SIDES;
     immutable double step = 2.0 * PI / effSides;
@@ -355,7 +414,7 @@ Vec3[] radialAlignTargets(const(Vec3)[] source, bool nsideMode, int sides,
         }
         turn = radialAlignSearch(&totalDistance, n, radius);
     }
-    turn += (angleDeg + (nsideMode ? rotateDeg : 0.0f)) * (PI / 180.0);
+    turn += angleDeg * (PI / 180.0);
     foreach (k; 0 .. n) {
         const D3 r = slotAt(k, turn);
         result[(start + k) % n] = Vec3(cast(float)r.x, cast(float)r.y, cast(float)r.z);
@@ -403,9 +462,16 @@ private size_t radialAlignStart(const(D3)[] p, D3 center, D3 normal) pure nothro
     double bestKey = double.infinity;
     foreach (i, q; p) {
         const D3 d = q - center;
-        const uv = f.toPlane([d.x, d.y, d.z]);
+        const double normSquared = (d.y * d.y + d.z * d.z) + d.x * d.x;
+        const double length = sqrt(normSquared);
+        const D3 direction = length > 0 ? d * (1.0 / length) : d;
+        const uv = f.toPlane([direction.x, direction.y, direction.z]);
         const double a = abs(xyAngle(uv[0], uv[1]));
-        const double key = a - cast(long)(a / (PI / 2)) * (PI / 2);
+        const double quarter = radialPi / 2.0;
+        const double quotient = a / quarter;
+        const int whole = cast(int)quotient;
+        const double multiple = cast(double)whole * quarter;
+        const double key = a - multiple;
         if (key < bestKey) { bestKey = key; best = i; }
     }
     return best;
@@ -449,10 +515,12 @@ private double radialAlignSearch(scope double delegate(double) pure nothrow @saf
 /// Plane-frame angle of (x, y) in (−π, π]; on x == 0 it answers ±π/2 by
 /// the sign of y (−π/2 at the origin), as the read law does.
 private double xyAngle(double x, double y) pure nothrow @safe @nogc {
-    if (x == 0) return y > 0 ? PI / 2 : -PI / 2;
-    const double a = atan(y / x);
+    const double quarter = radialPi / 2.0;
+    if (x == 0) return y > 0 ? quarter : -quarter;
+    const double quotient = y / x;
+    const double a = atan(quotient);
     if (x > 0) return a;
-    return y < 0 ? a - PI : a + PI;
+    return y < 0 ? a - radialPi : a + radialPi;
 }
 
 /// Double-precision point for the radial kernel (the read law runs in
@@ -480,3 +548,28 @@ private struct D3 {
 // hand-verified against the captured data once and is reproduced as a
 // literal.
 // ---------------------------------------------------------------------
+
+unittest { // Task 20261040: private radialAlignStart, original first equal-key owner.
+    import std.file : readText;
+    import std.json : parseJSON, JSONType;
+    import std.format : format;
+    auto fixture = parseJSON(readText("tests/fixtures/radial_nsided_original.json"));
+    assert(fixture["model"]["vertices"].array.length == 90 &&
+        fixture["orderedIds"].array.length == 18, "full original population");
+    D3[] p;
+    foreach (k, id; fixture["orderedIds"].array) {
+        assert(id.integer == 72 + k, "original ordered mapping");
+        auto v = fixture["model"]["vertices"][cast(size_t)id.integer];
+        double value(size_t i) { return cast(float)(v[i].type == JSONType.integer ? cast(double)v[i].integer : v[i].floating); }
+        p ~= D3(value(0), value(1), value(2));
+    }
+    D3 center;
+    foreach (q; p) center = center + q;
+    center = center * (1.0 / p.length);
+    const normal = ringNormal(p, center);
+    const start = radialAlignStart(p, center, normal);
+    double radius = 0;
+    foreach (q; p) radius += (q-center).len;
+    radius /= p.length;
+    assert(start == 0, format("original-start expected=0 actual=%s", start));
+}

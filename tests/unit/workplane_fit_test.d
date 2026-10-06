@@ -141,3 +141,12 @@ unittest { // endpoints centred on the world origin: A is regular but sum p = 0,
     assert(skewEdgePairFrame(v, x, y, z) == SkewFit.zeroNormal,
         "the frame must pass the zeroNormal verdict through");
 }
+
+unittest { // OUR inverse-frame algebra; no new orientation law.
+    PlaneFrame frame;
+    assert(planeFrame([.3,.4,.8660254037844386],frame),"ordinary oblique frame admitted");
+    const p=frame.fromPlane(.37,-.82,.19);
+    const uv=frame.toPlane(p);
+    assert(abs(uv[0]-.37)<1e-12 && abs(uv[1]+.82)<1e-12,
+        "frame transpose inverse retains plane coordinates");
+}

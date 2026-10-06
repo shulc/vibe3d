@@ -14,17 +14,9 @@ import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets, al
                               MAX_ALIGN_SIDES;
 import falloff : weightedLerp;
 
-/// Distribute a selected vertex CHAIN at equal angular slots around a
-/// circle (task 0361 — replaces the previous sphere-projection algorithm,
-/// which did not match the reference "Radial Align" tool: the reference
-/// has NO cylinder/sphere mode, only planar `circle`/`nside`). See
-/// `tools/align_kernels.d`'s module doc comment for the full captured
-/// law: center = mean chain position, radius = mean distance from
-/// center, N points at equal `360/N`-degree slots in chain order.
-///
-/// This one-shot Command has no falloff plumbing (that lives in the
-/// interactive `xfrm.radialAlignTool`, tools/radial_align_tool.d, which
-/// shares this same kernel) — `weight` here is a plain uniform blend.
+/// Shared radial target law (tasks 9490, 20261040): Circle start/search or
+/// N-sided integer knots and double chords, followed by the existing uniform
+/// weightedLerp and recorded PositionUndo. The tool adds target-space falloff.
 class MeshRadialAlign : Command, Operator {
     mixin OperatorActrCommon;
     private uint[] touchedIdx;
@@ -48,7 +40,7 @@ class MeshRadialAlign : Command, Operator {
 
     private string mode_   = "circle";
     private int    side_   = 4;
-    private float  rotate_ = 0.0f;
+    private int    rotate_ = 0;
     private float  angle_  = 0.0f;
     private float  weight_ = 1.0f;
 
@@ -69,7 +61,7 @@ class MeshRadialAlign : Command, Operator {
                 [["circle", "Circle"], ["nside", "N-Sided"]], "circle"),
             Param.int_("side", "Side", &side_, 4)
                 .min(1).max(MAX_ALIGN_SIDES).enforceBounds(),
-            Param.float_("rotate", "Rotate", &rotate_, 0.0f).angle(),
+            Param.int_("rotate", "Rotate", &rotate_, 0),
             Param.float_("angle", "Angle", &angle_, 0.0f).angle(),
             Param.float_("weight", "Weight", &weight_, 1.0f)
                 .min(0.0f).max(1.0f).enforceBounds(),

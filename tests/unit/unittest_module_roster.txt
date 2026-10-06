@@ -546,6 +546,7 @@ tests.unit.toolpipe.subject_construction_census_test
 tests.unit.toolpipe.view_only_subject_pin_test
 tests.unit.tools.alignment.align_kernels_test
 tests.unit.tools.alignment.mirror_test
+tests.unit.tools.alignment.radial_nsided_original_test
 tests.unit.tools.create.arc_test
 tests.unit.tools.create.box_test
 tests.unit.tools.create.create_common_test

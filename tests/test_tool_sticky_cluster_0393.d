@@ -341,7 +341,8 @@ unittest {
     assert(side.integer == 6, "side should persist as 6, got " ~ side.toString);
 
     auto rotate = query("tool.attr xfrm.radialAlignTool rotate ?");
-    assert(approxEqual(rotate.floating, 15.0), "rotate should persist as 15, got " ~ rotate.toString);
+    assert(rotate.type == JSONType.integer && rotate.integer == 15,
+        "integer Rotate should persist as 15, got " ~ rotate.toString);
 
     auto angle = query("tool.attr xfrm.radialAlignTool angle ?");
     assert(approxEqual(angle.floating, 20.0), "angle should persist as 20, got " ~ angle.toString);

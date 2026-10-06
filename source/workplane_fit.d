@@ -203,6 +203,15 @@ D2 hullMajorAxis(const D2[] h) pure nothrow @nogc @safe {
 struct PlaneFrame {
     int k, a1, a2;
     double[3][3] M = [[1.0, 0, 0], [0.0, 1, 0], [0.0, 0, 1]];
+    /// Inverse embedding of plane coordinates by the shared frame transpose.
+    D3 fromPlane(double x, double y, double z = 0) const pure nothrow @nogc @safe {
+        D3 local = 0;
+        local[a1] = x; local[a2] = y; local[k] = z;
+        D3 world;
+        foreach (i; 0 .. 3)
+            world[i] = M[0][i] * local[0] + M[1][i] * local[1] + M[2][i] * local[2];
+        return world;
+    }
     double[2] toPlane(D3 v) const pure nothrow @nogc @safe {
         D3 r;
         foreach (i; 0 .. 3) r[i] = M[i][0] * v[0] + M[i][1] * v[1] + M[i][2] * v[2];
