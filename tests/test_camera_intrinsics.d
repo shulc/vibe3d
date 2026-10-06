@@ -245,3 +245,16 @@ unittest {
     assert(postJson("/api/command",commandBody("viewport.layout",`"Quad"`),base)["status"].str=="ok");
     foreach(i,lens;lenses)assert(cast(float)num(getJson(format("/api/camera?viewport=%d",i),base)["fovY"])==lens,"HTTP_ADDRESSED_LAYOUT_RETAINS");
 }
+
+unittest {
+    if(!selected("lifecycle"))return;
+    import std.process : spawnProcess,wait;
+    import std.socket : Socket,AddressFamily,SocketType,ProtocolType,InternetAddress;
+    auto socket=new Socket(AddressFamily.INET,SocketType.STREAM,ProtocolType.TCP);
+    socket.bind(new InternetAddress(InternetAddress.ADDR_ANY,0));
+    PerspectiveCameraRig rig;
+    rig.port=(cast(InternetAddress)socket.localAddress).port;socket.close();
+    rig.pid=spawnProcess(["/usr/bin/true"]);wait(rig.pid);
+    assert(rig.pid.processID<0,"OWNED_CAMERA_REAPED_CHILD_PREMISE");
+    rig.stop();assert(rig.pid is null,"OWNED_CAMERA_REAPED_CHILD_CLEANUP");
+}

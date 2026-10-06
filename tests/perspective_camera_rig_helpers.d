@@ -1,8 +1,8 @@
 module perspective_camera_rig_helpers;
-import core.sys.posix.signal : kill,SIGTERM,SIGKILL;
+import core.sys.posix.signal : SIGTERM,SIGKILL;
 import core.thread : Thread;
 import core.time : msecs;
-import std.process : Pid, Config, spawnProcess, wait, tryWait, thisProcessID;
+import std.process : Pid, Config, spawnProcess, wait, tryWait, thisProcessID, kill;
 import std.socket : Socket,AddressFamily,SocketType,ProtocolType,InternetAddress,SocketOptionLevel,SocketOption;
 import std.stdio : File,stdin;
 import std.file : mkdirRecurse,rmdirRecurse,exists,readText,getcwd,symlink;
@@ -22,6 +22,7 @@ struct PerspectiveCameraRig {
         r.base="http://127.0.0.1:"~r.port.to!string;
         r.root=buildPath("/tmp","vibe3d_perspective_camera_"~thisProcessID().to!string~"_"~r.port.to!string);
         mkdirRecurse(r.root);
+        scope(failure)r.stop();
         const repo=getcwd();
         symlink(buildPath(repo,"config"),buildPath(r.root,"config"));
         symlink(buildPath(repo,"assets"),buildPath(r.root,"assets"));
@@ -30,7 +31,6 @@ struct PerspectiveCameraRig {
         string[string] env=["VIBE3D_CONFIG_DIR":r.root,"VIBE3D_TEST_DIRTY_KEY":"1"];
         r.pid=spawnProcess([buildPath(repo,"vibe3d"),"--test","--http-port",r.port.to!string,
             "--viewport","1152x974"],stdin,f,f,env,Config.none,r.root);
-        scope(failure)r.stop();
         bool ready;
         foreach(_;0..1200) {
             if(tryWait(r.pid).terminated)break;
@@ -50,13 +50,13 @@ struct PerspectiveCameraRig {
     }
     void stop() {
         if(pid !is null) {
-            try kill(pid.processID,SIGTERM);catch(Exception){}
+            try kill(pid,SIGTERM);catch(Exception){}
             bool ended;
             foreach(_;0..40) {
                 if(tryWait(pid).terminated){ended=true;break;}
                 Thread.sleep(25.msecs);
             }
-            if(!ended){try kill(pid.processID,SIGKILL);catch(Exception){} try wait(pid);catch(Exception){}}
+            if(!ended){try kill(pid,SIGKILL);catch(Exception){} try wait(pid);catch(Exception){}}
             pid=null;
         }
         if(root.length&&exists(root))rmdirRecurse(root);
