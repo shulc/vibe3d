@@ -858,7 +858,7 @@
     {
       "aggregate": "EdgeExtendTool",
       "module": "tools.edit.edge_extend",
-      "semantic_sha256": "8d9e23716bf011d66ea54772c03b367d0d9ce2e2ae2ec2b02b347102094eef6c",
+      "semantic_sha256": "aed4ff9c7c3f885768037f56471d43559d68914929b879ab2048f642e2534c3e",
       "signature": "void(ref VectorStack vts)",
       "symbol": "update"
     },
