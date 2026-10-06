@@ -1003,11 +1003,11 @@ private struct ToolSession {
                                boundModel_() && postmodeArmed_);
         const armRow = latentArmRow_();
         const id = armedId_;
-        markerConsumed_ = false;
+        bool markerConsumed;
         const completionBefore = completedDropUndo_;
-        const r = undoImpl_();
+        const r = undoImpl_(markerConsumed);
         if (r) openBlock_ = null;
-        if (r && !markerConsumed_ && completedDropUndo_ == completionBefore && history_.undoEntries().length != navBefore_.depth)
+        if (r && !markerConsumed && completedDropUndo_ == completionBefore && history_.undoEntries().length != navBefore_.depth)
             settleAfterNavigation_(true);
         // K-RD rule 3: the undo that removed the activation row left the tool latent.
         if (r && armRow != size_t.max && history_.undoEntries().length <= armRow) {
@@ -1212,7 +1212,7 @@ private struct ToolSession {
             && act.sessionToken() == token_;
     }
 
-    private bool undoImpl_() {
+    private bool undoImpl_(out bool markerConsumed) {
         terminalRedoRequested_ = false;
         // Task 8261, e001/e005: two retained adjustment rows are visible
         // after close, yet one outside Undo restores the run-start image.
@@ -1310,8 +1310,8 @@ private struct ToolSession {
         }
         const tail = history_.undoEntries();
         if (tail.length && (tail[$ - 1].flags & HistoryFlags.PressMarker)) {
-            markerConsumed_ = history_.undo();
-            return markerConsumed_;
+            markerConsumed = history_.undo();
+            return markerConsumed;
         }
         // H1 + the session token (slice M4, gap 218): the record that closed
         // THIS session's first operation is undone together with the
@@ -1539,7 +1539,6 @@ private struct ToolSession {
         ++completedDropUndo_;
     }
     private ulong completedDropUndo_;
-    private bool markerConsumed_;
 
     // The one close routine (EditSession.closeOperation's body; plan R4.2).
     CloseOutcome close(CloseReason r, CommandDoor door, bool dropRow = false,

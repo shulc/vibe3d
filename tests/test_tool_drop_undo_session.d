@@ -515,6 +515,13 @@ unittest { // A second undo consumes the plain pen residual boundary.
     undo();
     assert(quadGap(verts(), first) <= 1e-6,
         format("plain second undo must traverse an inert residual row: got %s; first press %s", verts(), first));
+    const token = getJson("/api/tool/state")["session"]["token"].integer;
+    dragPx(worldPixel(Vec3(cast(float)first[0][0], cast(float)first[0][1], cast(float)first[0][2])), -44, 0);
+    assert(quadGap(verts(), first) > 0.05, "post-marker new edit must move geometry");
+    undo();
+    assert(quadGap(verts(), first) <= 1e-6 && tool() == "mesh.topoPen"
+        && getJson("/api/tool/state")["session"]["token"].integer == token,
+        "post-marker undo must navigate the new edit and preserve its owner token");
 }
 
 unittest { // Actual HTTP replay/export readers see a visible consumed press.

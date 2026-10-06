@@ -462,6 +462,14 @@ class ResidualRig {
     void close() { h.recordToolLifecycle(drop); }
 }
 
+unittest { // Consume the real carrier before the structural-shape witness.
+    auto r = new ResidualRig(); r.close();
+    assert(r.h.undo() && r.m.vertices[0].x == 1 && r.last.reverts == 1,
+        "residual consume floor: newest press was reverted once");
+    assert(r.h.undo() && r.last.reverts == 1 && r.field.reverts == 1 && r.m.vertices[0].x == 1,
+        "residual marker must never call the original press revert again");
+}
+
 unittest {
     auto r = new ResidualRig(); r.close();
     const gen = r.h.generation(); const epoch = r.h.undoEpoch();
@@ -473,6 +481,8 @@ unittest {
     auto marker = cast(const DropPressMarkerCommand) rows[2].cmd;
     assert(marker !is null && marker !is r.last && marker !is r.field && marker.sessionToken() == 7 && (cast(Command)marker).meshPtr() is null,
         "residual carrier must be fresh and payload-free");
+    assert(rows[2].label == "Consumed press: probe.last", "residual carrier copies its consumed boundary text");
+    assert(!(cast(Command)marker).apply(), "residual carrier has no forward operation");
     assert(rows[2].flags == (HistoryFlags.Succeeded | HistoryFlags.Undoable | HistoryFlags.PressMarker)
         && rows[2].runId == 0 && r.h.redoEntries().length == 0,
         "residual marker has only its undo role and never retained redo");

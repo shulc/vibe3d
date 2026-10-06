@@ -416,7 +416,7 @@ unittest { // (3) the doors reach the tool session only through EditSession
     // Slice M4: the tool-held peel, keep-alive, live-redo and run-record
     // branches are gone; the record that carries its activation row is read
     // before the stack steps, and a restored predecessor adopts its token after.
-    inOrder(bodyAt(ts, "private bool undoImpl_()"),
+    inOrder(bodyAt(ts, "private bool undoImpl_(out bool markerConsumed)"),
             ["navigateRecorded_(true)", "navigateTopology_(true)", "undoFirstGroup_(t)",
              "cancelUncommittedEdit()", "recordCarriesActivation_()", "absorbedRunAbove_()",
              "rebaseAfterTail_(", "restorePredecessor_("],
@@ -436,8 +436,8 @@ unittest { // (3) the doors reach the tool session only through EditSession
     assert(squeeze(bodyAt(ts, "bool undo()")) == "{navBefore_=NavBefore(history_.undoEntries().length,"
            ~ "token_,boundModel_()&&postmodeArmed_);"
            ~ "constarmRow=latentArmRow_();constid=armedId_;"
-           ~ "markerConsumed_=false;constcompletionBefore=completedDropUndo_;constr=undoImpl_();if(r)openBlock_=null;"
-           ~ "if(r&&!markerConsumed_&&completedDropUndo_==completionBefore&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
+           ~ "boolmarkerConsumed;constcompletionBefore=completedDropUndo_;constr=undoImpl_(markerConsumed);if(r)openBlock_=null;"
+           ~ "if(r&&!markerConsumed&&completedDropUndo_==completionBefore&&history_.undoEntries().length!=navBefore_.depth)settleAfterNavigation_(true);"
            ~ "if(r&&armRow!=size_t.max&&history_.undoEntries().length<=armRow){"
            ~ "latentId_=id;latentGen_=history_.generation();}"
            ~ "returnr;}",
@@ -1213,7 +1213,7 @@ unittest { // (4e)
            ~ "files are %s, the table %s", model, kRebaseBodyFiles));
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");
-    foreach (m; ["private bool undoImpl_()", "private bool redoImpl_()",
+    foreach (m; ["private bool undoImpl_(out bool markerConsumed)", "private bool redoImpl_()",
                  "private bool attrRowJoinsActivation_()", "void notePointerDown()"])
         assert(squeeze(bodyAt(ts, m)).length > 2, "S6 floor: the session body " ~ m ~ " is empty");
 
@@ -1230,7 +1230,7 @@ unittest { // (4e)
            == ["<decl>:1", "ToolSession.undoImpl_:1"],
            format("S6 needle: the UI pair of an attribute-only row is read at %s",
                   identSites(es, "attrRowJoinsActivation_", false)));
-    const und = bodyAt(ts, "private bool undoImpl_()");
+    const und = bodyAt(ts, "private bool undoImpl_(out bool markerConsumed)");
     const join_ = squeeze(bodyAt(ts, "private bool attrRowJoinsActivation_()"));
     assert(words(und, "topologyDormant_") == 0 && join_.canFind("act.joinsFirstGroup()")
            && join_.canFind("cast(constTopologyAdjustmentEdit)ue[$-1].cmd!isnull")
@@ -1346,7 +1346,7 @@ unittest { // (4g)
     import tests.unit.census_symbols : blankUnittestBodies;
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");
-    foreach (m; ["private bool undoImpl_()", "private bool navigateTopology_(bool isUndo)",
+    foreach (m; ["private bool undoImpl_(out bool markerConsumed)", "private bool navigateTopology_(bool isUndo)",
                  "private void adoptPredecessorToken_(const Command undone)",
                  "private void restorePredecessor_(const Command undone, AttrImage remembered)"])
         assert(squeeze(bodyAt(ts, m)).length > 2,
@@ -1379,7 +1379,7 @@ unittest { // (4h)
     import tests.unit.census_symbols : blankUnittestBodies;
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");
-    foreach (m; ["private bool undoImpl_()", "private bool redoImpl_()",
+    foreach (m; ["private bool undoImpl_(out bool markerConsumed)", "private bool redoImpl_()",
                  "private void rebaseAfterTail_(Tool t)"])
         assert(squeeze(bodyAt(ts, m)).length > 2,
                "S7 (6) floor: the session body " ~ m ~ " is empty");
