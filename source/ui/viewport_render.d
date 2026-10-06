@@ -834,15 +834,17 @@ public:
         // majors every 10, its two world-axis lines brightest (colours: the
         // near-focus readings of the GR_P_z frame). An underlay like the
         // ortho grid (rule 1, measured in ortho only), so a later line draws
-        // over a coincident earlier one. The fade is ours; the reference's,
-        // and a pinned plane's grid, are uncaptured (gap rows).
+        // over a coincident earlier one. Unfaded, through the ortho grid's
+        // neutral uniforms: the ground's fade is radial from the world origin
+        // and would erase a lattice 5 m away; the reference's fade, and a
+        // pinned plane's grid, are uncaptured (gap rows).
         if (workStage is null || workStage.isAuto) {
             glDepthMask(GL_FALSE);
             scope (exit) glDepthMask(GL_TRUE);
             immutable float[16] wpModel = workPlaneLatticeModel(vp, gridStep);
             float[16] m = wpModel;
             m[0 .. 12] *= 5.0f;
-            glUniformMatrix4fv(gridShader.locModel, 1, GL_FALSE, m.ptr);
+            gridShader.useProgram(m, vp, 1e30f, 1e9f, 1e9f, -5e8f, -5e8f);
             glUniform3f(gridShader.locColor, 96 / 255.0f, 106 / 255.0f, 111 / 255.0f);
             glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
             g_fc.draw(DrawPass.grid, gridOnlyVertCount);

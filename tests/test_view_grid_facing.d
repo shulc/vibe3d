@@ -241,12 +241,12 @@ unittest { // GR_D — behind the plane
 // ---------------------------------------------------------------------------
 struct PerspRig { Viewport vp; double step; }
 
-PerspRig perspRig() {
+PerspRig perspRig(string camera = `{"azimuth":0.15,"elevation":-0.1,`
+                                   ~ `"focus":{"x":0.07,"y":1.0,"z":0.7},"distance":3}`) {
     cmd(commandBody("scene.reset", `{"empty":true}`));
     cmd("workplane.reset");
     cmd("viewport.view Perspective");
-    auto cr = postJson("/api/camera?viewport=0", `{"azimuth":0.15,"elevation":-0.1,`
-        ~ `"focus":{"x":0.07,"y":1.0,"z":0.7},"distance":3}`);
+    auto cr = postJson("/api/camera?viewport=0", camera);
     assert(cr["status"].str == "ok", "camera: " ~ cr.toString);
     frameFence(null, 3);
     PerspRig r;
@@ -307,4 +307,21 @@ unittest { // GR_P — the work-plane lattice at the rounded focus, uncoloured a
     assert(sa > sj && sj > sm,
         format("GR_P: the world-axis line must outshine the 1 m major, the major the "
              ~ "0.5 m line: axis %s major %s mid %s", axis, major, mid));
+}
+
+unittest { // GR_P far from the origin: the lattice is a window about the focus
+    // (fixture K-GR.json: lines over +-2.3 m around it), so it must not fade
+    // out with its distance from the world origin. Front-facing, focus at
+    // z = 6: the plane is z = 6 and its x = 0 line passes above the eye.
+    if (!cellOn("persp-far")) return;
+    import std.math : abs;
+    auto r = perspRig(`{"azimuth":0,"elevation":0,"focus":{"x":0,"y":1.0,"z":6},"distance":3}`);
+    immutable axis = peakNear(Vec3(0, 1.25f, 6), r.vp);
+    immutable off  = peakNear(Vec3(0.25f, 1.25f, 6), r.vp);
+    writefln("GR_P far: axis %s off %s", axis, off);
+    foreach (i; 0 .. 3)
+        assert(abs(off[i] - kBg[i]) <= 2, format("GR_P far: off-lattice must be background, got %s", off));
+    assert(axis[0] - kBg[0] >= 10 && axis[1] - kBg[1] >= 10 && axis[2] - kBg[2] >= 10,
+        format("GR_P far: the work-plane lattice 6 m from the origin must stay visible, its "
+             ~ "x = 0 line reads %s (background %s)", axis, kBg));
 }
