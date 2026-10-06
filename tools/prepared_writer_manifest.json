@@ -984,14 +984,14 @@
     {
       "aggregate": "TopologyPenTool",
       "module": "tools.edit.topology_pen.tool",
-      "semantic_sha256": "71c71f7d791c5332244cceb85d2a79a7e7c8d0ba3941fea0bd8a453e4bf2299c",
+      "semantic_sha256": "b83a0a6f6ce897537546f643c1024068cc8a42b241b315f57ceb47bc5e5140c7",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "TopologyPenTool",
       "module": "tools.edit.topology_pen.tool",
-      "semantic_sha256": "da188cf0e04ddb40529882dc6152a139eeb1bb48150cb46718a049367da80a0d",
+      "semantic_sha256": "dd763d30c6c04126baeb631fa09b95f488037587254eb40178d7eaa766e0c7f1",
       "signature": "void()",
       "symbol": "deactivate"
     },
