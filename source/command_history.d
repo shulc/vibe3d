@@ -1277,6 +1277,7 @@ final class CommandHistory {
                     // top command so /api/history reflects the latest values.
                     top.args  = serializeParams(top.cmd.params());
                     top.label = top.cmd.label;
+                    ++_generation;
 
                     // MANDATORY invariant 1: a merge diverges the mesh from any
                     // redo entry, so the redo timeline MUST be cleared.
@@ -1498,13 +1499,17 @@ final class CommandHistory {
                                runId: runId,
                                tweakGeneration: _tweakGeneration };
             undoStack[$ - 1] = e;
+            ++_generation;
             redoStack.length = 0;
             fireRecordHook(cmd.name, argsStr, baseFlags);
             undoStack[$ - 1].flags |= HistoryFlags.Refire;
             return;
         }
 
-        if (dropTail) undoStack.length -= 1;
+        if (dropTail) {
+            undoStack.length -= 1;
+            ++_generation;
+        }
         // Append the replacement as a fresh tagged in-session entry, then stamp
         // the Refire bit so the NEXT re-grade recognises it as a re-grade tail.
         // recordInSession clears the redo stack (N1) and re-sets _runOpen.
@@ -1818,6 +1823,7 @@ final class CommandHistory {
                                flags: flags,
                                runId: 0 };
             undoStack = undoStack[0 .. start] ~ [e] ~ undoStack[end .. $];
+            ++_generation;
             redoStack.length = 0;
             fireRecordHook(cmd.name, args, flags);
         } else {
@@ -1940,6 +1946,7 @@ final class CommandHistory {
         scope(exit) { import mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
         if (_lockout) return false;
         if (undoStack.length == 0) return false;
+        scope(exit) ++_generation;   // even a refused revert removes its row
 
         // Suspend to keep internal sub-commands off the stack.
         auto prev = _state;
@@ -1973,7 +1980,6 @@ final class CommandHistory {
         }
 
         ++_undoEpoch;  // bump exactly once per successful undo
-        ++_generation;
         g_perf.count(Cat.undoApply, 1);  // task 0200 F-I7 (no-op in default build)
         return true;
     }
