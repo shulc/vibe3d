@@ -2701,18 +2701,22 @@ private struct ToolSession {
         history_.markEntrySession(row, closingToken_);
     }
 
+    private bool sessionWroteRow_(ulong token) {
+        foreach (ref e; history_.undoEntries())
+            if (token != 0 && e.cmd.sessionToken() == token &&
+                !(e.flags & HistoryFlags.ToolLifecycle)) return true;
+        return false;
+    }
+
     // S6: the drop row, above whatever the door wrote (a salvaged press),
     // then — on the Esc rung only — the empty task row above it (L39).
     private void recordDropRow_() {
         if (dropRowFactory_ is null) return;
-        // A session-reverting drop writes its row only over a row of the
-        // dropped session: with edits +1 (K-RD CD_Q_*), without them none
+        // A session-reverting drop writes its row only when the dropped
+        // session wrote a row: with edits +1 (K-RD CD_Q_*), without none
         // (tool_drop_pipe_stages capture C1/q, C1/off, C6g/q: delta {}).
-        import commands.tool.lifecycle : ToolActivationCommand;
-        const top = undoTop_();
-        if (pendingDrop_.revertsSession && (top is null || pendingDrop_.previousToken == 0 ||
-                top.sessionToken() != pendingDrop_.previousToken ||
-                cast(const ToolActivationCommand) top !is null)) return;
+        if (pendingDrop_.revertsSession && !sessionWroteRow_(pendingDrop_.previousToken))
+            return;
         Command[2] rows = [dropRowFactory_(pendingDrop_),
             pendingDrop_.ctx.clearsTask && taskRowFactory_ !is null
                 ? taskRowFactory_() : null];
