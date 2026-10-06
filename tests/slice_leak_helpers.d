@@ -547,6 +547,19 @@ void slUndoLawWitness(string deleteMode, int[] function() deleteSel,
         ++steps;
     }
 
+    // Below step 3 each Ctrl+Z pops one prologue record — except the Move
+    // session's drop row, which pops with that session's rows down to its
+    // activation row (findings_K-RD CD_Q_TM, task 9508). `below[i]`: the mesh
+    // after the (i + 4)-th step; past the history, the prologue's first state.
+    SlMesh[] below;
+    for (long i = pro.historyLen - 1; i >= 0; --i) {
+        if (pro.labels[i] == "Tool Drop")
+            while (i > 0 && pro.labels[i - 1] != "Activate Tool") --i;
+        below ~= pro.meshBefore[cast(size_t) i];
+    }
+    assert(below.length == pro.historyLen - 1,
+           format("slice floor: the prologue's drop row did not join exactly one Move row: %s",
+                  pro.labels));
     // The law table, reachable only by a live editor; it reads only `snaps`.
     bool meshIs(const SlMesh a, const SlMesh b) { return a.canon == b.canon; }
     foreach (k; 1 .. K + 1) {
@@ -555,7 +568,7 @@ void slUndoLawWitness(string deleteMode, int[] function() deleteSel,
         if (k == 1)      okStep = s.points == 2 && meshIs(s.mesh, afterDrag2);
         else if (k == 2) okStep = s.points == 1 && meshIs(s.mesh, base);
         else if (k == 3) okStep = s.points == 0 && meshIs(s.mesh, base);
-        else             okStep = meshIs(s.mesh, pro.meshBefore[cast(size_t)(pro.historyLen - (k - 3))]);
+        else             okStep = meshIs(s.mesh, below[k - 4 < below.length ? k - 4 : $ - 1]);
         assert(okStep, format("undo step %d: state differs from the peel/undo law: %s",
                               k, s.toString));
         // Positive control for the step-3 negation: the id the tool state

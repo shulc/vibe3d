@@ -1004,7 +1004,8 @@ private struct ToolSession {
         if (r && history_.undoEntries().length != navBefore_.depth)
             settleAfterNavigation_(true);
         // K-RD rule 3: the undo that removed the activation row left the tool latent.
-        if (r && tool_() is null && history_.undoEntries().length <= armRow) {
+        if (r && armRow != size_t.max && tool_() is null &&
+                history_.undoEntries().length <= armRow) {
             latentId_ = id;
             latentTop_ = undoTop_();
             latentDepth_ = history_.undoEntries().length;

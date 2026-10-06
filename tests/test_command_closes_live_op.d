@@ -280,8 +280,10 @@ unittest { // PB-row: the UI door writes the SAME operation row the drop door wr
     bevelHaul();
     slLine("tool.set poly.bevel off");
     auto viaDrop = getJson("/api/history")["undo"].array;
-    assert(viaDrop.length >= 1, "PB-row floor: the drop wrote no row");
-    const opDrop = viaDrop[$ - 1];
+    // The drop row sits on the operation row (findings_K-RD CD_Q_BV, task 9508).
+    assert(viaDrop.length >= 2 && viaDrop[$ - 1]["label"].str == "Tool Drop",
+           "PB-row floor: the drop wrote no operation row under its drop row");
+    const opDrop = viaDrop[$ - 2];
     foreach (k; ["label", "command", "args", "flags"])
         assert(opKey[k] == opDrop[k],
                format("PB-row: the UI-door close wrote a different operation row than the drop door: "

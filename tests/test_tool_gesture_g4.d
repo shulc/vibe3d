@@ -311,7 +311,8 @@ struct Cell {
 Cell runCell(string name, string tool, string recordSite, string mode,
              string payload,
              void delegate() stand, void delegate() gesture, void delegate() drop,
-             void delegate() arm = null, size_t gestureRows = 1)
+             void delegate() arm = null, size_t gestureRows = 1,
+             bool dropRow = false)
 {
     Cell c;
     c.name = name; c.tool = tool; c.recordSite = recordSite;
@@ -352,11 +353,14 @@ Cell runCell(string name, string tool, string recordSite, string mode,
         name ~ ": the gesture moved NO plane. Its record, its undo and its redo "
       ~ "are then all satisfied by doing nothing. Either the drive missed the "
       ~ "handle, or the tool refused on this stand — check `/api/tool/state`");
-    assert(c.undoDelta == gestureRows,
+    // `dropRow`: the drop writes ONE drop row over the session's rows, and its
+    // undo takes them all (findings_K-RD rule 2, CD_Q_BV; task 9508).
+    assert(c.undoDelta == gestureRows + (dropRow ? 1 : 0),
         name ~ ": the gesture left " ~ c.undoDelta.to!string ~ " undo entr(ies), "
-      ~ "expected exactly " ~ gestureRows.to!string ~ " completed step(s)");
+      ~ "expected exactly " ~ gestureRows.to!string ~ " completed step(s)"
+      ~ (dropRow ? " and the drop row" : ""));
 
-    foreach (_; 0 .. gestureRows) {
+    foreach (_; 0 .. dropRow ? 1 : gestureRows) {
         auto ru = postJ("/api/command", commandBody("history.undo"));
         assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
     }
@@ -881,7 +885,7 @@ unittest {
               ~ "touched no face, so the drop will record nothing");
         },
         { cmd("tool.set poly.bevel off"); },
-        { cmd("tool.set poly.bevel on"); settle(250); });
+        { cmd("tool.set poly.bevel on"); settle(250); }, 1, true);
 
     // --- (b) PolyInsetTool. NO handle at all: the haul is anchored at the
     //     selection centroid wherever the press lands, so the press is the
