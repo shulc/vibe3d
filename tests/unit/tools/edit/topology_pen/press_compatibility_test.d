@@ -317,9 +317,7 @@ unittest {
     m=Mesh.init;m.vertices=[Vec3(-.15,0,0),Vec3(.15,0,0),Vec3(.15,0,.3),Vec3(.15,0,-.3),Vec3(.15,0,.4)];
     m.faces=[[0u,1u,2u],[1u,0u,3u],[0u,1u,4u]];m.rebuildEdgesFromFaces();m.buildLoops();
     SubjectPacket subject;subject.pickFacing=true;subject.pickFacesDrawn=false;subject.mesh=&m;subject.viewport=vp;
-    // Force all ordinary face normals away so only raw nonmanifold legacy support admits the shared edge.
-    foreach(ref f;m.faces)if(f[0]==1){import std.algorithm : reverse;reverse(f);}
-    m.buildLoops();
+    // All three ordinary face normals point away; raw nonmanifold support retains old eligibility.
     const raw=toolPressSupport(m,ModelSpace.world(),vp);int rawEdge=-1;
     foreach(i,e;m.edges)if((e[0]==0&&e[1]==1)||(e[0]==1&&e[1]==0))rawEdge=cast(int)i;
     assert(rawEdge>=0 && raw.edgeFaces[rawEdge]==3 && !raw.edges[rawEdge],"scope-nonmanifold-outcome: real raw three-face support");
