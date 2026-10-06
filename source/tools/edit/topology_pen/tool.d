@@ -376,6 +376,8 @@ private:
     package MoveElem     moveElem_  = MoveElem.None;
     package uint[]       moveVerts_;
     package Vec3[]       moveBase_;
+    // The grab point under the press (`pressAnchor`), local; read only while armed.
+    package Vec3         moveAnchor_;
     // The edge/polygon Move's shared offset at the last evaluation (zero on a
     // click or a miss): what the release writes to the Offset (L18).
     package Vec3         moveOffset_ = Vec3(0, 0, 0);
@@ -4034,6 +4036,7 @@ public:
         moveVerts_   = uniq;
         moveBase_.length = uniq.length;
         foreach (i, vi; uniq) moveBase_[i] = m.vertices[vi];
+        moveAnchor_  = pressAnchor(kind, index, e.x, e.y);
         moveStartX_  = e.x;
         moveStartY_  = e.y;
         moveDirty_   = false;
@@ -4045,10 +4048,27 @@ public:
         return true;
     }
 
+    // The grab point of a Move press, local (K-SC2 rule 2, E_q1/E_q3): the
+    // element point UNDER the press pixel — a vertex itself, the edge point
+    // nearest the press ray, the polygon's plane under it (rule 2's "probably
+    // the same" for a polygon); the corner mean when that ray misses.
+    private Vec3 pressAnchor(MoveElem kind, int index, int px, int py) {
+        auto m = mesh;
+        if (kind == MoveElem.Vertex) return moveBase_[0];
+        if (kind == MoveElem.Edge) {
+            const a = m.vertices[m.edges[index][0]], b = m.vertices[m.edges[index][1]];
+            return a + (b - a) * ratioOnSegment(px, py, pressVp_, a, b);
+        }
+        const Vec3 mean = meanOf(moveBase_);
+        Vec3 o, d, hit;
+        screenPointToLocalRay(cast(float) px, cast(float) py, pressVp_, primaryModelSpace(), o, d);
+        return rayPlaneIntersect(o, d, mean, m.faceNormal(cast(uint) index), hit) ? hit : mean;
+    }
+
     // Where the armed moving set belongs for a cursor at (px,py) — the ONE
     // place the Move law lives, so the live preview and the release commit
     // can never drift apart (task 0484). Every element kind is one RIGID drag
-    // of its grab point (the corner mean; a vertex itself) by `grabOffset`,
+    // of its grab point (`moveAnchor_`, the point under the press) by `grabOffset`,
     // then the constraint's geometry pass on each moved vertex
     // (`carriedTargets`; K-DW, K-SC rules 3-4). A click moves nothing (K-noop).
     //
@@ -4058,7 +4078,7 @@ public:
         immutable int dx = px - moveStartX_, dy = py - moveStartY_;
         moveOffset_ = Vec3(0, 0, 0);
         Vec3 off;
-        if (releaseIsClick(dx, dy) || !grabOffset(meanOf(moveBase_), dx, dy, vp, off))
+        if (releaseIsClick(dx, dy) || !grabOffset(moveAnchor_, dx, dy, vp, off))
             return moveBase_.dup;
         moveOffset_ = off;
         return carriedTargets(moveBase_, off);

@@ -44,11 +44,11 @@ private void loadMesh(string json) {
 }
 
 /// Background sphere in layer 0, optionally an overhang quad in a second
-/// background layer, an Edit layer on top (optionally the capture's quad), the
+/// background layer, an Edit layer on top (optionally the cell's mesh `fg`), the
 /// top camera, the topology pen in `mode`, then the constraint as captured
 /// (handle off, double-sided as the capture's preset read back).
 private void rig(string mode, string geometry, double offset, string overhang = null,
-                 bool quad = false) {
+                 string fg = null) {
     penSceneEmpty("Top");
     penCommand("prim.sphere cenX:0 cenY:1 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 sides:64 segments:32");
     if (overhang.length) {
@@ -56,9 +56,7 @@ private void rig(string mode, string geometry, double offset, string overhang = 
         loadMesh(overhang);
     }
     penCommand("layer.add name:Edit");
-    if (quad)
-        loadMesh(`{"vertices":[[0.1,1.994987,0],[0.1,1.860233,0.5],[-0.1,1.860233,0.5],`
-                 ~ `[-0.1,1.994987,0]],"faces":[[0,1,2,3]]}`);
+    if (fg.length) loadMesh(fg);
     penCommand("viewport.view Top");   // a load leaves the view perspective
     penCameraAt(Vec3(0.07f, 1, 0), kPpm);
     assert(getJson("/api/camera")["projKind"].str == "Ortho", "rig premise: the top view is orthographic");
@@ -145,7 +143,8 @@ unittest { // scr_neg — offset -0.1 reads back 0 and places the offset-0 point
 // ---------------------------------------------------------------------------
 
 private Vec3[2] moveCell(string cell, string geometry, int dx, int dy) {
-    rig("move", geometry, 0, null, true);
+    rig("move", geometry, 0, null, `{"vertices":[[0.1,1.994987,0],[0.1,1.860233,0.5],`
+        ~ `[-0.1,1.860233,0.5],[-0.1,1.994987,0]],"faces":[[0,1,2,3]]}`);
     auto before = readVerts();
     assert(before.length == 4, format("%s: rig quad has 4 vertices; got %s", cell, before.length));
     const p = worldPixel((before[0] + before[1]) * 0.5f);
@@ -197,6 +196,44 @@ unittest { // mv_scr — geometry Screen: each vertex re-cast along the view (xz
                 [0.465, 1.727026, 0.499731], "the nearest foot, v0 x 0.453 (mv_pt)");
     moveWitness("mvd_scr", "screen", 120, 90, [0.375, 1.901739, 0.204731],
                 [0.375, 1.597257, 0.704731], "the rigid move alone (mvd_g0)");
+}
+
+// ---------------------------------------------------------------------------
+// K-SC2 E_q1 / E_q3: the grab point is the edge point UNDER THE PRESS, not the
+// corner mean (geometry off; delta = recast(a + travel) - a). Press at 1/4 and
+// 3/4 of edge v0-v1, drag 152 px along x.
+// ---------------------------------------------------------------------------
+
+private Vec3[2] edgePressMove(string cell, float frac) {
+    rig("move", "off", 0, null, `{"vertices":[[0.1,1.974679,-0.2],[0.1,1.707107,0.7],`
+        ~ `[-0.2,1.685565,0.7],[-0.2,1.959166,-0.2]],"faces":[[0,1,2,3]]}`);
+    auto before = readVerts();
+    assert(before.length == 4, format("%s: rig quad has 4 vertices; got %s", cell, before.length));
+    const p = worldPixel(before[0] + (before[1] - before[0]) * frac);
+    const cam = fetchCamera();
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height, p[0], p[1],
+                             p[0] + 152, p[1], 38, 0, 1));
+    auto after = readVerts();
+    assert(after.length == 4, format("%s: the move keeps 4 vertices; got %s", cell, after.length));
+    foreach (i; 2 .. 4)
+        assert(after[i] == before[i], format("%s: vertex %s moved (%s -> %s)", cell, i, before[i], after[i]));
+    return [after[0], after[1]];
+}
+
+unittest { // E_q1 / E_q3 — rigid by the press point's re-cast
+    if (!runs("E_q")) return;
+    const q1 = edgePressMove("E_q1", 0.25f);
+    near("E_q1 v0", q1[0], [0.445, 1.959479, -0.200027], 3e-3, 5e-3, "the corner-mean anchor, 3.3e-2 high");
+    near("E_q1 v1", q1[1], [0.445, 1.691907, 0.699973], 3e-3, 5e-3, "the corner-mean anchor, 3.3e-2 high");
+    const q3 = edgePressMove("E_q3", 0.75f);
+    near("E_q3 v0", q3[0], [0.445, 1.95669, -0.200511], 3e-3, 5e-3, "the corner-mean anchor, 3.6e-2 high");
+    near("E_q3 v1", q3[1], [0.445, 1.689118, 0.699489], 3e-3, 5e-3, "the corner-mean anchor, 3.6e-2 high");
+    // Only the press point tells the two presses apart (any fixed anchor moves
+    // both alike): captured v0 drop difference 2.79e-3.
+    const double d = q1[0].y - q3[0].y;
+    assert(d >= 1.5e-3 && d <= 4e-3,
+           format("E_q: v0 after the 1/4 press must sit 1.5e-3..4e-3 above the 3/4 press's (captured "
+                  ~ "2.79e-3; a fixed anchor gives 0); got %.6f", d));
 }
 
 // ---------------------------------------------------------------------------
