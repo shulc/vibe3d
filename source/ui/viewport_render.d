@@ -1568,11 +1568,14 @@ unittest { // private ViewportSceneRenderer.dotCullFor cache lifetime
     v.camera.setFovY(View.defaultFovY);
     vp=v.camera.viewport();r.dotCullFor(v,m,model,vp,third);
     assert(v.dotCullRecomputes==3 && third!=second,"DOT_CULL_LENS_CONSUMED_ABA");
+    auto fresh=new ViewportSceneRenderer;ulong freshA;
+    vp=v.camera.viewport();got=fresh.dotCullFor(v,m,model,vp,freshA);
+    assert(v.dotCullRecomputes==4 && freshA!=0 && got.slots==slots,"DOT_CULL_LENS_FRESH_A_FLOOR");
     v.camera.setFovY(.9026584025557545);v.camera.setFovY(View.defaultFovY);
-    vp=v.camera.viewport();r.dotCullFor(v,m,model,vp,again);
-    assert(v.dotCullRecomputes==3 && again==third,"DOT_CULL_LENS_UNCONSUMED_ABA");
+    vp=v.camera.viewport();fresh.dotCullFor(v,m,model,vp,again);
+    assert(v.dotCullRecomputes==4 && again==freshA,"DOT_CULL_LENS_UNCONSUMED_ABA");
     v.camera.setFovY(v.camera.fovY);
     try v.camera.setFovY(1e-29);catch(Exception){}
-    vp=v.camera.viewport();r.dotCullFor(v,m,model,vp,again);
-    assert(v.dotCullRecomputes==3 && again==third,"DOT_CULL_LENS_REFUSAL_SAME_READ");
+    vp=v.camera.viewport();fresh.dotCullFor(v,m,model,vp,again);
+    assert(v.dotCullRecomputes==4 && again==freshA,"DOT_CULL_LENS_REFUSAL_SAME_READ");
 }

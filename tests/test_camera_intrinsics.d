@@ -222,3 +222,26 @@ unittest { // an ortho recording keeps the historical projection-kind placeholde
     }
     assert(metas==1,"HTTP_RECORDING_ORTHO_HEADER_POPULATION");
 }
+
+unittest {
+    if(!selected("quad"))return;
+    auto rig=PerspectiveCameraRig.launch();scope(exit)rig.stop();const base=rig.base;
+    assert(postJson("/api/command",commandBody("viewport.layout",`"Quad"`),base)["status"].str=="ok");
+    const float[4] lenses=[.7f,.902658403f,1.0f,1.2f];
+    foreach(i,lens;lenses) {
+        const path=format("/api/camera?viewport=%d",i);
+        assert(postJson(path,format(`{"fovY":%.9g}`,lens),base)["status"].str=="ok");
+    }
+    foreach(i,lens;lenses) {
+        const path=format("/api/camera?viewport=%d",i);
+        const before=getJson(path,base);
+        assert(cast(float)num(before["fovY"])==lens,"HTTP_ADDRESSED_CELL_LENS");
+        assert(postJson(path,`{}`,base)["status"].str=="ok","HTTP_MISSING_LENS_ACCEPTED");
+        assert(getJson(path,base)==before,"HTTP_ADDRESSED_MISSING_LENS_RETAINS");
+        assert(postJson(path,format(`{"fovY":%.9g}`,lens),base)["status"].str=="ok");
+        assert(getJson(path,base)==before,"HTTP_ADDRESSED_SAME_VALUE_RETAINS");
+    }
+    assert(postJson("/api/command",commandBody("viewport.layout",`"Single"`),base)["status"].str=="ok");
+    assert(postJson("/api/command",commandBody("viewport.layout",`"Quad"`),base)["status"].str=="ok");
+    foreach(i,lens;lenses)assert(cast(float)num(getJson(format("/api/camera?viewport=%d",i),base)["fovY"])==lens,"HTTP_ADDRESSED_LAYOUT_RETAINS");
+}
