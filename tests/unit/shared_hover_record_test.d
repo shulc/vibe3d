@@ -129,3 +129,35 @@ unittest {
     assert(hoverRecordAtPixel(300,300,vp,sources,false,false).kind == kCascadeEdge,
         "hover edge midpoint veto wins the shared class election");
 }
+
+unittest {
+    import tools.edit.topology_pen : TopologyPenTool;
+    import operator : VectorStack;
+    import toolpipe.packets : SubjectPacket, HoverTarget;
+    import snap : setBackgroundSnapSources, backgroundSourcesSnapshot,
+        backgroundSourcesModelSpaces, backgroundSourceLayerIndices;
+    const oldMeshes = backgroundSourcesSnapshot();
+    const oldSpaces = backgroundSourcesModelSpaces();
+    const oldLayers = backgroundSourceLayerIndices();
+    scope(exit) setBackgroundSnapSources(oldMeshes.dup,oldSpaces,oldLayers);
+    Mesh primary, first, second; second.vertices = [Vec3(2,0,0)];
+    auto space = ModelSpace.world(); space.isIdentity = false;
+    space.m[12] = -2; space.mInv[12] = 2;
+    setBackgroundSnapSources([&first,&second],[ModelSpace.world(),space],[10,20]);
+    SubjectPacket subject; subject.viewport = viewport(); subject.cursorValid = true;
+    subject.cursorX = subject.cursorY = 300; subject.pickOcclusion = false;
+    ConstrainHitPacket hit; hit.hit = true; hit.layer = 10;
+    VectorStack stack; stack.put(&subject); stack.put(&hit);
+    const expected = HoverTarget(HoverTargetKind.Vertex,0,-1,20);
+    auto ordinary = new TopologyPenTool(() => &primary,null);
+    ordinary.update(stack);
+    assert(ordinary.preparedUpdateForTest(hit,expected),
+        "topology ordinary update consumes common transformed source hover");
+    auto prepared = new TopologyPenTool(() => &primary,null);
+    auto image = prepared.buildPreparedUpdate(stack);
+    assert(image.hasPacket && image.nextTarget == expected,
+        "topology prepared update consumes common transformed source hover");
+    prepared.installPreparedUpdate(image);
+    assert(prepared.preparedUpdateForTest(hit,expected),
+        "topology update installs the elected source ownership");
+}
