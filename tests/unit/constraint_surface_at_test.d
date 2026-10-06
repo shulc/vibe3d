@@ -272,10 +272,14 @@ unittest {
         auto cs = new ConstrainStage(); cs.enabled = true;
         const expectedY = depth == -0.005f ? -0.0048828125f : -0.2001953125f;
         SurfaceHit admitted;
-        assert(cs.surfaceOnRay(Vec3(0.285f, 10000, 0.295f), Vec3(0, -1, 0), admitted),
+        assert(cs.surfaceOnRay(Vec3(0.285f, 10000, 0.295f), Vec3(0, -1, 0), admitted, true),
                "guided-depth: precise reconstruction must use a real admitted surface hit");
         assert(fabs(admitted.preciseT - (10000.0 - cast(double)depth)) < 1e-9,
                "guided-depth: t is reconstructed in double on the admitted triangle");
+        SurfaceHit ordinary;
+        assert(cs.surfaceOnRay(Vec3(0.285f, 10000, 0.295f), Vec3(0, -1, 0), ordinary) &&
+               ordinary.preciseT == double.infinity && ordinary.point == admitted.point && ordinary.t == admitted.t,
+               "guided-depth: ordinary surface reader preserves point/t without precise reconstruction");
         assert(admitted.productRoundedPoint.y == expectedY,
                "guided-depth: narrow only the ray product before adding the origin");
         const direct = cs.componentGuide(Vec3(0.285f, 0, 0.295f), vp);

@@ -160,7 +160,7 @@ unittest {
     Mesh empty;
     const xy = at(probes[0]);
     const secondary = toolPressAt(xy[0], xy[1], vp, [ToolPressSource(&empty, ms, 10), ToolPressSource(&up, ms, 20)], true, true, true);
-    assert(secondary.kind == kCascadeEdge && secondary.source == 1, "press-source: secondary foreground retains source identity");
+    assert(secondary.kind == kCascadeEdge && secondary.source == 1 && secondary.owner.mesh is &up, "press-source: secondary foreground retains source identity");
     assert(toolPressAt(xy[0], xy[1], vp, [ToolPressSource(&empty, ms, 10)], true, true, true).kind == -1,
            "press-source: excluded background is not queried");
 }
@@ -205,6 +205,6 @@ unittest {
     assert(subject.indexOf("subj.pickFacing = src.pickFacing;") >= 0 &&
            subject.indexOf("subj.pickFacesDrawn = src.pickFacesDrawn;") >= 0,
            "press-wiring: one subject funnel carries both tool-press terms");
-    assert(pen.indexOf("sources[hit.source].mesh !is m") >= 0,
+    assert(pen.indexOf("hit.owner.mesh !is mesh") >= 0,
            "press-authoring: a source-aware query cannot index another mesh into the bound primary");
 }

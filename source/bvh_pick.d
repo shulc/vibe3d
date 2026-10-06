@@ -238,7 +238,7 @@ public:
     /// empty mesh, or a degenerate ray.
     bool pickSurfaceRay(Vec3 org, Vec3 dir, const ref Mesh sourceMesh,
                         const ModelSpace ms,
-                        out SurfaceHit result, const(GpuMesh)* gpu = null)
+                        out SurfaceHit result, const(GpuMesh)* gpu = null, bool productPoint = false)
     {
         auto z = g_perf.scope_(Cat.hoverPick);
         g_fc.bumpHoverPick();
@@ -273,16 +273,18 @@ public:
         // world `org`/`dir` (untouched above) give the exact world point
         // directly — no local->world remap (and its extra rounding) needed.
         result.point = org + dir * hit.t;
-        import morph_target : displayPosition;
-        const corners = _surfTriVertices[hit.tri];
-        result.preciseT = triangleRayParameter(orgLocal, dirLocal,
-            displayPosition(&sourceMesh, corners[0]), displayPosition(&sourceMesh, corners[1]),
-            displayPosition(&sourceMesh, corners[2]));
-        const localProductPoint = Vec3(
-            cast(float)(cast(double)orgLocal.x + cast(float)(cast(double)dirLocal.x * result.preciseT)),
-            cast(float)(cast(double)orgLocal.y + cast(float)(cast(double)dirLocal.y * result.preciseT)),
-            cast(float)(cast(double)orgLocal.z + cast(float)(cast(double)dirLocal.z * result.preciseT)));
-        result.productRoundedPoint = ms.isIdentity ? localProductPoint : ms.toWorldPoint(localProductPoint);
+        if (productPoint) {
+            import morph_target : displayPosition;
+            const corners = _surfTriVertices[hit.tri];
+            result.preciseT = triangleRayParameter(orgLocal, dirLocal,
+                displayPosition(&sourceMesh, corners[0]), displayPosition(&sourceMesh, corners[1]),
+                displayPosition(&sourceMesh, corners[2]));
+            const localProductPoint = Vec3(
+                cast(float)(cast(double)orgLocal.x + cast(float)(cast(double)dirLocal.x * result.preciseT)),
+                cast(float)(cast(double)orgLocal.y + cast(float)(cast(double)dirLocal.y * result.preciseT)),
+                cast(float)(cast(double)orgLocal.z + cast(float)(cast(double)dirLocal.z * result.preciseT)));
+            result.productRoundedPoint = ms.isIdentity ? localProductPoint : ms.toWorldPoint(localProductPoint);
+        }
 
         // Normal from the hit triangle's fan (face[0], face[i], face[i+1]) —
         // the SAME triangulation rebuildSurface used to build the BVH.
@@ -519,7 +521,7 @@ struct BackgroundRayPicker {
 
     /// False on a miss across every source (or no source); `outHit.source` is
     /// the index into `sources` of the source that answered.
-    bool nearest(S)(Vec3 org, Vec3 dir, const(S)[] sources, out SurfaceHit outHit) {
+    bool nearest(S)(Vec3 org, Vec3 dir, const(S)[] sources, out SurfaceHit outHit, bool productPoint = false) {
         bool[size_t] live;
         foreach (bg; sources)
             if (bg.mesh !is null) live[cast(size_t)bg.mesh] = true;
@@ -542,7 +544,7 @@ struct BackgroundRayPicker {
                 bp = *pp;
             }
             SurfaceHit sh;
-            if (!bp.pickSurfaceRay(org, dir, *bg.mesh, bg.space, sh)) continue;
+            if (!bp.pickSurfaceRay(org, dir, *bg.mesh, bg.space, sh, null, productPoint)) continue;
             if (sh.t >= bestT) continue;
             bestT  = sh.t;
             outHit = sh;

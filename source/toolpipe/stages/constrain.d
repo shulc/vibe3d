@@ -121,8 +121,8 @@ public:
     /// the background surface on a WORLD ray, UNGATED.
     /// `hit.source` indexes `sources`.
     bool rayHit(Vec3 org, Vec3 dir, out SurfaceHit hit,
-                const(BackgroundSource)[] sources = backgroundSourcesFull()) {
-        return backgroundHit(_bgBvh, org, dir, sources, hit);
+                const(BackgroundSource)[] sources = backgroundSourcesFull(), bool productPoint = false) {
+        return backgroundHit(_bgBvh, org, dir, sources, hit, productPoint);
     }
 
     /// `rayHit` through window pixel (x, y)'s CENTRE, the one pixel convention.
@@ -136,8 +136,8 @@ public:
     /// The background surface on the ray when the constraint takes the
     /// pointer (`enabled && handle`): the RAW hit and facet normal. Each client
     /// offsets it (`offsetPoint`) where its captured order puts the offset.
-    bool surfaceOnRay(Vec3 org, Vec3 dir, out SurfaceHit hit) {
-        return enabled && handle && rayHit(org, dir, hit);
+    bool surfaceOnRay(Vec3 org, Vec3 dir, out SurfaceHit hit, bool productPoint = false) {
+        return enabled && handle && rayHit(org, dir, hit, backgroundSourcesFull(), productPoint);
     }
 
     /// `surfaceOnRay` through window pixel (x, y)'s centre.
@@ -162,7 +162,7 @@ public:
         else if (axis == 1) org.y = vp.focus.y + sign * 10000.0f;
         else org.z = vp.focus.z + sign * 10000.0f;
         SurfaceHit hit;
-        if (!surfaceOnRay(org, dir, hit)) return result;
+        if (!surfaceOnRay(org, dir, hit, true)) return result;
         result.valuesWorld = offsetPoint(hit.productRoundedPoint, hit.normal);
         result.acceptedMask = surfaceComponentMask(incoming, result.valuesWorld, axis);
         return result;
@@ -420,8 +420,8 @@ private:
 /// `bvh`; `hit.source` indexes `sources`. Pointer clients
 /// call the stage's forms; only a pipeline-less one passes its own `bvh`.
 bool backgroundHit(ref BackgroundRayPicker bvh, Vec3 org, Vec3 dir,
-                   const(BackgroundSource)[] sources, out SurfaceHit hit) {
-    return bvh.nearest(org, dir, sources, hit);
+                   const(BackgroundSource)[] sources, out SurfaceHit hit, bool productPoint = false) {
+    return bvh.nearest(org, dir, sources, hit, productPoint);
 }
 
 /// The live pipeline's constraint stage, or null. The ONE finder

@@ -3701,6 +3701,8 @@ public:
         int grabbed;
         const kind = resolveGrabTarget(e.x, e.y, vp, grabbed, pickOcclusionOf(vts), vts.get!SubjectPacket());
         if (kind != MoveElem.None) return armMoveOn(kind, grabbed, e, axis);
+        const other = queryPressTarget(e.x, e.y, vp, pickOcclusionOf(vts), vts.get!SubjectPacket());
+        if (other.source >= 0 && other.owner.mesh !is mesh) return false;
         if (findSourceVertex(e.x, e.y, vp) >= 0 || overPrimaryEdgeOrFace(e.x, e.y, vp)) return false;
         if (axis) return false;   // an axis move has nothing to place
 
@@ -3730,15 +3732,9 @@ public:
         import hover_state : ToolPressSource, toolPressSourcesResolver, toolPressAt,
             kCascadeVertex, kCascadeEdge, kCascadePolygon;
         index = -1;
-        const m = mesh;
-        if (m is null) return MoveElem.None;
-        const sources = toolPressSourcesResolver is null
-            ? [ToolPressSource(m, primaryModelSpace())] : toolPressSourcesResolver();
-        const hit = toolPressAt(mx, my, vp, sources,
-            subject !is null && subject.pickFacing, occlusion,
-            subject is null ? gpu_ !is null && occlusion : subject.pickFacesDrawn, topoPenPressPickPx(vp));
+        const hit = queryPressTarget(mx, my, vp, occlusion, subject);
         // Querying foreground sources does not widen this tool's bound authoring mesh.
-        if (hit.source < 0 || sources[hit.source].mesh !is m) return MoveElem.None;
+        if (hit.source < 0 || hit.owner.mesh !is mesh) return MoveElem.None;
         index = hit.index;
         switch (hit.kind) {
             case kCascadeVertex: return MoveElem.Vertex;
@@ -3746,6 +3742,17 @@ public:
             case kCascadePolygon: return MoveElem.Face;
             default: return MoveElem.None;
         }
+    }
+
+    package auto queryPressTarget(int mx, int my, const ref Viewport vp, bool occlusion,
+                                  const(SubjectPacket)* subject = null) {
+        import hover_state : ToolPressSource, ToolPressTarget, toolPressSourcesResolver, toolPressAt;
+        const m = mesh;
+        if (m is null) return ToolPressTarget.init;
+        const sources = toolPressSourcesResolver is null
+            ? [ToolPressSource(m, primaryModelSpace())] : toolPressSourcesResolver();
+        return toolPressAt(mx, my, vp, sources, subject !is null && subject.pickFacing, occlusion,
+            subject is null ? gpu_ !is null && occlusion : subject.pickFacesDrawn, topoPenPressPickPx(vp));
     }
 
     // The hover indicator element `draw()` actually paints: the RESOLVED grab

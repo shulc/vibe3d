@@ -153,6 +153,7 @@ struct ToolPressSource { const(Mesh)* mesh; ModelSpace space; int layer = -1; }
 struct ToolPressTarget {
     int kind = -1, index = -1, source = -1;
     Vec3 pointWorld;
+    ToolPressSource owner;
 }
 __gshared ToolPressSource[] delegate() toolPressSourcesResolver;
 
@@ -239,7 +240,7 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp,
             const d = (((x - mx - 0.5f) ^^ 2) + ((y - my - 0.5f) ^^ 2)) ^^ 0.5f;
             if (d <= reach && d < g.vertex && visible(p)) {
                 g.vertex = d;
-                vertex = ToolPressTarget(kCascadeVertex, cast(int)vi, cast(int)si, p);
+                vertex = ToolPressTarget(kCascadeVertex, cast(int)vi, cast(int)si, p, src);
             }
         }
         foreach (ei, e; m.edges) {
@@ -252,7 +253,7 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp,
             if (d <= reach && d < g.edge && visible(p)) {
                 g.edge = d;
                 g.edgeMid = (((ax + bx) * 0.5f - mx - 0.5f) ^^ 2 + ((ay + by) * 0.5f - my - 0.5f) ^^ 2) ^^ 0.5f;
-                edge = ToolPressTarget(kCascadeEdge, cast(int)ei, cast(int)si, p);
+                edge = ToolPressTarget(kCascadeEdge, cast(int)ei, cast(int)si, p, src);
             }
         }
     }
@@ -261,7 +262,7 @@ ToolPressTarget toolPressAt(int mx, int my, const ref Viewport vp,
         const t = nearestSurface(org, dir, si, fi);
         if (si >= 0) {
             g.polygon = 0;
-            polygon = ToolPressTarget(kCascadePolygon, fi, si, org + dir * t);
+            polygon = ToolPressTarget(kCascadePolygon, fi, si, org + dir * t, sources[si]);
         }
     }
     switch (electElement(g)) {
