@@ -1,4 +1,6 @@
 module tools.edit.poly_bevel;
+
+import tools.edit.haul_axis_latch : HaulAxisLatch, HaulAxis;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
@@ -155,8 +157,7 @@ private:
     int   dragPart = -1;
     int   dragStartMX, dragStartMY;
     float dragBaseShift, dragBaseInset;
-    bool  freeCtrl;            // Ctrl held at free-drag start → lock to one axis
-    int   freeLockAxis = -1;   // PART_SHIFT / PART_INSET, decided on first motion
+    HaulAxisLatch freeHaul;
     // Frozen at the press, one per parameter — the LOCAL length a pixel is
     // worth. Two, not one, because the two axes carry different item scales
     // (task 0645); at identity both are the single old `freeWorldPerPixel`.
@@ -436,8 +437,7 @@ public:
         // horizontal → inset (right = +), both at once. With Ctrl held, lock to
         // whichever axis the drag first moves along (only that one changes).
         dragPart          = PART_FREE;
-        freeCtrl          = (mods & KMOD_CTRL) != 0;
-        freeLockAxis      = -1;
+        freeHaul.begin((mods & KMOD_CTRL) != 0);
         // The haul is anchored where the geometry is DRAWN, and its world
         // answer is converted back into each parameter's own local units by
         // that parameter's axis gain (task 0645).
@@ -463,11 +463,10 @@ public:
         if (dragPart == PART_FREE) {
             int dx = e.x - dragStartMX;   // right +
             int dy = dragStartMY - e.y;   // up +
-            if (freeCtrl && freeLockAxis < 0 && (abs(dx) > 3 || abs(dy) > 3))
-                freeLockAxis = (abs(dy) >= abs(dx)) ? PART_SHIFT : PART_INSET;
-            if (!freeCtrl || freeLockAxis == PART_SHIFT)
+            freeHaul.motion(dx, dy);
+            if (freeHaul.allows(HaulAxis.vertical))
                 shift_ = dragBaseShift + cast(float)dy * freeShiftPerPixel;
-            if (!freeCtrl || freeLockAxis == PART_INSET)
+            if (freeHaul.allows(HaulAxis.horizontal))
                 inset_ = dragBaseInset + cast(float)dx * freeInsetPerPixel; // may go < 0 (outset)
             rebuildPreview();
             return true;
@@ -753,8 +752,8 @@ public:
         gizmoValid = false; anchor = Vec3(1,2,3); baseAnchor = Vec3(4,5,6);
         shiftAxis = Vec3(7,8,9); insetAxis = Vec3(10,11,12);
         gizmoSelHash = 13; dragStartMX = 14; dragStartMY = 15;
-        dragBaseShift = 16; dragBaseInset = 17; freeCtrl = true;
-        freeLockAxis = PART_INSET; freeShiftPerPixel = 18;
+        dragBaseShift = 16; dragBaseInset = 17; freeHaul.begin(true);
+        freeHaul.motion(1, 0); freeShiftPerPixel = 18;
         freeInsetPerPixel = 19; cachedVp.view[0] = 20;
         before = MeshSnapshot.capture(oldMesh); preview_.seedForTest(oldMesh);
         opApplied_ = true; opIndex_ = 2; previewOp_ = 5;   // a stale window (review R2)
@@ -784,7 +783,7 @@ public:
             shiftAxis == expectedShift && insetAxis == expectedInset &&
             gizmoSelHash == expectedHash && dragStartMX == 14 &&
             dragStartMY == 15 && dragBaseShift == 16 && dragBaseInset == 17 &&
-            freeCtrl && freeLockAxis == PART_INSET && freeShiftPerPixel == 18 &&
+            freeHaul.pressedCtrl && freeHaul.axis == HaulAxis.horizontal && freeShiftPerPixel == 18 &&
             freeInsetPerPixel == 19 && cachedVp.view[0] == 20;
     }
     version(unittest) final PreparedPolyBevelActivationImage

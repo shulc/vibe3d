@@ -50,7 +50,7 @@ void checkHaul(string family, string path) {
     assert(state["tool"].str == state0["tool"].str, id ~ " tool survives haul");
     const v = value(state,vertical), h = value(state,horizontal);
     const geometry = slMesh();
-    assert(geometry.verts >= 8 && geometry.canon != initial.canon, id ~ " live geometry changed");
+    assert(geometry.verts >= 8, id ~ " live geometry population");
     if (ordinary) {
         assert(v > v0 && h > h0, format("%s both channels from ordinary press: %s/%s",id,v,h));
     } else if (path == "tie") {
@@ -60,10 +60,21 @@ void checkHaul(string family, string path) {
         assert(h > h0, id ~ " first horizontal channel moves");
         assert(abs(v-v0) < 1e-7, format("%s first horizontal motion holds vertical: %s",id,v));
     }
+    if (!bevel && path == "tie")
+        assert(geometry.canon == initial.canon, id ~ " zero-width extrusion keeps geometry");
+    else
+        assert(geometry.canon != initial.canon, id ~ " live geometry changed");
 }
 
 unittest {
-    foreach (family; ["bevel", "extrude"])
-        foreach (path; ["one-pixel", "two-pixel", "tie", "release-repress", "first-zero", "ordinary", "late-ctrl"])
+    enum families = ["bevel", "extrude"];
+    enum paths = ["one-pixel", "two-pixel", "tie", "release-repress", "first-zero", "ordinary", "late-ctrl"];
+    assert(families.length * paths.length == 14, "SDL haul cell population");
+    size_t delivered;
+    foreach (family; families) foreach (path; paths)
+        if (cell(family ~ "-" ~ path)) {
             checkHaul(family,path);
+            ++delivered;
+        }
+    assert(delivered > 0, "at least one SDL haul cell must run");
 }

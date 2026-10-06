@@ -1,4 +1,6 @@
 module tools.edit.edge_extrude;
+
+import tools.edit.haul_axis_latch : HaulAxisLatch, HaulAxis;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
@@ -156,9 +158,7 @@ private:
     int   dragLastMX, dragLastMY;  // last mouse pos (incremental on-handle drags)
     int   dragStartMX, dragStartMY;// drag-start mouse pos (total-delta free drag)
     float dragBaseExtrude, dragBaseWidth;
-    // Ctrl axis-lock for the free drag, LATCHED once a clear direction is set
-    // so it never flips mid-drag: 0 = unlocked, 1 = extrude-only, 2 = width-only.
-    int   freeLockAxis = 0;
+    HaulAxisLatch freeHaul;
 
     // Pixel→param scale for the off-handle free drag (matches the tool's prior
     // blind whole-screen 2-axis drag scale).
@@ -418,7 +418,7 @@ public:
         dragStartMY     = e.y;
         dragBaseExtrude = extrude_;
         dragBaseWidth   = width_;
-        freeLockAxis    = 0;   // fresh latch for any new free drag
+        freeHaul.begin((mods & KMOD_CTRL) != 0);
         dragButton_ = e.button;
 
         if (boundary) {
@@ -450,26 +450,11 @@ public:
             // world-axis): up (−dy) → +extrude, right (+dx) → +width.
             int dx = e.x - dragStartMX;
             int dy = e.y - dragStartMY;
-            extrude_ = dragBaseExtrude + (-dy) * FREE_SCALE;
-            width_   = dragBaseWidth   + ( dx) * FREE_SCALE;
-            // Ctrl locks the drag to ONE axis. LATCH the axis the first time
-            // Ctrl is held with a clear dominant direction (>= LATCH_PX), then
-            // keep it for as long as Ctrl stays down — recomputing dominance
-            // every frame let a near-diagonal / direction-changing drag flip
-            // the lock between extrude and width ("doesn't always lock").
-            // Releasing Ctrl clears the latch (free 2-axis resumes; re-pressing
-            // re-latches).
-            if (SDL_GetModState() & KMOD_CTRL) {
-                if (freeLockAxis == 0) {
-                    enum int LATCH_PX = 4;
-                    if (abs(dx) >= LATCH_PX || abs(dy) >= LATCH_PX)
-                        freeLockAxis = (abs(dy) >= abs(dx)) ? 1 : 2;
-                }
-                if      (freeLockAxis == 1) width_   = dragBaseWidth;    // EXTRUDE only
-                else if (freeLockAxis == 2) extrude_ = dragBaseExtrude;  // WIDTH only
-            } else {
-                freeLockAxis = 0;
-            }
+            freeHaul.motion(dx, dy);
+            if (freeHaul.allows(HaulAxis.vertical))
+                extrude_ = dragBaseExtrude + (-dy) * FREE_SCALE;
+            if (freeHaul.allows(HaulAxis.horizontal))
+                width_ = dragBaseWidth + dx * FREE_SCALE;
             if (width_ < 0.0f) width_ = 0.0f;
             rebuildPreview();
             dragLastMX = e.x;
@@ -810,7 +795,7 @@ public:
         extrudeAxis = Vec3(7,8,9); widthAxis = Vec3(10,11,12);
         gizmoSelHash = 13; dragLastMX = 14; dragLastMY = 15;
         dragStartMX = 16; dragStartMY = 17; dragBaseExtrude = 18;
-        dragBaseWidth = 19; freeLockAxis = 2; cachedVp.view[0] = 20;
+        dragBaseWidth = 19; freeHaul.begin(true); freeHaul.motion(1, 0); cachedVp.view[0] = 20;
         before = MeshSnapshot.capture(oldMesh);
     }
     version(unittest) final bool preparedActivationDirtyForTest() const
@@ -820,7 +805,7 @@ public:
             extrudeAxis == Vec3(7,8,9) && widthAxis == Vec3(10,11,12) &&
             gizmoSelHash == 13 && dragLastMX == 14 && dragLastMY == 15 &&
             dragStartMX == 16 && dragStartMY == 17 && dragBaseExtrude == 18 &&
-            dragBaseWidth == 19 && freeLockAxis == 2 && cachedVp.view[0] == 20;
+            dragBaseWidth == 19 && freeHaul.pressedCtrl && freeHaul.axis == HaulAxis.horizontal && cachedVp.view[0] == 20;
     }
     version(unittest) final bool preparedActivationForTest(size_t count,
             Vec3 first, const Vec3* livePtr, bool expectedValid,
@@ -834,7 +819,7 @@ public:
             widthAxis == expectedWidth && gizmoSelHash == expectedHash &&
             dragLastMX == 14 && dragLastMY == 15 && dragStartMX == 16 &&
             dragStartMY == 17 && dragBaseExtrude == 18 && dragBaseWidth == 19 &&
-            freeLockAxis == 2 && cachedVp.view[0] == 20;
+            freeHaul.pressedCtrl && freeHaul.axis == HaulAxis.horizontal && cachedVp.view[0] == 20;
     }
     version(unittest) final PreparedEdgeExtrudeActivationImage
             preparedFrameForTest(ref Mesh source) const {
