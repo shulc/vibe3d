@@ -271,6 +271,29 @@ unittest { // P6: the reach is the snap acceptance, only with snapping on; the p
                "a press 12 px from the vertex must grab nothing (press reach 8)");
 }
 
+unittest { // Inner Snap on: an INTERIOR target welds at 12 px, not at 40 (snappreset s6 V-NEAR /
+    // V-FAR); the bare pen (Inner Snap off, s7) takes border targets only
+    if (!cell("inner")) return;
+    float[3][] g;
+    uint[][] f;
+    foreach (j; 0 .. 4) foreach (i; 0 .. 4) g ~= [0.5f * i, 0.5f * j, 0f];
+    foreach (j; 0 .. 3) foreach (i; 0 .. 3)
+        f ~= [cast(uint)(4 * j + i), 4 * j + i + 1, 4 * (j + 1) + i + 1, 4 * (j + 1) + i];
+    Rig grid = Rig(g, f);
+    enum float[3] v6 = [1f, 0.5f, 0f];
+    assert(nv(dragWeld(grid, 5, v6, -12)) == 15, "V-NEAR: interior v5 must weld into interior v6");
+    assert(nv(dragWeld(grid, 5, v6, -40)) == 16, "V-FAR: 40 px short must not weld");
+    loadRig(grid);
+    auto vp = frontView(0.25f, 0.15f);
+    snapState(true);
+    ok("tool.set mesh.topoPen on");
+    ok("tool.attr mesh.topoPen mode move");
+    drag(vp, g[5], v6, -12);
+    ok("tool.set mesh.topoPen off");
+    snapState(false);
+    assert(nv(getModel()) == 16, "control: the bare pen must not weld into an interior vertex");
+}
+
 unittest { // the source is no target: a release nearer the source than the target still welds
     if (!cell("self")) return;
     // Target 4 is 20 px right of source 1; the release is 8 px from the source and
