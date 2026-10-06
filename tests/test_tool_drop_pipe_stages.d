@@ -535,6 +535,9 @@ unittest {
             assert(beforeHistory["undo"].integer < 40,
                 id ~ ": history.clear in the rig did not keep the undo stack short");
             wantedHistory["undo"] = beforeHistory["undo"].integer + 1;
+            // The Q door's drop row over the edit (findings_K-RD CD_Q_TM, task 9508).
+            if (("historyDelta" in cell.object) !is null)
+                wantedHistory = applyHistoryDelta(id, wantedHistory, cell["historyDelta"]);
             compareExpected(id, kind, wantedHistory, afterHistory, mismatches,
                 comparedLeaves, "hist", keyKinds);
             expectedLeaves += leafCount(wantedHistory);

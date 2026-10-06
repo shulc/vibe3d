@@ -2705,6 +2705,14 @@ private struct ToolSession {
     // then — on the Esc rung only — the empty task row above it (L39).
     private void recordDropRow_() {
         if (dropRowFactory_ is null) return;
+        // A session-reverting drop writes its row only over a row of the
+        // dropped session: with edits +1 (K-RD CD_Q_*), without them none
+        // (task 5911 C1/q, C1/off, C6g/q: history delta {}).
+        import commands.tool.lifecycle : ToolActivationCommand;
+        const top = undoTop_();
+        if (pendingDrop_.revertsSession && (top is null || pendingDrop_.previousToken == 0 ||
+                top.sessionToken() != pendingDrop_.previousToken ||
+                cast(const ToolActivationCommand) top !is null)) return;
         Command[2] rows = [dropRowFactory_(pendingDrop_),
             pendingDrop_.ctx.clearsTask && taskRowFactory_ !is null
                 ? taskRowFactory_() : null];
