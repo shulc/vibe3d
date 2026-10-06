@@ -406,3 +406,13 @@ unittest {
     m=Mesh.init;m.vertices=[Vec3(0,0,0)];
     assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.Vertex && index==0,"press-preparation: c35 primary compatibility eligibility survives absent foreground sources");
 }
+
+unittest {
+    import toolpipe.packets : SubjectPacket;
+    // Raw face incidence remains authoritative when an input has no edge array.
+    const vp=viewport();Mesh m;m.vertices=[Vec3(0,0,0),Vec3(.15,0,-.05),Vec3(.15,0,.05)];m.faces=[[0u],[0u,1u,2u]];
+    const s=toolPressSupport(m,ModelSpace.world(),vp);
+    assert(m.faces.length==2 && m.edges.length==0 && !s.vertices[0] && s.vertices[1],"scope-all-vertex-raw-faces: earlier short support cannot be overwritten by later ordinary support");
+    auto t=new TopologyPenTool();t.meshSrc_=()=>&m;SubjectPacket subject;subject.mesh=&m;subject.viewport=vp;subject.pickFacing=true;subject.pickFacesDrawn=false;
+    int index;assert(t.resolveGrabTarget(300,300,vp,index,false,&subject)==MoveElem.Vertex && index==0,"scope-all-vertex-raw-faces: actual primary compatibility point survives ordinary back-FACE refusal");
+}

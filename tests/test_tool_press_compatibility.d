@@ -170,7 +170,7 @@ unittest {
 }
 
 unittest {
-    if(!runs("local_visibility"))return;
+    if(!runs("local_visibility") && !runs("local_press_visibility"))return;
     const aw=Vec3(-.5,-.7,-.2),bw=Vec3(.5,.7,.2);
     const a=Vec3(-.2828427125,-.4714045208,-2),b=Vec3(.2828427125,.4714045208,2);
     const transform=`"rot.z":45,"scl.x":3,"scl.y":0.3,"scl.z":0.1`;
@@ -184,13 +184,13 @@ unittest {
         const at0=rig(meshText(vs,which>0?[[2u,3u,4u,5u]]:null,[[0u,1u]]),null,"shaded",transformed?transform:null);
         const int[2] at=[at0[0],at0[1]+5];
         if(which<2 || which==3) {
-            hover(at,"edge",which==0?0:4);arm(at,"edge",0);
+            if(runs("local_visibility"))hover(at,"edge",which==0?0:4);arm(at,"edge",0);
             event([at[0]+20,at[1]],"SDL_MOUSEMOTION",1,20);event([at[0]+20,at[1]],"SDL_MOUSEBUTTONUP");
             const after=readVerts();const delta=transformed?toLocal(Vec3(.1,0,0)):Vec3(.1,0,0);
             foreach(i;0..2)assert(abs(after[i].x-vs[i].x-delta.x)<1e-4 && abs(after[i].y-vs[i].y-delta.y)<1e-4,
                 "LEGACY_LOCAL_EDGE_VIS: actual uncovered/identity positive release");
         } else {
-            hover(at,"none",-1);const before=readVerts();const rows=history();
+            if(runs("local_visibility"))hover(at,"none",-1);const before=readVerts();const rows=history();
             event(at,"SDL_MOUSEBUTTONDOWN");assert(getJson("/api/tool/state")["moveArmed"].type==JSONType.false_,
                 "LEGACY_LOCAL_EDGE_VIS: transformed old local visibility refuses actual press");
             event(at,"SDL_MOUSEBUTTONUP");assert(readVerts()==before && history()==rows+1,
