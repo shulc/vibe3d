@@ -484,13 +484,21 @@ unittest {
         fails ~= f;
     }
     // The same held-edge suppression at stroke slot 1. The placed point is
-    // on the 0.005 grid and projects inside the pointer pixel, independently
+    // on the placement grid and projects inside the pointer pixel, independently
     // of the first click's unquantised placement. Swapping the first two
     // points reverses the signed area, so the front-facing ring is [4,5,6].
     {
         auto w = verts(c["snap_off_isolated_v10"]["expected"]["vertices"])[0 .. 4];
-        const at = p(0.35, 0.295);
+        const at = p(0.35, 0.29);
         rig(p(0, 0.35), 440, meshJson(w, [[1, 2, 3]]), null);
+        const pixel = fpx(at);
+        // Put the lattice point 0.25 px inside the rounded pointer pixel.
+        penCameraAt(p((pixel[0] - round(pixel[0]) - 0.25) / 440,
+                      0.35 + (pixel[1] - round(pixel[1]) - 0.25) / 440), 440);
+        const aligned = fpx(at);
+        assert(abs(aligned[0] - round(aligned[0]) - 0.25) < 0.01 &&
+               abs(aligned[1] - round(aligned[1]) - 0.25) < 0.01,
+               format("hover-edge-second-point rig: lattice point lies inside the pointer pixel: %s -> %s", pixel, aligned));
         clickWorld(kFar[0], at, kFar[1]);
         drop(); ++ran;
         auto f = compare("hover-edge-second-point", w ~ kFar[0] ~ at ~ kFar[1],
