@@ -15,7 +15,8 @@ unittest {
         assert(app.canFind("setReplayCurrentLens(recordingLens());\n                    "~consumer),"LENS_REFRESH_BEFORE_PLAYER: "~consumer);
     }
     assert(app.canFind("vpm.views[vpm.overlayOwnerId()].camera")&&input.canFind("app.vpm.views[app.vpm.overlayOwnerId()].camera"),"LENS_METADATA_INPUT_OWNER");
-    assert(input.canFind("layout.vpW, layout.vpH, recordingLens());"),"LENS_METADATA_RESIZE_F1");
+    assert(input.canFind("setReplayCurrentViewport(layout.vpX, layout.vpY,\n                                         layout.vpW, layout.vpH, recordingLens());"),"LENS_METADATA_RESIZE_COPY");
+    assert(input.canFind("recLog.writeViewportMeta(layout.vpX, layout.vpY,\n                                             layout.vpW, layout.vpH, recordingLens());"),"LENS_METADATA_F1_HEADER");
     assert(providers.indexOf("lens = cameraLensParam(p[")<providers.indexOf("targetCam.setOrientation(o);"),"LENS_HTTP_PREFLIGHT_BEFORE_POSE");
     assert(providers.canFind("targetCam.setFovY(lens);"),"LENS_HTTP_COMMIT_FUNNEL");
     auto frame=blankNonCode(readText(buildPath(root,"source/input_frame_state.d")));

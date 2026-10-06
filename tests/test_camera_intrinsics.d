@@ -175,7 +175,7 @@ unittest {
     }
 }
 
-unittest { // recording-start versus actual SIZE_CHANGED metadata producer
+unittest { // SIZE_CHANGED reaches current metadata; journal header stays at start
     if(!selected("resize"))return;
     auto rig=PerspectiveCameraRig.launch();scope(exit)rig.stop();const base=rig.base;
     playAndWait(kPaceLine~`{"t":1,"type":"SDL_KEYDOWN","sym":1073741882,"mod":0,"repeat":0}`~"\n",base);
@@ -186,5 +186,7 @@ unittest { // recording-start versus actual SIZE_CHANGED metadata producer
     foreach(line;(cast(string)keepAliveGet(base~"/api/recorded-events")).splitLines) {
         const e=parseJSON(line);if(e["type"].str=="VIEWPORT"){++metas;lens=num(e["fovY"]);}
     }
-    assert(metas==2&&abs(lens-.9026584025557545)<3e-8,"HTTP_RESIZE_METADATA_CURRENT_LENS");
+    assert(metas==1&&cast(float)lens==cast(float)(45.0f*PI/180.0f),"HTTP_RESIZE_RECORDING_START_HEADER_RETAINED");
+    const c=getJson("/api/camera",base);
+    assert(c["width"].integer==1152&&c["height"].integer==974&&abs(num(c["fovY"])-.9026584025557545)<3e-8,"HTTP_SIZE_EVENT_ACTUAL_PANE_LENS_RETAINED");
 }
