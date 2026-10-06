@@ -156,17 +156,29 @@ unittest {
     assert(n == 19, format("pen: %s attributes enumerated, pinned 19", n));
 }
 
-// Source census: the pen's "a discrete target placed the point" test has ONE
-// spelling, in the merge class (`elementPlaced`); the guide has no gate of its
-// own on it (the election ranks an element above the guide, task 9416).
+// The shared predicate owns discrete placement; both pen producers consume it.
+// The guide election must not acquire a private post-election pass.
 unittest {
     import std.file : readText;
     import std.algorithm : count;
-    const src = readText("source/tools/create/pen.d");
+    import std.string : indexOf;
+    import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent;
+    string code(string path) {
+        return blankUnittestBodies(blankNonCode(readText(path)));
+    }
+    const pen = code("source/tools/create/pen.d");
+    const snapCode = code("source/snap.d");
     const expr = "s.snapped && s.constraintType == SnapType.None";
-    assert(src.count(expr) == 1 && src.count("applyPenGuide") == 0,
-        "pen: the discrete-placement test must be spelled once (elementPlaced) "
-        ~ "and no private guide pass may return");
+    assert(countIdent(snapCode, "elementPlaced") == 1 && snapCode.count(expr) == 1 &&
+        pen.count(expr) == 0,
+        "pen: discrete placement has one shared owner and no local duplicate");
+    assert(pen.indexOf("immutable bool element = elementPlaced(s);") >= 0,
+        "pen: resolvePenPoint must consume shared discrete placement");
+    assert(pen.indexOf("immutable bool small = elementPlaced(s);") >= 0 &&
+        countIdent(pen, "elementPlaced") == 3,
+        "pen: mergeTarget must consume shared discrete placement without another owner");
+    assert(countIdent(pen, "applyPenGuide") == 0,
+        "pen: no private guide pass may return");
 }
 
 version (PerfProbe) unittest {
