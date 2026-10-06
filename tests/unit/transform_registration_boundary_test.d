@@ -236,9 +236,10 @@ unittest {
     // Task 9429: the topology tools compose `tools.topology_step` (+1 each).
     // Task 9492: the attribute doors read `tool_attr_bounds` (+1 each).
     // Task 9490: the radial ring start reads `workplane_fit` (+1; registration held it).
-    assert(transform.queue.length == 250 && positive.queue.length == 514,
-        format("6506 import closure census changed: transform=%d/250 "
-            ~ "registration=%d/514", transform.queue.length,
+    // Task 9525: `tools.edit.drag_weld` deleted (-1 each).
+    assert(transform.queue.length == 249 && positive.queue.length == 513,
+        format("6506 import closure census changed: transform=%d/249 "
+            ~ "registration=%d/513", transform.queue.length,
             positive.queue.length));
 }
 

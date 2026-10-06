@@ -106,7 +106,7 @@ unittest {
                 "measured uniform preset declares physical event input and signed factors");
         }
     }
-    assert(defaultCount == 22 && optedCount == 1, "preset input policy population");
+    assert(defaultCount == 23 && optedCount == 1, "preset input policy population");   // +1 mesh.dragWeld (9525)
     import std.process : thisProcessID;
     import std.conv : to;
     const path = "/var/tmp/vibe3d-8630-scale-policy-" ~ to!string(thisProcessID) ~ ".yaml";

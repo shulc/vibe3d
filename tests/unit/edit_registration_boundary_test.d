@@ -272,9 +272,10 @@ unittest {
     // Task 9429: the topology tools compose `tools.topology_step` (+1 each).
     // Task 9492: the attribute doors read `tool_attr_bounds` (+1 each).
     // Task 9490: the radial ring start reads `workplane_fit` (+1; registration held it).
-    assert(edit.queue.length == 250 && positive.queue.length == 514,
-        format("6670 import closure census changed: edit=%d/250 "
-            ~ "registration=%d/514", edit.queue.length,
+    // Task 9525: `tools.edit.drag_weld` deleted (-1 each).
+    assert(edit.queue.length == 249 && positive.queue.length == 513,
+        format("6670 import closure census changed: edit=%d/249 "
+            ~ "registration=%d/513", edit.queue.length,
             positive.queue.length));
 }
 
@@ -318,10 +319,12 @@ unittest {
             entry.length, ctor.length));
     struct Row { string receiver, member; size_t count; }
     immutable rows = [
-        Row("deps", "gpu", 20), Row("deps", "litShader", 17),
-        Row("deps", "history", 20), Row("deps", "pipeGizmoHost", 1),
+        // Task 9525: Drag Weld's registration left (one gpu, litShader,
+        // history, bevelEditFactory and activeMesh use each).
+        Row("deps", "gpu", 19), Row("deps", "litShader", 16),
+        Row("deps", "history", 19), Row("deps", "pipeGizmoHost", 1),
         Row("deps", "vxEditFactory", 1),
-        Row("deps", "bevelEditFactory", 9),
+        Row("deps", "bevelEditFactory", 8),
         Row("deps", "loopSliceEditFactory", 1),
         Row("deps", "reduceEditFactory", 1),
         Row("deps", "cloneEditFactory", 1),
@@ -332,7 +335,7 @@ unittest {
         Row("deps", "radialArrayEditFactory", 1),
         Row("deps", "smoothShiftEditFactory", 1),
         Row("deps", "strokeExtrudeEditFactory", 1),
-        Row("owner", "activeMesh", 20), Row("owner", "document", 0),
+        Row("owner", "activeMesh", 19), Row("owner", "document", 0),
         Row("owner", "subjectType", 0), Row("live", "view", 0),
         Row("live", "mode", 0), Row("live", "modeCell", 18),
     ];

@@ -347,9 +347,9 @@ unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
     // Floor: measured 2026-10-02 —
     //   grep -rl LitShader source --include=*.d | wc -l -> 81 (shader.d and pen.d among them);
     //   2026-10-05 (wave-2 PRM1 folds eleven owner modules): 73, light_rig.d excluded -> 72;
-    //   after PRM2 folds five more: 69 -> 68.
-    assert(files.length >= 68, format("5 floor: the lit-program domain is %d files, "
-        ~ "floor 68 — the walk lost its domain", files.length));
+    //   after PRM2 folds five more: 69 -> 68; task 9525 deletes drag_weld.d: 67.
+    assert(files.length >= 67, format("5 floor: the lit-program domain is %d files, "
+        ~ "floor 67 — the walk lost its domain", files.length));
 
     string[] bad;
     size_t[string] insideReads;
