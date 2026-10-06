@@ -3359,17 +3359,21 @@ unittest {
         size_t rebases;
         this(Mesh* target) { mesh = target; basis = MeshSnapshot.capture(*mesh); }
         override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-            static immutable ToolSessionPolicy p = { activationRow: true, sessionSteps: true };
+            static immutable ToolSessionPolicy p = { activationRow: true, sessionSteps: true,
+                historyRecordedSteps: true };
             return p;
         }
         override void resyncSession() { basis = MeshSnapshot.capture(*mesh); ++rebases; }
     }
     static final class BasisModelTool : BasisTool, TopologyStepClient {
-        this(Mesh* target) { super(target); }
+        bool folded;
+        this(Mesh* target, bool folds) { super(target); folded = folds; }
         override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
             static immutable ToolSessionPolicy p = { activationRow: true, sessionSteps: true,
                 historyTopologySteps: true, opensAt: OpensAt.arm };
-            return p;
+            auto policy = p;
+            policy.foldsParamRowsIntoBlock = folded;
+            return policy;
         }
         override Mesh* topologyStepMesh() { return mesh; }
         override MeshSnapshot topologyStepBasis() { return basis; }
@@ -3380,7 +3384,8 @@ unittest {
         override void rebaseTopologyStep(MeshSnapshot b) { basis = b; ++rebases; }
         override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot b) { rebaseTopologyStep(b); }
     }
-    foreach (model; [false, true])
+    // Recorded, operation-model and folded-topology owners share the completion.
+    foreach (owner; 0 .. 3)
     foreach (restoredArmed; [false, true])
     foreach (navigation; [false, true]) {
         Mesh m = makeCube();
@@ -3398,7 +3403,7 @@ unittest {
         auto drop = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "basis", false, false, false, 0, 7, true, false, false, true);
         drop.setDropUndoPolicy(DropUndoPolicy(DropUndoExtent.wholeSession, DropRedoPopulation.editRows));
         drop.onActivate = (string id) {
-            restored = model ? new BasisModelTool(&m) : new BasisTool(&m);
+            restored = owner == 0 ? new BasisTool(&m) : new BasisModelTool(&m, owner == 2);
             active = restored;
             session.noteArm(id, 42, restoredArmed);
             assert(restored.basis.matches(m) && !original.matches(m), "completion floor: replay arm sees the unreverted edit");
@@ -3412,10 +3417,10 @@ unittest {
         assert(restored.rebases == 1, "navigation must not duplicate drop completion rebase");
         assert(session.sessionStateJson()["token"].integer == 7, "drop completion adopts the restored token");
         assert(!session.sessionStateJson()["live"].boolean, "drop completion discards live block bookkeeping");
-        assert(session.sessionStateJson()["armed"].boolean == (!model && restoredArmed)
+        assert(session.sessionStateJson()["armed"].boolean == (owner == 0 && restoredArmed)
                 && !session.sessionStateJson()["operationOpen"].boolean,
-            "drop completion closes only the model post mode and preserves the restored recorded arm choice");
-        if (model) {
+            "drop completion closes topology post modes and preserves the restored recorded arm choice");
+        if (owner == 1) {
             session.notePointerDown();
             assert(restored.rebases == 1, "the next press must reuse the completed final mesh basis");
         }
