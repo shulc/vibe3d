@@ -119,14 +119,14 @@ void pinCell(string cell, string got, string want) {
 
 // --- (1) rot 0, W centre (0.3, 0, 0) --------------------------------------
 
-unittest { // EX_PP0b (control: both press planes say −): the press at world x −0.15
-    pinCell("EX_PP0b", pinnedHaul("EX_PP0b", kVerts0, kFaces0, kSel0, [0.3, 0, 0], 0, -0.15101, -0.75081),
-            "RRUUUUUU");
-}
-
 unittest { // EX_P0v: the vertex plane is W(W(0)) (x 0.6): B at 0.45 is reflected
     pinCell("EX_P0v", pinnedHaul("EX_P0v", kVerts0, kFaces0, kSel0, [0.3, 0, 0], 0, 1.10033, 0.0),
             "UURRRRRR");
+}
+
+unittest { // EX_PP0b (control: both press planes say −): the press at world x −0.15
+    pinCell("EX_PP0b", pinnedHaul("EX_PP0b", kVerts0, kFaces0, kSel0, [0.3, 0, 0], 0, -0.15101, -0.75081),
+            "RRUUUUUU");
 }
 
 unittest { // EX_PP0a: the press at world x +0.15, left of W(0) (x 0.3) — world x decides
