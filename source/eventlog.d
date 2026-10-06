@@ -391,7 +391,14 @@ EventLogParseResult parseEventLog(string data) {
                 viewport.vpY  = cast(int)_jsonGet(obj, "vpY");
                 viewport.vpW  = cast(int)_jsonGet(obj, "vpW");
                 viewport.vpH  = cast(int)_jsonGet(obj, "vpH");
-                try { viewport.fovY = cast(float)obj["fovY"].floating; }
+                try {
+                    const n=obj["fovY"];
+                    switch(n.type) {
+                        case JSONType.integer:viewport.fovY=cast(float)n.integer;break;
+                        case JSONType.uinteger:viewport.fovY=cast(float)n.uinteger;break;
+                        default:viewport.fovY=cast(float)n.floating;break;
+                    }
+                }
                 catch (Exception) { viewport.fovY = 0.7853982f; }
                 viewport.valid = true;
                 continue;
@@ -1116,6 +1123,20 @@ unittest { // EventPlayer.tick: fastForward drains ALL events regardless of nowM
 }
 
 unittest { // private g_replayCurrentViewport lens-only refresh
+    import std.file : tempDir,readText,remove;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    import std.conv : to;
+    const oldCounter=_mock_PerfCounter,oldFreq=_mock_PerfFreq;
+    scope(exit){_mock_PerfCounter=oldCounter;_mock_PerfFreq=oldFreq;}
+    _mock_PerfCounter=function(){return 1UL;};_mock_PerfFreq=function(){return 1000UL;};
+    const path=buildPath(tempDir(),"camera_lens_metadata_"~thisProcessID().to!string~".jsonl");
+    scope(exit)remove(path);
+    foreach(lens;[.7853982f,.902658403f,1.0f,2.0f,1e-28f]) {
+        EventLogger logger;logger.open(path);logger.writeViewportMeta(150,28,1152,974,lens);logger.close();
+        const decoded=parseEventLog(readText(path));
+        assert(decoded.accepted&&decoded.log.viewport.fovY==lens,"REPLAY_METADATA_LENS_BIT_EXACT");
+    }
     const old=g_replayCurrentViewport;scope(exit)g_replayCurrentViewport=old;
     setReplayCurrentViewport(150,28,1152,974,.7853982f);
     setReplayCurrentLens(.902658403f);
