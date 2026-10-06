@@ -2615,6 +2615,49 @@ struct MeshEditTracker {
     /// conflicting revert applied to one edit (plan §7.1).
     bool wantsFaceReindex = false;
 
+    // Invocation rollback protects the accepted prefix and its mutable tail
+    // without copying the whole log (task 20261110; rollback amendment).
+    struct Checkpoint {
+    private:
+        MeshEditTracker* owner;
+        size_t length;
+        MeshOpEntry tail;
+        MeshEditScope declared;
+        bool mapValues, indexMove, faceReindex;
+    public:
+        @disable this(this);
+    }
+
+    Checkpoint checkpoint() {
+        Checkpoint c;
+        c.owner = &this;
+        c.length = log_.length;
+        if (c.length) {
+            c.tail = log_[$ - 1];
+            if (c.tail.kind == MeshOpEntry.Kind.AddVerts)
+                c.tail.pos = c.tail.pos.dup;
+            if (c.tail.kind == MeshOpEntry.Kind.AddFaces)
+                c.tail.faceLists = c.tail.faceLists.dup;
+        }
+        c.declared = declared_;
+        c.mapValues = sawMapValues_;
+        c.indexMove = sawIndexMove_;
+        c.faceReindex = wantsFaceReindex;
+        return c;
+    }
+
+    void restore(ref Checkpoint c) nothrow @nogc {
+        assert(c.owner is &this, "recorder checkpoint belongs to another owner");
+        assert(log_.length >= c.length, "accepted recorder prefix was drained");
+        if (c.length) log_[c.length - 1] = c.tail;
+        log_ = log_[0 .. c.length];
+        declared_ = c.declared;
+        sawMapValues_ = c.mapValues;
+        sawIndexMove_ = c.indexMove;
+        wantsFaceReindex = c.faceReindex;
+        c.owner = null;
+    }
+
     void declare(MeshEditScope s) { declared_ = s; }
 
     // --- Class P: per-primitive append hooks ------------------------------

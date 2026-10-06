@@ -35,7 +35,7 @@ void registerToolLifecycleCommands(ref Registry reg, LiveSessionRole owner,
     reg.registerCommand("tool.attr", () => cast(Command)
         new ToolAttrCommand(&owner.activeMesh(), live.view(), live.mode, host.read()));
     reg.registerCommand("tool.doApply", () => cast(Command)
-        new ToolDoApplyCommand(&owner.activeMesh(), live.view(), live.mode, host.read()));
+        new ToolDoApplyCommand(&owner.activeMesh(), live.view(), live.mode, host.read(), owner.document()));
     reg.registerCommand("tool.reset", () => cast(Command)
         new ToolResetCommand(&owner.activeMesh(), live.view(), live.mode, host.read()));
     reg.registerCommand("tool.pipe.attr", () => cast(Command)

@@ -1952,7 +1952,7 @@ static foreach (gone; ["firstTopologyRedoUsesAfterAttrs", "rebaseTopologyAfterSt
                   "S8 fence: the per-tool flag " ~ gone ~ " is back");
 
 static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
-    "activationRow", "commandClose", "sessionSteps", "historyTopologySteps",
+    "headlessSource", "activationRow", "commandClose", "sessionSteps", "historyTopologySteps",
     "historyRecordedSteps", "recordedFirstUndoEndsTool", "postmodeStartsOnPress",
     "previewHistoryLadder", "opensAt", "noClone", "imageAttrs", "haulAttrs",
     "activationResetAttrs", "armAttr", "headlessReplacesWindow", "recordCarriesActivation",

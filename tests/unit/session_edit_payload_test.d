@@ -32,7 +32,7 @@ import editmode  : EditMode;
 import snapshot  : MeshSnapshot;
 import operator  : VectorStack;
 import toolpipe.packets : SubjectPacket;
-import mesh_edit_delta  : MeshEditDelta, MeshEditScope;
+import mesh_edit_delta  : MeshEditDelta, MeshEditScope, MeshEditTracker;
 import commands.mesh.session_edit : MeshSessionEdit, kNoSessionReason;
 
 import std.algorithm : canFind;
@@ -157,4 +157,85 @@ unittest { // U-5 — the DELTA path is not touched by the snapshot gate
         ~ "sets `after`");
     assert(m.vertices.length == 8 && m.faces.length == 6,
         "an empty delta replay must leave the mesh as it found it");
+}
+
+private void checkpointMap(ref MeshEditTracker t) {
+    import mesh : MapDomain, MapKind;
+    import mesh_edit_delta : MeshOpEntry;
+    t.recordMapValuesOwned("checkpoint-map", 1, MapDomain.Point,
+        MapKind.unclassified, MeshOpEntry.MapAddressing.Listed,
+        [0u], [1.0f], [2.0f], null, null);
+}
+
+unittest { // Declaration, preference and owned noncoalescing prefix survive.
+    import mesh_edit_delta : MeshEditTracker;
+    import math : Vec3;
+    import std.math : isIdentical;
+    MeshEditTracker t;
+    t.declare(MeshEditScope.Position);
+    t.wantsFaceReindex = true;
+    t.recordSetPosOwned([0u], [Vec3(-0.0f, 1, 2)], [Vec3(0.0f, 3, 4)]);
+    checkpointMap(t);
+    auto c = t.checkpoint();
+    t.declare(MeshEditScope.Geometry);
+    t.wantsFaceReindex = false;
+    t.recordAddVert(8, Vec3(7, 8, 9));
+    t.restore(c);
+    assert(t.wantsFaceReindex, "checkpoint must restore face-reindex preference");
+    auto d = t.finish();
+    assert(d.scope_ == MeshEditScope.Position, "checkpoint must restore declaration");
+    assert(d.log.length == 2 && isIdentical(d.log[0].posBefore[0].x, -0.0f)
+        && isIdentical(d.log[0].posAfter[0].x, 0.0f)
+        && d.log[1].mapValsBefore == [1.0f] && d.log[1].mapValsAfter == [2.0f],
+        "checkpoint must preserve signed-zero and owned map prefix");
+}
+
+unittest { // Rolled-back MAP latch must not poison a subsequent index write.
+    import mesh_edit_delta : MeshEditTracker;
+    import math : Vec3;
+    import change_bus : changeBus;
+    MeshEditTracker t;
+    auto c = t.checkpoint();
+    checkpointMap(t);
+    t.restore(c);
+    const before = changeBus.mapDeltaMixRecorded;
+    t.recordAddVert(8, Vec3(1, 2, 3));
+    assert(changeBus.mapDeltaMixRecorded == before,
+        "checkpoint must restore absent map adjacency latch");
+    auto d = t.finish();
+    assert(d.log.length == 1, "empty-before failure must remain empty");
+}
+
+unittest { // Rolled-back INDEX latch must not poison a subsequent map write.
+    import mesh_edit_delta : MeshEditTracker;
+    import math : Vec3;
+    import change_bus : changeBus;
+    MeshEditTracker t;
+    auto c = t.checkpoint();
+    t.recordAddVert(8, Vec3(1, 2, 3));
+    t.restore(c);
+    const before = changeBus.mapDeltaMixRecorded;
+    checkpointMap(t);
+    assert(changeBus.mapDeltaMixRecorded == before,
+        "checkpoint must restore absent index adjacency latch");
+    auto d = t.finish();
+    assert(d.log.length == 1);
+}
+
+unittest { // Both preexisting latches remain effective after rollback.
+    import mesh_edit_delta : MeshEditTracker;
+    import math : Vec3;
+    import change_bus : changeBus;
+    foreach (mapFirst; [true, false]) {
+        MeshEditTracker t;
+        if (mapFirst) checkpointMap(t); else t.recordAddVert(8, Vec3(1, 2, 3));
+        auto c = t.checkpoint();
+        t.recordSetPosOwned([0u], [Vec3(1, 2, 3)], [Vec3(4, 5, 6)]);
+        t.restore(c);
+        const before = changeBus.mapDeltaMixRecorded;
+        if (mapFirst) t.recordAddVert(8, Vec3(1, 2, 3)); else checkpointMap(t);
+        assert(changeBus.mapDeltaMixRecorded == before + 1,
+            "checkpoint must preserve preexisting adjacency latch");
+        t.finish();
+    }
 }

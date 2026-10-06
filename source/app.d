@@ -2769,6 +2769,7 @@ void main(string[] args) {
     // defaulted parameter: `&dropActiveTool` is cast to
     // `void delegate(ToolTransition)` below and must keep that arity.
     void dropActiveToolWith(ToolTransition why, DropContext ctx) {
+        if (session !is null) session.invalidateHeadlessSource();
         // One-shot falloff-drag cancel at the universal tool
         // activation/switch/drop chokepoint. Step 4 removed the per-frame
         // cancel guard; without this, a no-tool-origin falloff drag (LMB held

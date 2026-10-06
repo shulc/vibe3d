@@ -13,8 +13,8 @@
 # Counts are compiler-aware: comments and string/character literals are
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
-source-files 575
-unittest-blocks 667
+source-files 576
+unittest-blocks 668
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -66,7 +66,7 @@ block source/io/scene_ir.d 7
 block source/json_num.d 3
 block source/log.d 4
 block source/math.d 19
-block source/mesh.d 19
+block source/mesh.d 20
 block source/mesh_corner_maps.d 1
 block source/mesh_dirty.d 9
 block source/mesh_edit_delta.d 11

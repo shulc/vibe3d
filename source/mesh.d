@@ -1103,6 +1103,7 @@ private struct EditBatchFrame {
     MeshEditTracker* rec;        // null ⇒ unrecorded batch (plan §9)
     bool             errored;    // a refused upgrade, or a nested leak
     bool             deferSafe;  // !anyHideBitSet() at open — see commitChange
+    uint             invocationFloor; // a scoped invocation cannot close its caller
 }
 
 private EditBatchFrame[] g_editBatchStack;   // ≤2 entries in practice
@@ -1120,7 +1121,7 @@ private EditBatchFrame[] g_editBatchStack;   // ≤2 entries in practice
 // the pointer; `pushEditFrame`'s own return is consumed by its caller before
 // anything else can push.
 pragma(inline, true)
-private EditBatchFrame* currentBatchFrame(const(Mesh)* m) {
+private EditBatchFrame* currentBatchFrame(const(Mesh)* m) nothrow @nogc {
     if (g_editBatchStack.length == 0) return null;
     foreach_reverse (i; 0 .. g_editBatchStack.length)
         if (g_editBatchStack[i].m is m) return &g_editBatchStack[i];
@@ -1185,6 +1186,8 @@ private EditBatchFrame* pushEditFrame(Mesh* m, uint declared, MeshEditTracker* r
 private MeshEditDelta closeEditFrame(Mesh* m, uint extraFlags) {
     auto f = currentBatchFrame(m);
     if (f is null) return MeshEditDelta.init;
+    if (f.invocationFloor && f.depth <= f.invocationFloor)
+        throw new Exception("headless invocation cannot close its caller edit frame");
 
     // TASK 1903 S2 — `extraFlags` MUST GO THROUGH `noteChange`, exactly as
     // every deferred `commitChange` in this batch already did. It is the only
@@ -1232,12 +1235,12 @@ private MeshEditDelta closeEditFrame(Mesh* m, uint extraFlags) {
 }
 
 // Pop the innermost frame for `m`. Order-preserving for the rest of the stack.
-private void popEditFrame(Mesh* m) {
+private void popEditFrame(Mesh* m) nothrow @nogc {
     foreach_reverse (i; 0 .. g_editBatchStack.length) {
         if (g_editBatchStack[i].m !is m) continue;
         foreach (j; i + 1 .. g_editBatchStack.length)
             g_editBatchStack[j - 1] = g_editBatchStack[j];
-        g_editBatchStack.length = g_editBatchStack.length - 1;
+        g_editBatchStack = g_editBatchStack[0 .. $ - 1];
         return;
     }
 }
@@ -1248,6 +1251,10 @@ private void popEditFrame(Mesh* m) {
 private void popLeakedEditFrame(Mesh* m) {
     auto f = currentBatchFrame(m);
     if (f is null) return;
+    if (f.invocationFloor && f.depth <= f.invocationFloor) {
+        f.errored = true;
+        return;
+    }
     if (f.depth > 1) {
         --f.depth;
         f.errored = true;
@@ -1627,6 +1634,86 @@ bool canBeginPreparedMesh(ref const Mesh source) {
 void installPreparedMeshImage(ref Mesh target, ref Mesh image) nothrow @nogc {
     target = image;
     image = Mesh.init;
+}
+
+// A failure-only owned image plus external recorder/frame checkpoint. Pending
+// membership is restored for this subject alone, before Command delivery closes
+// (task 20261110; doc/headless_edit_rollback_completion_amendment_2026-10-06.md).
+struct MeshInvocation {
+private:
+    Mesh* subject_;
+    Mesh image_;
+    EditBatchFrame frame_;
+    MeshEditTracker.Checkpoint recorder_;
+    bool hadFrame_, deliveryQueued_, hideQueued_;
+
+    static bool queued(Mesh*[] queue, Mesh* subject) nothrow @nogc {
+        foreach (p; queue) if (p is subject) return true;
+        return false;
+    }
+    static void removeNew(ref Mesh*[] queue, Mesh* subject, bool wasQueued)
+            nothrow @nogc {
+        if (wasQueued) return;
+        foreach_reverse (i; 0 .. queue.length) {
+            if (queue[i] !is subject) continue;
+            foreach (j; i + 1 .. queue.length) queue[j - 1] = queue[j];
+            queue = queue[0 .. $ - 1];
+        }
+    }
+public:
+    @disable this(this);
+    this(ref Mesh subject) {
+        image_ = detachedPreparedMesh(subject);
+        auto frame = currentBatchFrame(&subject);
+        if (frame !is null) {
+            frame_ = *frame;
+            hadFrame_ = true;
+            if (frame.rec !is null) recorder_ = frame.rec.checkpoint();
+            // Set only after all checkpoint allocations have succeeded.
+            frame.invocationFloor = frame.depth;
+        }
+        deliveryQueued_ = queued(g_deliveryPendingMeshes, &subject);
+        hideQueued_ = queued(g_hideDerivePendingMeshes, &subject);
+        subject_ = &subject;
+    }
+    void validate() {
+        auto frame = currentBatchFrame(subject_);
+        if (hadFrame_) {
+            if (frame is null || frame.rec !is frame_.rec ||
+                frame.depth != frame_.depth || frame.invocationFloor != frame_.depth)
+                throw new Exception("headless invocation changed its caller edit frame");
+        } else if (frame !is null) {
+            throw new Exception("headless invocation leaked an edit frame");
+        }
+    }
+    void release() nothrow @nogc {
+        if (hadFrame_) {
+            auto frame = currentBatchFrame(subject_);
+            assert(frame !is null && frame.rec is frame_.rec);
+            frame.invocationFloor = frame_.invocationFloor;
+        }
+        subject_ = null;
+        image_ = Mesh.init;
+    }
+    void rollback() nothrow @nogc {
+        if (subject_ is null) return;
+        auto frame = currentBatchFrame(subject_);
+        if (hadFrame_) {
+            assert(frame !is null && frame.rec is frame_.rec,
+                "headless invocation lost its protected caller frame");
+            if (frame_.rec !is null) frame_.rec.restore(recorder_);
+            *frame = frame_;
+        } else if (frame !is null) {
+            // No caller-owned prefix exists; do not dereference a leaked
+            // inner recorder whose stack lifetime may already have ended.
+            popEditFrame(subject_);
+        }
+        removeNew(g_deliveryPendingMeshes, subject_, deliveryQueued_);
+        removeNew(g_hideDerivePendingMeshes, subject_, hideQueued_);
+        installPreparedMeshImage(*subject_, image_);
+        subject_ = null;
+    }
+    ~this() nothrow @nogc { rollback(); }
 }
 
 struct Mesh {
@@ -16712,4 +16799,35 @@ unittest { // P1.0b.3c whole-field deep detachment and refusal seams.
     g_hideDerivePendingMeshes ~= &queued;
     assert(!canBeginPreparedMesh(queued));
     g_hideDerivePendingMeshes = null;
+}
+
+unittest { // Private frame bookkeeping across a rejected nested invocation.
+    Mesh m = makeCube();
+    m.syncSelection();
+    MeshEditTracker tracker;
+    m.beginEditBatch(&tracker, MeshEditScope.Position);
+    scope(exit) if (currentBatchFrame(&m) !is null) m.endEditBatch();
+    m.addVertex(Vec3(3, 4, 5));
+    auto saved = *currentBatchFrame(&m);
+    const leaks = changeBus.batchLeaks;
+    try {
+        auto invocation = MeshInvocation(m);
+        auto inner = MeshEditBatch.unrecorded(m, MeshEditScope.Geometry | MeshEditScope.Marks);
+        m.faceMarks[0] |= Mesh.Marks.Hide;
+        m.refreshHiddenDerived();
+        m.addVertex(Vec3(6, 7, 8));
+        throw new Exception("rejected nested invocation");
+    } catch (Exception e) {}
+    auto frame = currentBatchFrame(&m);
+    assert(frame !is null && frame.m is &m && frame.rec is &tracker,
+        "invocation rollback must preserve original frame owner");
+    assert(frame.depth == saved.depth && frame.invocationFloor == saved.invocationFloor,
+        "invocation rollback must restore caller depth and lifetime protection");
+    assert(frame.accum == saved.accum, "invocation rollback must restore frame flags");
+    assert(frame.errored == saved.errored, "invocation rollback must restore frame error latch");
+    assert(frame.deferSafe == saved.deferSafe, "invocation rollback must restore frame derive latch");
+    assert(changeBus.batchLeaks > leaks, "rollback must preserve truthful diagnostic leak counter");
+    auto delta = m.endEditBatch();
+    assert(delta.log.length == 1 && delta.log[0].pos == [Vec3(3, 4, 5)],
+        "nested exception must preserve accepted recorder prefix");
 }

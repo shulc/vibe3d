@@ -358,8 +358,11 @@ struct DropUndoPolicy {
     DropUndoResidualPopulation residual;
 }
 
+enum HeadlessSourcePolicy { current, retainedPositions }
+
 struct ToolSessionPolicy
 {
+    HeadlessSourcePolicy headlessSource;
     /// H1: arming writes the activation history row (a ToolActivationCommand)
     /// — read by `toolArmEmitsLifecycle` for both the incoming tool and the
     /// retained predecessor. Not WHEN the operation opens (that is `opensAt`,
@@ -528,6 +531,33 @@ bool postmodeStartsOnPressFor(in ToolSessionPolicy p) pure nothrow @nogc {
 }
 
 class Tool : ParamProvider {
+    // Only a scoped read-only borrow lives on Tool; ToolSession owns the source
+    // receipt (task 20261110; lifecycle completion amendment).
+    private const(Vec3)[] headlessBorrow_;
+    private bool headlessBorrowActive_;
+    final const(Vec3)[] headlessSourcePositions(const(Vec3)[] current) const
+            nothrow @nogc {
+        return headlessBorrowActive_ ? headlessBorrow_ : current;
+    }
+    struct HeadlessBorrow {
+    private:
+        Tool tool_;
+    public:
+        @disable this(this);
+        this(Tool tool, const(Vec3)[] positions) {
+            if (tool.headlessBorrowActive_)
+                throw new Exception("headless source borrow is already active");
+            tool_ = tool;
+            tool.headlessBorrow_ = positions;
+            tool.headlessBorrowActive_ = true;
+        }
+        ~this() nothrow @nogc {
+            if (tool_ is null) return;
+            tool_.headlessBorrow_ = null;
+            tool_.headlessBorrowActive_ = false;
+        }
+    }
+
     private DropUndoPolicy dropUndoOverride_;
     private bool hasDropUndoOverride_;
     private bool dropUndoSealed_;

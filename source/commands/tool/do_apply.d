@@ -5,6 +5,7 @@ import mesh;
 import view;
 import editmode;
 import snapshot : MeshSnapshot;
+import commands.mesh.mesh_edit_payload : MeshEditPayload, MeshRestorePolicy;
 import commands.tool.host : ToolHost;
 
 // ---------------------------------------------------------------------------
@@ -32,13 +33,15 @@ import commands.tool.host : ToolHost;
 // ---------------------------------------------------------------------------
 class ToolDoApplyCommand : Command {
     private ToolHost         toolHost;
-    private MeshSnapshot     snap;
+    private MeshEditPayload  payload;
+    private const(void)*     document_;
     private string           appliedToolId;   // captured at apply() for label()
 
-    this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host)
+    this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host, const(void)* document = null)
     {
         super(mesh, view, editMode);
         this.toolHost = host;
+        document_ = document;
     }
 
     override string name()  const { return "tool.doApply"; }
@@ -47,36 +50,44 @@ class ToolDoApplyCommand : Command {
     }
 
     protected override bool applyImpl() {
+        if (payload.present()) { payload.forward(*mesh); return true; }
         auto t = toolHost.getActiveTool();
         if (t is null) return false;
-
-        // A tool whose policy says the headless apply REPLACES its live window
-        // (slice M3b review R1: Polygon Bevel, whose arm applies at once)
-        // applies on the window's base; only AFTER it succeeded does the
-        // window end, and this row's undo then returns the mesh under it —
-        // never the window's preview as geometry no row created. A refusal
-        // returns before anything is touched: it changes nothing.
-        const bool replaces = t.sessionPolicy().headlessReplacesWindow
-                              && t.hasUncommittedEdit();
-        snap = MeshSnapshot.capture(*mesh);
-        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
-        if (!t.applyHeadless()) {
-            snap = MeshSnapshot.init;
-            return false;
+        auto transaction = MeshInvocation(*mesh);
+        string identity;
+        MeshEditPayload prepared;
+        bool complete() {
+            const bool replaces = t.sessionPolicy().headlessReplacesWindow
+                                  && t.hasUncommittedEdit();
+            auto before = MeshSnapshot.capture(*mesh);
+            if (!t.applyHeadless()) { transaction.rollback(); return false; }
+            if (replaces) {
+                auto result = MeshSnapshot.capture(*mesh);
+                t.cancelUncommittedEdit();
+                before = MeshSnapshot.capture(*mesh);
+                result.restore(*mesh);
+            }
+            auto after = MeshSnapshot.capture(*mesh);
+            identity = toolHost.getActiveToolId().idup;
+            prepared = MeshEditPayload.snapshots(before, after,
+                MeshRestorePolicy.geometryKeepSelection);
+            transaction.validate();
+            return true;
         }
-        if (replaces) {
-            auto result = MeshSnapshot.capture(*mesh);
-            t.cancelUncommittedEdit();          // the window ends; the mesh is its base
-            snap = MeshSnapshot.capture(*mesh);
-            result.restore(*mesh);
-        }
-        appliedToolId = toolHost.getActiveToolId();
+        auto session = toolHost.session is null ? null : toolHost.session();
+        const accepted = session is null ? complete()
+            : session.invokeHeadless(t, *mesh, document_, editMode, &complete);
+        if (!accepted) { transaction.rollback(); return false; }
+        appliedToolId = identity;
+        payload = prepared;
+        noteUndoRecorded();
+        transaction.release();
         return true;
     }
 
     protected override void revertImpl() {
         // Keep the live selection across a geometry undo (topology-safe
         // fallback built into the method).
-        snap.restoreGeometryKeepSelection(*mesh);
+        payload.reverse(*mesh);
     }
 }

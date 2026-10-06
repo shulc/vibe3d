@@ -44,6 +44,10 @@ import toolpipe.stage  : Stage;
 import tool_activation_ownership : CloseReason, CommandDoor, CloseOutcome, DropContext;
 import tools.common.session_mesh_key : SessionMeshKey;
 import snapshot : MeshSnapshot;
+import mesh : Mesh;
+import math : Vec3;
+import editmode : EditMode;
+import tool : HeadlessSourcePolicy;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.gesture_payload : GesturePayload;
 
@@ -274,6 +278,14 @@ final class EditSession {
         dropTool_ = dropTool;
         tools_    = ToolSession(tool, history, dropTool, rearmClosedTool);
     }
+
+    /// One synchronous invocation; the wrapper owns mesh rollback and stages
+    /// its payload inside completion before this owner publishes the source.
+    bool invokeHeadless(Tool tool, ref Mesh mesh, const(void)* document,
+            EditMode mode, scope bool delegate() completion) {
+        return tools_.invokeHeadless(tool, mesh, document, mode, completion);
+    }
+    void invalidateHeadlessSource() nothrow @nogc { tools_.invalidateHeadlessSource(); }
 
     // Computed phase classification (see SessionPhase above).
     SessionPhase phase() {
@@ -660,6 +672,10 @@ final class EditSession {
     // dropped (the `none` fallback). The funnel executes the outcome and reads
     // no command predicate itself.
     CloseOutcome closeForCommand(const Command cmd, CommandDoor door, bool reentrant) {
+        import command : sparesToolSession;
+        if ((cmd.cmdFlags() & (CmdFlags.Model | CmdFlags.UiState)) &&
+            !sparesToolSession(cmd.name()))
+            tools_.invalidateHeadlessSource();
         return commandMeetsTool(cmd, door, reentrant,
             (CommandDoor d) => closeOperation(CloseReason.command, d));
     }
@@ -789,6 +805,52 @@ private struct NavBefore {
 }
 
 private struct ToolSession {
+    private struct HeadlessReceipt {
+        Tool tool;
+        ulong token;
+        const(void)* document;
+        Mesh* mesh;
+        EditMode mode;
+        size_t vertices, faces;
+        ulong admission;
+        const(Vec3)[] positions;
+        bool filled;
+    }
+    private HeadlessReceipt headlessSource_;
+    private HeadlessSourcePolicy headlessPolicy_;
+
+    void invalidateHeadlessSource() nothrow @nogc {
+        headlessSource_ = HeadlessReceipt.init;
+    }
+    bool invokeHeadless(Tool tool, ref Mesh mesh, const(void)* document,
+            EditMode mode, scope bool delegate() completion) {
+        if (tool !is bound_) {
+            if (tool.sessionPolicy().headlessSource == HeadlessSourcePolicy.current)
+                return completion();
+            throw new Exception("headless invocation requires the bound tool session");
+        }
+        if (tool !is tool_() || !token_)
+            throw new Exception("headless invocation requires the bound tool session");
+        if (headlessPolicy_ == HeadlessSourcePolicy.current) return completion();
+        auto staged = headlessSource_;
+        if (!staged.filled || staged.tool !is tool || staged.token != token_ ||
+            staged.document !is document || staged.mesh !is &mesh || staged.mode != mode ||
+            staged.vertices != mesh.vertices.length || staged.faces != mesh.faces.length ||
+            staged.admission != mesh.selectionSignature(mode)) {
+            staged = HeadlessReceipt(tool, token_, document, &mesh, mode,
+                mesh.vertices.length, mesh.faces.length, mesh.selectionSignature(mode), mesh.vertices.dup, true);
+        }
+        const generation = token_;
+        auto borrow = Tool.HeadlessBorrow(tool, staged.positions);
+        if (!completion()) return false;
+        // All throwing preparation belongs to completion. Source installation
+        // is a value assignment, after successful payload preparation.
+        if (tool !is bound_ || token_ != generation)
+            throw new Exception("headless source owner changed during invocation");
+        headlessSource_ = staged;
+        return true;
+    }
+
     private Tool delegate() tool_;
     private CommandHistory  history_;
     private void delegate() dropTool_;
@@ -1062,6 +1124,7 @@ private struct ToolSession {
     // re-begin (N5/N6) and every other case leave it closed — the next press
     // opens a new one (topology-redo S2b, model doc §2.4).
     private void settleAfterNavigation_(bool isUndo) {
+        invalidateHeadlessSource();
         const aModel = boundModel_();
         const aToken = aModel ? token_ : 0;
         const armedAfter = aModel && ownOpenerOnTop_(aToken);
@@ -1546,6 +1609,7 @@ private struct ToolSession {
     // The one close routine (EditSession.closeOperation's body; plan R4.2).
     CloseOutcome close(CloseReason r, CommandDoor door, bool dropRow = false,
                        DropContext ctx = DropContext.init) {
+        invalidateHeadlessSource();
         // A new close starts a new account, whatever an unfinished one left.
         latentId_ = null;
         pendingMark_ = false;
@@ -1618,6 +1682,7 @@ private struct ToolSession {
     }
 
     void finishClose() {
+        if (pendingMark_ || pendingDropRow_ || pendingResume_) invalidateHeadlessSource();
         if (pendingMark_) { pendingMark_ = false; markClosedRow_(); }
         if (pendingDropRow_) { pendingDropRow_ = false; recordDropRow_(); }
         if (!pendingResume_) return;
@@ -1650,9 +1715,11 @@ private struct ToolSession {
     }
 
     void noteArm(string id, ulong token, bool postmodeArmed = true) {
+        invalidateHeadlessSource();
         auto t = tool_();
         bound_ = t;
         instanceActive_ = false;   // every bind is a new instance (M-init)
+        headlessPolicy_ = t is null ? HeadlessSourcePolicy.current : t.sessionPolicy().headlessSource;
         armedId_ = id.idup;
         token_ = token;
         postmodeArmed_ = postmodeArmed;
@@ -2819,6 +2886,7 @@ private struct ToolSession {
     // (only a row, a seed or a restored predecessor writes those); any other tool
     // re-syncs. Capture 8980 Z2/Z3 "kept", `param_closed_ebevel_ui` s10–s15.
     private void rebaseAfterTail_(Tool t) {
+        invalidateHeadlessSource();
         auto m = liveStepMesh_(t);
         if (capturedTopologyModel(t.sessionPolicy()) && m !is null)
             stepClient_(t).rebaseTopologyStep(MeshSnapshot.capture(*m));

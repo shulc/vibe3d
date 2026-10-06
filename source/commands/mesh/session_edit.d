@@ -8,6 +8,7 @@ import editmode;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import commands.mesh.gesture_payload : GesturePayload;
+import commands.mesh.mesh_edit_payload : MeshEditPayload;
 import tool : AttrImage, StepOrigin;
 
 /// Generic record-flavor command for an interactive mesh-editing session
@@ -60,8 +61,7 @@ enum string kNoSessionReason =
 class MeshSessionEdit : Command, Operator, GesturePayload {
     mixin OperatorActrCommon;
 
-    private MeshSnapshot before;
-    private MeshSnapshot after;
+    private MeshEditPayload payload_;
     // History owns each topology step's navigation image. The
     // preview basis is distinct from the visible mesh after a plain drag.
     private AttrImage stepBeforeAttrs_;
@@ -119,8 +119,7 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     // delta at a tool commit, and the callers — the majority — that never call
     // setDelta at all. It used to carry a third reader, the
     // `VIBE3D_UNDO_TRACKER=0` escape hatch, which task 1903 stage N deleted.
-    private MeshEditDelta delta_;
-    private bool          useDelta_;
+
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          string wireName, string defaultLabel,
@@ -143,13 +142,11 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     override MeshEditScope editScope() const { return editScope_; }
     // True iff this instance is delta-backed (setDelta was called). The
     // snapshot path (setSnapshots / the escape hatch) reports false honestly.
-    override bool isOperationInverse() const { return useDelta_; }
+    override bool isOperationInverse() const { return payload_.isDelta(); }
 
     void setSnapshots(MeshSnapshot before_, MeshSnapshot after_, string label_ = "") {
-        this.before    = before_;
-        this.after     = after_;
+        payload_ = MeshEditPayload.snapshots(before_, after_);
         this.editLabel = label_;
-        this.useDelta_ = false;
         // TASK 2500 — THE ONE PLACE THIRTY SESSION TOOLS DECLARE THEIR IMAGE.
         // A tool builds this carrier, hands it the pair and pushes it straight
         // to `history.record(cmd)` WITHOUT ever calling `apply()`; the flag
@@ -163,8 +160,7 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     // degenerate (empty) delta could fall back to the snapshot path, but
     // with a real delta the snapshot pair is never touched at apply/revert.
     void setDelta(MeshEditDelta delta_, string label_ = "") {
-        this.delta_    = delta_;
-        this.useDelta_ = true;
+        payload_ = MeshEditPayload.delta(delta_);
         this.editLabel = label_;
         noteUndoRecorded();
     }
@@ -174,7 +170,7 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     /// never writes `after` at all, so `after.filled` alone answers "empty" on
     /// a perfectly good delta carrier. Read by `evaluate()` and by
     /// `hasGesturePayload()`; ONE expression, on purpose (task 1905 D15).
-    private bool hasPayload() const { return useDelta_ || after.filled; }
+    private bool hasPayload() const { return payload_.present(); }
 
     /// GesturePayload — see `commands/mesh/gesture_payload.d`.
     override bool hasGesturePayload() const { return hasPayload(); }
@@ -208,8 +204,7 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
             baseRefusal_ = kNoSessionReason;
             return false;
         }
-        if (useDelta_) delta_.apply(*mesh);   // forward replay (redo)
-        else           after.restore(*mesh);
+        payload_.forward(*mesh);
         return true;
     }
 
@@ -236,8 +231,7 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     // arrives through. A carrier that never got one therefore answers from the
     // base, and `revertImpl` below cannot be entered by it at all.
     protected override void revertImpl() {
-        if (useDelta_) delta_.revert(*mesh);  // LIFO inverse replay (undo)
-        else           before.restore(*mesh);
+        payload_.reverse(*mesh);
     }
 }
 

@@ -9,6 +9,7 @@ import registry : ToolFactory;
 import params : Param;
 import tool_attr_bounds : applyToolAttrBound;
 import snapshot : MeshSnapshot;
+import commands.mesh.mesh_edit_payload : MeshEditPayload;
 
 // ---------------------------------------------------------------------------
 // ToolHeadlessCommand — generic Command wrapper around a Tool's applyHeadless
@@ -30,7 +31,7 @@ private:
     string           toolId_;
     ToolFactory      factory;
     Tool             toolInstance;   // lazily created on first params()/apply()
-    MeshSnapshot     snap;
+    MeshEditPayload  payload;
 
 public:
     this(Mesh* mesh, ref View view, EditMode editMode,
@@ -84,18 +85,22 @@ public:
 
     protected override bool applyImpl() {
         if (refusedForNoEditTarget()) return false;
+        if (payload.present()) { payload.forward(*mesh); return true; }
         if (toolInstance is null) toolInstance = factory();
-        snap = MeshSnapshot.capture(*mesh);
-        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
-        if (!toolInstance.applyHeadless()) {
-            snap = MeshSnapshot.init;
-            return false;
-        }
+        auto transaction = MeshInvocation(*mesh);
+        auto before = MeshSnapshot.capture(*mesh);
+        if (!toolInstance.applyHeadless()) { transaction.rollback(); return false; }
+        auto after = MeshSnapshot.capture(*mesh);
+        auto prepared = MeshEditPayload.snapshots(before, after);
+        transaction.validate();
+        payload = prepared;
+        noteUndoRecorded();
+        transaction.release();
         return true;
     }
 
     protected override void revertImpl() {
-        snap.restore(*mesh);
+        payload.reverse(*mesh);
     }
 
 private:
