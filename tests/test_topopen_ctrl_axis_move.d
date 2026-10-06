@@ -68,7 +68,7 @@ private int[2] rig(const double[3][4] quad, Vec3 h, bool transformed = false,
     penCommand("viewport.view Top");
     penCameraAt(h, kPpm);
     penCommand(preset ? "tool.set mesh.dragWeld on" : "tool.set mesh.topoPen on");
-    penCommand("tool.attr mesh.topoPen mode move");
+    penCommand("tool.attr " ~ (preset ? "mesh.dragWeld" : "mesh.topoPen") ~ " mode move");
     penCommand("tool.pipe.attr constrain enabled " ~ (constraint ? "true" : "false"));
     penCommand("tool.pipe.attr constrain geometry off");
     penCommand("tool.pipe.attr constrain handle true");

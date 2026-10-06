@@ -177,7 +177,9 @@ unittest {
     const throughBack = toolPressAt(centre[0], centre[1], vp, covered, true, true, false);
     assert(throughBack.kind == kCascadeVertex && throughBack.owner.mesh is &up,
            "press-occlusion: cull facing before depth so the lower front candidate survives");
+    up.resizeFaceSelection();
     foreach (fi; 0 .. up.faces.length) up.setFaceHidden(fi, true);
+    assert(up.countHiddenFaces() == 4, "press-hidden: all four faces are actually hidden");
     assert(!toolPressFaceAdmitted(up, 0, ms, vp, false) &&
            !toolPressEdgeAdmitted(up, interior, ms, vp, false) &&
            !toolPressVertexAdmitted(up, 4, ms, vp, false),
