@@ -221,3 +221,64 @@ unittest { // the pen's guide lifetime in its production text (signalling census
     assert(wordsAt(pen, "installPreparedGuides").length == 0,
         "pen.d removes its guide on a switch again: the transition owns that");
 }
+
+unittest { // 9513: opposite purposes, both, and query-owned registry isolation
+    import toolpipe.guide : SnapPurpose, SnapGuideScope, SnapQueryPolicy;
+    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import toolpipe.stages.snap : SnapStage, liveSnapGuides;
+    import tools.edit.topology_pen.snap_guide : PenSnapGuide;
+
+    static class DeclaredGuide : SnapGuide {
+        SnapPurpose declared;
+        this(SnapPurpose p) { declared = p; }
+        override SnapPurpose purpose() const nothrow @nogc { return declared; }
+        override bool proximity(Vec3, SnapType, int, int, ref float, ref int) { return false; }
+    }
+    auto saved = g_pipeCtx;
+    scope(exit) g_pipeCtx = saved;
+    auto ctx = new ToolPipeContext;
+    auto st = new SnapStage;
+    ctx.pipeline.add(st);
+    g_pipeCtx = ctx;
+    auto placement = new DeclaredGuide(SnapPurpose.placement);
+    auto weld = new DeclaredGuide(SnapPurpose.weld);
+    auto both = new DeclaredGuide(SnapPurpose.both);
+    st.addGuide(placement); st.addGuide(weld); st.addGuide(both);
+    assert(st.guideCount == 3, "9513 registry fixture: three declared purposes");
+    assert(liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)) ==
+           [cast(SnapGuide)placement, both], "placement excludes weld and retains both");
+    assert(liveSnapGuides(SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.registered)) ==
+           [cast(SnapGuide)weld, both], "weld excludes placement and retains both");
+    assert(liveSnapGuides(SnapQueryPolicy(SnapPurpose.both, SnapGuideScope.registered)) == st.guides(),
+           "both-purpose query retains the complete registry in order");
+    assert(liveSnapGuides(SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned)) is null,
+           "query-owned admission never receives registered vetoes");
+    assert((new PenSnapGuide).purpose() == SnapPurpose.weld, "topology guide declares weld purpose");
+    assert((new LineGuide).purpose() == SnapPurpose.placement, "polygon guide declares placement purpose");
+
+    // Real election: client refusal precedes even a higher-ranked guide.
+    static class OverrideGuide : SnapGuide {
+        size_t asked;
+        override bool proximity(Vec3, SnapType, int, int, ref float, ref int rank) {
+            ++asked; rank = 100; return true;
+        }
+    }
+    auto rank = new OverrideGuide;
+    st.removeGuide(placement); st.removeGuide(weld); st.removeGuide(both);
+    st.addGuide(rank);
+    Viewport vp = rigView();
+    Mesh m; m.vertices = [Vec3(0, 0, 0)];
+    SnapPacket cfg; cfg.enabled = true; cfg.enabledTypes = SnapType.Vertex;
+    float x, y, z;
+    assert(projectToWindowFull(m.vertices[0], vp, x, y, z));
+    invalidateSnapGrids();
+    auto accepted = snapCursor(Vec3(0, 0, 0), cast(int)round(x), cast(int)round(y), vp, m,
+        ModelSpace.world(), cfg, null, null,
+        liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
+    assert(accepted.snapped && rank.asked == 1, "control: registered rank guide reaches accepted vertex");
+    rank.asked = 0;
+    auto refused = snapCursor(Vec3(0, 0, 0), cast(int)round(x), cast(int)round(y), vp, m,
+        ModelSpace.world(), cfg, null, (SnapType, int, int) => false,
+        liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
+    assert(!refused.snapped && rank.asked == 0, "client refusal precedes registered guide ranking");
+}

@@ -13,6 +13,7 @@
 // all; the dependency runs one way, tool.d -> here.
 module tools.edit.topology_pen.snap_guide;
 
+import toolpipe.guide : SnapPurpose;
 import std.math          : hypot;
 
 import mesh              : Mesh, MeshTopoKey;
@@ -100,6 +101,7 @@ package bool isVertexInterior(Mesh* m, uint vi) {
 // spelling is ours.
 // -----------------------------------------------------------------------
 final class PenSnapGuide : SnapGuide {
+    override SnapPurpose purpose() const nothrow @nogc { return SnapPurpose.weld; }
     /// The priority this guide answers proximity queries with. MEASURED —
     /// see the block comment above. Higher wins outright; distance only
     /// breaks ties WITHIN one priority.

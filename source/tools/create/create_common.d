@@ -1,5 +1,6 @@
 module tools.create.create_common;
 
+import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import math : Vec3, Viewport, dot, isOrtho, matMul4, matrixMirrorsWinding, normalize,
               projectToWindowFull, rayPlaneIntersect, screenPointToRay;
 import std.math : abs;
@@ -608,7 +609,7 @@ SnapResult snapLocalHit(ref Vec3 hitLocal,
 
     Vec3 hitWorld = transformPoint(frame.toWorld, hitLocal);
     auto sr = snapCursor(hitWorld, sx, sy, vp, mesh, primaryModelSpace(), localPkt, excludeVerts,
-                         null, liveSnapGuides());
+                         null, liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
     if (sr.snapped)
         hitLocal = transformPoint(frame.toLocal, sr.worldPos);
     return sr;

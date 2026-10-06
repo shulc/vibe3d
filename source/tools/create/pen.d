@@ -1,4 +1,5 @@
 module tools.create.pen;
+import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import display_state : DrawPlan;
 
 import bindbc.opengl;
@@ -38,7 +39,7 @@ import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame,
                               workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType, SnapPacket, SymmetryPacket;
 import toolpipe.stages.symmetry : liveSymmetryStage, workplaneSymmetryPlane, mapByWorkplaneOnceMore;
-import toolpipe.stages.snap : liveSnapStage;
+import toolpipe.stages.snap : liveSnapGuides, liveSnapStage;
 import toolpipe.stages.constrain : liveConstrainStage;
 import bvh_pick : SurfaceHit;
 import symmetry : mirrorPosition, symmetryMirrorsEqual, symmetryPacketsEqual;
@@ -1718,7 +1719,8 @@ private:
         pkt.innerRangePx = r;
         pkt.enabledTypes = t;
         return snapCursor(placed, sx, sy, cachedVp, *mesh, primaryModelSpace(), pkt, null,
-                          (SnapType, int, int slot) => slot == 0);
+                          (SnapType, int, int slot) => slot == 0,
+                          liveSnapGuides(SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned)));
     }
 
     // The view's hover record at pointer pixel (x, y) holds an edge: the

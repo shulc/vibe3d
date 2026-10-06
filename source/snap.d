@@ -1,5 +1,6 @@
 module snap;
 
+import toolpipe.guide : SnapQueryPolicy;
 import std.math : sqrt, round, floor, isNaN;
 import core.sync.mutex : Mutex;
 
@@ -1215,15 +1216,17 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
 /// target; the radius and `admit` are the caller's. -1 when nothing is in reach.
 int editedVertexAt(int sx, int sy, const ref Viewport vp, const ref Mesh m,
                    const ModelSpace ms, SnapPacket cfg, float rangePx,
-                   scope SnapAdmit admit = null, const(uint)[] exclude = null)
+                   SnapQueryPolicy queryPolicy, scope SnapAdmit admit = null, const(uint)[] exclude = null)
 {
+    import toolpipe.stages.snap : liveSnapGuides;
     cfg.enabled      = true;
     cfg.enabledTypes = SnapType.Vertex;
     cfg.snapScope    = SnapMode.Global;
     cfg.innerRangePx = cfg.outerRangePx = rangePx;
     scope SnapAdmit edited = (SnapType t, int idx, int slot) nothrow =>
         slot == 0 && (admit is null || admit(t, idx, slot));
-    const sr = snapCursor(Vec3(0, 0, 0), sx, sy, vp, m, ms, cfg, exclude, edited);
+    const sr = snapCursor(Vec3(0, 0, 0), sx, sy, vp, m, ms, cfg, exclude, edited,
+                               liveSnapGuides(queryPolicy));
     return sr.snapped ? sr.targetIndex : -1;
 }
 

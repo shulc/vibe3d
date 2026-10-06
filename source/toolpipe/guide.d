@@ -69,6 +69,15 @@ enum GuideDrawState : ubyte {
     Chosen  = 2,   /// drawn as the target the arbitration picked
 }
 
+// Task 9513: guide eligibility is query data; placement and destructive
+// matching share election arithmetic, but do not share admission policy.
+enum SnapPurpose : ubyte { placement = 1, weld = 2, both = 3 }
+enum SnapGuideScope : ubyte { registered, queryOwned }
+struct SnapQueryPolicy {
+    SnapPurpose purpose;
+    SnapGuideScope guideScope;
+}
+
 /// A client-supplied snapping guide, alive for one gesture.
 ///
 /// Registered on `SnapStage` (`addGuide` / `removeGuide`) by the tool that
@@ -77,6 +86,8 @@ enum GuideDrawState : ubyte {
 /// no-op default (admit at the enumeration's rank, propose nothing); a guide
 /// overrides what it uses.
 abstract class SnapGuide {
+    SnapPurpose purpose() const nothrow @nogc { return SnapPurpose.both; }
+
     /// The environment's pixel ranges, pushed IN — the guide does not source
     /// them.
     ///

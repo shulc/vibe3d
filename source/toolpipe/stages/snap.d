@@ -1,5 +1,6 @@
 module toolpipe.stages.snap;
 
+import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import std.format    : format;
 import std.conv      : to;
 import std.string    : split, strip;
@@ -149,11 +150,9 @@ class SnapStage : Stage, Operator {
     // around a drag); the interface's method set and its `priority` return are
     // header-derived and unmeasured — see `toolpipe.guide` for which is which.
     //
-    // One registered client: the topology pen registers its guide for a
-    // gesture (`registerSnapGuide`). Every production `snapCursor` call
-    // passes this registry (`liveSnapGuides()`), so a registered
-    // guide re-ranks every client's walk; with none, the ranking is the
-    // historical "nearest wins".
+    // Registered guides are resolved by query purpose; query-owned admission
+    // stays independent of this registry. With no eligible guide, ranking is
+    // the historical "nearest wins".
 
     /// Register a gesture-scoped guide, and push the current ranges into it.
     ///
@@ -298,11 +297,12 @@ class SnapStage : Stage, Operator {
         // (see SnapHitPacket's contract). Were the seed to acquire meaning,
         // this line would have to become a real derivation, and the packet's
         // "meaningful only when `snapped`" clause is what keeps that honest.
-        // `_guides` is the registry; every tool-side `snapCursor` call passes
-        // the same registry through `liveSnapGuides()`.
+        // This placement query uses this stage's registry through the same
+        // purpose resolver as tool-side queries (including non-live stages).
         SnapResult sr = snapCursor(Vec3(0, 0, 0), subj.cursorX, subj.cursorY,
                                    subj.viewport, *subj.mesh, primaryModelSpace(), cfg,
-                                   null, null, _guides);
+                                   null, null, liveSnapGuides(
+                                       SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered), this));
 
         SnapHitPacket hit;   // every field at its documented default
         hit.snapped        = sr.snapped;
@@ -311,7 +311,7 @@ class SnapStage : Stage, Operator {
         hit.targetIndex    = sr.targetIndex;
         hit.targetSource   = sr.targetSource;
         hit.constraintType = sr.constraintType;
-        // PROVENANCE, not a result: how many guides re-ranked the walk above.
+        // Registry provenance: retain the existing public registered-guide count.
         hit.guideCount     = cast(int)_guides.length;
 
         // Paired with `highlighted` exactly as `worldPos` is paired with
@@ -780,11 +780,18 @@ size_t heldDragGuideCount() {
     return n;
 }
 
-/// The guides every production `snapCursor` call consults: the live stage's
-/// registry (empty unless a gesture registered one), or none.
-SnapGuide[] liveSnapGuides() {
-    if (auto st = liveSnapStage()) return st.guides();
-    return null;
+/// One purpose resolver (9513): registered queries use matching live guides;
+/// query-owned queries use only their explicit admission. A stage evaluating
+/// outside the live pipe supplies its own registry owner through the same seam.
+SnapGuide[] liveSnapGuides(SnapQueryPolicy queryPolicy, SnapStage stage = null) {
+    // Query-owned admission is complete; never inspect registry membership.
+    if (queryPolicy.guideScope == SnapGuideScope.queryOwned) return null;
+    if (stage is null) stage = liveSnapStage();
+    if (stage is null) return null;
+    SnapGuide[] result;
+    foreach (g; stage.guides())
+        if ((g.purpose() & queryPolicy.purpose) != 0) result ~= g;
+    return result;
 }
 
 // ---------------------------------------------------------------------------

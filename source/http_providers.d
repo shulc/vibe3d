@@ -13,6 +13,7 @@ module http_providers;
 // Import surface: mirrored verbatim from editor_app.d (itself harvested
 // from app.d's top-level import block for task 0415), plus step_trace for
 // the StepTrace-typed ctx field.
+import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import editor_app : EditorApp;
 import http_command_adapter : CommandHttpAdapter;
 import command_executor : CommandExecutor;
@@ -2315,7 +2316,7 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             // (task 0617 Stage 4), so a transformed primary snaps where it's
             // actually drawn.
             SnapResult sr = snapCursor(cursor, sx, sy, vp, mesh, primaryModelSpace(), cfg, exclude,
-                                       null, liveSnapGuides());
+                                       null, liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
 
             buf.put(format(
                 `{"snapped":%s,"highlighted":%s,"targetType":%d,`

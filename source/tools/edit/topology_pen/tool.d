@@ -5,6 +5,7 @@
 // `package.d` for why that distinction is the point.
 module tools.edit.topology_pen.tool;
 
+import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import hover_state;
 
 import bindbc.sdl;
@@ -41,7 +42,7 @@ import operator            : VectorStack, viewportOf, pickOcclusionOf;
 import toolpipe.packets    : ConstrainHitPacket, ConstrainPacket, ConstrainGeom, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType, SymmetryPacket;
 import toolpipe.stages.constrain : liveConstrainStage, backgroundHit;
-import toolpipe.stages.snap : SnapStage, liveSnapStage;
+import toolpipe.stages.snap : liveSnapGuides, SnapStage, liveSnapStage;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes, constrainPoint, BackgroundSource;
@@ -2210,7 +2211,8 @@ public:
         auto g = snapGuide();
         g.retarget(meshOrNull(), innerSnap_, backFace_);
         g.aimAt(vp, mx, my);
-        return weldTargetVertex(mx, my, vp, &g.admits, exclude);
+        return weldTargetVertex(mx, my, vp,
+            SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned), &g.admits, exclude);
     }
 
     /// The snap target at the pixel the LOCAL point `at` is drawn at (Pixel, §1.1):
@@ -2247,20 +2249,20 @@ public:
             if (t == SnapType.Vertex && idx == a) return false;
             return g.admits(t, idx, slot);
         };
-        return weldTargetVertex(mx, my, vp, admit);
+        return weldTargetVertex(mx, my, vp,
+            SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned), admit);
     }
     private PenSnapGuide splitGuide_;
 
     /// The WELD target (task 9407, capture K-T): `snap.editedVertexAt` on the
-    /// press-frozen packet at the accept radius. No registry guides: `admit`
-    /// IS the gesture's policy, and the registered guide would veto the
-    /// interior target Split's own guide admits.
+    /// press-frozen packet at the accept radius. Query-owned weld admission (9513):
+    /// the registered guide cannot veto Split's private interior admission.
     private int weldTargetVertex(int mx, int my, const ref Viewport vp,
-                                 scope SnapAdmit admit, const(uint)[] exclude = null) {
+                                 SnapQueryPolicy queryPolicy, scope SnapAdmit admit, const(uint)[] exclude = null) {
         auto m = mesh;
         if (m is null) return -1;
         return editedVertexAt(mx, my, vp, *m, primaryModelSpace(), dragSnap_,
-                              topoPenSnapAcceptPx(vp, dragSnap_), admit, exclude);
+                              topoPenSnapAcceptPx(vp, dragSnap_), queryPolicy, admit, exclude);
     }
 
     // -----------------------------------------------------------------------
@@ -5921,15 +5923,16 @@ public:
 
     // K-P P8/P8c: a Point lands on the shared snap election's answer at the
     // release pixel — every source, background included, on the press's packet
-    // — and on the surface hit when nothing snaps or snapping is off. No guides:
-    // the registered one is the weld policy and refuses the background. An
+    // — and on the surface hit when nothing snaps or snapping is off. Registered placement guides only (9513):
+    // the weld guide does not constrain background placement. An
     // edited vertex is a target too: the point lands on it as a new coincident
     // vertex, no weld (K-PS KPS_1/KPS_2).
     private Vec3 placeSnapped(int mx, int my, ref VectorStack vts) {
         auto m = mesh;
         if (m is null) return lastHit_.point;
         Viewport vp = viewportOf(vts);
-        const sr = snapCursor(lastHit_.point, mx, my, vp, *m, primaryModelSpace(), dragSnap_);
+        const sr = snapCursor(lastHit_.point, mx, my, vp, *m, primaryModelSpace(), dragSnap_, null, null,
+            liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
         return sr.snapped ? sr.worldPos : lastHit_.point;
     }
 

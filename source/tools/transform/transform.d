@@ -1,4 +1,5 @@
 module tools.transform.transform;
+import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import tool;
 import prepared_record_context : PreparedRecordContext;
 
@@ -1924,7 +1925,7 @@ protected:
         const pkt = snapPacketOf(vts);
         if (!pkt.enabled) return SnapResult.init;
         return snapCursor(rawHit, sx, sy, cachedVp, *mesh, primaryModelSpace(), pkt, [], null,
-                          liveSnapGuides());
+                          liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
     }
 
     // Live "where would the gizmo land if I clicked right now" preview.

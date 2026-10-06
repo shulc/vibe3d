@@ -1,4 +1,5 @@
 module tools.transform.move;
+import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import display_state : DrawPlan;
 
 import bindbc.opengl;
@@ -877,7 +878,7 @@ public:
             if (vi >= 0) exclude ~= cast(uint)vi;
 
         SnapResult sr = snapCursor(client, sx, sy, cachedVp, *mesh, primaryModelSpace(),
-                                   snapPkt, exclude, null, liveSnapGuides());
+                                   snapPkt, exclude, null, liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
         publishLastSnap(sr);
         if (sr.snapped) {
             immutable Vec3 d = constrainSnapDelta(sr.worldPos - gizmoCenter);

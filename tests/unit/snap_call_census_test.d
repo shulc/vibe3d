@@ -1,9 +1,5 @@
-// Task 9405: one snap packet read (`snap.snapPacketOf`), one stage finder
-// (`toolpipe.stages.snap.liveSnapStage`) and one call shape — every production
-// `snapCursor` call consults the registered guides (`liveSnapGuides()`, or the
-// stage's own `_guides`). Source census over the production text (unittest
-// bodies blanked), then one behaviour cell: a guide registered on the live
-// stage changes a create tool's answer.
+// Task 9513: every production snap query declares registered or query-owned
+// guide semantics through one resolver; no filename exemption.
 module tests.unit.snap_call_census_test;
 
 import std.algorithm : canFind, map, sort;
@@ -66,16 +62,16 @@ private string[] fileRoster(const Site[] sites) {
     return r;
 }
 
-/// A call consults the guide registry when its argument text names it.
+/// A call declares guide semantics by reaching the one policy resolver.
 private bool consultsGuides(string args) {
-    return args.canFind("liveSnapGuides()") || wordsAt(args, "_guides").length != 0;
+    return wordsAt(args, "liveSnapGuides").length == 1;
 }
 
 unittest // the scanner itself: positive controls on a scratch buffer
 {
     Site[] calls, others;
     enum scratch = "import snap : snapCursor, X;\nSnapResult snapCursor(Vec3 a) { return r; }\n"
-                 ~ "void f() { auto r = snapCursor(a, b, null, liveSnapGuides());\n"
+                 ~ "void f() { auto r = snapCursor(a, b, null, liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));\n"
                  ~ "  auto q = snapCursor (a, pkt);\n  auto p = &snapCursor; }";
     scanCalls("scratch.d", scratch, "snapCursor", "SnapResult", calls, others);
     assert(calls.length == 2 && others.length == 1,
@@ -84,7 +80,7 @@ unittest // the scanner itself: positive controls on a scratch buffer
         "scanner control: the guide-less call must be told apart from the consulting one");
 }
 
-unittest // every production snapCursor call consults the guide registry
+unittest // every production snapCursor call declares guide semantics
 {
     const files = productionSources();
     assert(files.length >= 500, format("population floor: %s source files scanned", files.length));
@@ -101,18 +97,38 @@ unittest // every production snapCursor call consults the guide registry
         "source/tools/transform/move.d", "source/tools/transform/transform.d"],
         format("snapCursor call roster: %s", fileRoster(calls)));
     assert(others.length == 0, format("snapCursor reached other than by a call: %s", fileRoster(others)));
-    // The needle. pen.d's merge query is exempt: pen-owned and frozen while the
-    // pen wave runs; the interaction-layer pen slices own it. The topology
-    // tools' vertex finder `snap.editedVertexAt` is exempt: its admit is the
-    // gesture's own policy, and the registered guide would veto Split's
-    // interior target (tasks 9407, 9437). The topology pen's Point placement is
-    // exempt: its registered guide is the WELD policy (edited mesh only) and
-    // would veto the background vertex the placement lands on (K-P P8).
-    Site[] guideless;
-    foreach (c; calls) if (!consultsGuides(c.args)) guideless ~= c;
-    assert(fileRoster(guideless) == ["source/snap.d", "source/tools/create/pen.d",
-                                     "source/tools/edit/topology_pen/tool.d"],
-        format("snapCursor calls that do not consult the guides: %s", fileRoster(guideless)));
+    // Stationary allowed set: zero bypasses, before and after any compliant edit.
+    // A mutation removing any consumer's resolver must fail this assertion.
+    Site[] bypasses;
+    foreach (c; calls) if (!consultsGuides(c.args)) bypasses ~= c;
+    assert(bypasses.length == 0,
+        format("snapCursor calls bypassing declared query semantics: %s", fileRoster(bypasses)));
+    // Every site has a positive policy pin. These are contracts, not exemptions:
+    // the same no-bypass assertion above applies to every row.
+    immutable string[string] expected = [
+        "source/http_providers.d": "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)",
+        "source/snap.d": "queryPolicy",
+        "source/toolpipe/stages/snap.d": "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)",
+        "source/tools/create/create_common.d": "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)",
+        "source/tools/create/pen.d": "SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned)",
+        "source/tools/edit/topology_pen/tool.d": "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)",
+        "source/tools/transform/move.d": "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)",
+        "source/tools/transform/transform.d": "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)"
+    ];
+    assert(expected.length == 8, "query-policy contract population: eight production callers");
+    foreach (c; calls)
+        assert(c.args.canFind(expected[c.file]), "incorrect snap query policy in " ~ c.file);
+    Site[] resolvers, resolverOthers;
+    foreach (f; files)
+        scanCalls(f[0], blankUnittestBodies(blankNonCode(f[1])), "liveSnapGuides", "SnapGuide[]",
+                  resolvers, resolverOthers);
+    assert(resolvers.length == 8, format("guide resolver population: %s", resolvers.length));
+    assert(resolverOthers.length == 0, "guide resolver must only be reached by calls");
+    foreach (r; resolvers)
+        assert(wordsAt(r.args, "SnapQueryPolicy").length == 1 ||
+               wordsAt(r.args, "queryPolicy").length == 1,
+               "guide resolver lacks explicit policy in " ~ r.file);
+
 }
 
 unittest // one packet read, one finder: the deleted copies stay deleted
@@ -245,11 +261,11 @@ unittest // the signatures the clients rely on (compiler pins)
     import math : Vec3, Viewport;
     import snap : snapPacketOf;
     import toolpipe.packets : SnapPacket, SnapType;
-    import toolpipe.guide : SnapGuide;
+    import toolpipe.guide : SnapGuide, SnapQueryPolicy;
     import toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
     static assert(is(typeof(&snapPacketOf) == SnapPacket function(ref VectorStack)));
     static assert(is(typeof(&liveSnapStage) == SnapStage function()));
-    static assert(is(typeof(&liveSnapGuides) == SnapGuide[] function()));
+    static assert(is(typeof(&liveSnapGuides) == SnapGuide[] function(SnapQueryPolicy, SnapStage)));
     // Task 9416: a guide may propose a position; the guide-type mask is gone
     // (the bits reach the guide's own `propose` through the packet).
     static assert(is(typeof((SnapGuide g, Vec3 p, ref Viewport vp, ref SnapPacket c) {
@@ -268,7 +284,7 @@ unittest // a guide registered on the live stage reaches a create tool's query
     import editmode         : EditMode;
     import snap             : invalidateSnapGrids;
     import std.math         : PI, round;
-    import toolpipe.guide   : SnapGuide, GuideDrawState;
+    import toolpipe.guide   : SnapGuide, GuideDrawState, SnapQueryPolicy, SnapPurpose, SnapGuideScope;
     import toolpipe.packets : SnapType;
     import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
     import toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
@@ -282,7 +298,7 @@ unittest // a guide registered on the live stage reaches a create tool's query
     auto saved = g_pipeCtx;
     scope (exit) g_pipeCtx = saved;
     g_pipeCtx = null;
-    assert(liveSnapStage() is null && liveSnapGuides() is null, "no pipeline: no stage, no guides");
+    assert(liveSnapStage() is null && liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)) is null, "no pipeline: no stage, no guides");
 
     auto ctx = new ToolPipeContext();
     auto st  = new SnapStage();
@@ -313,11 +329,44 @@ unittest // a guide registered on the live stage reaches a create tool's query
                             EditMode.Vertices).snapped;
     }
     // Control first: an empty registry snaps onto the vertex under the cursor.
-    assert(liveSnapGuides().length == 0 && snappedAt(), "control: empty registry snaps to the vertex");
+    assert(liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)).length == 0 && snappedAt(), "control: empty registry snaps to the vertex");
     auto g = new Refuse();
     st.addGuide(g);
     scope (exit) st.removeGuide(g);
     assert(!snappedAt() && g.asked > 0,
         format("a registered refusing guide must reach snapLocalHit's query (asked %s)", g.asked));
-    assert(liveSnapGuides() == [cast(SnapGuide)g], "the registry is what the finder hands out");
+    assert(liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)) == [cast(SnapGuide)g], "the registry is what the finder hands out");
+}
+
+unittest { // explicit policies at actual production seams, not helper-only rigs
+    string body(string file, string declaration) {
+        const code = blankUnittestBodies(blankNonCode(readText(buildPath(repoRoot, file))));
+        const at = code.indexOf(declaration);
+        assert(at >= 0, "query-policy producer missing: " ~ declaration);
+        return balancedSpan(code, code.indexOf('{', at), '{', '}');
+    }
+    const pen = "source/tools/edit/topology_pen/tool.d";
+    assert(body(pen, "int resolveSnapTargetVert(").canFind(
+        "SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned)"),
+        "ordinary Move must declare query-owned weld admission");
+    assert(body(pen, "int resolveSplitTargetVert(").canFind(
+        "SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned)"),
+        "Split must declare query-owned weld admission");
+    assert(body(pen, "Vec3 placeSnapped(").canFind(
+        "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)"),
+        "Point must declare registered placement admission");
+    assert(body("source/tools/create/pen.d", "SnapResult nearestOf(").canFind(
+        "SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned)"),
+        "polygon merge must declare query-owned weld admission");
+    assert(body("source/snap.d", "int editedVertexAt(").canFind("liveSnapGuides(queryPolicy)"),
+        "edited vertex query must transport its caller's policy");
+}
+
+unittest { // the actual private Slice producer declares placement
+    const src = blankUnittestBodies(blankNonCode(readText(buildPath(repoRoot,
+        "source/tools/slice/slice_tool.d"))));
+    const at = src.indexOf("class LineGuide : SnapGuide");
+    assert(at >= 0, "Slice guide producer population: one LineGuide");
+    const guide = balancedSpan(src, src.indexOf('{', at), '{', '}');
+    assert(guide.canFind("return SnapPurpose.placement;"), "Slice guide must declare placement purpose");
 }

@@ -1,4 +1,5 @@
 module tools.slice.slice_tool;
+import toolpipe.guide : SnapPurpose;
 import display_state : DrawPlan;
 
 import bindbc.sdl;
@@ -869,7 +870,9 @@ private:
     // (`dropPreview`). The base guide admits every candidate at its own rank,
     // so it re-ranks nothing; it makes the snap key live mid-drag
     // (`heldDragGuideCount`).
-    private final class LineGuide : SnapGuide {}
+    private final class LineGuide : SnapGuide {
+        override SnapPurpose purpose() const nothrow @nogc { return SnapPurpose.placement; }
+    }
     private LineGuide lineGuide_;
     private void endLineGuide() { if (auto st = liveSnapStage()) st.removeGuide(lineGuide_); }
 

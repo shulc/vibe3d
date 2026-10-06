@@ -7,6 +7,7 @@
 // `pen.d`. Design: doc/pen_parity_wave_plan_2026-10-04.md §3.2 M-BUILD, §9.1.
 module tools.create.pen_geometry;
 
+import toolpipe.guide : SnapPurpose;
 import math : Vec3, Viewport, closestPointOnLineToRay, cross, dot, eyeVectorAt,
     faceNormalFirst3, normalize, projectToWindowFull;
 import mesh : Mesh;
@@ -203,6 +204,7 @@ void revKeepFirst(uint[] ring) nothrow @nogc {
 /// the nearest on screen; it re-ranks nothing. `live`: the surface did not place
 /// the point.
 final class LineGuide : SnapGuide {
+    override SnapPurpose purpose() const nothrow @nogc { return SnapPurpose.placement; }
     struct Line { Vec3 origin, dir; SnapType type; }
     Line[] lines;
     bool live;

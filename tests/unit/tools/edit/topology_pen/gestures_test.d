@@ -11208,6 +11208,15 @@ unittest {
     import toolpipe.packets : SubjectPacket;
     import std.format : format;
 
+    // 9513: exercise the actual registered innerSnap-off guide during Split.
+    import toolpipe.pipeline : ToolPipeContext;
+    auto savedPipe = g_pipeCtx;
+    scope(exit) g_pipeCtx = savedPipe;
+    auto ctx = new ToolPipeContext;
+    auto snapStage = new SnapStage;
+    ctx.pipeline.add(snapStage);
+    g_pipeCtx = ctx;
+
     loadSDL();
     SDL_SetModState(cast(SDL_Keymod)0);
 
