@@ -632,12 +632,9 @@ unittest {
     z("absorb-then-drop z1");
     at("absorb-then-drop", "z1 (task row)", g1, false, r.hp + 4);
     z("absorb-then-drop z2");
-    at("absorb-then-drop", "z2 (drop row)", g1, true, r.hp + 3);
+    at("absorb-then-drop", "z2 (drop plus press)", r.a0, true, r.hp + 2);
     z("absorb-then-drop z3");
-    at("absorb-then-drop", "z3", r.a0, true, r.hp + 2);
-    assert(attrStr("loop") == "true", "absorb-then-drop z3: loop " ~ attrStr("loop"));
-    z("absorb-then-drop z4");
-    at("absorb-then-drop", "z4", r.a0, false, r.hp);
+    at("absorb-then-drop", "z3", r.a0, false, r.hp);
     writeln("PASS absorb-then-drop");
 }
 

@@ -1947,10 +1947,10 @@ static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
     "previewHistoryLadder", "opensAt", "noClone", "imageAttrs", "haulAttrs",
     "activationResetAttrs", "armAttr", "headlessReplacesWindow", "recordCarriesActivation",
     "keepAliveOnCancel", "rollovers", "handleAnchor", "armRestoresWholeImage", "dropWritesRow",
-    "toolSetDropRow", "armUndoLeavesToolLatent",
+    "toolSetDropRow", "dropUndo", "armUndoLeavesToolLatent",
     "pressOpensOperation", "foldsParamRowsIntoBlock",
     "redoPinsRefireImage", "commandEndsOpenGesture", "stepsParamWrites"],
-    "UND2 pin: ToolSessionPolicy's members changed (measured 28 since task 9508)");
+    "UND2 pin: ToolSessionPolicy's members changed (measured 29 since task 9508)");
 
 /// The session type `EditSession` holds in its field `tools_`.
 private template SessionOf(ES) {
@@ -2290,7 +2290,7 @@ unittest { // (10b)
             if (pol.armUndoLeavesToolLatent) latent ~= c.name;
         }
     }
-    assert(scanned == 48, format("9508 policy classes: scanned %s, measured 48", scanned));
+    assert(scanned == 47, format("9508 policy classes: scanned %s, measured 47", scanned));
     dropRow.sort();
     assert(dropRow == ["tools.edit.poly_bevel.PolyBevelTool",
                        "tools.transform.xfrm_transform.XfrmTransformTool"],

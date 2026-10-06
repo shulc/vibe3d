@@ -1,4 +1,5 @@
 module tools.transform.xfrm_transform;
+import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
@@ -2969,7 +2970,8 @@ public:
         static immutable ToolSessionPolicy defaults = {
             activationRow: true, commandClose: CommandClose.allDoors,
             sessionSteps: true, historyRecordedSteps: true,
-            toolSetDropRow: true, armUndoLeavesToolLatent: true };
+            toolSetDropRow: true,
+            dropUndo: DropUndoPolicy(DropUndoExtent.wholeSession, DropRedoPopulation.editRows), armUndoLeavesToolLatent: true };
         ToolSessionPolicy policy = defaults;
         policy.activationRow = activationHistoryRow;
         policy.recordedFirstUndoEndsTool = recordedFirstUndoEndsTool;

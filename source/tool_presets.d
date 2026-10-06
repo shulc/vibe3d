@@ -6,7 +6,7 @@ import std.json : JSONValue;
 import command_history : RunCloseMode, RecordedRunBoundaryMode, RunCloseScope;
 
 import registry         : Registry, ToolFactory, typedToolFactory;
-import tool             : Tool, ToolFlag;
+import tool             : Tool, ToolFlag, DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import tools.transform.rotate : OffGizmoRotateInput;
 import tools.deform.push : PushTool;
@@ -41,6 +41,8 @@ struct ToolPreset {
     RecordedRunBoundaryMode   runBoundaryMode;
     RunCloseScope             runCloseScope;
     ScaleInputPolicy          scaleInput;
+    DropUndoPolicy            dropUndo;
+    bool                      hasDropUndo;
 }
 
 // Map YAML flag name → ToolFlag bit. Names match the enum members
@@ -91,7 +93,8 @@ ToolPreset[] loadToolPresets(string path) {
                     || node.containsKey("attrs") || node.containsKey("flags")
                     || node.containsKey("rearmAfterCommand")
                     || node.containsKey("historyClose")
-                    || node.containsKey("scaleInput"))
+                    || node.containsKey("scaleInput")
+                    || node.containsKey("dropUndo"))
                 throw new Exception(format(
                     "tool_presets: preset '%s' in '%s' has 'alias' plus "
                     ~ "'base'/'pipe'/'attrs'/'flags' — an alias entry may only "
@@ -106,6 +109,27 @@ ToolPreset[] loadToolPresets(string path) {
         ToolPreset p;
         p.id   = id;
         p.base = node["base"].as!string;
+        if (node.containsKey("dropUndo")) {
+            auto config = node["dropUndo"];
+            foreach (string key, Node value; config) {
+                if (key == "extent") {
+                    switch (value.as!string) {
+                        case "none": p.dropUndo.extent = DropUndoExtent.none; break;
+                        case "newestPressBlock": p.dropUndo.extent = DropUndoExtent.newestPressBlock; break;
+                        case "wholeSession": p.dropUndo.extent = DropUndoExtent.wholeSession; break;
+                        default: throw new Exception("tool_presets: unknown dropUndo extent");
+                    }
+                } else if (key == "redo") {
+                    switch (value.as!string) {
+                        case "discard": p.dropUndo.redo = DropRedoPopulation.discard; break;
+                        case "editRows": p.dropUndo.redo = DropRedoPopulation.editRows; break;
+                        case "selectedSuffix": p.dropUndo.redo = DropRedoPopulation.selectedSuffix; break;
+                        default: throw new Exception("tool_presets: unknown dropUndo redo");
+                    }
+                } else throw new Exception("tool_presets: unknown dropUndo key " ~ key);
+            }
+            p.hasDropUndo = true;
+        }
         if (node.containsKey("runBoundary")) {
             const value = node["runBoundary"].as!string;
             switch (value) {
@@ -264,6 +288,8 @@ private ToolPreset resolveAliasPreset(const ref ToolPreset target, string aliasI
     r.runBoundaryMode = target.runBoundaryMode;
     r.runCloseScope = target.runCloseScope;
     r.scaleInput = target.scaleInput;
+    r.dropUndo = target.dropUndo;
+    r.hasDropUndo = target.hasDropUndo;
     r.toolAttrs = target.toolAttrs.dup;
     foreach (stageId, attrs; target.pipeAttrs)
         r.pipeAttrs[stageId] = attrs.dup;
@@ -414,6 +440,7 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 auto t = cast(T)baseFactory();
                 assert(t !is null, "typed preset base factory descriptor drift");
                 t.presetFlags = presetCopy.flags;
+                if (presetCopy.hasDropUndo) t.setDropUndoOverride(presetCopy.dropUndo);
                 // Presets declare their own close law. A preset based on
                 // `rotate` does not silently inherit the base ID's law.
                 static if (is(T == XfrmTransformTool)) {

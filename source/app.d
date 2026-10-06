@@ -4006,7 +4006,9 @@ void main(string[] args) {
                 JSONValue noNamed = JSONValue(cast(JSONValue[string]) null);
                 armPreparedTool(ToolTransition.replayArm, restoreId, noNamed, true);
             };
-            if (spec.revertsSession) row.markRevertsSession();
+            row.setDropUndoPolicy(spec.dropUndo);
+            row.onCompleteDropUndo = (string id, ulong token) { session.completeDropUndo(id, token); };
+            row.onDeactivate = () { dropActiveTool(ToolTransition.replayDrop); };
             if (spec.ctx.flipsSelType) {
                 row.restoresSelType(spec.ctx.selBefore);
                 row.onRestoreSelType = (SelType st) {

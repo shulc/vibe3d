@@ -1946,38 +1946,62 @@ final class CommandHistory {
         scope(exit) { import mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
         if (_lockout) return false;
         if (undoStack.length == 0) return false;
-        scope(exit) ++_generation;   // even a refused revert removes its row
-
-        // Suspend to keep internal sub-commands off the stack.
-        auto prev = _state;
-        _state = UndoState.Suspend;
-        scope(exit) _state = prev;
-
-        // K-RD rule 2: a drop row that reverts its session takes the dropped
-        // session's rows below it in the same step (`session`, to redo).
+        bool generationDone;
+        scope(exit) if (!generationDone) ++_generation;
         import commands.tool.lifecycle : ToolArmLifecyclePolicy;
-        ulong session;
-        for (bool first = true; undoStack.length; first = false) {
-            auto entry = undoStack[$ - 1];
-            if (!first && ((entry.flags & HistoryFlags.ToolLifecycle) ||
-                           entry.cmd.sessionToken() != session)) break;
-            undoStack.length -= 1;
-            // The failed entry has already been removed and no redo entry is
-            // created. This preserves the old stuck-stack avoidance for the new
-            // one-record step; revert()==false still makes undo() return false.
-            if (!entry.cmd.revert()) {
-                if (first) return false;
-                break;
+        import commands.mesh.session_edit : MeshSessionEdit;
+        import tool : DropUndoExtent, DropRedoPopulation;
+        auto lifecycle = cast(ToolArmLifecyclePolicy) undoStack[$ - 1].cmd;
+        const dropping = lifecycle !is null && lifecycle.dropRow();
+        size_t selected = 1;
+        if (dropping && lifecycle.previousToken() != 0) {
+            const policy = lifecycle.dropUndoPolicy();
+            size_t lo = undoStack.length - 1;
+            if (policy.extent == DropUndoExtent.wholeSession) {
+                while (lo && !(undoStack[lo - 1].flags & HistoryFlags.ToolLifecycle)
+                       && undoStack[lo - 1].cmd.sessionToken() == lifecycle.previousToken()) --lo;
+                selected = undoStack.length - lo;
+            } else if (policy.extent == DropUndoExtent.newestPressBlock) {
+                while (lo && !(undoStack[lo - 1].flags & HistoryFlags.ToolLifecycle)
+                       && undoStack[lo - 1].cmd.sessionToken() == lifecycle.previousToken()
+                       && (undoStack[lo - 1].flags & HistoryFlags.JoinsBelow)) --lo;
+                if (lo && !(undoStack[lo - 1].flags & HistoryFlags.ToolLifecycle)
+                       && undoStack[lo - 1].cmd.sessionToken() == lifecycle.previousToken()) {
+                    auto press = cast(const MeshSessionEdit) undoStack[lo - 1].cmd;
+                    if (press !is null && press.isTopologyStep() && press.stepOpenedByPress())
+                        selected = undoStack.length - (lo - 1);
+                }
             }
-            auto armPolicy = cast(ToolArmLifecyclePolicy)entry.cmd;
-            if (armPolicy !is null && !armPolicy.carriesRedoAfterUndo())
-                redoStack.length = 0;
-            else
-                redoStack = [entry] ~ redoStack;
-            if (armPolicy !is null && armPolicy.revertsSession())
-                session = armPolicy.previousToken();
-            if (session == 0) break;
         }
+        {
+            // Rearming can change session state, so selection above is frozen first.
+            auto prev = _state;
+            _state = UndoState.Suspend;
+            scope(exit) _state = prev;
+            foreach (i; 0 .. selected) {
+                auto entry = undoStack[$ - 1];
+                undoStack.length -= 1;
+                if (!entry.cmd.revert()) {
+                    if (i == 0) return false;
+                    break;
+                }
+                auto armPolicy = cast(ToolArmLifecyclePolicy) entry.cmd;
+                if (dropping) {
+                    const population = lifecycle.dropUndoPolicy().redo;
+                    if (population == DropRedoPopulation.selectedSuffix ||
+                        (population == DropRedoPopulation.editRows && i != 0))
+                        redoStack = [entry] ~ redoStack;
+                } else if (armPolicy !is null && !armPolicy.carriesRedoAfterUndo())
+                    redoStack.length = 0;
+                else
+                    redoStack = [entry] ~ redoStack;
+            }
+            if (dropping && lifecycle.dropUndoPolicy().redo == DropRedoPopulation.discard)
+                redoStack.length = 0;
+            ++_generation;
+            generationDone = true;
+        }
+        if (dropping) lifecycle.completeDropUndo();
 
         ++_undoEpoch;  // bump exactly once per successful undo
         g_perf.count(Cat.undoApply, 1);  // task 0200 F-I7 (no-op in default build)

@@ -220,7 +220,8 @@ unittest { // task 9508 (findings_K-RD rule 2): one undo of a session-reverting 
     ToolActivationCommand drop(ulong token) {
         auto d = new ToolActivationCommand(&m, v, EditMode.Vertices, "", "move", false, false,
             false, 0, token, true, false, false, true);
-        d.markRevertsSession();
+        import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
+        d.setDropUndoPolicy(DropUndoPolicy(DropUndoExtent.wholeSession, DropRedoPopulation.editRows));
         return d;
     }
     // The drop row takes the session's two rows (to redo, oldest first) and

@@ -5,6 +5,7 @@ import mesh;
 import view;
 import editmode;
 import seltype : SelType;
+import tool : DropUndoPolicy, DropRedoPopulation;
 
 // ---------------------------------------------------------------------------
 // ToolActivationCommand — tool.activate
@@ -25,7 +26,9 @@ interface ToolArmLifecyclePolicy {
     bool joinsFirstGroup() const;
     /// K-RD rule 2: the undo of this row also undoes the rows of
     /// the session `previousToken` names, below it (a drop row only).
-    bool revertsSession() const;
+    bool dropRow() const;
+    DropUndoPolicy dropUndoPolicy() const;
+    void completeDropUndo();
     ulong previousToken() const;
 }
 
@@ -62,7 +65,8 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     private bool dropRow_;
     private bool flipsSelType_;
     private SelType selBefore_;
-    private bool revertsSession_;
+    private DropUndoPolicy dropUndoPolicy_;
+    void delegate(string, ulong) onCompleteDropUndo;
 
     // Hooks wired by app.d after construction.
     void delegate(string) onActivate;
@@ -108,7 +112,9 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     // A drop row (S6) is never redone: its undo empties the redo stack (L32),
     // so it has no arm to re-apply (wave plan 8640 [A6-n7]).
     protected override bool applyImpl() {
-        if (armedId_.length != 0 && onActivate !is null) onActivate(armedId_);
+        if (dropRow_) {
+            if (onDeactivate !is null) onDeactivate();
+        } else if (armedId_.length != 0 && onActivate !is null) onActivate(armedId_);
         return true;
     }
 
@@ -138,7 +144,7 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     bool carriesRedoAfterUndo() const {
         // L32 (captured X-bare-redo, X-sel-redo): undoing a drop row empties
         // the redo stack, before every other term (wave plan 8640 [A6-1]).
-        if (dropRow_) return false;
+        if (dropRow_) return dropUndoPolicy_.redo == DropRedoPopulation.selectedSuffix;
         return dormantTopology_ || previousHistoryTopology_ ||
             (sessionSteps_ && !historyRecordedSteps_ && !previousClassified_);
     }
@@ -149,8 +155,12 @@ class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
         flipsSelType_ = true;
         selBefore_ = before;
     }
-    void markRevertsSession() { revertsSession_ = true; }   // drop rows only (app.d)
-    bool revertsSession() const { return revertsSession_ && previousToken_ != 0; }
+    void setDropUndoPolicy(DropUndoPolicy policy) { dropUndoPolicy_ = policy; }
+    DropUndoPolicy dropUndoPolicy() const { return dropUndoPolicy_; }
+    void completeDropUndo() {
+        if (dropRow_ && onCompleteDropUndo !is null)
+            onCompleteDropUndo(previousId_, previousToken_);
+    }
     void markDormantTopology() { dormantTopology_ = true; }
     bool dormantTopology() const { return dormantTopology_; }
     bool previousHistoryTopology() const { return previousHistoryTopology_; }

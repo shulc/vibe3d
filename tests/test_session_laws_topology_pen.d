@@ -1988,8 +1988,8 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // S6 (wave plan 8640 §4.6, §9.6, §9.17.4, [A6-1], [A7-4]) — a user drop of the
-// pen writes a DROP row. Undoing it re-arms the pen and KEEPS the gesture (L8:
-// the reference loses it — our deliberate divergence, gap row (a)), and
+// pen writes a DROP row. Undoing it re-arms the pen and reverts the newest
+// completed press block (L8), and
 // EMPTIES the redo stack (L32, ported). Esc also writes an empty task row
 // above it (L39), whose undo keeps redo (X-esc-r R-task).
 // ---------------------------------------------------------------------------
@@ -2049,22 +2049,14 @@ void dropLadder(string id, void delegate() drop, bool taskRow) {
         dropStep(id, "zt2 (task row)", g1, false, h + 1, 1);
     }
     penCtrlZ(id ~ " z1");
-    dropStep(id, "z1 (drop row: re-armed, g1 kept, redo emptied)", g1, true, h, 0);
-    assert(penSessionSteps() == 1,
-           format("%s z1: the re-armed pen owns %d steps, expected g1 (it must continue the "
-                  ~ "dropped session's token)", id, penSessionSteps()));
+    dropStep(id, "z1 (drop plus newest press, redo discarded)", r.a0, true, h - 1, 0);
+    assert(penSessionSteps() == 0, format("%s z1: reverted press remains in session", id));
     penCtrlShiftZ(id ~ " z1-redo");
-    dropStep(id, "z1-redo (nothing to redo)", g1, true, h, 0);
+    dropStep(id, "z1-redo (nothing to redo)", r.a0, true, h - 1, 0);
     penCtrlZ(id ~ " z2");
-    dropStep(id, "z2", r.a0, true, h - 1, 1);
-    penCtrlZ(id ~ " z3");
-    dropStep(id, "z3", r.a0, false, h - 2, 2);
+    dropStep(id, "z2 (activation)", r.a0, false, h - 2, 1);
     penCtrlShiftZ(id ~ " r1");
-    dropStep(id, "r1", r.a0, true, h - 1, 1);
-    penCtrlShiftZ(id ~ " r2");
-    dropStep(id, "r2", g1, true, h, 0);
-    penCtrlShiftZ(id ~ " r3");
-    dropStep(id, "r3 (nothing to redo)", g1, true, h, 0);
+    dropStep(id, "r1 (activation only)", r.a0, true, h - 1, 0);
     writeln("PASS ", id);
 }
 
@@ -2105,20 +2097,15 @@ unittest {
     assert(penSelType() == "polygon" && penHistoryLabels()[$ - 1] == "Tool Drop",
            format("drop-sel exit: type %s, history %s", penSelType(), penHistoryLabels()));
     penCtrlZ("drop-sel z1");
-    dropStep("drop-sel", "z1", g1, true, h, 0);
-    assert(penSelType() == "vertex", "drop-sel z1: the selection type was not restored: " ~ penSelType());
-    assert(penSessionSteps() == 1, format("drop-sel z1: the re-armed pen owns %d steps", penSessionSteps()));
+    dropStep("drop-sel", "z1", r.a0, true, h - 1, 0);
+    assert(penSelType() == "vertex", "drop-sel z1: selection type not restored");
+    assert(penSessionSteps() == 0, "drop-sel z1: reverted press still owned");
+    penCtrlShiftZ("drop-sel refused redo");
+    dropStep("drop-sel", "r0", r.a0, true, h - 1, 0);
     penCtrlZ("drop-sel z2");
-    dropStep("drop-sel", "z2", r.a0, true, h - 1, 1);
-    penCtrlZ("drop-sel z3");
-    dropStep("drop-sel", "z3", r.a0, false, h - 2, 2);
+    dropStep("drop-sel", "z2", r.a0, false, h - 2, 1);
     penCtrlShiftZ("drop-sel r1");
-    dropStep("drop-sel", "r1", r.a0, true, h - 1, 1);
-    penCtrlShiftZ("drop-sel r2");
-    dropStep("drop-sel", "r2", g1, true, h, 0);
-    penCtrlShiftZ("drop-sel r3");
-    dropStep("drop-sel", "r3 (nothing to redo)", g1, true, h, 0);
-    assert(penSelType() == "vertex", "drop-sel r3: type " ~ penSelType());
+    dropStep("drop-sel", "r1", r.a0, true, h - 1, 0);
     writeln("PASS drop-sel");
 }
 
@@ -2138,7 +2125,7 @@ unittest {
     assert(penSelType() == "item" && penHistoryLabels()[$ - 1] == "Tool Drop",
            format("drop-sel-item exit: type %s, history %s", penSelType(), penHistoryLabels()));
     penCtrlZ("drop-sel-item z1");
-    dropStep("drop-sel-item", "z1", g1, true, h, 0);
+    dropStep("drop-sel-item", "z1", r.a0, true, h - 1, 0);
     assert(penSelType() == "vertex",
            "drop-sel-item z1: the selection type was not restored: " ~ penSelType());
     writeln("PASS drop-sel-item");

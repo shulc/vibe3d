@@ -33,7 +33,7 @@ module edit_session;
 
 import tool            : capturedTopologyModel, opensAtArm, PressActivation;
 import tool            : Tool, CommandClose, AttrImage, PressKind, OpensAt,
-                         StepOrigin, ToolSessionLink, TopologyStepClient;
+                         StepOrigin, ToolSessionLink, TopologyStepClient, DropUndoPolicy;
 import command         : Command, CmdFlags;
 import std.json        : JSONValue;
 import command_history : CommandHistory, UndoState, HistoryFlags;
@@ -650,6 +650,10 @@ final class EditSession {
         tools_.taskRowFactory_ = taskRow;
     }
 
+    void completeDropUndo(string previousId, ulong previousToken) {
+        tools_.completeDropUndo(previousId, previousToken);
+    }
+
     // The command funnel's one question (slice M4, the plan's "M2 follow-up"):
     // what an armed tool does before `cmd` applies — close its operation (the
     // policy's `commandClose`, through `closeOperation`), stay armed, or be
@@ -769,7 +773,8 @@ struct DropRowSpec {
     string previousId;
     ulong previousToken;
     DropContext ctx;
-    bool revertsSession;   // the policy's `toolSetDropRow`
+    DropUndoPolicy dropUndo;
+    bool requiresSessionRows;
 }
 
 /// What a navigation saw BEFORE it ran: the undo depth, so the settle after
@@ -1331,6 +1336,7 @@ private struct ToolSession {
                 activation.sessionToken() == currentToken()
             ? dropImage_(extra) : DropImage.init;
         auto topologyRestore = predecessorAttrs_(activation);
+        const dropCompletionBefore = completedDropUndo_;
         bool ok = history_.undo();
         if (ok) storeDropImage_(drop);
         foreach (_; 0 .. ok ? extra : 0) {
@@ -1354,10 +1360,11 @@ private struct ToolSession {
             // door's rule; topology-redo S2b: such a row now also stands outside dormant).
             auto t3 = tool_();
             const re3 = history_.redoEntries();
-            if (t3 !is null && !(re3.length &&
+            if (completedDropUndo_ == dropCompletionBefore && t3 !is null && !(re3.length &&
                     cast(const TopologyAdjustmentEdit) re3[0].cmd !is null))
                 rebaseAfterTail_(t3);
-            restorePredecessor_(last, topologyRestore);
+            if (completedDropUndo_ == dropCompletionBefore)
+                restorePredecessor_(last, topologyRestore);
         }
         return ok;
     }
@@ -1511,6 +1518,17 @@ private struct ToolSession {
         return ok;
     }
 
+    // A drop-row undo settles only after history has restored its state and mesh.
+    void completeDropUndo(string previousId, ulong previousToken) {
+        adoptToken_(previousId, previousToken);
+        endOperation_();
+        openBlock_ = null;
+        auto t = tool_();
+        if (t !is null) rebaseAfterTail_(t);
+        ++completedDropUndo_;
+    }
+    private ulong completedDropUndo_;
+
     // The one close routine (EditSession.closeOperation's body; plan R4.2).
     CloseOutcome close(CloseReason r, CommandDoor door, bool dropRow = false,
                        DropContext ctx = DropContext.init) {
@@ -1526,7 +1544,7 @@ private struct ToolSession {
         if (dropRow && r == CloseReason.drop && t is bound_ && armedId_.length) {
             pendingDropRow_ = true;
             pendingDrop_ = DropRowSpec(armedId_.idup, closingToken_, ctx,
-                t.sessionPolicy().toolSetDropRow);
+                t.resolvedDropUndoPolicy(), t.sessionPolicy().toolSetDropRow);
         }
         if (topologyPending_ && reporting_(t) &&
             t.sessionPolicy().historyTopologySteps)
@@ -2714,7 +2732,7 @@ private struct ToolSession {
         // A session-reverting drop writes its row only when the dropped
         // session wrote a row: with edits +1 (K-RD CD_Q_*), without none
         // (tool_drop_pipe_stages capture C1/q, C1/off, C6g/q: delta {}).
-        if (pendingDrop_.revertsSession && !sessionWroteRow_(pendingDrop_.previousToken))
+        if (pendingDrop_.requiresSessionRows && !sessionWroteRow_(pendingDrop_.previousToken))
             return;
         Command[2] rows = [dropRowFactory_(pendingDrop_),
             pendingDrop_.ctx.clearsTask && taskRowFactory_ !is null

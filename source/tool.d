@@ -349,7 +349,15 @@ struct ToolSessionLink {
     PressActivation delegate(Tool) pressActivation; // a press of the tool's door (S6r); unbound when not reporting
 }
 
-struct ToolSessionPolicy {
+enum DropUndoExtent { none, newestPressBlock, wholeSession }
+enum DropRedoPopulation { editRows, discard, selectedSuffix }
+struct DropUndoPolicy {
+    DropUndoExtent extent;
+    DropRedoPopulation redo;
+}
+
+struct ToolSessionPolicy
+{
     /// H1: arming writes the activation history row (a ToolActivationCommand)
     /// — read by `toolArmEmitsLifecycle` for both the incoming tool and the
     /// retained predecessor. Not WHEN the operation opens (that is `opensAt`,
@@ -448,6 +456,7 @@ struct ToolSessionPolicy {
     /// fresh (findings_K-RD rule 2; captured on the transform presets and
     /// Polygon Bevel). The other doors are uncaptured for these tools.
     bool toolSetDropRow;
+    DropUndoPolicy dropUndo;
     /// The undo that removes this tool's activation row leaves it LATENT:
     /// undrawn, and the next plain viewport press re-arms it (K-RD rule 3,
     /// RD_DROP_Z0D; captured on the transform tool).
@@ -517,6 +526,15 @@ bool postmodeStartsOnPressFor(in ToolSessionPolicy p) pure nothrow @nogc {
 }
 
 class Tool : ParamProvider {
+    private DropUndoPolicy dropUndoOverride_;
+    private bool hasDropUndoOverride_;
+    final void setDropUndoOverride(DropUndoPolicy policy) nothrow @nogc {
+        dropUndoOverride_ = policy;
+        hasDropUndoOverride_ = true;
+    }
+    final DropUndoPolicy resolvedDropUndoPolicy() const nothrow @nogc {
+        return hasDropUndoOverride_ ? dropUndoOverride_ : sessionPolicy().dropUndo;
+    }
 private:
     immutable ulong preparedToolOwnerIdentity_;
 public:
