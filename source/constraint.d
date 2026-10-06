@@ -781,7 +781,8 @@ HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
     ToolPressSource[] querySources;
     foreach (source; sources)
         querySources ~= ToolPressSource(source.mesh, source.space, source.layerIndex);
-    const target = hoverRecordAtPixel(mx, my, vp, querySources, occlusion, true, thPx);
+    // The hit face is a fallback, not a competing cascade class (P1 diagnostic contract).
+    const target = hoverRecordAtPixel(mx, my, vp, querySources, occlusion, false, thPx);
     result.layer = target.owner.layer;
     switch (target.kind) {
         case kCascadeVertex: result.kind = HoverTargetKind.Vertex; result.vert = target.index; break;

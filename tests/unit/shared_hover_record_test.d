@@ -161,3 +161,15 @@ unittest {
     assert(prepared.preparedUpdateForTest(hit,expected),
         "topology update installs the elected source ownership");
 }
+
+unittest {
+    // The diagnostic accepts a custom reach; its surface remains a fallback.
+    auto vp = viewport(); Mesh m;
+    m.vertices = [Vec3(.0975f,0,.0975f),Vec3(.1f,0,-.5f),Vec3(.1f,0,.15f),
+        Vec3(-2,0,-2),Vec3(2,0,-2),Vec3(2,0,2),Vec3(-2,0,2)];
+    m.edges = [cast(uint[2])[1,2]]; m.faces = [cast(uint[])[3,4,5,6]];
+    ConstrainHitPacket hit; hit.hit = true; hit.layer = 20;
+    const target = resolveHoverTarget(hit,vp,60,[BackgroundSource(&m,ModelSpace.world(),20)],300,300,false);
+    assert(target.kind == HoverTargetKind.Vertex && target.vert == 0,
+        "background hover custom reach retains the hit face as fallback");
+}
