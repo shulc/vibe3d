@@ -15,7 +15,7 @@ import http_command_helpers : commandBody;
 import std.algorithm : canFind;
 import std.array : split;
 import std.format : format;
-import std.math : abs, round;
+import std.math : abs, round, isFinite;
 import std.process : environment;
 
 void main() {}
@@ -39,7 +39,9 @@ private int[2][] round2() { int[2][] p = [[6, -1], [4, -5]]; foreach (i; 0 .. 12
 
 /// The quad, the top camera centred on the grab point `h` (so the press pixel
 /// is exactly `h`), the pen in Move mode, snapping off; the press pixel.
-private int[2] rig(const double[3][4] quad, Vec3 h, bool transformed = false) {
+private int[2] rig(const double[3][4] quad, Vec3 h, bool transformed = false,
+                          float backgroundDepth = float.nan, bool constraint = false,
+                          bool remote = false, bool preset = false) {
     penSceneEmpty("Top");
     string vs;
     foreach (i, v; quad) vs ~= format("%s[%.9f,%.9f,%.9f]", i ? "," : "", v[0], v[1], v[2]);
@@ -54,9 +56,21 @@ private int[2] rig(const double[3][4] quad, Vec3 h, bool transformed = false) {
         penCommand("layer.attr 0 scl.y 3");
         penCommand("layer.attr 0 scl.z 0.5");
     }
+    if (isFinite(backgroundDepth)) {
+        penCommand("layer.add name:Guide");
+        const x = remote ? 10 : 0;
+        auto bg = postJson("/api/command", commandBody("scene.loadMesh", format(
+            `{"vertices":[[%s,%s,-2],[%s,%s,-2],[%s,%s,2],[%s,%s,2]],"faces":[[0,3,2,1]]}`,
+            x - 2, backgroundDepth, x + 2, backgroundDepth, x + 2, backgroundDepth, x - 2, backgroundDepth)));
+        assert(bg["status"].str == "ok", "guided-rig: background plane loads");
+        penCommand("layer.select index:0");
+    }
     penCommand("viewport.view Top");
     penCameraAt(h, kPpm);
-    penCommand("tool.set mesh.topoPen on");
+    penCommand("tool.pipe.attr constrain enabled " ~ (constraint ? "true" : "false"));
+    penCommand("tool.pipe.attr constrain geometry off");
+    penCommand("tool.pipe.attr constrain handle true");
+    penCommand(preset ? "tool.set mesh.dragWeld on" : "tool.set mesh.topoPen on");
     penCommand("tool.attr mesh.topoPen mode move");
     penCommand(`tool.pipe.attr snap types ""`);
     Viewport vp = viewportFromCameraMatrices();
@@ -155,4 +169,25 @@ unittest {
         assert(dot(error, error) < 1e-8f,
                format("transformed-primary: ungrabbed v%s stays LOCAL %s; got %s", i + 1, v, local[i + 1]));
     }
+}
+
+unittest {
+    if (!runs("background_controls")) return;
+    size_t n;
+    foreach (preset; [false, true]) foreach (which; 0 .. 4) {
+        const depth = which == 3 ? -0.2f : -0.005f;
+        const at = rig(kSkew, Vec3(0.272742241f, 0, 0.297731015f), false,
+                       depth, which >= 1, which == 2, preset);
+        ctrlDrag(at, round2());
+        double[3][4] want = kSkew;
+        if (which == 3) { want[0][1] = want[3][1] = -0.2001953125; }
+        else {
+            const dx = which == 1 ? 0.157257759 : 0.155;
+            want[0][0] += dx; want[3][0] += dx;
+        }
+        expect(format("background-controls preset=%s which=%s", preset, which), want,
+            "inventory must not select rails; shallow guided X uses raw H, deep guide elects Y");
+        ++n;
+    }
+    assert(n == 8, "background-controls: plain and preset OFF/shallow/remote/deep cells exercised");
 }

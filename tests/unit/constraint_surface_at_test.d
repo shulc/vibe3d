@@ -255,3 +255,35 @@ unittest {
     }
     assert(n == 3, "guide-mask: all three axes exercised");
 }
+
+unittest {
+    import drag : HandleDrag, DragFrame, DragKind;
+    import std.math : fabs;
+    auto vp = Viewport(lookAt(Vec3(0, 5, 0), Vec3(0, 0, 0), Vec3(0, 0, -1)),
+        orthographicMatrix(300.0f / 440.0f, 800.0f / 600.0f, 0.01f, 100), 800, 600, 0, 0, Vec3(0, 5, 0));
+    vp.focus = Vec3(0, 0, 0);
+    size_t n;
+    foreach (depth; [-0.005f, -0.2f]) {
+        Mesh background;
+        background.vertices = [Vec3(-2, depth, -2), Vec3(2, depth, -2), Vec3(2, depth, 2), Vec3(-2, depth, 2)];
+        background.faces = [cast(uint[])[0, 3, 2, 1]];
+        setBackgroundSnapSources([cast(const(Mesh)*)&background], [ModelSpace.world()]);
+        scope(exit) setBackgroundSnapSources(null, null);
+        auto cs = new ConstrainStage(); cs.enabled = true;
+        const expectedY = depth == -0.005f ? -0.0048828125f : -0.2001953125f;
+        const direct = cs.componentGuide(Vec3(0.285f, 0, 0.295f), vp);
+        assert(direct.acceptedMask == 2 && direct.valuesWorld.y == expectedY,
+               format("guided-depth: orthographic ray hit carries binary32 product residual; depth=%s mask=%s got=%s want=%s",
+                      depth, direct.acceptedMask, direct.valuesWorld.y, expectedY));
+        HandleDrag g; g.press(Vec3(0.272742241f, 0, 0.297731015f), 0, 0);
+        scope resolve = (Vec3 u) { return cs.componentGuide(u, vp); };
+        bool skip;
+        const point = g.client(70, -42, DragFrame(DragKind.viewPlane), vp, skip, resolve);
+        assert(!skip && near3(point, Vec3(0.43f, expectedY, 0.2f)), "guided-depth: actual stage feeds component values to shared client");
+        const delta = point - g.point;
+        assert(fabs(delta.x - 0.157257759f) < 1e-6f && fabs(delta.z + 0.097731015f) < 1e-6f,
+               "guided-depth: accepted Y changes unmasked X/Z anchor subtraction to raw H");
+        ++n;
+    }
+    assert(n == 2, "guided-depth: shallow and deep producer values exercised");
+}
