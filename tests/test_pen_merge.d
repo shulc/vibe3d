@@ -493,7 +493,7 @@ unittest {
         rig(p(0, 0.35), 440, meshJson(w, [[1, 2, 3]]), null);
         clickWorld(kFar[0], at, kFar[1]);
         drop(); ++ran;
-        auto f = compare("hover-edge-second-point", w ~ [kFar[0], at, kFar[1]],
+        auto f = compare("hover-edge-second-point", w ~ kFar[0] ~ at ~ kFar[1],
                          [[1L, 2, 3], [4L, 5, 6]], kTol, [5]);
         const g = model().v[$ > 5 ? 5 : 0];
         if (!f.length && !(abs(g.x - at.x) <= 0.0051 && abs(g.y - 1) <= kTol &&
