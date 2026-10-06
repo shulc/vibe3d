@@ -3714,23 +3714,12 @@ public:
         return true;
     }
 
-    // WHICH element the cursor is on — the single source of truth for both
-    // "what would a press grab" (`armMoveElement`) and "what does the hover
-    // indicator highlight" (`onMouseMotion`/`draw`). Those two answers MUST
-    // come from one function: a highlight that names a different element than
-    // the press takes is worse than no highlight, because the user aims by it.
-    //
-    // Gather: vertex and edge within `topoPenPressPickPx`, the face under the
-    // cursor; the element-pick comparator elects one. `index` is the resolved
-    // element's own index in its own array (vertex / edge / face), or -1.
-    //
-    // `pickPrimaryFace` needs `gpu_` and answers -1 without it, so under a
-    // bare `dub test` (no GL) only the vertex and edge terms are live — the
-    // face term is exercised by the HTTP tests, which have a real upload.
+    // Tool presses elect a foreground candidate with the shared 8 px cascade
+    // and ordinary-FACE facing/border admission (9528, K-PG). The read-only
+    // result retains its source; this bound-primary tool only authors its mesh.
     package MoveElem resolveGrabTarget(int mx, int my, const ref Viewport vp, out int index,
                                        bool occlusion, const(SubjectPacket)* subject = null) {
-        import hover_state : ToolPressSource, toolPressSourcesResolver, toolPressAt,
-            kCascadeVertex, kCascadeEdge, kCascadePolygon;
+        import hover_state : kCascadeVertex, kCascadeEdge, kCascadePolygon;
         index = -1;
         const hit = queryPressTarget(mx, my, vp, occlusion, subject);
         // Querying foreground sources does not widen this tool's bound authoring mesh.
@@ -4059,12 +4048,9 @@ public:
         return ms.toLocalPoint(aW + kW) - moveAnchor_;
     }
 
-    // The Move family's shared offset: the grab point `anchorLocal` dragged
-    // by the pointer travel `(dx, dy)` through the shared translator's free
-    // form with the handle on it (K-DW: in perspective it keeps its height
-    // above the work plane), then re-cast along the view onto the background
-    // under it, when there is one (K-SC rule 3), minus the anchor. Local in,
-    // local out; false when the drag does not convert.
+    // The shared free translator consumes the gated ortho component guide
+    // before world-axis election (9528, K-DW2/GUIDE_PRECISION_10660). Accepted
+    // coordinates use the raw grab anchor; no guide retains q(H+T)-q(H).
     package bool grabOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
                             out Vec3 offLocal) {
         const ms = primaryModelSpace();

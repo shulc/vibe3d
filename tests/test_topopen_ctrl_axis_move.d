@@ -191,3 +191,58 @@ unittest {
     }
     assert(n == 8, "background-controls: plain and preset OFF/shallow/remote/deep cells exercised");
 }
+
+// K-PG's sheared ordinary-FACE grid: interior edge and polygon Ctrl grabs
+// move two/four corners on WORLD X. Reversing the winding refuses both.
+unittest {
+    if (!runs("interior_controls")) return;
+    size_t n;
+    foreach (front; [true, false]) foreach (polygon; [false, true]) {
+        penSceneEmpty("Top");
+        string vertices, faces;
+        Vec3[] before;
+        foreach (r; 0 .. 4) foreach (c; 0 .. 4) {
+            const p = Vec3(0.0727f + 0.2f * c - 0.05f * r, 2.2f,
+                           -0.3021f + 0.2f * r + 0.1f * c);
+            before ~= p;
+            vertices ~= format("%s[%.9f,%.9f,%.9f]", before.length == 1 ? "" : ",", p.x, p.y, p.z);
+        }
+        foreach (r; 0 .. 3) foreach (c; 0 .. 3) {
+            const a = r * 4 + c;
+            faces ~= format("%s[%s,%s,%s,%s]", faces.length ? "," : "", front ? a : a + 1,
+                front ? a + 4 : a + 5, front ? a + 5 : a + 4, front ? a + 1 : a);
+        }
+        const loaded = postJson("/api/command", commandBody("scene.loadMesh",
+            `{"vertices":[` ~ vertices ~ `],"faces":[` ~ faces ~ `]}`));
+        assert(loaded["status"].str == "ok", "interior-controls: captured grid loads");
+        const ids = polygon ? [5, 9, 10, 6] : [5, 6];
+        Vec3 h = Vec3(0, 0, 0);
+        foreach (i; ids) h = h + before[i];
+        h = h / cast(float)ids.length;
+        penCommand("viewport.view Top");
+        penCameraAt(h, kPpm);
+        penCommand("viewport.displayStyle shaded");
+        penCommand("tool.pipe.attr constrain enabled false");
+        penCommand("tool.set mesh.topoPen on");
+        penCommand("tool.attr mesh.topoPen mode move");
+        penCommand(`tool.pipe.attr snap types ""`);
+        auto vp = viewportFromCameraMatrices();
+        float x, y;
+        assert(projectToWindow(h, vp, x, y));
+        ctrlDrag([cast(int)round(x), cast(int)round(y)], round2());
+        const after = readVerts();
+        assert(after.length == 16, "interior-controls: ordinary FACE grid population stays 16");
+        size_t changed;
+        foreach (i, p; after) {
+            const carried = front && ids.canFind(cast(int)i);
+            const want = before[i] + Vec3(carried ? 0.155f : 0, 0, 0);
+            assert(abs(p.x - want.x) < 1e-4 && abs(p.y - want.y) < 1e-4 && abs(p.z - want.z) < 1e-4,
+                format("interior-controls front=%s polygon=%s v%s: WORLD X +.155 only on admitted corners; got %s want %s",
+                       front, polygon, i, p, want));
+            if (carried) ++changed;
+        }
+        assert(changed == (front ? ids.length : 0), "interior-controls: carried population is two/four or refused");
+        ++n;
+    }
+    assert(n == 4, "interior-controls: edge/polygon and reversible winding controls exercised");
+}

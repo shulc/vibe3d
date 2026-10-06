@@ -23,7 +23,7 @@
 // No background layer: Slide is a pure topology gesture and never consults the
 // CONS surface hit, so adding one would only add moving parts.
 //
-// Presses are DOWN-only (`ctrlDown`), so each probe reads the arm decision the
+// Presses are DOWN-only (`optionDown`), so each probe reads the arm decision the
 // press itself made, with no release/commit in between — the same idiom
 // test_topopen_move_state.d uses. A matching UP is sent afterwards so the
 // harness's own button state does not leak into the next probe.
@@ -40,7 +40,7 @@ void main() {}
 
 // The Edge Slide option drives the rail slide; Ctrl+LMB with no background is the
 // one-axis move (K-FH, task 9528; test_topopen_ctrl_axis_move).
-enum uint LCTRL = 0;
+enum uint OPTION_MODS = 0;
 
 // The tool's own screen-space PRESS-PICK reach (`topoPenPressPickPx`),
 // mirrored so the "far from every edge" precondition is stated in the same
@@ -61,14 +61,14 @@ string viewportLine(int vpX, int vpY, int vpW, int vpH) {
 }
 
 /// A Ctrl-held LEFT button DOWN with no partner — probes the arm decision.
-string ctrlDown(double t, int px, int py) {
+string optionDown(double t, int px, int py) {
     return format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,`
-                ~ `"clicks":1,"mod":%u}`, t, px, py, LCTRL);
+                ~ `"clicks":1,"mod":%u}`, t, px, py, OPTION_MODS);
 }
 
 string ctrlUp(double t, int px, int py) {
     return format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,`
-                ~ `"clicks":1,"mod":%u}`, t, px, py, LCTRL);
+                ~ `"clicks":1,"mod":%u}`, t, px, py, OPTION_MODS);
 }
 
 /// Distance from (px,py) to the SEGMENT (ax,ay)-(bx,by), in pixels.
@@ -147,7 +147,7 @@ unittest {
                  ~ "got %.1fpx", kSnapPx, e[0], e[1], d));
     }
 
-    postJson("/api/play-events", vpl ~ "\n" ~ ctrlDown(10.0, mx, my) ~ "\n");
+    postJson("/api/play-events", vpl ~ "\n" ~ optionDown(10.0, mx, my) ~ "\n");
     waitPlayerIdle();
 
     auto s1 = getJson("/api/tool/state");
@@ -168,7 +168,7 @@ unittest {
     immutable int ix = cast(int)((px[1] + px[2]) * 0.5f);
     immutable int iy = cast(int)((py[1] + py[2]) * 0.5f);
 
-    postJson("/api/play-events", vpl ~ "\n" ~ ctrlDown(10.0, ix, iy) ~ "\n");
+    postJson("/api/play-events", vpl ~ "\n" ~ optionDown(10.0, ix, iy) ~ "\n");
     waitPlayerIdle();
 
     auto s2 = getJson("/api/tool/state");
@@ -205,7 +205,7 @@ unittest {
     immutable int ax = cast(int)((px[3] + px[0]) * 0.5f);
     immutable int ay = cast(int)((py[3] + py[0]) * 0.5f);
 
-    postJson("/api/play-events", vpl ~ "\n" ~ ctrlDown(10.0, ax, ay) ~ "\n");
+    postJson("/api/play-events", vpl ~ "\n" ~ optionDown(10.0, ax, ay) ~ "\n");
     waitPlayerIdle();
 
     auto s3 = getJson("/api/tool/state");

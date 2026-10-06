@@ -41,7 +41,7 @@
 // Still asserted unchanged: colinearity to the endpoint's OWN incident edge,
 // zero topology delta, polygon-continuation rail at the valence-3 hub,
 // held-fixed on the ambiguous interior edge, and exact undo restoration.
-// Uses an LCTRL-hold-around-LMB-drag chord (same fragility P5/P6 flagged for
+// Uses an OPTION_MODS-hold-around-LMB-drag chord (same fragility P5/P6 flagged for
 // their own MMB chords).
 //
 // Run via: ./run_test.d topopen_slide_drag
@@ -57,7 +57,7 @@ void main() {}
 
 // The Edge Slide option drives the rail slide; Ctrl+LMB with no background is the
 // one-axis move (K-FH, task 9528; test_topopen_ctrl_axis_move).
-enum uint LCTRL = 0;
+enum uint OPTION_MODS = 0;
 
 double perpDistToLine(Vec3 p, Vec3 a, Vec3 b) {
     Vec3 ab = b - a;
@@ -127,7 +127,7 @@ unittest {
         int ry = my + cast(int)((p2y - my) * 0.35f);
 
         auto pr = postJson("/api/play-events",
-            buildDragLog(c.vpX, c.vpY, c.width, c.height, mx, my, rx, ry, 16, LCTRL, 1));
+            buildDragLog(c.vpX, c.vpY, c.width, c.height, mx, my, rx, ry, 16, OPTION_MODS, 1));
         assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
         waitPlayerIdle();
 
@@ -194,7 +194,7 @@ unittest {
         int ry = my + cast(int)((p3y - my) * 3.0f);
 
         auto pr = postJson("/api/play-events",
-            buildDragLog(c.vpX, c.vpY, c.width, c.height, mx, my, rx, ry, 16, LCTRL, 1));
+            buildDragLog(c.vpX, c.vpY, c.width, c.height, mx, my, rx, ry, 16, OPTION_MODS, 1));
         assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
         waitPlayerIdle();
 
@@ -264,7 +264,7 @@ unittest {
         int ry = my + cast(int)((p0y - my) * 0.6f);
 
         auto pr = postJson("/api/play-events",
-            buildDragLog(c.vpX, c.vpY, c.width, c.height, mx, my, rx, ry, 16, LCTRL, 1));
+            buildDragLog(c.vpX, c.vpY, c.width, c.height, mx, my, rx, ry, 16, OPTION_MODS, 1));
         assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
         waitPlayerIdle();
 
