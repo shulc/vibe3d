@@ -3411,5 +3411,11 @@ unittest {
         assert(restored.rebases == 1, "navigation must not duplicate drop completion rebase");
         assert(session.sessionStateJson()["token"].integer == 7, "drop completion adopts the restored token");
         assert(!session.sessionStateJson()["live"].boolean, "drop completion discards live block bookkeeping");
+        assert(!session.sessionStateJson()["armed"].boolean && !session.sessionStateJson()["operationOpen"].boolean,
+            "drop completion closes the discarded post mode");
+        if (model) {
+            session.notePointerDown();
+            assert(restored.rebases == 1, "the next press must reuse the completed final mesh basis");
+        }
     }
 }
