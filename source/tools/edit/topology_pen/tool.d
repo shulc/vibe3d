@@ -4092,21 +4092,33 @@ public:
     private Vec3[] carriedTargets(const(Vec3)[] base, Vec3 offLocal) {
         const bool zero = offLocal.x == 0 && offLocal.y == 0 && offLocal.z == 0;
         auto t = new Vec3[](base.length);
-        foreach (i, b; base) t[i] = zero ? b : passLocal(b, b + offLocal);
+        const sources = zero ? null : passSources();
+        foreach (i, b; base) t[i] = zero ? b : passLocal(b, b + offLocal, sources);
         return t;
+    }
+
+    // The background snapshot the geometry pass reads, fetched ONCE per
+    // commit by the caller; empty when the pass is the identity (geometry off,
+    // the constraint disabled, no background), so a caller can skip it.
+    private const(BackgroundSource)[] passSources() {
+        auto cs = liveConstrainStage();
+        if (cs !is null && (!cs.enabled || cs.geom == ConstrainGeom.Off)) return null;
+        return backgroundSourcesFull();
     }
 
     // The constraint's geometry pass (`ConstrainStage.pass`, in the press's
     // view) over a primary-LOCAL point `local` placed from `fromLocal`, local
     // again: Point the nearest foot, Screen the view re-cast, off the point
-    // itself; a pipeline-less pen runs its own composition, Point. The ONE
-    // after-placement pass of this tool.
-    private Vec3 passLocal(Vec3 fromLocal, Vec3 local) {
+    // itself; a pipeline-less pen runs its own composition, Point. `sources`
+    // is the caller's `passSources()`; empty, the point comes back untouched.
+    // The ONE after-placement pass of this tool.
+    private Vec3 passLocal(Vec3 fromLocal, Vec3 local, const(BackgroundSource)[] sources) {
+        if (sources.length == 0) return local;
         const ms = primaryModelSpace();
         const Vec3 w = ms.toWorldPoint(local), motion = w - ms.toWorldPoint(fromLocal);
-        if (auto cs = liveConstrainStage()) return ms.toLocalPoint(cs.pass(w, pressVp_, motion));
+        if (auto cs = liveConstrainStage()) return ms.toLocalPoint(cs.pass(w, pressVp_, motion, sources));
         const ConstrainPacket point = { enabled: true, geom: ConstrainGeom.Point };
-        return ms.toLocalPoint(constrainPoint(w, motion, pressVp_, backgroundSourcesFull(), point));
+        return ms.toLocalPoint(constrainPoint(w, motion, pressVp_, sources, point));
     }
 
     private static Vec3 meanOf(const(Vec3)[] ps) {
@@ -5172,7 +5184,7 @@ public:
         k = sign * abs(axis == 0 ? off.x : axis == 1 ? off.y : off.z);
         const Vec3 tW = Vec3(uW.x + (axis == 0 ? k : 0.0f), uW.y + (axis == 1 ? k : 0.0f),
                              uW.z + (axis == 2 ? k : 0.0f));
-        target = passLocal(m.vertices[slideVertex_], ms.toLocalPoint(tW));
+        target = passLocal(m.vertices[slideVertex_], ms.toLocalPoint(tW), passSources());
         return true;
     }
 
@@ -6669,6 +6681,7 @@ public:
         foreach (vi; 0 .. nV)
             pos[vi] = RelaxVec3(m.vertices[vi].x, m.vertices[vi].y, m.vertices[vi].z);
 
+        const sources = passSources();   // one snapshot per commit
         relaxPasses(pos, topo, cast(double) smoothStrength_ / kSmoothStrengthDivisor,
                     passCount);
 
@@ -6690,7 +6703,7 @@ public:
 
             Vec3 relaxed = Vec3(cast(float) pos[vi].x, cast(float) pos[vi].y,
                                 cast(float) pos[vi].z);
-            relaxed = passLocal(m.vertices[vi], relaxed);
+            relaxed = passLocal(m.vertices[vi], relaxed, sources);
             m.vertices[vi] = relaxed;
         }
 
@@ -6779,6 +6792,7 @@ public:
         if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
 
         const Vec3[] beforePos = m.vertices.dup;  // positions only (the step holds the image)
+        const sources = passSources();   // one snapshot per commit
 
         foreach (pass; 0 .. passCount) {
             Vec3[] read = m.vertices.dup;   // this pass's neighbor-read snapshot (Jacobi)
@@ -6794,7 +6808,7 @@ public:
                 bool hadNeighbors;
                 Vec3 relaxed = inverseEdgeLenRelax(read, vi, *pNbrs, hadNeighbors);
                 if (!hadNeighbors) continue;
-                relaxed = passLocal(m.vertices[vi], relaxed);
+                relaxed = passLocal(m.vertices[vi], relaxed, sources);
                 m.vertices[vi] = relaxed;
             }
         }
@@ -7242,11 +7256,13 @@ public:
     // pinned by tests/test_topopen_addloop_bg_resnap.d). `addVertex` only
     // appends, so the inserted set is every index from `firstNew` on.
     private void snapInsertedToBackground(ref MeshEditBatch ed, size_t firstNew) {
+        const sources = passSources();
+        if (sources.length == 0) return;   // the identity pass writes nothing
         uint[] idx;
         Vec3[] to;
         foreach (vi; firstNew .. ed.vertices.length) {
             idx ~= cast(uint) vi;
-            to  ~= passLocal(ed.vertices[vi], ed.vertices[vi]);
+            to  ~= passLocal(ed.vertices[vi], ed.vertices[vi], sources);
         }
         if (idx.length) ed.setVertexPositions(idx, to);
     }

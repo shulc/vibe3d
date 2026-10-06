@@ -140,3 +140,44 @@ unittest {
         "the smoothed vertex must move TOWARD the raw relax target's lateral direction (proves it is "
       ~ "the re-snapped point, not an unrelated displacement)");
 }
+
+/// The T1 rig again, the constraint written after the pen's own Point
+/// composition; one Smooth click; B after it.
+Vec3 smoothB(string[] constrain) {
+    setupSphereBg(R, LON, LAT);
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh",
+        trianglePatchBody(Vec3(R, 0, 0), Vec3(1.0f, 1.0f, 5.0f), Vec3(0, R, 0))));
+    assert(lr["status"].str == "ok", "load-mesh (triangle patch) failed: " ~ lr.toString);
+    postJson("/api/camera", format(
+        `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,
+        0.3, 0.5, 8.0, 0.0, 0.0, 0.0));
+    auto c = fetchCamera();
+    int cx = c.vpX + c.width / 2, cy = c.vpY + c.height / 2;
+    cmd("tool.set mesh.topoPen on");
+    foreach (a; constrain) cmd("tool.pipe.attr constrain " ~ a);
+    postJson("/api/play-events",
+        buildDragLog(c.vpX, c.vpY, c.width, c.height, cx, cy, cx, cy, 0, SHIFT_CTRL, 1));
+    waitPlayerIdle();
+    auto post = readVerticesLayer(1);
+    assert(post.length == 3, "Smooth must keep the patch's 3 vertices");
+    return toVec3(post[1]);
+}
+
+unittest { // OURS, pending capture K-SC2: the re-snap is the constraint's geometry pass
+    // Geometry off: no pass — B stays at its raw relax target, 3.2 off the
+    // sphere (before task 9510 it landed on the sphere whatever the geometry).
+    const Vec3 off = smoothB(["geometry off"]);
+    immutable double offNorm = sqrt(cast(double)dot(off, off));
+    assert(abs(offNorm - R) > 3,
+        format("geometry off: B must stay at its raw relax target, off the sphere; got %s, |B| %f",
+               off, offNorm));
+    // Offset 0.2 (geometry Point): the foot plus 0.2 along the facet's
+    // WINDING normal, which on this hand-built sphere points inward (K-SC
+    // could not separate winding from facing; measured |B| 1.796).
+    const Vec3 lifted = smoothB(["geometry point", "offset 0.2"]);
+    immutable double liftNorm = sqrt(cast(double)dot(lifted, lifted));
+    assert(abs(liftNorm - (R - 0.2)) < R * 0.04,
+        format("offset 0.2: B must land 0.2 off the sphere along the winding normal (|B| ~= %f); "
+               ~ "got %s, |B| %f", R - 0.2, lifted, liftNorm));
+    cmd("tool.set mesh.topoPen off");
+}

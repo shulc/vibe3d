@@ -129,7 +129,13 @@ private struct FgXform {
 
 /// One run of the gesture with the foreground layer under `X` (cells 2..7).
 /// The identity transform is the frozen rig verbatim.
-private void runCell(JSONValue fx, FgXform X, string tag, bool facelessBg = false) {
+/// `constrain`: constraint attributes written after the pen's own Point
+/// composition (geometry off: no pass, the chord; `lift` > 0: the foot plus
+/// `lift` along the background's normal).
+private void runCell(JSONValue fx, FgXform X, string tag, bool facelessBg = false,
+                     string[] constrain = null, double lift = 0) {
+    import std.algorithm : canFind;
+    immutable bool chord = facelessBg || constrain.canFind("geometry off");
     immutable double tol = num(fx["tolerance"]);
     auto ex = fx["expected"];
     auto inserted = ex["inserted"].array;
@@ -205,6 +211,7 @@ private void runCell(JSONValue fx, FgXform X, string tag, bool facelessBg = fals
 
     slLineUi("tool.set mesh.topoPen on");
     cmd("tool.attr mesh.topoPen middle " ~ (fx["input"]["middle"].boolean ? "true" : "false"));
+    foreach (a; constrain) cmd("tool.pipe.attr constrain " ~ a);
 
     immutable size_t rowsBefore = historySurfaceCounts().editRows;
     immutable long posBefore = getJson("/api/changes")["totalPosition"].integer;
@@ -237,7 +244,9 @@ private void runCell(JSONValue fx, FgXform X, string tag, bool facelessBg = fals
             if (!used[v] && shareFaceEdge(faces, a, v) && shareFaceEdge(faces, b, v)) { nv = v; break; }
         assert(nv >= 0, format("%s: no inserted vertex sits on rail (%d,%d)", tag, a, b));
         used[nv] = true;
-        immutable double[3] want = X.toLocal(triple(row[facelessBg ? "chord_midpoint" : "position"]));
+        double[3] wantW = triple(row[chord ? "chord_midpoint" : "position"]);
+        foreach (k; 0 .. 3) wantW[k] += lift * bgNormal(fx)[k];
+        immutable double[3] want = X.toLocal(wantW);
         immutable double off = dist(post[nv], want);
         assert(off <= tol, format(
             "%s: inserted vertex %d on rail (%d,%d) is %.3g from its expected position "
@@ -260,7 +269,7 @@ private void runCell(JSONValue fx, FgXform X, string tag, bool facelessBg = fals
         auto ch = getJson("/api/changes");
         immutable long dPos = ch["totalPosition"].integer - posBefore;
         immutable long dDel = ch["deliveryCount"].integer - delBefore;
-        immutable long wantPos = facelessBg ? 0 : 1;
+        immutable long wantPos = chord ? 0 : 1;
         assert(dDel == 1 && dPos == wantPos, format(
             "%s: one Add Loop gesture must be exactly one delivery, %d of them carrying "
           ~ "Position; got %d deliveries, %d carrying Position", tag, wantPos, dDel, dPos));
@@ -287,6 +296,17 @@ private void runCell(JSONValue fx, FgXform X, string tag, bool facelessBg = fals
         "one Ctrl+Shift+Z must restore the re-snapped cut exactly");
 
     cmd("tool.attr mesh.topoPen middle false");   // sticky option: leave it off for the next test
+}
+
+/// The background quad's unit normal (its winding; the quad is planar).
+private double[3] bgNormal(JSONValue fx) {
+    auto v = fx["background"]["vertices"].array;
+    const a = triple(v[0]), b = triple(v[1]), c = triple(v[2]);
+    const double[3] u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    double[3] n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+    const l = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    foreach (k; 0 .. 3) n[k] /= l;
+    return n;
 }
 
 unittest {
@@ -330,4 +350,11 @@ unittest {
     // which the capture recorded as the rig's discriminator, not as the
     // reference's answer for a faceless background.
     runCell(fx, FgXform.init, "faceless background", true);
+
+    // OURS, pending capture K-SC2: the re-snap is the constraint's geometry
+    // pass (task 9510). Geometry off runs no pass, so the cut stays on its
+    // chord (the frozen foot was taken under the pen's own Point composition);
+    // an offset lifts each foot along the background's normal.
+    runCell(fx, FgXform.init, "geometry off", false, ["geometry off"]);
+    runCell(fx, FgXform.init, "offset 0.05", false, ["geometry point", "offset 0.05"], 0.05);
 }
