@@ -127,7 +127,7 @@ Vec3[] penMovedPoints(const(Vec3)[] points, const(uint)[] sources) {
     const first = sources.length ? sources[0] : 0;
     foreach (i, p; points) {
         const source = i < sources.length ? sources[i] : cast(uint)i;
-        if (i == 0 || (source != last && source != first)) last = source;
+        if (source != first) last = source;
         geometry[last] = p;
     }
     return geometry;

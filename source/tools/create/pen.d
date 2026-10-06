@@ -558,6 +558,7 @@ version(unittest) unittest {
     weldPen.order_ = [1,2,3,0];
     weldPen.geometryPoints_ = weldPen.vertices_.dup;
     weldPen.geometryPoints_[2] = Vec3(.23,1,.23);
+    foreach (v; weldPen.vertices_) weldPen.vertHandlers ~= weldPen.vertMarker(v);
     auto weldDrop = weldPen.buildPreparedDeactivateState();
     assert(weldPen.preparedDeactivateStateMatches(weldDrop), "frozen drop control");
     weldPen.geometryPoints_[2].x = .24;
@@ -582,7 +583,6 @@ version(unittest) unittest {
     assert(!weldPen.preparedParamMatches(weldParam), "frozen param order changed");
     weldPen.sources_[4] = 0; weldPen.order_ = [1,2,3,0];
     weldPen.previewGpu.suppressCageUpload = true;
-    foreach (v; weldPen.vertices_) weldPen.vertHandlers ~= weldPen.vertMarker(v);
     weldPen.onParamChanged("flip");
     assert(weldPen.previewMesh.vertices.length == 4 &&
         weldPen.previewMesh.faces == [[1u,2,3,0]], "frozen live preview control");
