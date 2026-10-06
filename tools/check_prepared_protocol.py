@@ -2835,7 +2835,8 @@ def state_param_gate(cls, kernel, identity):
                 not any(x in region for x in (
                     "beginPreparedShadow(", "candidate", "operation(", "applies", "expectedBefore")) and
                 (cls != "ArrayTool" or all(x in tool for x in (
-                    "active == other.active && built == other.built", "projection.item = item_.dup;"))) and
+                    "active == other.active && built == other.built", "projection.item = item_.dup;",
+                    "return ArrayParamProjection(active, built, numX_,"))) and
                 (cls != "MagnetTool" or all(x in tool for x in (
                     "projection.touchedIdx = touchedIdx_.dup;",
                     "projection.touchedPrev = touchedPrev_.dup;",

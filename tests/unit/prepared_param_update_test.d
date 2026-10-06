@@ -346,6 +346,12 @@ unittest {
 // data. Each changed member alone must refuse while the live mesh holds still.
 unittest {
     auto ar = Rig!ArrayRow.make(true, true);
+    foreach (isActive; [false, true]) foreach (isBuilt; [false, true]) {
+        ar.tool.seedPreparedParamForTest(ar.layer.meshRef(), true, isActive, isBuilt);
+        auto image = ar.tool.buildPreparedParamUpdate("", ar.layer.meshRef());
+        assert(image.expected.active == isActive && image.expected.built == isBuilt,
+            "Array projection omitted the actual session flags");
+    }
     static foreach (member; ["active", "built"]) {{
         auto image = ar.tool.buildPreparedParamUpdate("", ar.layer.meshRef());
         assert(ar.tool.preparedParamUpdateMatches(image, ar.layer.meshRef()));
