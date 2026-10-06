@@ -483,6 +483,24 @@ unittest {
                         g, at);
         fails ~= f;
     }
+    // The same held-edge suppression at stroke slot 1. The placed point is
+    // on the 0.005 grid and projects inside the pointer pixel, independently
+    // of the first click's unquantised placement. Swapping the first two
+    // points reverses the signed area, so the front-facing ring is [4,5,6].
+    {
+        auto w = verts(c["snap_off_isolated_v10"]["expected"]["vertices"])[0 .. 4];
+        const at = p(0.35, 0.295);
+        rig(p(0, 0.35), 440, meshJson(w, [[1, 2, 3]]), null);
+        clickWorld(kFar[0], at, kFar[1]);
+        drop(); ++ran;
+        auto f = compare("hover-edge-second-point", w ~ [kFar[0], at, kFar[1]],
+                         [[1L, 2, 3], [4L, 5, 6]], kTol, [5]);
+        const g = model().v[$ > 5 ? 5 : 0];
+        if (!f.length && !(abs(g.x - at.x) <= 0.0051 && abs(g.y - 1) <= kTol &&
+                           abs(g.z - at.z) <= 0.0051))
+            f ~= format("hover-edge-second-point: p1 %s, expected the plane point near %s", g, at);
+        fails ~= f;
+    }
     // A loose V 19.8 px away loses to an edge 0.44 px away (it trails by more
     // than its 16 px tolerance); without the edge the same V links.
     fails ~= vtx20Cell("merge_vtx20_edge", b8["merge_vtx20_edge"], 3, ran);
@@ -562,7 +580,7 @@ unittest {
         fails ~= relinkCell(cell, b10[cell], ran);
 
     snap(null);
-    assert(ran == 83, format("pen merge population: %s cells ran, pinned 83", ran));
+    assert(ran == 84, format("pen merge population: %s cells ran, pinned 84", ran));
 
     assert(fails.length == 0, format("pen merge, %s failing: %-(%s\n%)", fails.length, fails));
 }
