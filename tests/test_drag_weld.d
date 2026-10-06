@@ -326,6 +326,28 @@ Viewport backgroundRig() {
     return frontView(-1.5f, 0, true);
 }
 
+string snapEnabled() {
+    foreach (st; getJSON("/api/toolpipe")["stages"].array)
+        if (st["task"].str == "SNAP") return st["attrs"]["enabled"].str;
+    assert(false, "no SNAP stage");
+}
+
+unittest { // the preset's activation arms the snap state, the drop restores it (preset_arms_snapstate J/K/L/M)
+    if (!cell("arm")) return;
+    loadRig(cast(Rig)kC);
+    auto vp = frontView(0.25f, 0.15f);
+    ok("tool.pipe.attr snap enabled false");
+    ok(`tool.pipe.attr snap types ""`);
+    ok("tool.pipe.attr snap innerRange 24");
+    assert(snapEnabled() == "false", "rig: snapping must start off");
+    ok("tool.set mesh.dragWeld on");
+    assert(snapEnabled() == "true", "J/K: arming Drag Weld must turn snapping on: " ~ snapEnabled());
+    drag(vp, kC.pts[1], [0.5f, 0.06f, 0f], 0, 10);
+    ok("tool.set mesh.dragWeld off");
+    assert(snapEnabled() == "false", "L/M: dropping Drag Weld must restore snapping off: " ~ snapEnabled());
+    assert(nv(getModel()) == 7, "a 10 px release must weld under the armed state (P6 W2d)");
+}
+
 string consState() {
     foreach (st; getJSON("/api/toolpipe")["stages"].array)
         if (st["task"].str == "CONS")

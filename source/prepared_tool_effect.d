@@ -80,7 +80,7 @@ enum PreparedEdgeSliceParamKind : ubyte {
 }
 enum PreparedLoopSliceParamKind : ubyte { None, Noop, State }
 enum PreparedEdgeExtendParamKind : ubyte { None, Noop, BankSwitch, Pivot }
-enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
+enum PreparedInheritedNoopKind : ubyte { Update }
 
 @PreparedAggregate struct PreparedActivateEffect {
     OwnedId owner;

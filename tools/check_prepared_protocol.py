@@ -7872,8 +7872,8 @@ for old, new, label in (
         fail(f"EdgeExtend update mutation did not RED: {label}")
 
 # Closed inherited base-noop owner infrastructure.  The effective product
-# table above proves no product inherits both lifecycle no-ops (Drag Weld is a
-# topology-pen preset), so those two kinds admit nothing; this tranche
+# table above proves no product inherits both lifecycle no-ops (Drag Weld became
+# a topology-pen preset), so the owner has only the `update` kind; this tranche
 # deliberately has no producer or ledger claim yet.
 inherited_noop_owner = prepared_module_source("prepared_inherited_noop")
 def inherited_noop_gate(owner, context):
@@ -7899,8 +7899,7 @@ def inherited_noop_gate(owner, context):
         has_final_class(owner, "PreparedInheritedNoopOwner") and
         has_prepared_token_pair(owner, "InheritedNoop") and
         not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
-        "if (kind != PreparedInheritedNoopKind.Update)\n"
-        "            return false;" in owner and
+        "kind != PreparedInheritedNoopKind" not in owner and
         sorted(admitted) == expected_admitted and
         "prepared_.owner != owner_" in owner and
         "prepared_.generation != generation_" in owner and
@@ -7955,11 +7954,10 @@ if inherited_free_producer_call_count(prepared_source_texts) != 2:
 free_call_mutant = dict(prepared_source_texts)
 free_call_mutant[next(iter(free_call_mutant))] += \
     "\nvoid inheritedNoopEscapeForMutation() { prepareInheritedNoop(null, " \
-    "PreparedInheritedNoopKind.Activate, null); }\n"
+    "PreparedInheritedNoopKind.Update, null); }\n"
 if inherited_free_producer_call_count(free_call_mutant) == 2:
     fail("Inherited base-noop free-producer escape mutation did not RED")
 for target, old, new, label in (
-    ("owner", "if (kind != PreparedInheritedNoopKind.Update)\n            return false;", "if (kind != PreparedInheritedNoopKind.Update)\n            return true;", "broaden lifecycle admission"),
     ("owner", "target.classinfo is ArcTool.classinfo ||", "", "drop update admission"),
     ("owner", "prepared_.owner != owner_", "false", "drop prepared owner"),
     ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
@@ -8015,9 +8013,6 @@ for old, new, label in (
     ("return PreparedInheritedNoopEffect(targetOwner, kind, accepted);",
      "return PreparedInheritedNoopEffect(OwnedId.init, kind, accepted);",
      "wrong accepted owner"),
-    ("return PreparedInheritedNoopEffect(targetOwner, kind, accepted);",
-     "return PreparedInheritedNoopEffect(targetOwner, PreparedInheritedNoopKind.Deactivate, accepted);",
-     "substitute result kind"),
     ("auto owner = PreparedInheritedNoopOwner.prepare(target, kind);",
      "auto owner = PreparedInheritedNoopOwner.prepare(target, kind); owner.install();",
      "early producer install"),

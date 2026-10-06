@@ -47,3 +47,26 @@ unittest {
     assert(magnet.toolAttrs["S"] == "false");
     assert(magnet.pipeAttrs["falloff"]["type"] == "radial");
 }
+
+// Task 9525 review: `noBackgroundConstraint` is the topology pen's flag (its
+// activation alone composes a background constraint). The shipped Drag Weld
+// preset carries it; on any other base the loader refuses the preset.
+unittest {
+    import std.conv : to;
+    import std.exception : collectExceptionMsg;
+    import std.file : remove, write;
+    import std.process : thisProcessID;
+    import std.algorithm.searching : canFind;
+    const(ToolPreset)* weld = null;
+    auto shipped = loadToolPresets("config/tool_presets.yaml");
+    foreach (ref p; shipped) if (p.id == "mesh.dragWeld") weld = &p;
+    assert(weld !is null && weld.base == "mesh.topoPen"
+           && (weld.flags & ToolFlag.NoBackgroundConstraint),
+           "the Drag Weld preset must carry the flag on the pen");
+    const path = "/var/tmp/vibe3d-9525-flag-base-" ~ to!string(thisProcessID) ~ ".yaml";
+    write(path, "presets:\n  - id: wrong\n    base: move\n    flags: [noBackgroundConstraint]\n");
+    scope(exit) remove(path);
+    const msg = collectExceptionMsg(loadToolPresets(path));
+    assert(msg !is null && msg.canFind("noBackgroundConstraint on base 'move'"),
+           "the flag on a non-pen base must be refused at load: " ~ msg);
+}

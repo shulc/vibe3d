@@ -209,6 +209,10 @@ ToolPreset[] loadToolPresets(string path) {
                     "tool_presets: preset '%s' has non-sequence/scalar `flags`", p.id));
             }
         }
+        if ((p.flags & ToolFlag.NoBackgroundConstraint) && p.base != "mesh.topoPen")
+            throw new Exception(format(
+                "tool_presets: preset '%s' sets noBackgroundConstraint on base '%s'; only the "
+                ~ "topology pen composes a background constraint", p.id, p.base));
         // Tool session model, slice M3 (C-rearm-key, gap 370): whether a
         // recording command re-opens the tool's window after closing it is a
         // field of the PRESET (its transform node), not of the class and not

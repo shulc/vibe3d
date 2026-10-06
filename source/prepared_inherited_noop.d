@@ -75,10 +75,9 @@ private:
 
 private shared ulong nextInheritedNoopOwner;
 
-/// Closed owner for the base Tool no-op `update`; the two lifecycle kinds
-/// admit no product since Drag Weld became a topology-pen preset (task 9525).
-/// Install intentionally mutates no live state; consuming the validated token
-/// is the complete effect.
+/// Closed owner for the base Tool no-op `update` (the lifecycle kinds left with
+/// Drag Weld, task 9525). Install intentionally mutates no live state;
+/// consuming the validated token is the complete effect.
 final class PreparedInheritedNoopOwner {
 private:
     Tool target_;
@@ -147,8 +146,6 @@ private:
     static bool admit(Tool target, PreparedInheritedNoopKind kind)
             nothrow @nogc {
         if (target is null) return false;
-        if (kind != PreparedInheritedNoopKind.Update)
-            return false;
         return target.classinfo is ArcTool.classinfo ||
             target.classinfo is ArrayTool.classinfo ||
             target.classinfo is BendTool.classinfo ||
@@ -231,13 +228,6 @@ version(unittest) unittest {
                context.installTraceForTest == [17, 8]);
     }
 
-    // No factory product inherits both lifecycle no-ops since Drag Weld became
-    // a topology-pen preset: the two lifecycle kinds admit nothing.
-    assert(PreparedInheritedNoopOwner.prepare(target,
-               PreparedInheritedNoopKind.Activate) is null &&
-           PreparedInheritedNoopOwner.prepare(target,
-               PreparedInheritedNoopKind.Deactivate) is null);
-
     foreach (ownerIdentity; [false, true]) {
         auto wrong = PreparedInheritedNoopOwner.prepare(
             target, PreparedInheritedNoopKind.Update);
@@ -303,18 +293,18 @@ version(unittest) unittest {
     }
     auto foreignContext = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub());
-    auto foreign = new ArcTool(() => &mesh, &gpu, LitShader.init);
+    auto foreign = new Tool();          // not a closed factory product
     auto foreignEffect = prepareInheritedNoop(
         foreign,
-        PreparedInheritedNoopKind.Activate, foreignContext);
+        PreparedInheritedNoopKind.Update, foreignContext);
     assert(!foreignEffect.accepted &&
            foreignEffect.owner == foreign.preparedLifecycleOwner &&
-           foreignEffect.kind == PreparedInheritedNoopKind.Activate &&
+           foreignEffect.kind == PreparedInheritedNoopKind.Update &&
            !foreignContext.validate());
     auto nullEffect = prepareInheritedNoop(target,
-        PreparedInheritedNoopKind.Deactivate, null);
+        PreparedInheritedNoopKind.Update, null);
     assert(!nullEffect.accepted && nullEffect.owner == target.preparedLifecycleOwner &&
-           nullEffect.kind == PreparedInheritedNoopKind.Deactivate);
+           nullEffect.kind == PreparedInheritedNoopKind.Update);
 
     auto producerFault = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub());

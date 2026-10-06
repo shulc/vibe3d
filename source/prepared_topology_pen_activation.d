@@ -170,8 +170,9 @@ version(unittest) unittest {
         new RecordObserverHub());
     assert(weldTool.prepareActivate(weldContext).accepted && weldContext.validate());
     weldContext.install();
-    assert(weldSnap.enabled && weldSnap.hasPushedEnabled("mesh.topoPen") &&
-        !weldCons.enabled && weldCons.geom == ConstrainGeom.Screen,
+    assert(weldSnap.enabled && weldSnap.hasPushedEnabled("mesh.topoPen"),
+        "a no-background-constraint preset must still arm the snap state");
+    assert(!weldCons.enabled && weldCons.geom == ConstrainGeom.Screen,
         "a no-background-constraint preset must not compose the constraint");
 
     g_pipeCtx = null;
