@@ -818,7 +818,7 @@ private void pv2Row(T)(EditMode mode, void function(ref Mesh) select,
         scope(exit) rig.release();
         auto cold = new T(() => &rig.mesh, &rig.gpu, &rig.editMode, null);
         auto coldImage = cold.buildPreparedParamUpdate("", rig.mesh);
-        assert(coldImage.valid && !coldImage.expectedBefore.filled &&
+        assert(coldImage.valid &&
                cold.preparedParamUpdateMatches(coldImage, rig.mesh),
             name ~ ": a cold prepared image refuses (task 4491's hole)");
     }

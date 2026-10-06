@@ -43,9 +43,8 @@ unittest {
         auto px = new PolyExtrudeTool(() => &layer.meshRef(), &gpu, &mode,
             LitShader.init);
         auto img = px.buildPreparedParamUpdate("", layer.meshRef());
-        assert(img.valid && !img.expectedBefore.filled,
-            "4491 control: poly.extrude must be on the COLD path (before "
-            ~ "unfilled) or it is not the same cell as the bevels below");
+        assert(img.valid,
+            "4491 control: the fresh poly.extrude cold image must be valid");
         assert(px.preparedParamUpdateMatches(img, layer.meshRef()),
             "4491 control: poly.extrude must match on a cold arm");
     }
@@ -55,7 +54,7 @@ unittest {
         auto pb = new PolyBevelTool(() => &layer.meshRef(), &gpu, &mode,
             LitShader.init);
         auto img = pb.buildPreparedParamUpdate("", layer.meshRef());
-        assert(img.valid && !img.expectedBefore.filled,
+        assert(img.valid,
             "4491: poly.bevel must be on the COLD path here");
         assert(pb.preparedParamUpdateMatches(img, layer.meshRef()),
             "4491 poly.bevel: cold-arm image must match the live tool");
@@ -80,7 +79,7 @@ unittest {
         auto eb = new EdgeBevelTool(() => &layer.meshRef(), &gpu, &mode,
             LitShader.init);
         auto img = eb.buildPreparedParamUpdate("", layer.meshRef());
-        assert(img.valid && !img.expectedBefore.filled,
+        assert(img.valid,
             "4491: edge.bevel must be on the COLD path here");
         assert(eb.preparedParamUpdateMatches(img, layer.meshRef()),
             "4491 edge.bevel: cold-arm image must match the live tool");

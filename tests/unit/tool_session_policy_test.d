@@ -1749,14 +1749,24 @@ static assert(ToolSessionPolicy.init.redoPinsRefireImage == false);
 // `tool.built`), by enclosing symbol, unittest bodies blanked; measured 2026-10-02.
 private enum string[][string] kBuiltSites = [
     "source/tools/alignment/array_tool.d": [
-        "<decl>:1", "ArrayTool.activate:1", "ArrayTool.applyHeadless:2",
-        "ArrayTool.buildPreparedParamUpdate:1", "ArrayTool.cancelLiveEdit:2",
-        "ArrayTool.commitOperation:1", "ArrayTool.deactivate:1", "ArrayTool.hasUncommittedEdit:1",
+        "<decl>:1",
+        "ArrayParamProjection.opEquals:2",
+        "ArrayParamProjection:1",
+        "ArrayTool.activate:1",
+        "ArrayTool.applyHeadless:2",
+        "ArrayTool.cancelLiveEdit:2",
+        "ArrayTool.commitOperation:1",
+        "ArrayTool.deactivate:1",
+        "ArrayTool.hasUncommittedEdit:1",
         "ArrayTool.installPreparedActivation:1",
-        "ArrayTool.onMouseButtonUp:1", "ArrayTool.preparedActivationInstalledForTest:1",
-        "ArrayTool.preparedParamUpdateMatches:1", "ArrayTool.rebaseTopologyStep:1",
-        "ArrayTool.rebuildPreview:1", "ArrayTool.resyncSession:2",
-        "ArrayTool.seedPreparedActivationForTest:1", "ArrayTool.seedPreparedParamForTest:1",
+        "ArrayTool.onMouseButtonUp:1",
+        "ArrayTool.paramProjection:1",
+        "ArrayTool.preparedActivationInstalledForTest:1",
+        "ArrayTool.rebaseTopologyStep:1",
+        "ArrayTool.rebuildPreview:1",
+        "ArrayTool.resyncSession:2",
+        "ArrayTool.seedPreparedActivationForTest:1",
+        "ArrayTool.seedPreparedParamForTest:1",
         "ArrayTool:1",
     ],
     "source/tools/alignment/clone_tool.d": [
@@ -1897,7 +1907,7 @@ private enum string[][string] kBuiltSites = [
 unittest { // (4d')
     import tests.unit.census_symbols : blankUnittestBodies;
     // FLOOR (form item 4): the census reads the 12 files and finds `built` in 11 of
-    // them (Mirror keys its preview on `engaged`), 194 enclosing-symbol sites in all,
+    // them (Mirror keys its preview on `engaged`), 195 enclosing-symbol sites in all,
     // plus the shared gizmo rebase's one (task 9429).
     assert(kBuiltSites.length == 12, "S3 built census: the table names "
            ~ format("%s", kBuiltSites.length) ~ " files, the model has 12");
@@ -1911,7 +1921,7 @@ unittest { // (4d')
         if (s.length) ++files;
         sites += s.length;
     }
-    assert(files == 11 && sites == 194, format("S3 built census: %s files, %s sites; measured 11, 194",
+    assert(files == 11 && sites == 195, format("S3 built census: %s files, %s sites; measured 11, 195",
                                                 files, sites));
     // Task 9429: the six gizmo tools' rebase write is ONE site, the shared gizmo rebase.
     const home = identSites(blankUnittestBodies(blankNonCode(readText("source/tools/topology_step.d"))),
