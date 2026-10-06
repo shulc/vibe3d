@@ -189,6 +189,8 @@ unittest {
         // Opaque guide and quarter-alpha fill are independently captured values.
         // The active ring retains its existing 0.95 GL alpha over the grey face.
         auto fill = drag.at(cx+45, cy-15);
+        // Half of the fixed haul vector lies on the terminal radial edge.
+        auto edge = drag.at(cx+52, cy-30);
         const guideCount = population(drag, cx, cy, 116, [204,153,255], 0);
         const activeCount = population(drag, cx, cy, 123, [245,221,101], 0);
         size_t changed;
@@ -200,8 +202,8 @@ unittest {
         evidence ~= measured ~ "\n"; writefln("%s", measured);
         check(axis, "fill", { assert(near(fill, [95,83,108], 0),
             format("%s sector quarter-alpha fill: expected [95, 83, 108], got %s", axis, fill)); }, first);
-        check(axis, "outline", { assert(guideCount >= 20,
-            format("%s sector opaque guide outline: expected >=20 purple pixels, got %d", axis, guideCount)); }, first);
+        check(axis, "outline", { assert(guideCount >= 20 && near(edge, [204,153,255], 0),
+            format("%s sector opaque guide outline: expected >=20 purple pixels and radial edge [204, 153, 255], got %d and %s", axis, guideCount, edge)); }, first);
         check(axis, "active-ring", { assert(activeCount >= 40,
             format("%s dragged ring handleActive: expected >=40 active pixels, got %d", axis, activeCount)); }, first);
         input(env, ["mouseup", "1"]);
