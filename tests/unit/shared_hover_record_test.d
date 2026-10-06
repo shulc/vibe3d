@@ -161,3 +161,24 @@ unittest {
     assert(target.kind == HoverTargetKind.Vertex && target.vert == 0,
         "background hover custom reach retains the hit face as fallback");
 }
+
+unittest {
+    auto vp = viewport(); Mesh empty, edge;
+    edge.vertices = [Vec3(1.5f,0,0),Vec3(2.5f,0,0)]; edge.edges = [cast(uint[2])[0,1]];
+    auto space = ModelSpace.world(); space.isIdentity = false;
+    space.m[12] = -2; space.mInv[12] = 2;
+    const sources = [ToolPressSource(&empty,ModelSpace.world(),10),ToolPressSource(&edge,space,20)];
+    const elected = hoverRecordAtPixel(300,300,vp,sources,false,false);
+    assert(elected.kind == kCascadeEdge && elected.source == 1 && elected.index == 0 &&
+        elected.owner.mesh is &edge && elected.owner.layer == 20,
+        "hover transformed edge retains the elected source and identity");
+    ConstrainHitPacket miss;
+    assert(resolveHoverTarget(miss,vp,8,[BackgroundSource(&edge,space,20)],300,300,false).kind == HoverTargetKind.None,
+        "background hover surface miss cannot acquire a target");
+    edge.resizeEdgeSelection(); edge.setEdgeHidden(0,true);
+    assert(hoverRecordAtPixel(300,300,vp,sources,false,false).kind == -1,
+        "hover excludes a hidden loose edge");
+    Mesh point; point.vertices = [Vec3(0,0,0)]; point.resizeVertexSelection(); point.setVertexHidden(0,true);
+    assert(hoverRecordAtPixel(300,300,vp,[ToolPressSource(&point,ModelSpace.world())],false,false).kind == -1,
+        "hover excludes a hidden isolated vertex");
+}
