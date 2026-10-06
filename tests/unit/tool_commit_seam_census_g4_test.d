@@ -147,6 +147,9 @@ private enum NonMember[] kEditDirNonMembers = [
       ~ "and rostered by tool_commit_seam_census_g1_test.d"),
     NonMember("edge_extrude.d",
         "group G1 — the twin of the above, same phase, same census"),
+    NonMember("haul_axis_latch.d",
+        "not a tool: the shared value latch for a held haul (task 9449). "
+      ~ "No gesture recorder or history owner"),
     NonMember("preview_rebuild.d",
         "not a tool: the shared restore-the-cage-and-re-run-the-kernel seam "
       ~ "(task 1620). No class, no gesture, no history"),

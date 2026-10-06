@@ -3381,6 +3381,7 @@ unittest {
         override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot b) { rebaseTopologyStep(b); }
     }
     foreach (model; [false, true])
+    foreach (restoredArmed; [false, true])
     foreach (navigation; [false, true]) {
         Mesh m = makeCube();
         View v = new View(0, 0, 800, 600);
@@ -3399,7 +3400,7 @@ unittest {
         drop.onActivate = (string id) {
             restored = model ? new BasisModelTool(&m) : new BasisTool(&m);
             active = restored;
-            session.noteArm(id, 42);
+            session.noteArm(id, 42, restoredArmed);
             assert(restored.basis.matches(m) && !original.matches(m), "completion floor: replay arm sees the unreverted edit");
         };
         drop.onCompleteDropUndo = (string id, ulong token) { session.completeDropUndo(id, token); };
@@ -3411,8 +3412,9 @@ unittest {
         assert(restored.rebases == 1, "navigation must not duplicate drop completion rebase");
         assert(session.sessionStateJson()["token"].integer == 7, "drop completion adopts the restored token");
         assert(!session.sessionStateJson()["live"].boolean, "drop completion discards live block bookkeeping");
-        assert(!session.sessionStateJson()["armed"].boolean && !session.sessionStateJson()["operationOpen"].boolean,
-            "drop completion closes the discarded post mode");
+        assert(session.sessionStateJson()["armed"].boolean == (!model && restoredArmed)
+                && !session.sessionStateJson()["operationOpen"].boolean,
+            "drop completion closes only the model post mode and preserves the restored recorded arm choice");
         if (model) {
             session.notePointerDown();
             assert(restored.rebases == 1, "the next press must reuse the completed final mesh basis");

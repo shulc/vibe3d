@@ -170,7 +170,7 @@ private immutable SiteCount[] kSites = [
     SiteCount("resetRearm",             1, "tool.reset rebuilding the same id"),
     SiteCount("explicitDrop",           3, "toolHost.deactivate, Space key and Esc ladder first rung"),
     SiteCount("sameIdToggleDrop",       1, "activateToolById's already-active toggle"),
-    SiteCount("replayDrop",             1, "the lifecycle re-drop delegate inside armPreparedTool"),
+    SiteCount("replayDrop",             2, "the lifecycle re-drop delegates inside armPreparedTool and the retained drop-row factory (task 9508)"),
     SiteCount("selTypeFlipDrop",        2, "both selection-mode funnels (geometry, item); task 9458: flip or not"),
     SiteCount("activeLayerChangedDrop", 1, "the primary-change hook"),
     SiteCount("documentReplaceDisarm",  1, "the tool_disarm seam body, a new document"),

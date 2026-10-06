@@ -381,24 +381,15 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     gesture();
     c.liveEntryNames = historyNames();
 
-    drop();
-    settle();
+    // Score the gesture while its own record is still live. A later plain-pen
+    // drop consumes that press and discards redo (9508); it cannot be used as
+    // a setup step for the frozen gesture round-trip.
     c.postCommit = planes();
-    c.entryNames  = historyNames();
+    c.entryNames = historyNames();
     c.entryLabels = historyLabels();
-    // Wave plan 8640 S6: a user drop of the pen writes a DROP row above the
-    // gesture (its undo re-arms the pen). It is the teardown's row, not the
-    // gesture's: exactly one, and only for the pen; set aside before scoring.
-    immutable bool dropRow = c.entryLabels.length > 0 && c.entryLabels[$ - 1] == "Tool Drop";
-    assert(dropRow == (tool == "mesh.topoPen"),
-        name ~ ": the drop row is " ~ (dropRow ? "present" : "absent")
-      ~ " for " ~ tool ~ ": " ~ c.entryLabels.to!string);
-    if (dropRow) {
-        c.entryNames  = c.entryNames[0 .. $ - 1];
-        c.entryLabels = c.entryLabels[0 .. $ - 1];
-    }
-    c.undoDelta   = undoLen() - u0 - (dropRow ? 1 : 0);
-    c.drove       = gDrove;   // task 3091: captured after stand+gesture+drop
+    c.undoDelta = undoLen() - u0;
+    const gestureToken = getJ("/api/tool/state")["session"]["token"].integer;
+    assert(gestureToken != 0, name ~ ": the live gesture must have a session token");
 
     // ANTI-VACUITY, BEFORE anything is compared. A gesture that moved no plane
     // makes every assertion below satisfiable by an undo that does nothing.
@@ -412,14 +403,6 @@ Cell runCell(string name, string tool, string recordSite, string mode,
       ~ "expected exactly 1. Zero means the commit never recorded; more than "
       ~ "one means a gesture that should be a single entry split");
 
-    if (dropRow) {
-        // The drop row's undo re-arms the pen and changes no plane.
-        auto rd = postJ("/api/command", commandBody("history.undo"));
-        assert(rd["status"].str == "ok", name ~ ": the drop row's undo failed: " ~ rd.toString);
-        settle();
-        assert(undoLen() == u0 + c.undoDelta && planes() == c.postCommit,
-            name ~ ": the drop row's undo did not leave exactly the gesture standing");
-    }
     auto ru = postJ("/api/command", commandBody("history.undo"));
     assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
     settle();
@@ -436,6 +419,41 @@ Cell runCell(string name, string tool, string recordSite, string mode,
 
     c.undoResidual = planeDiff(c.preOp,      c.postUndo);
     c.redoResidual = planeDiff(c.postCommit, c.postRedo);
+
+    // Teardown has its own captured navigation contract, independent of the
+    // frozen gesture planes above. Keep the drop and both undo boundaries live.
+    drop();
+    settle();
+    c.drove = gDrove;
+    auto droppedLabels = historyLabels();
+    const dropRow = droppedLabels.length != 0 && droppedLabels[$ - 1] == "Tool Drop";
+    assert(dropRow == (tool == "mesh.topoPen"),
+        name ~ ": teardown drop-row ownership moved: " ~ droppedLabels.to!string);
+    assert(planes() == c.postRedo && undoLen() == u0 + c.undoDelta + (dropRow ? 1 : 0),
+        name ~ ": teardown must preserve gesture planes and write exactly its drop row");
+    if (dropRow) {
+        auto rd = postJ("/api/command", commandBody("history.undo"));
+        assert(rd["status"].str == "ok", name ~ ": drop undo refused: " ~ rd.toString);
+        settle();
+        auto history = getJ("/api/history");
+        auto restored = getJ("/api/tool/state");
+        assert(planes() == c.postUndo && undoLen() == u0 + 1 &&
+                history["undo"].array[$ - 1]["command"].str == "history.pressMarker" &&
+                history["redo"].array.length == 0 && restored["tool"].str == "mesh.topoPen" &&
+                restored["session"]["token"].integer == gestureToken,
+            name ~ ": drop undo must revert the press, re-arm its token, leave one inert marker and discard redo");
+        auto refusedRedo = postJ("/api/command", commandBody("history.redo"));
+        settle();
+        assert(refusedRedo["status"].str == "error" && planes() == c.postUndo &&
+                getJ("/api/history") == history && getJ("/api/tool/state")["session"] == restored["session"],
+            name ~ ": plain drop must refuse functional redo without changing the restored session");
+        auto markerUndo = postJ("/api/command", commandBody("history.undo"));
+        settle();
+        assert(markerUndo["status"].str == "ok" && undoLen() == u0 && planes() == c.postUndo &&
+                getJ("/api/history")["redo"].array.length == 0 &&
+                getJ("/api/tool/state")["session"] == restored["session"],
+            name ~ ": second drop undo must consume only the marker and preserve the restored session");
+    }
     return c;
 }
 

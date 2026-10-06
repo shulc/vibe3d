@@ -1535,7 +1535,10 @@ private struct ToolSession {
         auto mesh = liveStepMesh_(t);
         baseImage_ = mesh is null ? MeshSnapshot.init : MeshSnapshot.capture(*mesh);
         operationOpen_ = false;
-        postmodeArmed_ = false;
+        // Only the captured model owns a discarded post mode; recorded-step
+        // clients retain the restored arm's choice (9508, drop completion).
+        if (t !is null && capturedTopologyModel(t.sessionPolicy()))
+            postmodeArmed_ = false;
         ++completedDropUndo_;
     }
     private ulong completedDropUndo_;
