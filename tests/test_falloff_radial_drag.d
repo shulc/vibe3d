@@ -206,14 +206,17 @@ unittest { // a falloff handle's centre box is a free handle, the DQ form from t
     // ortho at 440 px/m, q 0.005, the radial centre / the linear start typed at
     // the off-lattice (0.1014, 0, 0.0513), a (58, 23) px haul of its box writes
     // H + q(H + T) - q(H) = (0.2364, 0, 0.1063). ABSOLUTE misses by 0.0014, RAW
-    // by 0.003. The Move selection is a quad far from the handle.
+    // by 0.003. The Move selection is a quad far from the handle. Third haul
+    // (ours, uncaptured): the radial centre's X arrow, pressed 30 px along it and
+    // hauled (40, 0) px, steps the centre by the per-event screen-axis increments,
+    // 40 px = 0.0909 along X.
     import std.format : format;
     import std.string : split;
     import core.thread : Thread;
     import core.time : dur;
     import http_client : getJson, postJson;
     import pen_rig_helpers : penCameraAt, worldPixel;
-    void cell(string type, string handleAttr, string setup) {
+    void cell(string type, string handleAttr, string setup, int[2] at, int[2] by, double[3] want) {
         auto r = postJson("/api/command", commandBody("scene.loadMesh",
             `{"vertices":[[-0.6,0,0.4],[-0.4,0,0.4],[-0.4,0,0.6],[-0.6,0,0.6]],"faces":[[0,1,2,3]]}`));
         assert(r["status"].str == "ok", "load failed: " ~ r.toString);
@@ -240,18 +243,21 @@ unittest { // a falloff handle's centre box is a free handle, the DQ form from t
         assert(approx(h0[0], 0.1014, 1e-6) && approx(h0[2], 0.0513, 1e-6),
             format("rig: the %s %s must start at the typed (0.1014, 0, 0.0513), got %s",
                    type, handleAttr, h0));
-        immutable int[2] p = worldPixel(Vec3(0.1014f, 0, 0.0513f));
+        immutable int[2] c = worldPixel(Vec3(0.1014f, 0, 0.0513f));
+        immutable int[2] p = [c[0] + at[0], c[1] + at[1]];
         auto cam = fetchCamera();
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-            p[0], p[1], p[0] + 58, p[1] + 23, 12));
+            p[0], p[1], p[0] + by[0], p[1] + by[1], 12));
         Thread.sleep(dur!"msecs"(200));
         immutable double[3] h = handle();
-        assert(approx(h[0], 0.2364, 1e-4) && approx(h[1], 0, 1e-4) && approx(h[2], 0.1063, 1e-4),
-            format("falloff-handle C-FO %s %s: expected (0.2364, 0, 0.1063), got %s",
-                   type, handleAttr, h));
+        assert(approx(h[0], want[0], 1e-4) && approx(h[1], want[1], 1e-4) && approx(h[2], want[2], 1e-4),
+            format("falloff-handle C-FO %s %s pressed +%s: expected %s, got %s",
+                   type, handleAttr, at, want, h));
     }
-    cell("radial", "center", `tool.pipe.attr falloff center "0.1014,0,0.0513"` ~ "\n"
-        ~ `tool.pipe.attr falloff size "0.3,0.3,0.3"` ~ "\n");
+    immutable radial = `tool.pipe.attr falloff center "0.1014,0,0.0513"` ~ "\n"
+        ~ `tool.pipe.attr falloff size "0.3,0.3,0.3"` ~ "\n";
+    cell("radial", "center", radial, [0, 0], [58, 23], [0.2364, 0, 0.1063]);
     cell("linear", "start", `tool.pipe.attr falloff start "0.1014,0,0.0513"` ~ "\n"
-        ~ `tool.pipe.attr falloff end "-0.4,0,-0.35"` ~ "\n");
+        ~ `tool.pipe.attr falloff end "-0.4,0,-0.35"` ~ "\n", [0, 0], [58, 23], [0.2364, 0, 0.1063]);
+    cell("radial", "center", radial, [30, 0], [40, 0], [0.1014 + 40.0 / 440, 0, 0.0513]);
 }
