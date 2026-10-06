@@ -173,7 +173,7 @@ alias BASE = testBaseUrl;
 enum string kFrozen = import("fixtures/tool_gesture/g7.json");
 
 // Retained metadata only (9514); observations still come from runCell.
-enum string kRegenerationHeader = import("fixtures/tool_gesture/g7.header.json");
+enum string kRegenerationHeader = import("fixture_inputs/g7.header.json");
 
 /// The one file allowed to write `g7.json`. Asserted against the fixture's own
 /// `writtenBy`, so a second writer has to change the field and be seen.
