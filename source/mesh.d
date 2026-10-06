@@ -16810,6 +16810,16 @@ unittest { // Private frame bookkeeping across a rejected nested invocation.
     m.addVertex(Vec3(3, 4, 5));
     auto saved = *currentBatchFrame(&m);
     const leaks = changeBus.batchLeaks;
+    {
+        auto invocation = MeshInvocation(m);
+        bool refused;
+        try { m.endEditBatch(); } catch (Exception e) { refused = true; }
+        // On a guard mutation, disarm before asserting so an expired frame
+        // cannot replace this named RED with a destructor Error/crash.
+        if (!refused) invocation.subject_ = null;
+        assert(refused, "invocation must refuse closing its caller-owned frame");
+        invocation.release();
+    }
     try {
         auto invocation = MeshInvocation(m);
         m.beginEditBatch(null, MeshEditScope.Geometry); // rejected legacy nested frame

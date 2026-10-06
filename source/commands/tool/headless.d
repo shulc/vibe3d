@@ -94,7 +94,7 @@ public:
         auto prepared = MeshEditPayload.snapshots(before, after);
         transaction.validate();
         payload = prepared;
-        noteUndoRecorded();
+        noteUndoRecorded(); // task 2500: actual consumer flag follows successful owned payload
         transaction.release();
         return true;
     }

@@ -80,7 +80,7 @@ class ToolDoApplyCommand : Command {
         if (!accepted) { transaction.rollback(); return false; }
         appliedToolId = identity;
         payload = prepared;
-        noteUndoRecorded();
+        noteUndoRecorded(); // task 2500: actual consumer flag follows successful owned payload
         transaction.release();
         return true;
     }

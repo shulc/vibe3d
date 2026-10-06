@@ -1462,6 +1462,14 @@ unittest {
     first.installLegacyPreparedParam(handle);
     assert(!handle.consumable);
     first.installLegacyPreparedParam(handle);
+    { // Private borrow storage must release its view as well as its active bit.
+        const(Vec3)[] positions = [Vec3(1, 2, 3)];
+        auto borrow = Tool.HeadlessBorrow(first, positions);
+        assert(first.headlessBorrowActive_ && first.headlessBorrow_.ptr == positions.ptr,
+            "local positive control: the scoped borrow must install its source view");
+    }
+    assert(!first.headlessBorrowActive_ && first.headlessBorrow_.length == 0,
+        "scoped source borrow must release both active bit and retained view");
 }
 
 static assert(!__traits(compiles, {

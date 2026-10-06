@@ -400,3 +400,39 @@ unittest { // Both snapshot directions keep live selection, with count fallback.
     assert(m.vertices.length == 8 && m.isVertexSelected(0) && !m.isVertexSelected(2),
         "geometry restore must fall back to snapshot selection when counts differ");
 }
+
+unittest { // Observational GC bytes; no cap or performance threshold.
+    import core.memory : GC;
+    import std.stdio : writefln;
+    foreach (retained; [false, true]) {
+        auto rig = sourceRig(retained);
+        auto t = cast(SourceTool)rig.activeTool;
+        auto first = invocation(rig);
+        auto start = GC.allocatedInCurrentThread;
+        assert(applyRegistered(rig, first));
+        const cold = GC.allocatedInCurrentThread - start;
+        auto second = invocation(rig);
+        start = GC.allocatedInCurrentThread;
+        assert(applyRegistered(rig, second));
+        const warm = GC.allocatedInCurrentThread - start;
+        t.failure = 1;
+        auto rejected = invocation(rig);
+        start = GC.allocatedInCurrentThread;
+        assert(!applyRegistered(rig, rejected));
+        const refusal = GC.allocatedInCurrentThread - start;
+        t.failure = 0;
+        assert(rig.history.undo());
+        rig.activeTool = null;
+        rig.host.getActiveTool = () { throw new Exception("closed allocation replay consulted tool"); return cast(Tool)null; };
+        start = GC.allocatedInCurrentThread;
+        assert(rig.history.redo());
+        const replay = GC.allocatedInCurrentThread - start;
+        writefln("L1-ALLOC-GC retained=%s cold=%s warm=%s refusal=%s closedRedo=%s",
+            retained, cold, warm, refusal, replay);
+    }
+}
+
+static assert([__traits(allMembers, MeshEditPayload)] == [
+    "before_", "after_", "delta_", "deltaOnly_", "policy_",
+    "snapshots", "delta", "present", "isDelta", "forward", "reverse"],
+    "shared mesh edit payload owner composition changed");

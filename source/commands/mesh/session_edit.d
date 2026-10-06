@@ -113,7 +113,7 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     private MeshEditScope editScope_;
 
     // Optional operation-log delta (doc/undo_change_tracker_plan.md Phase 2).
-    // When `useDelta_` is set (via setDelta), apply()/revert() replay the
+    // When setDelta installs a delta-backed payload, apply()/revert() replay the
     // delta (O(delta)) instead of restoring the whole-mesh snapshot pair.
     // The snapshot path stays intact as the fallback: a degenerate (empty)
     // delta at a tool commit, and the callers — the majority — that never call
@@ -141,7 +141,7 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     // class that never overrode editScope().
     override MeshEditScope editScope() const { return editScope_; }
     // True iff this instance is delta-backed (setDelta was called). The
-    // snapshot path (setSnapshots / the escape hatch) reports false honestly.
+    // snapshot path (setSnapshots) reports false honestly.
     override bool isOperationInverse() const { return payload_.isDelta(); }
 
     void setSnapshots(MeshSnapshot before_, MeshSnapshot after_, string label_ = "") {
@@ -156,9 +156,9 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     }
 
     // Install an operation-log delta. The tool builds this by re-running its
-    // kernel once inside a Mesh edit batch. `before` is still kept so a
-    // degenerate (empty) delta could fall back to the snapshot path, but
-    // with a real delta the snapshot pair is never touched at apply/revert.
+    // kernel once inside a Mesh edit batch. The payload owns this delta;
+    // even an empty installed delta is present. Callers choose the snapshot
+    // fallback before installation; delta replay never reads a snapshot pair.
     void setDelta(MeshEditDelta delta_, string label_ = "") {
         payload_ = MeshEditPayload.delta(delta_);
         this.editLabel = label_;
@@ -185,11 +185,11 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
         // pre-record gates read; it is deliberately NOT "the snapshot is
         // empty", because a session may LEGITIMATELY end on an empty mesh
         // (delete the last face) and `capture(emptyMesh)` is `filled` and
-        // MUST still redo. The `useDelta_` term is load-bearing: the delta
+        // MUST still redo. The delta-only term in the shared payload is load-bearing: the delta
         // path (edge_extrude / edge_extend) never sets `after` at all.
         //
-        // TASK 1905 (D15): the expression itself now lives in `hasPayload()`
-        // below, and `hasGesturePayload()` — the gesture recorder's belt —
+        // TASK 1905 (D15): the expression itself now lives in the shared payload, forwarded
+        // by `hasPayload()`, and `hasGesturePayload()` — the gesture recorder's belt —
         // reads the SAME function. It is not "the same predicate written
         // twice on purpose": two copies drift, and the drift's worst state is
         // a command the recorder ACCEPTED and this method then refuses, i.e.

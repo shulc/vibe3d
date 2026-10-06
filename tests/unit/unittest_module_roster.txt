@@ -27,6 +27,7 @@ commands.workplane
 constraint
 drag
 drag_identity
+edit_session
 eventlog
 falloff_rmb_discipline_test
 forms
