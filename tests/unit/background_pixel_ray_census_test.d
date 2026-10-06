@@ -292,6 +292,19 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
     assert(tokenAt(router, "toolEventVts").length == dispatches + 1,
         format("every active-tool mouse dispatch builds its packets through toolEventVts (declaration + "
                ~ "%d calls), got %d", dispatches, tokenAt(router, "toolEventVts").length));
+    // The event packet, the operator accessor and the stage ray keep the same
+    // viewport; the populated cell-hit suite exercises their actual callers.
+    immutable frame = blankNonCode(readText(buildPath(root, "source", "input_frame_state.d")));
+    assert(tokenAt(frame, "inputSnapshot").length == 1,
+        "census floor: the event builder reads the input viewport exactly once");
+    assert(matchAll(frame, regex(`app\.vpm\.inputSnapshot\s*\(\s*\)`)).array.length == 1,
+        "event SubjectSource must carry the input owner's viewport");
+    immutable op = blankNonCode(readText(buildPath(root, "source", "operator.d")));
+    assert(matchAll(op, regex(`if\s*\(auto s = vts\.get!SubjectPacket\(\)\) return s\.viewport;`)).array.length == 1,
+        "viewportOf must read the event SubjectPacket");
+    immutable cons = blankNonCode(readText(buildPath(root, "source", "toolpipe", "stages", "constrain.d")));
+    assert(matchAll(cons, regex(`rayHitAt\(subj\.cursorX, subj\.cursorY, subj\.viewport, sh, bgFull\)`)).array.length == 1,
+        "surface publication must raycast the event pixel under its SubjectPacket viewport");
     string[] syncSites, ownViewport;
     foreach (f; files) {
         immutable code = blankNonCode(readText(buildPath(root, "source", f)));
