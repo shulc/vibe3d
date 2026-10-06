@@ -896,14 +896,12 @@ private:
         float cx, cy, cndcZ;
         if (!projectToWindowFull(center, vp, cx, cy, cndcZ)) return;
 
-        uint fillCol = dragAxis == 0 ? IM_COL32(220, 60,  60,  50)
-                     : dragAxis == 1 ? IM_COL32( 60, 220,  60,  50)
-                     : dragAxis == 2 ? IM_COL32( 60,  60, 220,  50)
-                                     : IM_COL32(160, 160, 160,  50);
-        uint lineCol = dragAxis == 0 ? IM_COL32(220, 60,  60, 200)
-                     : dragAxis == 1 ? IM_COL32( 60, 220,  60, 200)
-                     : dragAxis == 2 ? IM_COL32( 60,  60, 220, 200)
-                                     : IM_COL32(180, 180, 180, 200);
+        // One guide role for every axis, quarter fill and opaque edge
+        // (task 10820; tests/fixtures/rotation_sector_pixels.json).
+        import viewport_scheme : SchemeColor, schemeColor, packImCol;
+        auto guideColor = schemeColor(SchemeColor.handleGuide);
+        uint fillCol = packImCol(guideColor, 64);
+        uint lineCol = packImCol(guideColor, 255);
 
         Vec3 rodrig(Vec3 p, float a) {
             return rotateAboutPivot(p, Vec3(0,0,0), axisVec, a);
