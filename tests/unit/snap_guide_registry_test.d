@@ -321,3 +321,44 @@ unittest { // 9513: background placement and edited-only weld are distinct elect
     assert(editedVertexAt(sx, sy, vp, edited, ModelSpace.world(), cfg, 24, ownedWeld) == 0,
         "edited-only weld cannot elect the nearer background vertex");
 }
+
+unittest { // 9513: a non-live stage resolves its own registered placement guides
+    import operator : VectorStack;
+    import toolpipe.pipeline : g_pipeCtx;
+    import toolpipe.packets : SubjectPacket, SnapHitPacket;
+    import toolpipe.stages.snap : SnapStage;
+    import toolpipe.guide : SnapPurpose;
+
+    static class RefusePurpose : SnapGuide {
+        SnapPurpose declared;
+        this(SnapPurpose p) { declared = p; }
+        override SnapPurpose purpose() const nothrow @nogc { return declared; }
+        override bool proximity(Vec3, SnapType, int, int, ref float, ref int) { return false; }
+    }
+    auto saved = g_pipeCtx;
+    scope(exit) { g_pipeCtx = saved; invalidateSnapGrids(); }
+    g_pipeCtx = null;
+    Mesh m; m.vertices = [Vec3(0, 0, 0)];
+    Viewport vp = rigView();
+    float x, y, z;
+    assert(projectToWindowFull(m.vertices[0], vp, x, y, z));
+    auto subject = new SubjectPacket;
+    subject.mesh = &m; subject.viewport = vp;
+    subject.cursorValid = true;
+    subject.cursorX = cast(int)round(x); subject.cursorY = cast(int)round(y);
+    VectorStack vts; vts.put(subject);
+    auto st = new SnapStage;
+    st.enabled = true; st.enabledTypes = SnapType.Vertex;
+    bool snapped() {
+        st.demandHit(); st.evaluate(vts);
+        auto hit = vts.get!SnapHitPacket();
+        assert(hit !is null, "non-live stage must publish its demanded query");
+        return hit.snapped;
+    }
+    invalidateSnapGrids();
+    assert(snapped(), "control: non-live stage's empty registry snaps to the vertex");
+    st.addGuide(new RefusePurpose(SnapPurpose.weld));
+    assert(snapped(), "non-live stage's placement query excludes its weld guide");
+    st.addGuide(new RefusePurpose(SnapPurpose.placement));
+    assert(!snapped(), "non-live stage must consult its own registered placement guide");
+}
