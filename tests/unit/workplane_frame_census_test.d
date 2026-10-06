@@ -123,9 +123,10 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         // the grid sub-step is read through `viewVectorQuantum` everywhere but
         // its home (app.d: an import); task 9415: the pen joins (P1); drag.d: the handle drag's quantum forms
         "viewGridSubStep": "app.d:1 viewgrid.d:2",
-        // create_common.d: + the free point's q of its plane point (task 9499)
-        "viewVectorQuantum": "create_common.d:4 drag.d:2 http_providers.d:2 pen.d:2 poly_extrude.d:2 "
-            ~ "transform.d:2 viewgrid.d:2",
+        // create_common.d: + the free point's q of its plane point (task 9499);
+        // array_tool.d: the snapped press hit P0 of the offset haul (task 9527)
+        "viewVectorQuantum": "array_tool.d:2 create_common.d:4 drag.d:2 http_providers.d:2 pen.d:2 "
+            ~ "poly_extrude.d:2 transform.d:2 viewgrid.d:2",
         "viewPrincipalAxis": "create_common.d:2 pen.d:2",
         // radial_array_tool.d: its own unrelated `axisUnit()` member (5); create_common.d: + the
         // centre box's locked axis in `snapMoverCentre` (task 9472)

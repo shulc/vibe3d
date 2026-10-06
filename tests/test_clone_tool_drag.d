@@ -168,47 +168,35 @@ unittest { // captured: a 1.2 per-copy X scale grows each successive copy by 20%
     cmd("tool.set " ~ TOOL ~ " off");
 }
 
-unittest { // the offset haul (K-FH C-NT-off clone, fixtures K-FH.json KFH_NT_CLONE /
-    // KFH_NT_CLONE_R / KFH_NT_CLONE2): offset = (P - P0) + (c - P0), P0 the snapped
-    // press hit, P = P0 + q(P0 + T) - q(P0); the offset before the press (0, 0,
-    // 0.06) is replaced. Top ortho at 440 px/m, q 0.005, one quad at y 0 with the
-    // off-lattice centroid c (0.2977, 0, 0.1979), (70, -42) px hauls. Pressed at
-    // c's pixel (P0 (0.3, 0, 0.2)), twice: (0.1577, 0, -0.0971); pressed at
-    // (0.365, 0, 0.245): (0.0927, 0, -0.1421). The K-H3 reading (DQ from c) misses
-    // by 0.0029 and 0.0623.
+unittest { // the offset haul is a free handle, quantised (K-H3 H3_NT): top ortho
+    // view at 440 px/m (T = pixels / 440), q 0.005, the top face's centroid A
+    // (0, 0.5, 0) on the lattice; a (70, -42) px haul writes q(A + T) - q(A) =
+    // (0.16, 0, -0.095). RAW is (0.159091, 0, -0.095455).
     import core.thread : Thread;
     import core.time : dur;
-    import pen_rig_helpers : penCameraAt, worldPixel;
-    void cell(string name, Vec3 pressAt, double[3] want) {
-        auto r = postJson("/api/command", commandBody("scene.loadMesh",
-            `{"vertices":[[0.1977,0,0.0979],[0.3977,0,0.0979],[0.3977,0,0.2979],[0.1977,0,0.2979]],`
-            ~ `"faces":[[0,1,2,3]]}`));
-        assert(r["status"].str == "ok", "load failed: " ~ r.toString);
-        r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
-        assert(r["status"].str == "ok", "select failed: " ~ r.toString);
-        cmd("viewport.view Top");
-        penCameraAt(Vec3(0, 0, 0), 440.0);
-        assert(getJson("/api/camera")["projKind"].str == "Ortho",
-            "rig: the top view must be orthographic");
-        cmd("tool.set " ~ TOOL ~ " on");
-        cmd("tool.attr " ~ TOOL ~ " num 1");
-        cmd("tool.attr " ~ TOOL ~ " offX 0");
-        cmd("tool.attr " ~ TOOL ~ " offY 0");
-        cmd("tool.attr " ~ TOOL ~ " offZ 0.06");
-        Thread.sleep(dur!"msecs"(300));
-        immutable int[2] p = worldPixel(pressAt);
-        auto cam = fetchCamera(BASE);
-        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-            p[0], p[1], p[0] + 70, p[1] - 42, 12), BASE);
-        Thread.sleep(dur!"msecs"(200));
-        immutable double[3] o = [attrOf("offX"), attrOf("offY"), attrOf("offZ")];
-        assert(abs(o[0] - want[0]) <= 1e-4 && abs(o[1] - want[1]) <= 1e-4
-            && abs(o[2] - want[2]) <= 1e-4,
-            format("clone-offset %s: expected %s, got (%.6f, %.6f, %.6f)",
-                   name, want, o[0], o[1], o[2]));
-        cmd("tool.set " ~ TOOL ~ " off");
-    }
-    cell("NT_CLONE", Vec3(0.2977f, 0, 0.1979f), [0.1577, 0, -0.0971]);
-    cell("NT_CLONE_R", Vec3(0.2977f, 0, 0.1979f), [0.1577, 0, -0.0971]);
-    cell("NT_CLONE2", Vec3(0.365f, 0, 0.245f), [0.0927, 0, -0.1421]);
+    import pen_rig_helpers : penCameraAt;
+    auto r = postJson("/api/command", commandBody("scene.reset"));
+    assert(r["status"].str == "ok");
+    r = postJson("/api/command", commandBody("mesh.select",
+        `{"mode":"polygons","indices":[4]}`));
+    assert(r["status"].str == "ok");
+    cmd("viewport.view Top");
+    penCameraAt(Vec3(0, 0, 0), 440.0);
+    assert(getJson("/api/camera")["projKind"].str == "Ortho",
+        "rig: the top view must be orthographic");
+    cmd("tool.set " ~ TOOL ~ " on");
+    cmd("tool.attr " ~ TOOL ~ " num 1");
+    Thread.sleep(dur!"msecs"(300));
+    immutable double[3] o0 = [attrOf("offX"), attrOf("offY"), attrOf("offZ")];
+    auto cam = fetchCamera(BASE);
+    immutable int cx = cam.vpX + cam.width / 2, cy = cam.vpY + cam.height / 2;
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        cx, cy, cx + 70, cy - 42, 12), BASE);
+    Thread.sleep(dur!"msecs"(200));
+    immutable double[3] d = [attrOf("offX") - o0[0], attrOf("offY") - o0[1],
+                             attrOf("offZ") - o0[2]];
+    assert(abs(d[0] - 0.16) <= 1e-4 && abs(d[1]) <= 1e-4 && abs(d[2] + 0.095) <= 1e-4,
+        format("clone-offset-quantised: the haul expected (0.16, 0, -0.095), got (%.6f, %.6f, %.6f)",
+               d[0], d[1], d[2]));
+    cmd("tool.set " ~ TOOL ~ " off");
 }

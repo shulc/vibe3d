@@ -17,8 +17,7 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import editmode : EditMode;
-import drag : HandleDrag, DragFrame, DragKind, automaticPlanePressHit;
-import viewgrid : vectorSnap, viewVectorQuantum;
+import drag : HandleDrag, DragFrame, DragKind;
 import overlay_space : OverlaySpace;
 import params : Param, IntEnumEntry;
 import shader : Shader;
@@ -76,7 +75,7 @@ private:
 
     bool active, built, dragging;
     MeshSnapshot before;
-    HandleDrag grab;   // the snapped press hit + travel
+    HandleDrag grab;   // the selection centroid at the press + travel
     Vec3 dragBaseOffset;
     OverlaySpace dragSpace;
 
@@ -197,15 +196,13 @@ public:
         if (e.button != SDL_BUTTON_LEFT) return false;
         if (SDL_GetModState() & (KMOD_ALT | KMOD_SHIFT)) return false;
         if (*editMode != EditMode.Polygons || !mesh.hasAnySelectedFaces()) return false;
-        Vec3 p0;   // the press hit, snapped to the view quantum
-        if (!automaticPlanePressHit(e.x, e.y, cachedVp, p0)) return false;
-        p0 = vectorSnap(p0, viewVectorQuantum(cachedVp));
         sessionStepBegins();
         dragSpace = OverlaySpace.ofPrimary();
-        // K-FH C-NT-off: offset = (P - P0) + (c - P0), P the DQ travel from P0;
-        // the press moves the base point from the centroid c to P0.
-        grab.press(p0, e.x, e.y);
-        dragBaseOffset = dragSpace.toLocalDelta(dragSpace.pos(mesh.selectionCentroidFaces()) - p0);
+        // Not yet K-FH C-NT-off's offset = (P - P0) + (c - P0): the base point
+        // of a repeated haul is uncaptured (the clone_dormant cell refutes a
+        // fixed c), so the haul stays the accumulating free handle.
+        grab.press(dragSpace.pos(mesh.selectionCentroidFaces()), e.x, e.y);
+        dragBaseOffset = offsetVec();
         dragging = true;
         return true;
     }
