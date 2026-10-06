@@ -269,22 +269,22 @@ unittest {
     // through the per-row message rather than through a bare total.
     size_t total;
     foreach (r; kSites) total += r.count;
-    assert(total == 24,
-        format("task 4053: the site ledger now sums to %s, recorded 24 (task 9457: "
-               ~ "the item-list primary move's re-arm arrived) — say in "
+    assert(total == 25,
+        format("task 4053: the site ledger now sums to %s, recorded 25 (task 9508: "
+               ~ "the retained drop-row replay delegate arrived) — say in "
                ~ "the commit which sites arrived or left", total));
 
-    // And the total DECOMPOSES, which is what keeps 22 from being a number
+    // And the total DECOMPOSES, which is what keeps 25 from being a number
     // with no structure:
-    //     15  dropActiveTool(With)(ToolTransition.…) calls
-    //   +  6  armPreparedTool(ToolTransition.…) calls
+    //     16  dropActiveTool(With)(ToolTransition.…) calls
+    //   +  7  armPreparedTool(ToolTransition.…) calls
     //   +  2  shutdownDrop mentions — a comment and the door assert, the one
     //         drop with no call at all, because its scope(exit) is declared
     //         above the verb
-    //   = 23
+    //   = 25
     // This is not a restatement of the scan above: that one counts MENTIONS,
     // so a transition named only in a comment would satisfy it. These two
-    // count CALLS, and the arithmetic closing is what says the 26 wired rows
+    // count CALLS, and the arithmetic closing is what says the 25 wired rows
     // are wired rather than merely written down.
     //
     // WHICH IS WHY THEY SCAN THE MASKED TEXT, and the scan above does not.
@@ -313,10 +313,11 @@ unittest {
     // added the closed-run owner replay arm (4 -> 5), and wave plan 8640 S6 the
     // drop row's restore (5 -> 6); task 9402 the primary move's drop (15 -> 16);
     // task 9458 removed the status bar's drop, its funnel drops (16 -> 15);
-    // task 9457 added the item-list primary move's re-arm (6 -> 7).
-    assert(dropCalls == 15 && armCalls == 7,
+    // task 9457 added the item-list primary move's re-arm (6 -> 7);
+    // task 9508 added the retained drop-row replay drop (15 -> 16).
+    assert(dropCalls == 16 && armCalls == 7,
         format("task 4053: wired call sites moved — %s drops and %s arms, "
-               ~ "recorded 15 and 7. With the 2 shutdownDrop mentions (no call) "
+               ~ "recorded 16 and 7. With the 2 shutdownDrop mentions (no call) "
                ~ "these must sum to the ledger's %s.",
                dropCalls, armCalls, total));
     assert(dropCalls + armCalls + 2 == total,
