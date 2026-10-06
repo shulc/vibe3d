@@ -191,11 +191,18 @@ version (unittest) {
         import editmode : EditMode;
         private Mesh _mesh;
         private View _view = new View(0, 0, 1, 1);
-        this(ulong token, bool revertible = true) {
+        this(ulong token, bool revertible = true, bool mergeable = false) {
             super(&_mesh, _view, EditMode.Vertices);
+            mergeable_ = mergeable;
             markSession(token);
             if (revertible) noteUndoRecorded();
         }
+        private bool mergeable_;
+        override CompareResult compareOp(const Command prev) const {
+            return mergeable_ && cast(const _SessionRowCmd) prev !is null
+                ? CompareResult.Compatible : CompareResult.Different;
+        }
+        override bool mergeFrom(Command newer) { return mergeable_; }
         override string name() const { return "test.sessionrow"; }
         override string label() const { return "SessionRow"; }
         protected override bool applyImpl() { return true; }
@@ -243,4 +250,61 @@ unittest { // task 9508 (findings_K-RD rule 2): one undo of a session-reverting 
     foreach (Command c; [cast(Command) r1, new _SessionRowCmd(0, false)]) h.pushEntryForTest(c);
     assert(!h.undo() && h.undoEntries().length == 1 && h.redoEntries().length == 0,
         "a refused revert answers false and leaves no redo");
+}
+
+
+unittest { // task 9508: an in-place coalesce moves history without replacing its row
+    auto h = new CommandHistory();
+    auto row = new _SessionRowCmd(0, true, true);
+    h.record(row);
+    const before = h.generation();
+    h.recordCoalescing(new _SessionRowCmd(0, true, true));
+    assert(h.undoEntries().length == 1 && h.undoEntries()[0].cmd is row,
+        "generation coalesce floor: same row retained");
+    assert(h.generation() > before, "an in-place coalesce advances history generation");
+}
+
+unittest { // task 9508: replacing a re-grade tail is a record too
+    auto h = new CommandHistory();
+    const run = h.currentRunId();
+    h.replaceInSessionTail(new _SessionRowCmd(7), run);
+    const before = h.generation();
+    auto row = new _SessionRowCmd(7);
+    h.replaceInSessionTail(row, run);
+    assert(h.undoEntries().length == 1 && h.undoEntries()[0].cmd is row,
+        "generation re-grade floor: one replacement row");
+    assert(h.generation() > before, "a re-grade replacement advances history generation");
+}
+
+unittest { // task 9508: committing a run by splice bypasses the append recorder
+    auto h = new CommandHistory();
+    const run = h.currentRunId();
+    h.recordInSession(new _SessionRowCmd(7), run);
+    const before = h.generation();
+    auto row = new _SessionRowCmd(7);
+    h.replaceInSessionTailWith(run, row);
+    assert(h.undoEntries().length == 1 && h.undoEntries()[0].cmd is row,
+        "generation splice floor: one committed row");
+    assert(h.generation() > before, "a run splice advances history generation");
+}
+
+unittest { // task 9508: even a refused revert removes its row
+    auto h = new CommandHistory();
+    h.record(new _SessionRowCmd(0, false));
+    const before = h.generation();
+    assert(!h.undo() && h.undoEntries().length == 0, "generation refused-undo floor: row removed");
+    assert(h.generation() > before, "a refused revert that removes a row advances history generation");
+}
+
+unittest { // task 9508: a suspended re-grade can remove the matching tail without appending
+    auto h = new CommandHistory();
+    const run = h.currentRunId();
+    h.replaceInSessionTail(new _SessionRowCmd(7), run);
+    const before = h.generation();
+    {
+        auto guard = h.suspended();
+        h.replaceInSessionTail(new _SessionRowCmd(7), run);
+    }
+    assert(h.undoEntries().length == 0, "generation suspended-tail floor: tail removed");
+    assert(h.generation() > before, "a removed re-grade tail advances history generation");
 }
