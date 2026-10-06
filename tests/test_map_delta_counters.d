@@ -56,7 +56,7 @@
 // through `/api/command`, which edits the primary layer — so no
 // `g_isDocumentMesh` predicate is weakening these zeros.
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, settledChanges;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -67,7 +67,7 @@ void main() {}
 alias BASE = testBaseUrl;
 
 
-JSONValue changes() { return getJson("/api/changes"); }
+JSONValue changes() { return settledChanges(); }
 
 void cmdJ(string id, string paramsJson = "{}") {
     auto j = postJson("/api/command",

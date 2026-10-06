@@ -7,7 +7,7 @@
 // deterministically reverse exactly one face of the default cube, without
 // needing to hand-author a raw vertex/face JSON fixture.
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, settledChanges;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -50,7 +50,7 @@ long undoCount() {
 }
 
 JSONValue getChanges() {
-    return parseJSON(cast(string) get(baseUrl ~ "/api/changes"));
+    return settledChanges();
 }
 
 void selectFaces(int[] idx) {

@@ -32,13 +32,11 @@
 // bug that restored the wrong member or dropped the primary would surface as a
 // broken invariant rather than a wrong vertex position.
 
-import http_client : testBaseUrl, getJson;
+import http_client : testBaseUrl, getJson, settledChanges;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
-import core.thread : Thread;
-import core.time   : dur;
 
 void main() {}
 
@@ -149,8 +147,11 @@ struct Changes {
     string lastCurrentType;
 }
 
+// Fenced (`settledChanges`): the document-level channels (layer kinds, item
+// selection, current type) drain at the flush of the frame that served the
+// command, AFTER its HTTP answer, so every snapshot waits for that frame.
 Changes changes() {
-    auto j = getJson("/api/changes");
+    auto j = settledChanges();
     Changes c;
     c.flushCount          = j["flushCount"].integer;
     c.deliveryCount       = j["deliveryCount"].integer;
@@ -178,85 +179,25 @@ void assertMonotonic(Changes before, Changes after, string at) {
     assert(after.totalLayerReordered >= before.totalLayerReordered, "totalLayerReordered regressed at: " ~ at);
 }
 
-// Run `op`, then poll until `pick(now) > pick(before)` AND a publication
-// advanced. Asserts coherence and returns the post-op snapshot.
+// Run `op`, then assert `pick` advanced AND a publication happened, and that
+// the counters stayed coherent; returns the post-op snapshot. Both reads are
+// fenced, so the step's publication has landed by the second one.
 //
-// TASK 1906 STAGE 3 — the second conjunct was `flushCount` and had to be
-// RE-READ, not dropped. It said "a delivery window elapsed", and the per-frame
-// flush was the only witness for that. Since stage 3 a MESH edit no longer
-// moves `flushCount` (the flush carries only the document-level channels), so
-// the window's witness is `flushCount + deliveryCount` — either channel moving
-// means the bus did work for this step, and the picked counter says WHICH.
+// TASK 1906 STAGE 3 — the publication witness is `flushCount + deliveryCount`:
+// a MESH edit no longer moves `flushCount` (the flush carries only the
+// document-level channels), so either channel moving means the bus did work
+// for this step, and the picked counter says WHICH.
 Changes expectPublish(string label, long delegate(Changes) pick, void delegate() op) {
     auto before = changes();
     op();
-    Changes now;
-    bool advanced = false;
-    for (int i = 0; i < 40; ++i) {
-        now = changes();
-        if (pick(now) > pick(before)
-            && (now.flushCount + now.deliveryCount)
-                 > (before.flushCount + before.deliveryCount)) {
-            advanced = true; break;
-        }
-        Thread.sleep(dur!"msecs"(25));
-    }
-    assert(advanced,
+    auto now = changes();
+    assert(pick(now) > pick(before)
+        && (now.flushCount + now.deliveryCount)
+             > (before.flushCount + before.deliveryCount),
         "change-bus incoherent at `" ~ label ~ "`: expected counter did not advance "
         ~ "after the publishing step (missed publisher?)");
     assertMonotonic(before, now, label);
     return now;
-}
-
-// Drain any deferred change-bus flush that is still in-flight before taking a
-// counter snapshot. The DOCUMENT-level channels (layer kinds, item selection,
-// current type) still deliver once per frame at source/app.d's flush site;
-// cmd() returns on HTTP status:ok BEFORE that frame's flush, so snapshots taken
-// immediately after a cmd() may precede delivery. It keys on `flushCount`
-// deliberately and that is still right after task 1906 stage 3: the MESH
-// channel is synchronous now and has nothing in flight to wait for, so an
-// early "already quiescent" here is the truth rather than a miss.
-//
-// Discipline (mirrors expectPublish): capture the current flushCount, then poll
-// until it advances AND a subsequent read is stable (two equal flushCounts ~25ms
-// apart). If nothing is pending the flushCount may never advance — the timeout
-// guard returns once the two-read quiescence is confirmed without an advance.
-//
-// Early-out (idle-bus fast path): two consecutive reads ~25ms apart with the
-// same flushCount means at least one full frame window elapsed with no delivery.
-// The bus was already quiescent on entry — nothing is pending — so we return
-// immediately without burning ~1s in Phase 1. The advance-then-quiescent path
-// below is only entered when Phase 0 sees the flushCount move.
-void settle() {
-    auto base = changes();
-    // Phase 0: idle-bus fast path — one 25ms sleep then re-read.
-    // If flushCount hasn't moved in that window (~one frame), the bus was
-    // already quiescent on entry and there is nothing pending to drain.
-    Thread.sleep(dur!"msecs"(25));
-    auto probe = changes();
-    if (probe.flushCount == base.flushCount) return;  // nothing pending, return immediately
-
-    // Something was delivered during Phase 0 (probe.flushCount advanced).
-    // Phase 1: continue waiting for any further in-flight flushes to land
-    // (or time out after ~1000ms from here).
-    long prevFlush = probe.flushCount;
-    for (int i = 0; i < 40; ++i) {
-        Thread.sleep(dur!"msecs"(25));
-        auto now = changes();
-        if (now.flushCount > prevFlush) prevFlush = now.flushCount;
-        // no early-exit here — let Phase 2 confirm quiescence
-        else break;  // no new flush in this tick, move to quiescence check
-    }
-    // Phase 2: confirm quiescence — two consecutive reads that agree on flushCount.
-    // Uses the same 40-iteration budget as Phase 1 so trailing flushes under
-    // -j8 scheduler pressure cannot slip past the quiescence window.
-    for (int i = 0; i < 40; ++i) {
-        Thread.sleep(dur!"msecs"(25));
-        auto now = changes();
-        if (now.flushCount == prevFlush) return;  // stable
-        prevFlush = now.flushCount;
-    }
-    // Still not quiescent after the extra window — accept and move on.
 }
 
 void moveVertexActive(double[3] from, double[3] to) {
@@ -343,7 +284,6 @@ unittest {
     cmd("layer.select index:1 mode:add");   // A,B selected; A heads the queue
     cmd("layer.select index:2 mode:add");   // A,B,C selected; A still heads it
     assertPrimaryInvariant("after re-add B,C");
-    settle();                               // drain ActiveChanged from the two adds above
     auto beforeBg = changes();
     expectPublish("background B (remove)", c => c.totalSelItem,
         () { cmd("layer.select index:1 mode:remove"); });
@@ -359,7 +299,6 @@ unittest {
     assertPrimaryInvariant("after background B");
 
     // --- Phase 3: reorder + delete + delete-undo, invariant after each. ---
-    settle();                               // drain any pending flush before reorder snapshot
     auto beforeReorder = changes();
     cmd("layer.reorder from:0 to:2");        // move A to the end
     auto afterReorder = changes();
@@ -500,9 +439,6 @@ unittest { // Exact selected-set round-trip: delta-mode selects + layer.delete u
     //   [5] sel-remove-C(UI)   → A only  ← HEAD
     //
     // Strict LIFO reverts exactly one of these records per press.
-
-    // Drain any pending flush before starting the undo walk.
-    settle();
 
     // Undo 1 — reverts sel-remove-C: A+C selected.
     {

@@ -19,7 +19,7 @@
 
 import slice_leak_helpers;
 import slice_grid_helpers;
-import http_client : getJson;
+import http_client : getJson, settledChanges;
 import std.json : JSONType;
 import std.format : format;
 import std.stdio : writeln;
@@ -375,11 +375,11 @@ void symOwnCell(string cell, void delegate() taps, long wantV, long wantE,
     clickXZ(1.5, 0, [1, 0, 0], [2, 0, 0], cell ~ " P1");
     clickXZ(1.5, 1, [1, 0, 1], [2, 0, 1], cell ~ " P2");
     assert(slMesh().verts == 29, cell ~ ": the prologue is not the 29 v mirrored chord");
-    const missed0 = getJson("/api/changes")["missedPublishers"].integer;
+    const missed0 = settledChanges()["missedPublishers"].integer;
     taps();
     slLine("tool.set mesh.edgeSliceTool off");
     // A split-only step writes through its own publisher (the bus contract).
-    const missed = getJson("/api/changes")["missedPublishers"].integer - missed0;
+    const missed = settledChanges()["missedPublishers"].integer - missed0;
     const mesh = slMesh();
     const ec = edgeCounts();
     const born = verticesFrom(GRID_VERTS);

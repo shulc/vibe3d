@@ -38,7 +38,7 @@
 //   - scene.reset on a mixed document collapses to exactly one mesh layer.
 //   - no missed-publisher warning across a mixed-document sequence.
 
-import http_client : testBaseUrl, getJson;
+import http_client : testBaseUrl, getJson, settledChanges;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -98,7 +98,7 @@ void redoOk(string why) {
 
 JSONValue getLayers()    { return getJson("/api/layers"); }
 JSONValue getSelection() { return getJson("/api/selection"); }
-JSONValue getChanges()   { return getJson("/api/changes"); }
+JSONValue getChanges()   { return settledChanges(); }
 
 size_t layerCount()  { return getLayers()["layers"].array.length; }
 size_t activeLayer() { return cast(size_t)getLayers()["active"].integer; }

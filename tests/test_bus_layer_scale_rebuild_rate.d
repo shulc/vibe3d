@@ -73,7 +73,7 @@
 // the cliff", not "what does the geometry consumer specifically pay" — that
 // remains a named non-goal (a hover/snap sweep over background layers would
 // need its own stand and its own card).
-import http_client : testBaseUrl, getJson, postJson, quiesce;
+import http_client : testBaseUrl, getJson, postJson, quiesce, settledChanges;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -97,10 +97,10 @@ void resetApp() {
 }
 void settle() { quiesce(); }
 
-long bgGpuUploads()      { return getJson("/api/changes")["bgGpuUploads"].integer; }
-int  dirtySlotCeiling()  { return cast(int)getJson("/api/changes")["meshDirtySlotCeiling"].integer; }
-int  birthSlotCeiling()  { return cast(int)getJson("/api/changes")["meshBirthSlotCeiling"].integer; }
-long birthsRecorded()    { return getJson("/api/changes")["meshBirthsRecorded"].integer; }
+long bgGpuUploads()      { return settledChanges()["bgGpuUploads"].integer; }
+int  dirtySlotCeiling()  { return cast(int)settledChanges()["meshDirtySlotCeiling"].integer; }
+int  birthSlotCeiling()  { return cast(int)settledChanges()["meshBirthSlotCeiling"].integer; }
+long birthsRecorded()    { return settledChanges()["meshBirthsRecorded"].integer; }
 long framesNow()         { return getJson("/api/frames/counts")["frames"].integer; }
 
 /// One `layer.duplicate` (new layer becomes primary, previous primary is

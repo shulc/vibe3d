@@ -9,7 +9,7 @@
 // Both pass the loader's entry-count check but are caught by cleanDegenerateFaces.
 // Literal 2-vertex faces are exercised only in the mesh.d dub unittests.
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, settledChanges;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -55,7 +55,7 @@ long undoCount() {
 }
 
 JSONValue getChanges() {
-    return parseJSON(get(testBaseUrl() ~ "/api/changes"));
+    return settledChanges();
 }
 
 // Required before the seam block below, which uses a polygon command as its

@@ -28,7 +28,7 @@
 //   Vertex=1, Edge=2, Face=4.
 
 import http_client : testBaseUrl, getJson, postJson, frameFence,
-    waitPlaybackProcessed;
+    settledChanges, waitPlaybackProcessed;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -95,8 +95,10 @@ struct Changes {
     ulong missedPublishers;              // task 0462 — bus-contract violations
 }
 
+// Every read is fenced (`settledChanges`): a read is final for every request
+// answered before it, mesh delivery and the frame flush alike.
 Changes readChanges() {
-    auto j = getJson("/api/changes");
+    auto j = settledChanges();
     Changes c;
     c.flushCount        = j["flushCount"].integer;
     c.deliveryCount     = j["deliveryCount"].integer;
@@ -133,25 +135,6 @@ bool meshCountersUnchanged(Changes before, Changes after) {
         && after.totalMaterial == before.totalMaterial;
 }
 
-// Wait until at least one more MESH DELIVERY has been made since `before`.
-//
-// TASK 1906 STAGE 3 — this settled on `flushCount` and could not any more: a
-// mesh edit does not move that counter, so every call here would have spun the
-// full 3 s and returned a reading nobody had waited for. `deliveryCount` is the
-// mesh channel's own counter, and since delivery is SYNCHRONOUS with the edit
-// the wait is now usually one poll long rather than one frame.
-//
-// A frame FENCE, not a timeout. Mesh delivery is
-// synchronous with the request that caused it, and the document-level
-// accumulators (layer kinds, current type) drain at the flush of the frame that
-// served it; one completed frame after the last answered request therefore
-// makes the read final. The old loop waited the full 3 s whenever nothing was
-// delivered, which is exactly the case the negative rows below assert.
-Changes settleAfter(Changes before) {
-    frameFence();
-    return readChanges();
-}
-
 // Replay an event log given its FILE PATH (reads the contents and posts them).
 void playAndWait(string logPath) {
     auto r = postJson("/api/play-events", readText(logPath));
@@ -164,10 +147,10 @@ void playAndWait(string logPath) {
 // mesh.move_vertex → Position published, no Geometry, no Marks.
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
-    auto before = settleAfter(readChanges());   // drain the reset's own flush
+    auto before = readChanges();   // drain the reset's own flush
 
     cmd("mesh.move_vertex from:{0.5,0.5,0.5} to:{0.75,0.6,0.55}");
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     assert(after.totalPosition > before.totalPosition,
         "move_vertex must publish Position");
@@ -184,10 +167,10 @@ unittest {
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("history.clear");
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     cmd("mesh.subdivide");
-    auto afterSub = settleAfter(before);
+    auto afterSub = readChanges();
     assert(afterSub.totalPoints   > before.totalPoints,
         "subdivide must publish Points");
     assert(afterSub.totalPolygons > before.totalPolygons,
@@ -195,14 +178,14 @@ unittest {
 
     // Undo → the class is re-published (snapshot restore emits All ⊇ Geometry).
     postJson("/api/command", commandBody("history.undo"));
-    auto afterUndo = settleAfter(afterSub);
+    auto afterUndo = readChanges();
     assert(afterUndo.totalPoints   > afterSub.totalPoints
         && afterUndo.totalPolygons > afterSub.totalPolygons,
         "undo of subdivide must re-publish Points|Polygons");
 
     // Redo → same.
     postJson("/api/command", commandBody("history.redo"));
-    auto afterRedo = settleAfter(afterUndo);
+    auto afterRedo = readChanges();
     assert(afterRedo.totalPoints   > afterUndo.totalPoints
         && afterRedo.totalPolygons > afterUndo.totalPolygons,
         "redo of subdivide must re-publish Points|Polygons");
@@ -211,10 +194,10 @@ unittest {
 // /api/reset → All bits (Position|Points|Polygons|Marks|Material).
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));          // get into a known state
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));          // the reset under test
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     assert((after.lastDeliveryFlags & ALLBITS) == ALLBITS,
         "reset must publish the All mask; got " ~ to!string(after.lastDeliveryFlags));
@@ -240,7 +223,7 @@ unittest {
     cmd("tool.set move on");
     cmd("actr.local");
 
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     playAndWait("tests/events/acen_local_translate_drag.log");
 
@@ -296,9 +279,9 @@ unittest {
     cmd("tool.set move on");
     cmd("actr.local");
 
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
     playAndWait("tests/events/acen_local_translate_drag.log");
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     assert(after.totalPosition > before.totalPosition,
         "drag under an active subpatch preview must still publish Position");
@@ -329,10 +312,10 @@ void selectVia(string mode, int[] indices) {
 // face selection).
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     playAndWait("tests/events/selection_points.log");
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     assert(after.totalSelVertex > before.totalSelVertex,
         "interactive points-mode select must publish the Vertex domain");
@@ -347,17 +330,17 @@ unittest {
 // mode routes through its own setXSelectedFrom, which publishes only its bit.
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     selectVia("polygons", [0, 1, 2]);
-    auto afterFace = settleAfter(before);
+    auto afterFace = readChanges();
     assert(afterFace.totalSelFace > before.totalSelFace,
         "polygon select must publish the Face domain");
     assert(afterFace.totalSelVertex == before.totalSelVertex,
         "polygon select must NOT publish the Vertex domain");
 
     selectVia("edges", [0, 1]);
-    auto afterEdge = settleAfter(afterFace);
+    auto afterEdge = readChanges();
     assert(afterEdge.totalSelEdge > afterFace.totalSelEdge,
         "edge select must publish the Edge domain");
 }
@@ -370,10 +353,10 @@ unittest {
     cmd("history.clear");
     cmd("select.typeFrom edge");
     selectVia("edges", [0]);                // seed one edge
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     cmd("select.loop");                     // grow the seed into a full loop
-    auto after = settleAfter(before);
+    auto after = readChanges();
     assert(after.totalSelEdge > before.totalSelEdge,
         "select.loop in edge mode must publish the Edge domain");
 }
@@ -388,12 +371,12 @@ unittest {
     playAndWait("tests/events/selection_points.log");
     // A second, ADDING selection so the undo actually changes the marks back
     // (a no-op restore would be compare-before-set away to nothing).
-    auto mid = settleAfter(readChanges());
+    auto mid = readChanges();
     playAndWait("tests/events/selection_add.log");
-    auto before = settleAfter(mid);
+    auto before = readChanges();
 
     postJson("/api/command", commandBody("history.undo"));
-    auto after = settleAfter(before);
+    auto after = readChanges();
     assert(after.totalSelVertex > before.totalSelVertex,
         "undo of a vertex selection must re-publish the Vertex domain");
 }
@@ -410,7 +393,7 @@ unittest {
     // construed as changing — then prove the mode switch alone publishes only
     // the current-type signal.
     selectVia("polygons", [0]);
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     // Three switches; each lands on a type different from the prior current, so
     // each FLIPS the front and ticks currentTypeChanged exactly once.
@@ -418,8 +401,8 @@ unittest {
     cmd("select.typeFrom vertex");
     cmd("select.typeFrom polygon");
     // A type flip now accumulates a current-type change, so the per-frame flush
-    // DOES advance (unlike the pre-Stage-1 inert no-op). settleAfter is valid.
-    auto after = settleAfter(before);
+    // DOES advance (unlike the pre-Stage-1 inert no-op). The settled read is valid.
+    auto after = readChanges();
 
     // (1) UNCHANGED contract: no selection domain, no mesh change.
     assert(after.totalSelVertex == before.totalSelVertex
@@ -447,12 +430,11 @@ unittest {
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");            // make polygon current
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     cmd("select.typeFrom polygon");            // already current → no flip
     cmd("select.typeFrom polygon");
-    frameFence();                              // nothing accumulates → no new flush
-    auto after = readChanges();
+    auto after = readChanges();                // nothing accumulates → no new flush
 
     assert(after.currentTypeChanged == before.currentTypeChanged,
         "a switch to the already-current type must NOT tick currentTypeChanged");
@@ -469,10 +451,10 @@ unittest {
 // switch hook emits ActiveChanged in the same frame).
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     cmd("layer.add name:B");
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     assert(after.totalLayerAdded == before.totalLayerAdded + 1,
         "layer.add must bump Added exactly once");
@@ -490,10 +472,10 @@ unittest {
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("layer.add name:B");                 // B (index 1) is now active
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     cmd("layer.delete");                      // delete the active layer (B)
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     assert(after.totalLayerRemoved == before.totalLayerRemoved + 1,
         "delete of active layer must bump Removed");
@@ -508,10 +490,10 @@ unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("layer.add name:B");                 // index 1, active
     cmd("layer.add name:C");                 // index 2, active
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     cmd("layer.delete index:1");              // delete B (non-active)
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     assert(after.totalLayerRemoved == before.totalLayerRemoved + 1,
         "delete of non-active layer must bump Removed");
@@ -526,10 +508,10 @@ unittest {
     cmd("layer.add name:B");                 // index 1
     cmd("layer.add name:C");                 // index 2, active
     cmd("layer.select index:0");             // A active again
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     cmd("layer.reorder from:2 to:0");         // move C to front; A stays active
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     assert(after.totalLayerReordered == before.totalLayerReordered + 1,
         "reorder must bump Reordered");
@@ -544,10 +526,10 @@ unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("layer.add name:B");                 // B active
     cmd("layer.select index:0");             // A active
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     cmd("layer.select index:1");             // switch to B
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     assert(after.totalLayerActive == before.totalLayerActive + 1,
         "select to a different layer must bump Active");
@@ -563,10 +545,10 @@ unittest {
 // pure document-state change touching no mesh-pending state).
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     cmd("layer.rename name:Renamed");         // rename the active layer
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     assert(after.totalLayerRenamed == before.totalLayerRenamed + 1,
         "rename must bump Renamed");
@@ -579,10 +561,10 @@ unittest {
 // layer.setVisible bumps VisibilityChanged, no mesh counters.
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     cmd("layer.setVisible value:false");
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     assert(after.totalLayerVisible == before.totalLayerVisible + 1,
         "setVisible must bump VisibilityChanged");
@@ -606,10 +588,10 @@ unittest {
     // the selection.
     cmd("layer.select index:0");             // A alone, A is the target
     cmd("layer.select index:1 mode:add");    // + B selected, A still the target
-    auto before = settleAfter(readChanges());
+    auto before = readChanges();
 
     cmd("layer.select index:1 mode:remove"); // deselect B
-    auto after = settleAfter(before);
+    auto after = readChanges();
 
     // No LAYER-channel counter moves — backgrounding is not a layer-structural
     // change. (Renamed/Visible/Active/Added/Removed/Reordered all flat.)

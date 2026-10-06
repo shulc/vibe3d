@@ -244,6 +244,18 @@ void frameFence(string baseUrl = null, uint frames = 1) {
     }
 }
 
+/// `/api/changes` read after a frame fence: the ONE way a suite driver reads a
+/// frame-published counter (the document-level flush channels, the frame
+/// loop's missed-publisher check, the draw's background uploads). The route is
+/// answered on the HTTP thread, and the flush of the frame that served the
+/// last command runs after that answer, so a bare read can still miss it — or,
+/// as a baseline, count it inside the next window (task 9521). Enforced by
+/// `tests/unit/frame_fence_census_test.d` (task 9526).
+JSONValue settledChanges(string baseUrl = null) {
+    frameFence(baseUrl);
+    return getJson("/api/changes", baseUrl);
+}
+
 /// The PACE meta line: the player delivers one
 /// distinct `t` per frame, in order, instead of waiting the log's wall-clock
 /// schedule. For a synthetic test log whose gaps mean "a frame between these".

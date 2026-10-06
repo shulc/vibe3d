@@ -9,7 +9,7 @@
 
 import core.thread : Thread;
 import core.time : dur;
-import http_client : getJson, postRaw;
+import http_client : getJson, postRaw, settledChanges;
 import http_command_helpers : commandBody;
 import std.format : format;
 import std.json : JSONValue, parseJSON;
@@ -234,10 +234,10 @@ unittest { // S5/P3: imagePlane.add must clear the live morph binding
 
 unittest { // S6: one mesh means no primary transition and no hook delivery
     resetCube();
-    const before = getJson("/api/changes")["totalLayerActive"].integer;
+    const before = settledChanges()["totalLayerActive"].integer;
     command("imagePlane.add");
     settle();
-    const after = getJson("/api/changes")["totalLayerActive"].integer;
+    const after = settledChanges()["totalLayerActive"].integer;
     assert(primaryIndices() == [0] && model()["vertices"].array.length == 8,
         "6355 S6 floor: a single-mesh document must retain cube A as primary");
     assert(after == before,

@@ -5,7 +5,7 @@
 // Subdivide twice:    98v / 192e / 96f (all quads)
 // Triple (all):       98v / ??? e / 192f (all tris)
 
-import http_client : testBaseUrl, postRaw;
+import http_client : testBaseUrl, postRaw, settledChanges;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -43,7 +43,7 @@ string postCommandRaw(string body) { return postRaw("/api/command", body); }
 
 JSONValue postUndo() { return postJ("/api/command", commandBody("history.undo")); }
 JSONValue getModel()  { return getJ("/api/model"); }
-JSONValue getChanges() { return getJ("/api/changes"); }
+JSONValue getChanges() { return settledChanges(); }
 
 // Switch to Polygons mode (required for mesh.subdivide, mesh.triple).
 void setPolygonMode() {

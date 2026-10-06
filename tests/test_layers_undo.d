@@ -167,13 +167,12 @@ void assertNoLockout(string at) {
 // ---------------------------------------------------------------------------
 
 struct Changes {
-    long flushCount, deliveryCount, totalPosition, totalPoints, totalPolygons;
+    long deliveryCount, totalPosition, totalPoints, totalPolygons;
 }
 
 Changes changes() {
     auto j = getJson("/api/changes");
     Changes c;
-    c.flushCount    = j["flushCount"].integer;
     c.deliveryCount = j["deliveryCount"].integer;
     c.totalPosition = j["totalPosition"].integer;
     c.totalPoints   = j["totalPoints"].integer;

@@ -18,7 +18,7 @@
 // Counters are read as DELTAS across a step (the runner resets app STATE, not
 // the bus, between test binaries — snapshot-before / read-after and diff).
 
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, settledChanges;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -29,8 +29,6 @@ import std.array     : join, array;
 import std.file      : exists, remove, tempDir;
 import std.path      : buildPath;
 import std.process   : thisProcessID;
-import core.thread : Thread;
-import core.time   : dur;
 
 void main() {}
 
@@ -61,19 +59,9 @@ Sel readSel() {
     return s;
 }
 
+// Fenced: a flip is counted at the frame flush, after the command's HTTP answer.
 ulong currentTypeChanged() {
-    return getJson("/api/changes")["currentTypeChanged"].integer;
-}
-
-// Wait until the per-frame flush has advanced currentTypeChanged past `from`
-// (a flip was delivered), or time out. Returns the new value.
-ulong waitTypeChangedPast(ulong from) {
-    foreach (i; 0 .. 60) {                 // up to ~3s
-        Thread.sleep(dur!"msecs"(50));
-        auto now = currentTypeChanged();
-        if (now > from) return now;
-    }
-    return currentTypeChanged();
+    return settledChanges()["currentTypeChanged"].integer;
 }
 
 void selectVia(string mode, int[] indices) {
@@ -212,11 +200,9 @@ unittest {
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom vertex");             // settle to a known current type
-    auto base = waitTypeChangedPast(0);        // ensure the reset/seed flushed
-
     auto before = currentTypeChanged();
     cmd("select.typeFrom polygon");            // vertex → polygon: a flip
-    auto after = waitTypeChangedPast(before);
+    auto after = currentTypeChanged();
     assert(after == before + 1,
         "one flip ticks currentTypeChanged once; got +"
         ~ to!string(after - before));
@@ -226,12 +212,10 @@ unittest {
 unittest {
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     cmd("select.typeFrom polygon");
-    waitTypeChangedPast(0);
     auto before = currentTypeChanged();
 
     cmd("select.typeFrom polygon");            // already current → no flip
-    cmd("select.typeFrom polygon");
-    Thread.sleep(dur!"msecs"(300));            // nothing accumulates
+    cmd("select.typeFrom polygon");            // nothing accumulates
     auto after = currentTypeChanged();
     assert(after == before,
         "a redundant same-type switch must NOT tick currentTypeChanged; got +"

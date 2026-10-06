@@ -15,7 +15,7 @@
 // T-junction backstop (HTTP): no two vertices share the exact same position.
 // Authoritative T-junction check (index-share) is in mesh.d unittest{}.
 
-import http_client : testBaseUrl;
+import http_client : testBaseUrl, settledChanges;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -268,7 +268,7 @@ unittest { // julienne Y×X 2×2: verify face count growth
 // /api/changes.
 // ---------------------------------------------------------------------------
 JSONValue getChanges() {
-    return parseJSON(cast(string)get(BASE ~ "/api/changes"));
+    return settledChanges();
 }
 
 unittest { // both slice commands run every cut of the ladder inside ONE batch

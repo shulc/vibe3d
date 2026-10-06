@@ -33,7 +33,7 @@
 //                     — but it is NOT evidence that this stage moved anything,
 //                     and quoting it as such would be a check that cannot come
 //                     out differently.
-import http_client : testBaseUrl, getJson, postJson;
+import http_client : testBaseUrl, getJson, postJson, settledChanges;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
@@ -52,7 +52,7 @@ struct Seam {
 }
 
 Seam seam() {
-    auto j = getJson("/api/changes");
+    auto j = settledChanges();
     Seam s;
     s.batchLeaks               = j["batchLeaks"].integer;
     s.nestedBatchOpens         = j["nestedBatchOpens"].integer;
