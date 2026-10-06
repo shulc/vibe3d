@@ -254,6 +254,18 @@ unittest {
         ++n;
     }
     assert(n == 3, "guide-mask: all three axes exercised");
+    size_t changed;
+    foreach (axis; 0 .. 3) foreach (channel; 0 .. 3) if (channel != axis) {
+        const input = Vec3(0.4f, 0.3f, 0.2f);
+        Vec3 resolved = input;
+        if (channel == 0) resolved.x += 0.1f;
+        else if (channel == 1) resolved.y += 0.1f;
+        else resolved.z += 0.1f;
+        assert(surfaceComponentMask(input, resolved, axis) == 7,
+               "guide-mask: every changed represented channel accepts the whole point");
+        ++changed;
+    }
+    assert(changed == 6, "guide-mask: six represented-channel contrasts exercised");
 }
 
 unittest {
