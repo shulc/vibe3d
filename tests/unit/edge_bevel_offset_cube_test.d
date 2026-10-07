@@ -8,7 +8,7 @@ import std.format : format;
 
 unittest {
     auto fixture=parseJSON(readText("tests/fixtures/edge_bevel/offset_cube.json"));
-    assert(fixture["cases"].array.length==4,"OFFSET CUBE: four independent native captures");
+    assert(fixture["cases"].array.length==6,"OFFSET CUBE: six independent native captures");
     foreach(cell;fixture["cases"].array) {
         Mesh m;
         foreach(row;fixture["source"]["vertices"].array)

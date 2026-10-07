@@ -678,6 +678,294 @@
       },
       "raw_artifact": "cube-width-positive.json",
       "raw_sha256": "6a9a1e69c68cea3e5846f75909154f24f1122c24d9c9758c66d4491bf159fa4d"
+    },
+    {
+      "name": "offset_only_user",
+      "width": 0.0,
+      "roundLevel": 0,
+      "widthMode": false,
+      "offset": 0.31838387250900285,
+      "expected": {
+        "vertices": [
+          [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          [
+            0.5,
+            0.5,
+            0.5
+          ],
+          [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          [
+            0.5,
+            0.18161612749099731,
+            0.5
+          ],
+          [
+            -0.5,
+            0.18161612749099731,
+            0.5
+          ],
+          [
+            -0.5,
+            0.5,
+            0.18161612749099731
+          ],
+          [
+            0.5,
+            0.5,
+            0.18161612749099731
+          ]
+        ],
+        "faces": [
+          [
+            0,
+            3,
+            2,
+            1
+          ],
+          [
+            10,
+            11,
+            2,
+            3
+          ],
+          [
+            2,
+            11,
+            8,
+            5,
+            1
+          ],
+          [
+            4,
+            9,
+            10,
+            3,
+            0
+          ],
+          [
+            5,
+            8,
+            9,
+            4
+          ],
+          [
+            0,
+            1,
+            5,
+            4
+          ],
+          [
+            6,
+            7,
+            9,
+            8
+          ],
+          [
+            9,
+            7,
+            10
+          ],
+          [
+            11,
+            6,
+            8
+          ],
+          [
+            7,
+            6,
+            11,
+            10
+          ]
+        ],
+        "edgeCount": 20
+      },
+      "provenance": {
+        "schema": 1,
+        "source": "live-capture",
+        "reference_token": "ref-editor@11.2v3",
+        "method": "debug-live",
+        "captured_utc": "2026-10-07",
+        "raw_artifact": "cube-zero-width-user.json",
+        "raw_sha256": "5bbb97b3130c8dbb40b8047b61c2016f7ac0899aa03beaee1e7938c039f11eaf",
+        "comparison": "positions and oriented rings modulo point renumbering, cyclic start and face permutation"
+      }
+    },
+    {
+      "name": "offset_only_small",
+      "width": 0.0,
+      "roundLevel": 0,
+      "widthMode": false,
+      "offset": 0.03,
+      "expected": {
+        "vertices": [
+          [
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          [
+            0.5,
+            -0.5,
+            -0.5
+          ],
+          [
+            0.5,
+            0.5,
+            -0.5
+          ],
+          [
+            -0.5,
+            0.5,
+            -0.5
+          ],
+          [
+            -0.5,
+            -0.5,
+            0.5
+          ],
+          [
+            0.5,
+            -0.5,
+            0.5
+          ],
+          [
+            0.5,
+            0.5,
+            0.5
+          ],
+          [
+            -0.5,
+            0.5,
+            0.5
+          ],
+          [
+            0.5,
+            0.4699999988079071,
+            0.5
+          ],
+          [
+            -0.5,
+            0.4699999988079071,
+            0.5
+          ],
+          [
+            -0.5,
+            0.5,
+            0.4699999988079071
+          ],
+          [
+            0.5,
+            0.5,
+            0.4699999988079071
+          ]
+        ],
+        "faces": [
+          [
+            0,
+            3,
+            2,
+            1
+          ],
+          [
+            10,
+            11,
+            2,
+            3
+          ],
+          [
+            2,
+            11,
+            8,
+            5,
+            1
+          ],
+          [
+            4,
+            9,
+            10,
+            3,
+            0
+          ],
+          [
+            5,
+            8,
+            9,
+            4
+          ],
+          [
+            0,
+            1,
+            5,
+            4
+          ],
+          [
+            6,
+            7,
+            9,
+            8
+          ],
+          [
+            9,
+            7,
+            10
+          ],
+          [
+            11,
+            6,
+            8
+          ],
+          [
+            7,
+            6,
+            11,
+            10
+          ]
+        ],
+        "edgeCount": 20
+      },
+      "provenance": {
+        "schema": 1,
+        "source": "live-capture",
+        "reference_token": "ref-editor@11.2v3",
+        "method": "debug-live",
+        "captured_utc": "2026-10-07",
+        "raw_artifact": "cube-zero-width-small.json",
+        "raw_sha256": "1a2e454c67b7096cae7bb4f331cd85c4bbcbe4336d7afe636d8eea3950775a46",
+        "comparison": "positions and oriented rings modulo point renumbering, cyclic start and face permutation"
+      }
     }
   ],
   "parameters": {
