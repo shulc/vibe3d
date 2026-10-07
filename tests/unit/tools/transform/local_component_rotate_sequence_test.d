@@ -159,6 +159,16 @@ private class Rig {
         }
         return expected;
     }
+    Vec3[] numericFold(const(Vec3)[] base, Vec3 degrees, AxisPacket ap, ActionCenterPacket cp) {
+        Vec3[] expected=base.dup;
+        foreach(vi,c;cp.clusterOf) if(c>=0) {
+            auto m=matMul4(pivotRotationMatrix(cp.clusterCenters[c],ap.clusterFwd[c],cast(float)(degrees.z*PI/180)),
+                matMul4(pivotRotationMatrix(cp.clusterCenters[c],ap.clusterUp[c],cast(float)(degrees.y*PI/180)),
+                    pivotRotationMatrix(cp.clusterCenters[c],ap.clusterRight[c],cast(float)(degrees.x*PI/180))));
+            expected[vi]=applyAffine(m,base[vi]);
+        }
+        return expected;
+    }
     void vertices(const(Vec3)[] expected,string label) {
         assert(expected.length==162,"full construction output population");
         foreach(vi,v;expected) near(mp.vertices[vi],v,label);
@@ -342,7 +352,7 @@ unittest {
             foreach(term;0..7) {
                 auto changed=image;
                 if(term==0) changed.itemTargets=null;
-                if(term==1) {changed.itemTargets=image.itemTargets.dup;changed.itemTargets[0]=new Layer;}
+                if(term==1) {changed.itemTargets=image.itemTargets.dup;auto foreign=new Layer;foreign.xform=live;changed.itemTargets[0]=foreign;}
                 if(term==2) {changed.itemTargets=image.itemTargets.dup;changed.itemTargets[0]=null;}
                 if(term==3) {changed.expectedItemXforms=image.expectedItemXforms.dup;changed.expectedItemXforms[0].rot.x+=1;}
                 if(term==4) changed.expectedItemXforms=image.expectedItemXforms.dup~live;
@@ -394,23 +404,26 @@ unittest {
             auto r=new Rig(fixture,id);auto base=r.mp.vertices.dup;
             auto cp=*r.stack.get!ActionCenterPacket();auto ap=*r.stack.get!AxisPacket();
             auto px=r.press(0);r.sample(0,-18);auto display=r.tool.publishedRotate();
-            auto channels=parseJSON("{\"TX\":0}");injectParamsInto(r.tool.params(),channels);
+            auto channels=parseJSON("{\"TX\":0.037,\"TY\":0,\"TZ\":0}");injectParamsInto(r.tool.params(),channels);
             r.tool.reEvaluate(ParameterChangeBatch(ParameterChangeSource.InteractiveValue,["TX"]));
-            r.vertices(r.folded(base,0,-18,ap,cp),"Move-only batch retains held local rotation");
+            assert(r.tool.publishedTranslate()==Vec3(.037f,0,0),"Move-only batch retains nonzero authored Move");
+            auto expected=r.folded(base,0,-18,ap,cp);
+            if(id=="xfrm.transform") foreach(vi,c;cp.clusterOf) if(c>=0) expected[vi]=expected[vi]+ap.clusterRight[c]*.037f;
+            r.vertices(expected,"Move-only batch retains held local rotation");
             assert(r.tool.publishedRotate()==display,"Move-only batch preserves world display");r.release(px);
         });
         receipt("legacy-numeric",{
             auto r=new Rig(fixture,id);auto base=r.mp.vertices.dup;
             auto cp=*r.stack.get!ActionCenterPacket();auto ap=*r.stack.get!AxisPacket();
-            r.tool.applyRotateAbsoluteFromRun(Vec3(cast(float)(-18*PI/180),0,0));
-            r.vertices(r.folded(base,0,-18,ap,cp),"legacy numeric companion");
+            r.tool.applyRotateAbsoluteFromRun(Vec3(cast(float)(7*PI/180),cast(float)(-11*PI/180),cast(float)(13*PI/180)));
+            r.vertices(r.numericFold(base,Vec3(7,-11,13),ap,cp),"legacy full-vector numeric companion");
         });
         receipt("batch-numeric",{
             auto r=new Rig(fixture,id);auto base=r.mp.vertices.dup;
             auto cp=*r.stack.get!ActionCenterPacket();auto ap=*r.stack.get!AxisPacket();
-            auto channels=parseJSON("{\"RX\":-18,\"RY\":0,\"RZ\":0}");injectParamsInto(r.tool.params(),channels);
+            auto channels=parseJSON("{\"RX\":7,\"RY\":-11,\"RZ\":13}");injectParamsInto(r.tool.params(),channels);
             r.tool.reEvaluate(ParameterChangeBatch(ParameterChangeSource.ScriptedValue,["RX","RY","RZ"]));
-            r.vertices(r.folded(base,0,-18,ap,cp),"value numeric companion");
+            r.vertices(r.numericFold(base,Vec3(7,-11,13),ap,cp),"value full-vector numeric companion");
         });
         receipt("reset-drop",{
             auto r=new Rig(fixture,id);auto px=r.press(0);r.sample(0,-18);r.release(px);

@@ -6,7 +6,7 @@ import std.math : abs;
 import std.format : format;
 import math : Vec3, ModelSpace, frameMatrix, frameMatrixInverse;
 import mesh : Mesh;
-import document : primaryModelSpaceResolver;
+import document : primaryModelSpaceResolver, ItemXform;
 import editmode : EditMode;
 import seltype : SelType;
 import operator : VectorStack;
@@ -149,4 +149,44 @@ unittest { // Real registration products and independent Rotate operation contra
         assert(readText("source/tools/transform/"~file~".d").count("currentBasis(")>0,"legacy bank reads shared production basis");
     assert(readText("source/tools/edit/edge_extend.d").count("xfrm.update(")>0,"embedded EdgeExtend reads shared Xfrm producer");
     assert(readText("source/tools/transform/xfrm_apply.d").count("queryClusterAxes(vts)")==1,"real operation component packet wiring");
+}
+
+unittest { // Construction controls for transported normals and alignment branches.
+    import toolpipe.stages.axis : localVirtualVertexNormals;
+    import toolpipe.obbox : alignLocalComponentFrames;
+    import math : cross, normalize, pivotRotationMatrix;
+    import std.math : PI;
+    auto savedSpace=primaryModelSpaceResolver;scope(exit) primaryModelSpaceResolver=savedSpace;
+    auto savedPipe=g_pipeCtx;scope(exit) g_pipeCtx=savedPipe;
+    Mesh mesh;mesh.vertices=[Vec3(0,0,0),Vec3(3,0,0),Vec3(1,1,0),Vec3(0,3,0)];
+    mesh.faces._store=[[0u,1,2,3]];mesh.rebuildEdgesFromFaces();mesh.resetSelection();mesh.selectFace(0);
+    auto normals=localVirtualVertexNormals(&mesh);assert(normals.length==4,"concave corner population");
+    foreach(n;normals) near(n,Vec3(0,0,1),"concave later corner sign corrected before virtual normal");
+    ItemXform posed;posed.rot=Vec3(180,0,0);posed.scl=Vec3(1.3f,.8f,1.1f);
+    auto space=posed.modelSpace();primaryModelSpaceResolver=()=>space;
+    EditMode mode=EditMode.Polygons;
+    auto center=new ActionCenterStage(()=>&mesh,&mode);auto axis=new AxisStage(()=>&mesh,&mode);
+    g_pipeCtx=new ToolPipeContext();g_pipeCtx.pipeline.add(center);g_pipeCtx.pipeline.add(axis);
+    center.mode=ActionCenterStage.Mode.Local;axis.mode=AxisStage.Mode.Local;
+    Vec3 r,u,f;axis.currentBasis(r,u,f);
+    near(f,normalize(space.toWorldDir(Vec3(0,0,1))),"actual Local normal uses layer linear transport");
+    assert(f.z<-.99f,"nonidentity transport separates omitted direction map");
+    primaryModelSpaceResolver=()=>ModelSpace.world();
+    Vec3[][] rights=[[Vec3(1,0,0),Vec3(0,1,0)],[Vec3(1,0,0),Vec3(-1,0,0)],
+                    [Vec3(1,0,0),Vec3(0,0,1)],[Vec3(1,0,0),Vec3(0,1,0)],
+                    [Vec3(1,0,0),Vec3(1,0,0)]];
+    Vec3[][] ups=[[Vec3(0,1,0),Vec3(-1,0,0)],[Vec3(0,1,0),Vec3(0,-1,0)],
+                 [Vec3(0,1,0),Vec3(0,-1,0)],[Vec3(0,1,0),Vec3(0,0,1)],
+                 [Vec3(0,1,0),Vec3(0,0,1)]];
+    Vec3[][] ns=[[Vec3(0,0,1),Vec3(0,0,1)],[Vec3(0,0,1),Vec3(0,0,1)],
+                [Vec3(0,0,1),Vec3(1,0,0)],[Vec3(0,0,1),Vec3(1,0,0)],
+                [Vec3(0,0,1),Vec3(0,-1,0)]];
+    Vec3[] expectedUp=[Vec3(0,1,0),Vec3(0,1,0),Vec3(0,1,0),Vec3(0,0,1),Vec3(0,0,1)];
+    assert(rights.length==5&&ups.length==5&&ns.length==5&&expectedUp.length==5,"five independent alignment branch constructions");
+    foreach(i;0..5) {
+        auto before=ns[i].dup;alignLocalComponentFrames(rights[i],ups[i],ns[i]);
+        assert(ns[i]==before,"alignment preserves each normal");
+        near(ups[i][1],expectedUp[i],"independent alignment up construction");
+        near(rights[i][1],cross(expectedUp[i],ns[i][1]),"alignment reconstructs right");
+    }
 }
