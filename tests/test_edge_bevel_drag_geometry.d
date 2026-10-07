@@ -140,9 +140,9 @@ unittest {
     assert(found, "LIVE OFFSET: part1 exists");
     int x = cast(int)sx, y = cast(int)sy;
     auto vp = viewportFromCamera(fetchCamera(BASE));
-    // Single horizontal edge: native frame up=X, normal=(Y+Z)/sqrt2;
-    // miter column0 = cross(X,normal).
-    auto axis = normalize(Vec3(0,-1,1));
+    // Single horizontal edge: native frame up=-X, normal=(Y+Z)/sqrt2;
+    // miter column0 = cross(-X,normal).
+    auto axis = normalize(Vec3(0,1,-1));
     float ax, ay, bx, by;
     assert(projectToWindow(Vec3(0,.5f,.5f), vp, ax, ay));
     assert(projectToWindow(Vec3(0,.5f,.5f)+axis, vp, bx, by));
