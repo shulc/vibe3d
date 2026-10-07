@@ -26,7 +26,7 @@ import tests.unit.census_symbols : blankNonCode, countOccurrences,
     enclosingSymbols, lineOf, symbolAt, symbolTokenHits;
 import tool : Tool;
 import toolpipe.packets : SubjectPacket;
-import tools.edit.edge_bevel : EdgeBevelTool;
+import tools.edit.edge_bevel : EdgeBevelTool, EdgeBevelState, EdgeBevelProfile;
 import ui.viewport_render : ToolOverlayInputs, ViewportSceneRenderer;
 import viewport_overlay_mode : OverlayMode;
 
@@ -339,6 +339,12 @@ private void cellC1_ownerOnly(ViewportSceneRenderer renderer, Shader shader,
     setOverrideMouse(330, 230);
     drawOverlay(renderer, tool, OverlayMode.Interactive, ownerVp, shader);
     assertOwnerA(tool, ownerVp);
+    const registered = tool.toolHandlesJson()["parts"].array;
+    assert(registered.length == 2, "S1 REGISTRATION: complete ordered bank");
+    assert(registered[0]["part"].integer == 0 && registered[0]["visible"].boolean,
+        "S1 REGISTERED WIDTH: eligible first part");
+    assert(registered[1]["part"].integer == 1 && !registered[1]["visible"].boolean,
+        "S1 REGISTERED MITER: ineligible second part");
     const read = tool.readInteractionForTest();
     assert(read.gizmoSelHash == sigA, format(
         "OWNER SELECTION SIGNATURE: expected %s got %s (tol 0)",
@@ -512,8 +518,16 @@ private void beginWidthDrag(EdgeBevelTool tool) {
     press.x = 330;
     press.y = 230;
     VectorStack vts;
+    auto state = tool.stateForTest();
+    state.miterOffset = 0.09f;
+    tool.stateForTest(state);
     assert(tool.onMouseButtonDown(press, vts),
         "WIDTH DRAG PRESS: expected true got false at (330,230)");
+    assert(tool.scalarStartsDeltasForTest()[0 .. 2] == [state.width, 0.09f],
+        "S1 PRESS: snapshots both independent starts");
+    auto widthVp = testViewport(800, 400, 20.0f);
+    assert(tool.firstBankHitForTest(330, 230, widthVp) == 0,
+        "S1 BANK HIT: width positive control");
 }
 
 private void cellC5_activeDrag(ViewportSceneRenderer renderer, Shader shader,
@@ -585,6 +599,11 @@ private void cellC6_builtPreview(ViewportSceneRenderer renderer, Shader shader,
         "C6 MOTION: expected true got false for 6 px motion");
     auto read = tool.readInteractionForTest();
     assert(read.built, "C6 BUILT FLOOR: expected true got false at 6 px");
+    assert(tool.stateForTest().miterOffset == 0.09f &&
+        tool.scalarStartsDeltasForTest()[3] == 0.0f,
+        "S1 MOTION: dormant scalar and delta stay independent");
+    assert(tool.scalarStartsDeltasForTest()[2] != 0.0f,
+        "S1 MOTION: operative width delta retained");
 
     SDL_MouseButtonEvent release;
     release.button = SDL_BUTTON_LEFT;
@@ -739,6 +758,82 @@ private void cellC10_replicaMirrorsResidentPaint(
                   "REPLICA ENGAGED COLOR");
 }
 
+// Dormant S1 data use our values; these are storage/isolation checks, not
+// reference defaults, placement, signed translation or miter geometry goldens.
+private void cellS1Dormant() {
+    Mesh live = twoQuadsFixture();
+    GpuMesh gpu;
+    EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    auto params = tool.params();
+    assert(params.length == 3, "S1 ADMISSION: only implemented parameters");
+    assert(params[0].name == "width" && params[1].name == "roundLevel" &&
+        params[2].name == "widthMode", "S1 ADMISSION: retained parameter order");
+    assert(tool.sessionPolicy().imageAttrs == ["width", "roundLevel", "widthMode"],
+        "S1 SESSION: dormant fields have no session admission");
+
+    tool.seedPreparedParamForTest(live);
+    auto baseline = tool.stateForTest();
+    auto image = tool.buildPreparedParamUpdate("width", live);
+    assert(tool.preparedParamUpdateMatches(image, live), "S1 PROJECTION: positive control");
+    foreach (field; 0 .. 9) {
+        auto changed = baseline;
+        final switch (field) {
+            case 0: changed.width = 0.3f; break;
+            case 1: changed.roundLevel = 2; break;
+            case 2: changed.widthMode = true; break;
+            case 3: changed.profile = EdgeBevelProfile.sharp; break;
+            case 4: changed.miterOffset = 0.07f; break;
+            case 5: changed.sharpCorner = true; break;
+            case 6: changed.maintainCoplanar = true; break;
+            case 7: changed.materialOverride = true; break;
+            case 8: changed.materialName = "S1-owned-tag"; break;
+        }
+        tool.stateForTest(changed);
+        assert(!tool.preparedParamUpdateMatches(image, live),
+            "S1 PROJECTION: stale field " ~ field.to!string);
+        tool.stateForTest(baseline);
+        assert(tool.preparedParamUpdateMatches(image, live),
+            "S1 PROJECTION: restored positive field " ~ field.to!string);
+    }
+    auto zero = baseline;
+    zero.width = 0.0f;
+    tool.stateForTest(zero);
+    auto zeroImage = tool.buildPreparedParamUpdate("width", live);
+    zero.width = -0.0f;
+    tool.stateForTest(zero);
+    assert(!tool.preparedParamUpdateMatches(zeroImage, live),
+        "S1 WIDTH BITS: signed zero is distinct image data");
+    zero.width = 0.0f;
+    zero.miterOffset = -0.0f;
+    tool.stateForTest(zero);
+    assert(!tool.preparedParamUpdateMatches(zeroImage, live),
+        "S1 MITER BITS: signed zero is distinct image data");
+    auto state = baseline;
+    state.width = 0.4f; state.miterOffset = 0.09f;
+    tool.stateForTest(state);
+    Mesh* preparedSource;
+    auto activation = tool.buildPreparedActivation(preparedSource);
+    assert(preparedSource is &live, "S1 ACTIVATION: retained source owner");
+    tool.installPreparedActivation(activation);
+    assert(tool.stateForTest() == state,
+        "S1 ACTIVATION: admitted and dormant state survives install");
+    tool.snapshotStartsForTest();
+    assert(tool.scalarStartsDeltasForTest() == [0.4f, 0.09f, 0.0f, 0.0f],
+        "S1 STARTS: independent starts, untouched deltas");
+    assert(tool.scalarBindingsForTest() == [0, 1, 2, 0],
+        "S1 BINDINGS: width/normal then miter/tangent");
+    const parts = tool.handlePartsForTest();
+    assert(parts.length == 2 && parts[0].part == 0 && parts[1].part == 1 &&
+        parts[0].h !is parts[1].h, "S1 BANK: ordered distinct parts");
+    assert(parts[0].h.isVisible() && !parts[1].h.isVisible(),
+        "S1 DORMANT: miter is ineligible");
+    Viewport vp = testViewport(800, 600, 5);
+    assert(tool.firstBankHitForTest(-10000, -10000, vp) == -1,
+        "S1 BANK: populated miss");
+}
+
 unittest { runReplicaOwnershipWitness(); }
 
 private void runReplicaOwnershipWitness() {
@@ -795,6 +890,7 @@ private void runReplicaOwnershipWitness() {
 
     premiseFloors(replicaVp, ownerVp);
     cellC0_arrangementCensus();
+    cellS1Dormant();
     cellC1_ownerOnly(renderer, shader, gpu, ownerVp);
     cellC2_replicaThenOwner(renderer, shader, gpu, replicaVp, ownerVp);
     cellC3_freshness(renderer, shader, gpu, replicaVp, ownerVp);

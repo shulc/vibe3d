@@ -15,7 +15,7 @@ import mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
 import math;
 import editmode : EditMode;
 import params : Param;
-import handler : Arrow, ToolHandles, HandleState, gizmoSize;
+import handler : Arrow, ToolHandles, HandleState, HandlePart, firstHitPart, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta;
 import overlay_space : OverlaySpace;
@@ -53,15 +53,68 @@ struct PreparedEdgeBevelActivationImage {
     }
 }
 
-struct EdgeBevelParamProjection {
-    bool interactive, active, built, widthMode;
-    float width;
+// S1 (task 20261220): one parameter state and ordered scalar bank retain the
+// current width path; dormant modes and miter descriptors are not admission.
+// Reviewed descriptor authority: private evidence/10860-edge-bevel/modes-handles-static-20261007.
+enum EdgeBevelProfile { round, square, sharp }
+private enum EdgeBevelScalar { width, miterOffset }
+private enum EdgeBevelBasis { tangent, binormal, normal }
+
+struct EdgeBevelState {
+    float width = 0.0f;
     int roundLevel;
+    // Mirrors the command's current edge widthMode: false means along-face
+    // slide (inset), true requests width conversion. Preview and apply share it.
+    bool widthMode;
+    EdgeBevelProfile profile;
+    float miterOffset = 0.0f;
+    bool sharpCorner, maintainCoplanar, materialOverride;
+    string materialName;
+
+    bool opEquals(const ref EdgeBevelState other) const nothrow @nogc {
+        return memcmp(&width, &other.width, float.sizeof) == 0 &&
+            roundLevel == other.roundLevel && widthMode == other.widthMode &&
+            profile == other.profile &&
+            memcmp(&miterOffset, &other.miterOffset, float.sizeof) == 0 &&
+            sharpCorner == other.sharpCorner &&
+            maintainCoplanar == other.maintainCoplanar &&
+            materialOverride == other.materialOverride &&
+            materialName == other.materialName;
+    }
+}
+
+private struct EdgeBevelScalarDescriptor {
+    EdgeBevelScalar binding;
+    EdgeBevelBasis basis;
+    float start = 0.0f;
+    float delta = 0.0f;
+}
+
+private struct EdgeBevelHandleBank {
+    Arrow widthArrow, miterArrow;
+    EdgeBevelScalarDescriptor[2] scalars = [
+        EdgeBevelScalarDescriptor(EdgeBevelScalar.width, EdgeBevelBasis.normal),
+        EdgeBevelScalarDescriptor(EdgeBevelScalar.miterOffset, EdgeBevelBasis.tangent),
+    ];
+
+    HandlePart[2] handleParts() {
+        return [HandlePart(widthArrow, 0), HandlePart(miterArrow, 1)];
+    }
+    int firstHit(int mx, int my, const ref Viewport vp) {
+        return firstHitPart(mx, my, vp, handleParts());
+    }
+    void snapshotStarts(const ref EdgeBevelState state) nothrow @nogc {
+        scalars[0].start = state.width;
+        scalars[1].start = state.miterOffset;
+    }
+}
+
+struct EdgeBevelParamProjection {
+    bool interactive, active, built;
+    EdgeBevelState state;
     bool opEquals(const EdgeBevelParamProjection other) const nothrow @nogc {
         return interactive == other.interactive && active == other.active &&
-            built == other.built && widthMode == other.widthMode &&
-            roundLevel == other.roundLevel &&
-            memcmp(&width, &other.width, float.sizeof) == 0;
+            built == other.built && state == other.state;
     }
 }
 
@@ -73,7 +126,7 @@ alias PreparedEdgeBevelParamImage = PreparedStateParamImage!(EdgeBevelParamProje
 // Topology-creating tool, modelled on PolyExtrudeTool. ToolSession records
 // a mesh and attribute image for each completed gesture.
 //
-// Single handle:
+// Operative handle (the second bank entry stays dormant):
 //   PART_WIDTH = BLUE Arrow along the averaged adjacent-face normal.
 //
 // Headless: tool.set edge.bevel on; tool.attr edge.bevel width <v>;
@@ -109,13 +162,8 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-    float width_      = 0.0f;
-    int   roundLevel_ = 0;
-    // Mirrors the mesh.bevel command's edge `widthMode`: false (default) =
-    // `width_` IS the along-face slide (inset); true = `width_` is the true
-    // perpendicular bevel width (slide = width/sin(dihedral/2)). Kept in lock-
-    // step with the command so tool preview == headless apply.
-    bool  widthMode_  = false;
+    // Defaults are ours; dormant fields have no public parameter or kernel reader.
+    EdgeBevelState state_;
 
     bool         active;
     bool         built;
@@ -136,9 +184,10 @@ private:
     // absolute value from that origin, so replay/coalescing cannot make the
     // result depend on how many motion events SDL delivered.
     int   dragStartMX, dragStartMY;
-    float dragBaseWidth;
 
-    Arrow       widthArrow;
+    EdgeBevelHandleBank handleBank_;
+    @property Arrow widthArrow() { return handleBank_.widthArrow; }
+    @property const(Arrow) widthArrow() const { return handleBank_.widthArrow; }
     Arrow       replicaArrow_;
     // One draw-only frame image is shared by every foreign cell.  The owner
     // publishes its frozen frame here; after a selection change the first
@@ -152,11 +201,11 @@ public:
     version(unittest) final void seedPreparedParamForTest(ref Mesh live,
             bool interactive = true) {
         interactiveParamEdit = interactive; active = true; built = false;
-        width_ = 0.2f; roundLevel_ = 1; widthMode_ = false;
+        state_.width = 0.2f; state_.roundLevel = 1; state_.widthMode = false;
         before = MeshSnapshot.capture(live); preview_.reset();
     }
     version(unittest) final void mutatePreparedParamForTest(float value)
-            nothrow @nogc { width_ = value; }
+            nothrow @nogc { state_.width = value; }
     version(unittest) final bool preparedParamInstalledForTest() const
             nothrow @nogc {
         return built && preview_.counts().fullRebuilds == 1;
@@ -167,13 +216,16 @@ public:
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-        widthArrow  = new Arrow(Vec3(0,0,0), Vec3(0,1,0), WIDTH_COLOR);
+        handleBank_.widthArrow = new Arrow(Vec3(0,0,0), Vec3(0,1,0), WIDTH_COLOR);
+        handleBank_.miterArrow = new Arrow(Vec3(0,0,0), Vec3(0,0,0), WIDTH_COLOR);
+        handleBank_.miterArrow.setVisible(false);
         replicaArrow_ = new Arrow(Vec3(0,0,0), Vec3(0,1,0), WIDTH_COLOR);
         toolHandles = new ToolHandles();
     }
 
     void destroy() {
         if (widthArrow !is null) widthArrow.destroy();
+        if (handleBank_.miterArrow !is null) handleBank_.miterArrow.destroy();
         if (replicaArrow_ !is null) replicaArrow_.destroy();
     }
 
@@ -183,9 +235,9 @@ public:
 
     override Param[] params() {
         return [
-            Param.float_("width", "Width", &width_, 0.0f),
-            Param.int_("roundLevel", "Round Level", &roundLevel_, 0),
-            Param.bool_("widthMode", "Width Mode", &widthMode_, false),
+            Param.float_("width", "Width", &state_.width, 0.0f),
+            Param.int_("roundLevel", "Round Level", &state_.roundLevel, 0),
+            Param.bool_("widthMode", "Width Mode", &state_.widthMode, false),
         ];
     }
 
@@ -248,7 +300,7 @@ public:
     }
 
     public override bool hasUncommittedEdit() const {
-        return active && dragPart >= 0 && built && width_ != 0.0f;
+        return active && dragPart >= 0 && built && state_.width != 0.0f;
     }
 
     public override void cancelUncommittedEdit() {
@@ -274,7 +326,7 @@ public:
     }
     private EdgeBevelParamProjection paramProjection() const nothrow @nogc {
         return EdgeBevelParamProjection(interactiveParamEdit, active, built,
-            widthMode_, width_, roundLevel_);
+            state_);
     }
     final PreparedEdgeBevelParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
         return PreparedEdgeBevelParamImage.prepare(paramProjection(), live);
@@ -319,7 +371,7 @@ public:
         // key it remembers no longer describes what is standing.
         preview_.reset();
         if (mesh.edges.length == 0) return false;
-        if (width_ == 0.0f) return true;
+        if (state_.width == 0.0f) return true;
         if (operation(*mesh) == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -339,7 +391,7 @@ public:
         int part = toolHandles.test(hmx, hmy, cachedVp);
 
         dragStartMX   = e.x; dragStartMY = e.y;
-        dragBaseWidth = width_;
+        handleBank_.snapshotStarts(state_);
 
         if (part == PART_WIDTH) {
             sessionStepBegins();
@@ -372,8 +424,9 @@ public:
                                      os.pos(anchor), ax.dir, cachedVp, skip);
         if (!skip) {
             float d = ax.toLocal(dot(delta, ax.dir));
-            width_ = dragBaseWidth + d;
-            if (width_ < 0.0f) width_ = 0.0f;
+            handleBank_.scalars[0].delta = d;
+            state_.width = handleBank_.scalars[0].start + handleBank_.scalars[0].delta;
+            if (state_.width < 0.0f) state_.width = 0.0f;
             rebuildPreview();
         }
         return true;
@@ -388,9 +441,9 @@ public:
     public override JSONValue toolStateJson() const {
         auto root = JSONValue.emptyObject;
         root["tool"]       = JSONValue("edgeBevel");
-        root["width"]      = JSONValue(width_);
-        root["roundLevel"] = JSONValue(roundLevel_);
-        root["widthMode"]  = JSONValue(widthMode_);
+        root["width"]      = JSONValue(state_.width);
+        root["roundLevel"] = JSONValue(state_.roundLevel);
+        root["widthMode"]  = JSONValue(state_.widthMode);
         root["built"]      = JSONValue(built);
         root["dragPart"]   = JSONValue(dragPart);
         return root;
@@ -435,7 +488,8 @@ public:
         widthArrow.color = WIDTH_COLOR;
 
         toolHandles.begin();
-        toolHandles.add(widthArrow, PART_WIDTH);
+        auto parts = handleBank_.handleParts();
+        toolHandles.add(parts[], 0);
         if (dragPart >= 0) toolHandles.setHaul(dragPart);
         else               toolHandles.setHaul(-1);
         int hmx, hmy;
@@ -573,8 +627,8 @@ private:
     // width, but a dropdown changes at human speed: keying it costs an extra
     // rebuild and buys not proving that no width mode collapses a face.
     PreviewTopologyKey previewKey(ref Mesh cage) {
-        return PreviewTopologyKey.make(cage.operandEdgeMask(), width_ == 0.0f,
-            roundLevel_, widthMode_ ? 1 : 0);
+        return PreviewTopologyKey.make(cage.operandEdgeMask(), state_.width == 0.0f,
+            state_.roundLevel, state_.widthMode ? 1 : 0);
     }
     // The one operation: preview and scripted apply.
     // Unrecorded — a preview frame records nothing, and the gesture's record
@@ -585,8 +639,8 @@ private:
     // A zero width builds nothing: the kernel refuses it before any edit.
     size_t operation(ref Mesh target) {
         auto ed = MeshEditBatch.unrecorded(target, kEdgeBevelEditScope);
-        const n = ed.bevelEdgesByMask(target.operandEdgeMask(), width_,
-            roundLevel_, widthMode_);
+        const n = ed.bevelEdgesByMask(target.operandEdgeMask(), state_.width,
+            state_.roundLevel, state_.widthMode);
         ed.close();
         return n;
     }
@@ -614,6 +668,23 @@ private:
 
 public:
     version(unittest) {
+        final EdgeBevelState stateForTest() const { return state_; }
+        final void stateForTest(EdgeBevelState state) { state_ = state; }
+        final HandlePart[2] handlePartsForTest() { return handleBank_.handleParts(); }
+        final void snapshotStartsForTest() { handleBank_.snapshotStarts(state_); }
+        final float[4] scalarStartsDeltasForTest() const {
+            return [handleBank_.scalars[0].start, handleBank_.scalars[1].start,
+                handleBank_.scalars[0].delta, handleBank_.scalars[1].delta];
+        }
+        final int[4] scalarBindingsForTest() const {
+            return [cast(int)handleBank_.scalars[0].binding,
+                cast(int)handleBank_.scalars[1].binding,
+                cast(int)handleBank_.scalars[0].basis,
+                cast(int)handleBank_.scalars[1].basis];
+        }
+        final int firstBankHitForTest(int x, int y, const ref Viewport vp) {
+            return handleBank_.firstHit(x, y, vp);
+        }
         private static size_t preparedGizmoFrameCallsForTest_;
 
         private static void appendRaw(T)(ref ubyte[] bytes,
@@ -701,12 +772,25 @@ public:
             appendRaw(bytes, dragPart);
             appendRaw(bytes, built);
             appendRaw(bytes, active);
-            appendRaw(bytes, width_);
-            appendRaw(bytes, roundLevel_);
-            appendRaw(bytes, widthMode_);
+            appendRaw(bytes, state_.width);
+            appendRaw(bytes, state_.roundLevel);
+            appendRaw(bytes, state_.widthMode);
             appendRaw(bytes, dragStartMX);
             appendRaw(bytes, dragStartMY);
-            appendRaw(bytes, dragBaseWidth);
+            foreach (scalar; handleBank_.scalars) {
+                appendRaw(bytes, scalar.binding);
+                appendRaw(bytes, scalar.basis);
+                appendRaw(bytes, scalar.start);
+                appendRaw(bytes, scalar.delta);
+            }
+            appendRaw(bytes, state_.profile);
+            appendRaw(bytes, state_.miterOffset);
+            appendRaw(bytes, state_.sharpCorner);
+            appendRaw(bytes, state_.maintainCoplanar);
+            appendRaw(bytes, state_.materialOverride);
+            const size_t materialNameLength = state_.materialName.length;
+            appendRaw(bytes, materialNameLength);
+            bytes ~= cast(const(ubyte)[])state_.materialName;
             appendRaw(bytes, widthArrow.start);
             appendRaw(bytes, widthArrow.end);
             appendRaw(bytes, widthArrow.color);
@@ -734,18 +818,18 @@ public:
         return preparedToolStateOwner;
     }
     version(unittest) final void seedPreparedActivationForTest(ref Mesh oldMesh) {
-        active = false; built = true; dragPart = 9; width_ = 7;
-        roundLevel_ = 3; widthMode_ = true;
+        active = false; built = true; dragPart = 9; state_.width = 7;
+        state_.roundLevel = 3; state_.widthMode = true;
         gizmoValid = false; anchor = Vec3(1,2,3); baseAnchor = Vec3(4,5,6);
         widthAxis = Vec3(7,8,9); gizmoSelHash = 10;
-        dragStartMX = 11; dragStartMY = 12; dragBaseWidth = 13;
+        dragStartMX = 11; dragStartMY = 12; handleBank_.scalars[0].start = 13;
         cachedVp.view[0] = 14; before = MeshSnapshot.capture(oldMesh);
         preview_.seedForTest(oldMesh);
     }
     version(unittest) final bool preparedActivationDirtyForTest() const
             nothrow @nogc {
-        return !active && built && dragPart == 9 && width_ == 7 &&
-            roundLevel_ == 3 && widthMode_ && !gizmoValid &&
+        return !active && built && dragPart == 9 && state_.width == 7 &&
+            state_.roundLevel == 3 && state_.widthMode && !gizmoValid &&
             anchor == Vec3(1,2,3) && baseAnchor == Vec3(4,5,6) &&
             widthAxis == Vec3(7,8,9) && gizmoSelHash == 10 &&
             preview_.dirtyForTest();
@@ -754,15 +838,15 @@ public:
             Vec3 first, const Vec3* livePtr, bool expectedValid,
             Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedAxis,
             ulong expectedHash) const nothrow @nogc {
-        return active && !built && dragPart == -1 && width_ == 7 &&
-            roundLevel_ == 3 && widthMode_ && before.filled &&
+        return active && !built && dragPart == -1 && state_.width == 7 &&
+            state_.roundLevel == 3 && state_.widthMode && before.filled &&
             before.vertices.length == count &&
             (count == 0 || (before.vertices[0] == first &&
                             before.vertices.ptr !is livePtr)) &&
             preview_.resetForTest() && gizmoValid == expectedValid &&
             anchor == expectedAnchor && baseAnchor == expectedBase &&
             widthAxis == expectedAxis && gizmoSelHash == expectedHash &&
-            dragStartMX == 11 && dragStartMY == 12 && dragBaseWidth == 13 &&
+            dragStartMX == 11 && dragStartMY == 12 && handleBank_.scalars[0].start == 13 &&
             cachedVp.view[0] == 14;
     }
     version(unittest) final PreparedEdgeBevelActivationImage
