@@ -1,0 +1,13 @@
+# Task 20261200: expose the existing headless apply door in Tool Properties.
+forms:
+  - id: toolprops.radialAlign
+    label: Radial Align
+    whenTool: xfrm.radialAlignTool
+    showLabel: false
+    rows:
+      - { control: "tool.attr xfrm.radialAlignTool mode ?", label: Mode }
+      - { control: "tool.attr xfrm.radialAlignTool side ?", label: Side }
+      - { control: "tool.attr xfrm.radialAlignTool rotate ?", label: Rotate }
+      - { control: "tool.attr xfrm.radialAlignTool angle ?", label: Angle }
+      - { control: "tool.attr xfrm.radialAlignTool weight ?", label: Weight }
+      - { cmd: "tool.doApply", label: Apply }

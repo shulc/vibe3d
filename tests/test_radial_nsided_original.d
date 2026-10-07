@@ -1,4 +1,5 @@
 // Task 20261040: both registered product doors, full original mesh.
+import forms : loadForms, RowKind, parseBinding, substituteQuery;
 import http_client : getJson, postJson, testBaseUrl;
 import std.net.curl : get;
 import std.array : replace;
@@ -238,5 +239,39 @@ unittest { // A warm zero-weight member keeps the visible result, not the retain
     foreach(a;0..3)
         assert(bits(after["vertices"][76][a])==bits(first["vertices"][76][a]),
             "warm zero-weight member keeps immediate visible result");
+    cmd("tool.set xfrm.radialAlignTool off");
+}
+
+// Task 20261200: read the shipped panel, then execute its actual Apply route.
+unittest {
+    auto panels = loadForms("config/forms/radial_align.yaml");
+    assert(panels.length == 1, "radial panel population");
+    auto panel = panels[0];
+    assert(panel.matchesTool("xfrm.radialAlignTool"), "radial panel matches toolbar activation");
+    string apply;
+    size_t controls;
+    foreach (row; panel.rows) {
+        if (row.kind == RowKind.cmd) {
+            assert(apply.length == 0, "one radial panel action");
+            apply = row.command;
+        } else if (row.kind == RowKind.control) ++controls;
+    }
+    assert(controls == 5, "radial panel exposes all five live attributes");
+    assert(apply == "tool.doApply", "radial panel exposes the real Apply door");
+    auto f = parseJSON(readText("tests/fixtures/radial_nsided_original.json"));
+    auto before = loadOriginal(f);
+    cmd("tool.set xfrm.radialAlignTool on");
+    foreach (c; 0..2) {
+        foreach (row; panel.rows) if (row.kind == RowKind.control) {
+            auto binding = parseBinding(row.command);
+            auto key = binding.attr;
+            auto value = key == "mode" ? "nside" : key == "weight" ? "1" :
+                format("%s", f["cells"][c][key].integer);
+            cmd(substituteQuery(binding, key == "mode" ? JSONValue(value) : parseJSON(value)));
+        }
+        auto response = postJson("/api/command?origin=ui", apply);
+        assert(response["status"].str == "ok", "radial panel UI Apply accepted");
+        score(f, before, c, "panel-apply");
+    }
     cmd("tool.set xfrm.radialAlignTool off");
 }
