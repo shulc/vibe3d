@@ -116,6 +116,7 @@ unittest {
     assert(abs(m.vertices[1].x-.7)<1e-6,"9494 typed panel source from press baseline");
     assert(abs(m.vertices[6].x+.7)<1e-6,"9494 typed panel partner follows shared write");
     assert(m.vertices.length==8 && m.faces==rings,"9494 typed panel retains exact corner rings");
+    foreach(i;0..30) ui.frame(); // let the prior text click leave the double-click window
     const before=pen.offsetX_;
     ui.pressAt(at);
     auto heldAt=at; heldAt.x+=20;
