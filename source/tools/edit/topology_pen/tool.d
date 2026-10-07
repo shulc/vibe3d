@@ -4130,16 +4130,18 @@ public:
         immutable int dx = px - moveStartX_, dy = py - moveStartY_;
         moveOffset_ = Vec3(0, 0, 0);
         placementSnap_ = SnapResult.init;
-        Vec3 off;
-        if (releaseIsClick(dx, dy) || !grabOffset(moveAnchor_, dx, dy, vp, off, movePerspectiveGuideAccepted_, true))
+        Vec3 off, snapCenter;
+        if (releaseIsClick(dx, dy) || !grabOffset(moveAnchor_, dx, dy, vp, off, movePerspectiveGuideAccepted_, true, &snapCenter))
             return moveBase_.dup;
         if (moveAxisLock_) off = onElectedAxis(off);
         moveOffset_ = off;
         auto targets = carriedTargets(moveBase_, off);
         if (!moveAxisLock_ && moveElem_ == MoveElem.Vertex && targets.length == 1) {
             uint[] exclude = moveVerts_.dup;
-            placementSnap_ = placementElection(primaryModelSpace().toWorldPoint(targets[0]),
-                px, py, vp, dragSnap_, exclude);
+            float sx, sy, sz;
+            if (projectToWindowFull(snapCenter, vp, sx, sy, sz))
+                placementSnap_ = placementElection(snapCenter,
+                    cast(int)sx, cast(int)sy, vp, dragSnap_, exclude);
             // Ordinary placement is source-aware; Ctrl keeps its component guide
             // and axis/geometry order. Welding remains a separate edited-mesh client.
             if (placementSnap_.snapped)
@@ -4173,7 +4175,8 @@ public:
     }
 
     package bool grabOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
-                            out Vec3 offLocal, out bool acceptedPerspective, bool perspectiveGuideRequested) {
+                            out Vec3 offLocal, out bool acceptedPerspective, bool perspectiveGuideRequested,
+                            Vec3* snapCenter = null) {
         const ms = primaryModelSpace();
         HandleDrag grab;
         grab.press(ms.toWorldPoint(anchorLocal), 0, 0);
@@ -4194,6 +4197,7 @@ public:
         Vec3 toW = grab.client(dx, dy, DragFrame(DragKind.viewPlane), vp, skip, guide);
         if (skip) return false;
         acceptedPerspective = acceptedGuide && !isOrtho(vp);
+        if (snapCenter !is null) *snapCenter = toW;
         // 9504: inventory does not compose a constraint. Free movement presets
         // retain element depth; an explicit enabled handle constraint still applies.
         if ((!guidedRoute || (!isOrtho(vp) && !acceptedGuide))
