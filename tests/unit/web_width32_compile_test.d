@@ -8,6 +8,7 @@ import std.array : join;
 import std.file : dirEntries, exists, mkdir, readText, remove, rmdirRecurse,
     SpanMode, tempDir, write;
 import std.format : format;
+import std.stdio : writefln;
 import std.path : buildPath, dirName;
 import std.process : Config, execute, thisProcessID;
 import std.string : indexOf, lastIndexOf, splitLines, strip;
@@ -149,6 +150,7 @@ SH";
         format("W16-W web closure population changed: expected %d source modules to reach "
              ~ "the 32-bit compiler, got %d", expectedWebModules, closurePaths.length));
 
+    sort(closurePaths);
     write(manifestPath, closurePaths.join("\n") ~ "\n");
     enum compileWidthProxy = q"SH
 set -euo pipefail
@@ -213,6 +215,8 @@ SH";
         assert(objectFiles == 0,
             format("W16-W %s width proxy must keep dmd -o- (no codegen), but it "
                  ~ "wrote %d object files", mode, objectFiles));
+        writefln("WIDTH mode=%s modules=%d semantic3=%d objects=%d",
+            mode, expectedWebModules, rootLines, objectFiles);
     }
     assert(modesRun == 2, "both production and unittest width probes must run");
 

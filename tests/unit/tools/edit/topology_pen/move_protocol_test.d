@@ -589,3 +589,136 @@ unittest {
     assert(corners==[0u,1] && ends==[5u,6],
         "equal-cost polygon sides retain the first accepted pair");
 }
+
+// Probe migration: the virtual pointer and the resolved element are deliberately
+// separated. Fixed world inputs make both the source slot and local conversion observable.
+unittest {
+    import tools.edit.topology_pen.tool : TopologyPenTool;
+    import tools.edit.topology_pen.defs : MoveElem;
+    import document : ItemXform, primaryModelSpaceResolver;
+    import snap : setBackgroundSnapSources;
+    import math : lookAt, orthographicMatrix, projectToWindowFull;
+    import tool : ToolFlag;
+    ItemXform xf; xf.pos=Vec3(.3,0,0); xf.scl=Vec3(2,1,1);
+    const ms=xf.modelSpace();
+    const saved=primaryModelSpaceResolver; scope(exit) primaryModelSpaceResolver=saved;
+    primaryModelSpaceResolver=()=>ms;
+    Mesh m,bg; m.addVertex(Vec3(.4,0,0)); bg.addVertex(Vec3(3.24,0,0));bg.resizeVertexSelection();
+    ItemXform bx; bx.pos=Vec3(-2,0,0);const bs=bx.modelSpace();
+    setBackgroundSnapSources([&bg],[bs]);scope(exit)setBackgroundSnapSources(null,null);
+    Viewport vp;vp.width=800;vp.height=800;vp.eye=Vec3(0,0,5);
+    vp.view=lookAt(vp.eye,Vec3(0,0,0),Vec3(0,1,0));
+    vp.proj=orthographicMatrix(2,1,.1,100);
+    auto pen=new TopologyPenTool();pen.meshSrc_=()=>&m;
+    pen.presetFlags=cast(uint)ToolFlag.NoBackgroundConstraint;
+    pen.moveElem_=MoveElem.Vertex;pen.moveVerts_=[0u];pen.moveBase_=[Vec3(.4,0,0)];
+    pen.moveAnchor_=Vec3(.4,0,0);pen.moveStartX_=200;pen.moveStartY_=400;
+    pen.dragSnap_.enabled=true;pen.dragSnap_.enabledTypes=SnapType.Vertex;
+    pen.dragSnap_.innerRangePx=15;pen.dragSnap_.outerRangePx=40;
+    float sx,sy,sz;
+    assert(projectToWindowFull(Vec3(1.2,0,0),vp,sx,sy,sz) && sx-220>40,
+        "resolved center is outside virtual cursor reach");
+    auto targets=pen.moveTargets(220,400,vp);
+    const answer=pen.buildPreparedDeactivate(null).expectedPlacementSnap;
+    assert(answer.snapped && answer.targetSource==1 && answer.targetIndex==0
+        && answer.targetType==SnapType.Vertex && (answer.worldPos-Vec3(1.24,0,0)).length<1e-5,
+        "resolved center elects and retains transformed background vertex");
+    assert(targets.length==1 && (targets[0]-Vec3(.47,0,0)).length<1e-5,
+        "resolved center converts retained world answer into primary local target");
+    pen.dragSnap_.enabled=false;
+    targets=pen.moveTargets(220,400,vp);
+    assert(!pen.buildPreparedDeactivate(null).expectedPlacementSnap.snapped
+        && (targets[0]-Vec3(.45,0,0)).length<1e-5,
+        "resolved center disabled snap keeps raw target");
+    pen.dragSnap_.enabled=true;pen.dragSnap_.enabledTypes=SnapType.Edge;
+    targets=pen.moveTargets(220,400,vp);
+    assert(!pen.buildPreparedDeactivate(null).expectedPlacementSnap.snapped,
+        "resolved center refuses a vertex when only edges are enabled");
+    pen.dragSnap_.enabledTypes=SnapType.Vertex;m.addVertex(Vec3(.47,0,0));
+    setBackgroundSnapSources(null,null);
+    targets=pen.moveTargets(220,400,vp);
+    const primary=pen.buildPreparedDeactivate(null).expectedPlacementSnap;
+    assert(primary.snapped && primary.targetSource==0 && primary.targetIndex==1
+        && (primary.worldPos-Vec3(1.24,0,0)).length<1e-5
+        && (targets[0]-Vec3(.47,0,0)).length<1e-5,
+        "resolved center reaches transformed primary source independently");
+}
+
+private void symmetricConfinedFrames(PenMode mode) {
+    import tools.edit.topology_pen.tool : TopologyPenTool;
+    import toolpipe.packets : SubjectPacket, SnapPacket;
+    import operator : VectorStack;
+    import bindbc.sdl;
+    import math : lookAt, orthographicMatrix;
+    import snap : invalidateSnapGrids, g_snapGridBuilds, snapCursor;
+    import mesh_dirty : noteMeshChange, g_settledGeomEpochs, g_geomEpochs;
+    import change_bus : changeBus, MeshEditScope;
+    import display_sync : activeMeshResolver;
+    import std.algorithm : canFind;
+    import std.math : abs;
+    loadSDL();const mods=SDL_GetModState();scope(exit)SDL_SetModState(mods);
+    SDL_SetModState(cast(SDL_Keymod)0);
+    Mesh offscreen;const savedDisplay=activeMeshResolver;
+    activeMeshResolver=()=>&offscreen;scope(exit)activeMeshResolver=savedDisplay;
+    const checkpoint=changeBus.meshSubscriberCheckpointForTest();
+    scope(exit)changeBus.restoreMeshSubscribersForTest(checkpoint);
+    changeBus.onMeshChanged((size_t addr,uint flags) nothrow {noteMeshChange(addr,flags);});
+    Mesh m;
+    foreach(v;[Vec3(.1,0,0),Vec3(.4,0,0),Vec3(.4,.4,0),Vec3(.1,.4,0),
+               Vec3(-.1,.4,0),Vec3(-.4,.4,0),Vec3(-.4,0,0),Vec3(-.1,0,0),
+               Vec3(-.35,0,0),Vec3(-.35,-.4,0),Vec3(-.7,-.4,0)]) m.addVertex(v);
+    m.addFace([0u,1,2,3]);m.addFace([4u,5,6,7]);m.addFace([8u,9,10]);
+    m.rebuildEdges();m.buildLoops();m.resizeVertexSelection();m.resizeEdgeSelection();m.resizeFaceSelection();m.resizeAllMeshMaps();
+    SymmetryPacket sp;sp.pairOf=[7,6,5,4,3,2,1,0,-1,-1,-1];sp.onPlane=new bool[](11);
+    sp.enabled=true;sp.axisIndex=0;
+    Viewport vp;vp.width=800;vp.height=800;vp.eye=Vec3(0,0,5);
+    vp.view=lookAt(vp.eye,Vec3(0,0,0),Vec3(0,1,0));vp.proj=orthographicMatrix(2,1,.1,100);
+    auto pen=new TopologyPenTool();pen.meshSrc_=()=>&m;pen.backFace_=true;pen.penMode_=mode;
+    SubjectPacket subject;subject.mesh=&m;subject.viewport=vp;
+    SnapPacket snap;snap.enabled=true;snap.enabledTypes=SnapType.Vertex;snap.innerRangePx=15;
+    VectorStack vts;vts.put(&subject);vts.put(&snap);vts.put(&sp);
+    SDL_MouseButtonEvent down;down.button=SDL_BUTTON_LEFT;down.x=480;down.y=400;
+    assert(pen.onMouseButtonDown(down,vts) && pen.moveArmed_ && pen.moveVerts_==[1u],
+        "symmetric frame real press owns one source");
+    invalidateSnapGrids();
+    assert(pen.resolveSnapTargetVert(320,400,vp)==6,
+        "nearer moving partner positive control precedes exclusion");
+    assert(pen.resolveSnapTargetVert(320,400,vp,[1u,6u])==8,
+        "stationary target control is reachable while nearer partner is excluded");
+    const epoch=g_settledGeomEpochs.epochFor(cast(size_t)&m);
+    const geom=g_geomEpochs.epochFor(cast(size_t)&m), before=m.vertices.dup;
+    SDL_MouseMotionEvent motion;motion.x=520;motion.y=400;motion.state=1;
+    assert(pen.onMouseMotion(motion,vts),"symmetric frame real motion consumed");
+    auto frame=pen.buildPreparedDeactivate(null).expectedMoveFrame;
+    assert(frame !is null && frame.marked.canFind(1u) && frame.marked.canFind(6u)
+        && frame.liveSource.canFind(1u) && frame.liveSource.canFind(6u),
+        "symmetric frame moving population includes source and partner");
+    assert(abs(m.vertices[1].x-.6)<1e-5 && abs(m.vertices[6].x+.6)<1e-5,
+        "symmetric frame actual source and partner positions");
+    foreach(i,p;before)if(i!=1 && i!=6)assert(m.vertices[i]==p,"symmetric frame preserves stationary vertices");
+    assert(g_geomEpochs.epochFor(cast(size_t)&m)!=geom && g_settledGeomEpochs.epochFor(cast(size_t)&m)==epoch,
+        "symmetric raw and final publications retain settled epoch");
+    assert(pen.resolveSnapTargetVert(320,400,vp,frame.liveSource)==8,
+        "symmetric cached query excludes nearer old partner and chooses stationary target");
+    const builds=g_snapGridBuilds;
+    assert(pen.resolveSnapTargetVert(320,400,vp,frame.liveSource)==8 && g_snapGridBuilds==builds,
+        "symmetric same-exclusion query reuses the confined grid");
+    motion.x=540;assert(pen.onMouseMotion(motion,vts));
+    assert(abs(m.vertices[1].x-.7)<1e-5 && abs(m.vertices[6].x+.7)<1e-5,
+        "symmetric repeated frame uses frozen source and partner positions");
+    assert(g_settledGeomEpochs.epochFor(cast(size_t)&m)==epoch
+        && pen.resolveSnapTargetVert(320,400,vp,frame.liveSource)==8,
+        "symmetric repeated frame keeps excluded cached query stable");
+    const repeatedBuilds=g_snapGridBuilds;
+    assert(pen.resolveSnapTargetVert(320,400,vp,frame.liveSource)==8 && g_snapGridBuilds==repeatedBuilds,
+        "symmetric repeated same-exclusion query reuses the confined grid");
+    assert(pen.onMouseButtonUp(down,vts),"symmetric frame real release consumed");
+    assert(g_settledGeomEpochs.epochFor(cast(size_t)&m)!=epoch,
+        "symmetric settlement advances settled epoch");
+    const settled=snapCursor(Vec3(-.7,0,0),260,400,vp,m,ModelSpace.init,snap);
+    assert(settled.snapped && settled.targetSource==0 && settled.targetIndex==6
+        && (settled.worldPos-Vec3(-.7,0,0)).length<1e-5 && g_snapGridBuilds>repeatedBuilds,
+        "symmetric settled query rebuilds and reaches moved partner at new position");
+}
+version (ConfinedPointOnly) {} else unittest { symmetricConfinedFrames(PenMode.Move); }
+version (ConfinedMoveOnly) {} else unittest { symmetricConfinedFrames(PenMode.Point); }

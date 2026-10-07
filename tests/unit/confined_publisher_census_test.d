@@ -379,3 +379,52 @@ unittest {
       ~ "can therefore only mean the arithmetic changed under it.",
         hits.length, recordedTotal));
 }
+
+// The two new sites retain the consumer-side licence, beyond the caller count.
+unittest {
+    import tools.edit.topology_pen.tool : TopologyPenTool;
+    auto compiledTool = new TopologyPenTool();
+    assert(compiledTool !is null, "confined exclusion probe compiles the real tool");
+    import tests.unit.census_symbols : balancedSpan;
+    import std.string : indexOf;
+    import std.algorithm : canFind;
+    string body(string path, string declaration) {
+        const code=blankUnittestBodies(blankNonCode(readText(buildPath(repoRoot,path))));
+        const at=code.indexOf(declaration);
+        assert(at>=0,"confined exclusion declaration population: " ~ declaration);
+        const result=balancedSpan(code,code.indexOf('{',at),'{','}');
+        assert(result.length>30,"confined exclusion body population: " ~ declaration);
+        return result;
+    }
+    enum tool="source/tools/edit/topology_pen/tool.d";
+    enum frame="source/evaluated_move_weld.d";
+    const marks=body(frame,"private void markSources()");
+    assert(marks.canFind("marked_=source_.dup;")
+        && marks.canFind("marked_~=cast(uint)symmetry_.pairOf[vi];"),
+        "confined moving-set marks retain every source and valid frozen partner");
+    assert(marks.canFind("liveSource_=marked_.dup;"),
+        "confined live-source starts from marked population");
+    const begin=body(frame,"bool beginFrame(");
+    assert(begin.canFind("liveSource_ = marked_.dup;"),
+        "confined frame restoration resets live-source from marked population");
+    const weld=body(frame,"void weld(");
+    assert(weld.canFind("foreach (vi; liveSource_)")
+        && weld.canFind("survivors ~= entry.perm[vi];")
+        && weld.canFind("liveSource_ = survivors;"),
+        "confined welded live-source transports actual kernel reindex survivors");
+    const apply=body(tool,"private void applyEvaluatedMove(");
+    assert(apply.canFind("admitsMoveElement(*m,t,i,moveFrame_.liveSource,"),
+        "confined live admission excludes transported moving population");
+    assert(apply.canFind("rawSnapTarget(targets[0],vp,moveFrame_.liveSource)"),
+        "confined vertex handle snap excludes transported moving population");
+    assert(apply.canFind("true,innerSnap_,backFace_,ray,sp,moveFrame_.marked)"),
+        "confined held admission excludes marked source and partners");
+    assert(apply.canFind("rawSnapTarget(rawTargets[i],vp,moveFrame_.marked)"),
+        "confined endpoint snap excludes marked source and partners");
+    const raw=body(tool,"private int rawSnapTarget(");
+    assert(raw.canFind("vp, exclude);"),
+        "confined projected snap transports exclusion to resolver");
+    const resolve=body(tool,"package int resolveSnapTargetVert(");
+    assert(resolve.canFind("&g.admits, exclude);"),
+        "confined resolver transports exclusion to edited-mesh election");
+}

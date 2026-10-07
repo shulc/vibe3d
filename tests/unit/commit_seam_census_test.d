@@ -3915,17 +3915,9 @@ unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
     string firstHit;
     immutable size_t raw = countRawPositionWrites(sy, firstHit);
     assert(raw == 12,
-        format("source/symmetry.d: %d raw position write(s) under §5.7's "
-             ~ "predicate, expected exactly 12 — FIVE production (the plain and "
-             ~ "the delta mirror writer's store, through which the walker "
-             ~ "writes both the on-plane projection and the partner, and the "
-             ~ "symmetric weld's own-mirror fuse, task 9438) plus SEVEN "
-             ~ "unittest-fixture writes below the kernels. All twelve are named "
-             ~ "by text in the rows that follow. "
-             ~ "First hit: `%s`. A THIRTEENTH write here would be invisible to "
-             ~ "every other row in this file, because neither census zone "
-             ~ "scans this module at all (task 1903 §L0-b, §L0.3 shape (D)).",
-               raw, firstHit));
+        format("source/symmetry.d: %d raw position writes under §5.7, expected exactly 12 "
+             ~ "(five production and seven fixtures). Every allowed spelling is named "
+             ~ "below; an extra or missing write must fail. First hit: `%s`.", raw, firstHit));
 
     // The two-sided half — WHICH writes the allowance covers. The count row
     // above reads 12 for ANY twelve raw writes, so a production write swapped

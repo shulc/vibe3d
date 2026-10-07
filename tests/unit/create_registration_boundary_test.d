@@ -256,9 +256,7 @@ unittest {
     // Task 9490: the radial ring start reads `workplane_fit`'s frame (+1).
     // Task 9525: Drag Weld became a topology-pen preset, `tools.edit.drag_weld` gone (-1).
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
-    pinClosure("create_tool_registration", create, 253);
-    pinClosure("registration", positive, 515);
-    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 254,
+    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length >= 200,
         format("6507 import scanner population: files=%d create=%d closure=%d",
             sourceFiles, createSeen, create.queue.length));
     assert("editor_app" in positive.reached,
@@ -269,6 +267,10 @@ unittest {
         if (forbidden in create.reached)
             assert(false, "6507 create_tool_registration reaches " ~ forbidden
                 ~ ": " ~ reachChain("create_tool_registration", forbidden, create));
+    pinClosure("create_tool_registration", create, 253);
+    pinClosure("registration", positive, 515);
+    assert(create.queue.length == 254 && positive.queue.length == 516,
+        "6507 reviewed narrow and broad closure populations");
 }
 
 // L3a: compiler-owned complete member sets, including private declarations.
