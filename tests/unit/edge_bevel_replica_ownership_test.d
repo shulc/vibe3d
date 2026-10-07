@@ -20,6 +20,8 @@ import std.conv : to;
 import std.file : readText;
 import std.format : format;
 import std.math : abs;
+import std.json : JSONValue;
+import params : injectParamsInto;
 import std.process : environment;
 import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode, countOccurrences,
@@ -772,6 +774,18 @@ private void cellS1Dormant() {
         params[2].name == "widthMode", "S1 ADMISSION: retained parameter order");
     assert(tool.sessionPolicy().imageAttrs == ["width", "roundLevel", "widthMode"],
         "S1 SESSION: dormant fields have no session admission");
+
+    const initial = tool.stateForTest();
+    auto modeWrite = JSONValue.emptyObject;
+    modeWrite["widthMode"] = JSONValue(true);
+    injectParamsInto(params, modeWrite);
+    const modeState = tool.stateForTest();
+    assert(modeState.sharpCorner == initial.sharpCorner &&
+        modeState.miterOffset == initial.miterOffset,
+        "S1 MODE ISOLATION: public mode write leaves dormant fields alone");
+    assert(tool.toolStateJson()["widthMode"].boolean,
+        "S1 MODE PARAM: actual injected binding reaches widthMode");
+    tool.stateForTest(initial);
 
     tool.seedPreparedParamForTest(live);
     auto baseline = tool.stateForTest();
