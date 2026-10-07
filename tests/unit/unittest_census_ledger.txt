@@ -259,3 +259,4 @@ drop 1 2 9417 the pen's work-plane mirror helper is gone (the pen maps the stage
 drop 0 26 9489 the prepared param image's mesh path is dead in production and deleted: the cells that drove it (preview install, foreign GPU, zero-width preview, prepared candidate geometry, prepared panel edit) go; the live and scripted modes keep the one-operation pins
 drop 2 17 9500 the reverted empty-redo port's unit blocks (tool_session_policy (13), tool_session_recorded_steps 9500): K-RD showed the rule was a counter artefact
 drop 0 3 9525 Drag Weld became a topology-pen preset: snap_call_census lost the deleted tool's finder assert; prepared_inherited_noop's duplicate Update-producer cell folded into its Update loop (the lifecycle kinds admit no product)
+drop 0 1 20261310 commit_seam_census_test: three edge bevel seam asserts became a seven-consumer population assert plus reconciliation assert; all seven consumer removals have built red receipts (task 20261300)
