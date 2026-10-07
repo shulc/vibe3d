@@ -253,17 +253,6 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     if (miterOffset > 0 && (roundLevel != 0 || widthMode)) return 0;
     if (mask.length != ed.edges.length) return 0;
     if (width < 1e-6f) return edgeBevelOffsetOnly(ed, mask, miterOffset);
-    if (miterOffset > 0) {
-        bool[] touched = new bool[](ed.vertices.length);
-        foreach (ei, chosen; mask) if (chosen) {
-            touched[ed.edges[ei][0]] = true; touched[ed.edges[ei][1]] = true;
-        }
-        foreach (ring; ed.faces) foreach (i, v; ring) if (touched[v]) {
-            auto a = edgeKey(v, ring[(i + ring.length - 1) % ring.length]) in ed.edgeIndexMap;
-            auto b = edgeKey(v, ring[(i + 1) % ring.length]) in ed.edgeIndexMap;
-            if ((a is null || !mask[*a]) && (b is null || !mask[*b])) return 0;
-        }
-    }
     // Settled-mesh precondition (debug-only, stripped from release builds
     // — task 0724 / audit-4 M6). The open-fan rim arm resolves each
     // bordering edge's selection through edgeIndexMap (`selectedEdge`),
@@ -535,6 +524,7 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
         Vec3 dir;
     }
     CornerInfo[ulong] cornerAtVF;
+    uint[2][ulong] splitSupportAtVF;
 
     // face_index → (old_vert → new_verts[]), same substitution-table
     // idiom as bevelVerticesByMask / extrudeFacesByMask. A face can now
@@ -1299,6 +1289,7 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
                 immutable uint sPred = (k4feCap && kr == k4feOppSlot) ? V : getSlide(kr);
                 immutable uint sSucc = (k4feCap && k  == k4feOppSlot) ? V : getSlide(k);
                 faceSubs.require(fi) ~= Mesh.VertSub(V, [sPred, sSucc]);
+                splitSupportAtVF[vfKey(V, fi)] = [sPred, sSucc];
             }
         }
 
@@ -1790,9 +1781,20 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
             uint[] replacement;
             foreach (i, v; ring) {
                 auto c = vfKey(v, fi) in cornerAtVF;
-                if (c is null) { replacement ~= v; continue; }
                 const uint prev = ring[(i + ring.length - 1) % ring.length];
                 const uint next = ring[(i + 1) % ring.length];
+                if (c is null) {
+                    if (auto support = vfKey(v, fi) in splitSupportAtVF) {
+                        const uint before = ed.addVertex(edgeBevelOffsetMiddle(
+                            ed.vertices[v], ed.vertices[prev], width, miterOffset));
+                        const uint after = ed.addVertex(edgeBevelOffsetMiddle(
+                            ed.vertices[v], ed.vertices[next], width, miterOffset));
+                        replacement ~= [before, after];
+                        miterFlanks ~= [(*support)[0], (*support)[1], after, before];
+                        miterFlankSource ~= fi;
+                    } else replacement ~= v;
+                    continue;
+                }
                 uint nv;
                 if (c.kind == CornerKind.Miter) {
                     nv = ed.addVertex(edgeBevelOffsetCorner(ed.vertices[v],
