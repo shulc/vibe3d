@@ -496,7 +496,7 @@ private immutable StepRow[] kStepTable = [
     // Task 8920 (law 1): Edge Bevel, Vertex Bevel and Vertex Extrude open at the
     // arm — the captured script cell and the three UI cells `s01 armed=True`.
     StepRow("edge.bevel", OpensAt.arm, false,
-            ["width", "roundLevel", "widthMode"]),
+            ["width", "roundLevel", "widthMode", "miterOffset"]),
     // Slice M4: the 11 haul attributes plus the operation-open state.
     StepRow("edge.extend", OpensAt.firstPress, false,
             ["opOpen", "inset", "shift", "offsetX", "offsetY", "offsetZ",
@@ -686,7 +686,7 @@ unittest { // (4)
                        "mesh.thickenTool", "mesh.topoPen", "mesh.vertexBevel", "mesh.vertexExtrude",
                        "pen", "poly.bevel", "poly.extrude", "vert.merge"],
            format("M3 step table: image-step ids %s", imageStepIds));
-    assert(checkedNames == 175, format("M3 step table: %s image names checked, measured 175",
+    assert(checkedNames == 176, format("M3 step table: %s image names checked, measured 176",
                                       checkedNames));
     assert(armAttrs == 1, format("M3b step table: %s arm attributes, measured 1", armAttrs));
     assert(actionNames == 3, format("M3 step table: %s Action params on the session tools, "

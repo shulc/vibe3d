@@ -136,5 +136,22 @@
         8
       ]
     ]
-  }
+  },
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "debug-live",
+    "captured_utc": "2026-10-07",
+    "acceptance": "finite captured data only; ordered output identifiers and general geometry parity unproved",
+    "capture_head": "d197e4ee786be89999c7b1fac3a7ef92908394ec",
+    "raw_artifact": "H120-miter-only.json",
+    "mode": "inset",
+    "mode_value": 0,
+    "level": 0,
+    "comparison": "positions and oriented rings modulo point renumbering, cyclic start and face permutation",
+    "raw_sha256": "e0a471f07922d3021f1431971af96edb0eb4eef342024e1bc7d23c881a240d20",
+    "source_artifact": "H120-miter-only.json:source"
+  },
+  "schema": 1
 }

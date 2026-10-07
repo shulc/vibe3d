@@ -77,5 +77,21 @@
     0.9953828498864294
   ],
   "private_archive_commit": "2cef156d0d779d09d38af24d233a62a8e47afe0d",
-  "private_archive_blob": "1af3b19ca6c5a6c8f837d13c850904d7c2591616"
+  "private_archive_blob": "1af3b19ca6c5a6c8f837d13c850904d7c2591616",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "debug-live",
+    "captured_utc": "2026-10-07",
+    "acceptance": "finite captured data only; ordered output identifiers and general geometry parity unproved",
+    "capture_head": "2cef156d0d779d09d38af24d233a62a8e47afe0d",
+    "raw_blob": "1af3b19ca6c5a6c8f837d13c850904d7c2591616",
+    "raw_sha256": "02b8b6faf756ff2199e85dc60ac5a23a295c7f9c2048afa41c633ad801312729",
+    "capture": "20261007T090221_1f3fce77",
+    "mode": "inset",
+    "mode_value": 0,
+    "level": 0
+  },
+  "schema": 1
 }

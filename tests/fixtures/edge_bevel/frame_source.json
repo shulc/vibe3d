@@ -70,5 +70,15 @@
     ],
     "vertices": [],
     "polygons": []
-  }
+  },
+  "provenance": {
+    "schema": 1,
+    "source": "unknown",
+    "reference_token": "unknown",
+    "method": "unknown",
+    "captured_utc": "UNKNOWN; frozen for finite frame check on 2026-10-07",
+    "acceptance": "finite captured data only; ordered output identifiers and general geometry parity unproved",
+    "limits": "Frozen asymmetric source F used with captured handle receipts; original source capture cohort and raw source authority UNKNOWN."
+  },
+  "schema": 1
 }

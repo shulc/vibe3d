@@ -2389,42 +2389,24 @@ unittest // Stage G — the manifold edge bevel family
       ~ "pass it, and a per-call-site literal is the drift this constant exists "
       ~ "to prevent (task 1903 Stage G).");
 
-    // …AND THE KERNEL'S OWN `commitChange` FLAGS ARE BOUND TO IT. Stage F2's
-    // review (MINOR-2) found this hole on poly_bevel.d: `kEdgeBevelEditScope`
-    // is what a RECORDING batch DECLARES, and the literal below is what the
-    // kernel STAMPS — two different spellings of the same intent, able to
-    // drift independently with nothing watching. Stage H's `extrude.d`
-    // inherits the same hole and needs its own row.
-    assert(countOccurrences(eb,
-            "ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)") == 1,
-        "source/mesh_ops/edge_bevel.d: the kernel's own "
-      ~ "`ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)` tail "
-      ~ "call no longer appears exactly once with this exact spelling — "
-      ~ "`kEdgeBevelEditScope` above is what a RECORDING batch declares, not "
-      ~ "what the kernel stamps at `commitChange`, and those two can drift "
-      ~ "independently. H's `extrude.d` inherits this same hole and needs its "
-      ~ "own row (task 1903 Stage G, Stage F2 review MINOR-2).");
-
-    // THE TWO REWRITES UNDER ONE HANDLE (1902 §2.6's shared-`rwB` constraint,
-    // plan §5.3's K-audit row). BOTH numbers matter and in opposite directions:
-    // a THIRD rewrite is a face change nobody audited, and a SECOND
-    // `beginCornerRewrite` would split the shared handle the corner-provenance
-    // capture depends on.
-    assert(countOccurrences(eb, "rewriteFaces(ed,") == 2,
-        format("source/mesh_ops/edge_bevel.d calls `rewriteFaces(ed, …)` %d "
-             ~ "time(s); Stage G measured exactly 2 — the rebuild pass and the "
-             ~ "new-vertex merge pass, in ONE function, under ONE "
-             ~ "`beginCornerRewrite` handle. That pairing is 1902 §2.6's "
-             ~ "shared-`rwB` constraint and plan §5.3's K-audit row for this "
-             ~ "family (\"two sites, one function, TWO scopes\"): Stage K owes "
-             ~ "this family TWO per-rewrite arming scopes, not one, and a third "
-             ~ "site would silently need a third (task 1903 Stage G).",
-               countOccurrences(eb, "rewriteFaces(ed,")));
-    assert(countOccurrences(eb, "ed.beginCornerRewrite()") == 1,
-        "source/mesh_ops/edge_bevel.d no longer opens exactly ONE "
-      ~ "`beginCornerRewrite` handle for its two `rewriteFaces` calls. The "
-      ~ "shared handle is the constraint 1902 §2.6 states: this kernel declares "
-      ~ "corner provenance ONCE, after the SECOND rewrite (task 1903 Stage G).");
+    // Task 20261300: each real consumer owns a tail in the caller's batch.
+    // Stationary allowed populations; a missing or moved site must fail.
+    immutable LedgerRow[] edgePins = [
+        LedgerRow("bevelEdgesByMask|tail", 1, "positive/ordinary kernel tail"),
+        LedgerRow("edgeBevelOffsetOnly|tail", 1, "zero-width kernel tail"),
+        LedgerRow("bevelEdgesByMask|rewrite", 2, "shared two-pass rewrite"),
+        LedgerRow("edgeBevelOffsetOnly|rewrite", 1, "zero-width rewrite"),
+        LedgerRow("bevelEdgesByMask|corner", 1, "shared rewrite handle"),
+        LedgerRow("edgeBevelOffsetOnly|corner", 1, "zero-width rewrite handle"),
+    ];
+    LedgerHit[] edgeHits;
+    edgeHits ~= symbolTokenHits(eb, "source/mesh_ops/edge_bevel.d",
+        "ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)", "tail");
+    edgeHits ~= symbolTokenHits(eb, "source/mesh_ops/edge_bevel.d", "rewriteFaces(ed,", "rewrite");
+    edgeHits ~= symbolTokenHits(eb, "source/mesh_ops/edge_bevel.d", "ed.beginCornerRewrite()", "corner");
+    assert(edgeHits.length == 7, "edge bevel consumer seam population must be seven");
+    const edgeProblems = reconcile(edgePins, edgeHits);
+    assert(edgeProblems.length == 0, "edge bevel consumer seams changed: " ~ edgeProblems);
 
     // …and NO indexed install, which is what puts this family on the ARMABLE
     // side of §5.3's split. THE OTHER HALF OF THAT SENTENCE IS NOW STALE AND IS

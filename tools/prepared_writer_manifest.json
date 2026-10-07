@@ -1603,7 +1603,7 @@
     {
       "aggregate": "EdgeBevelTool",
       "module": "tools.edit.edge_bevel",
-      "semantic_sha256": "d71382eed16a26aabaec4f5c38ac681173e6fc7f7437b730eb0bb77a09b3ba9b",
+      "semantic_sha256": "2768ab36b1d20964a48d5b258a22647b677d13a649495a81761bec37cc911e75",
       "signature": "Param[]()",
       "symbol": "params"
     },

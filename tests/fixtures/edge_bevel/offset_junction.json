@@ -384,5 +384,22 @@
         0
       ]
     ]
-  }
+  },
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "debug-live",
+    "captured_utc": "2026-10-07",
+    "acceptance": "finite captured data only; ordered output identifiers and general geometry parity unproved",
+    "capture_head": "d197e4ee786be89999c7b1fac3a7ef92908394ec",
+    "raw_artifact": "J3-positive.json",
+    "mode": "inset",
+    "mode_value": 0,
+    "level": 0,
+    "comparison": "positions and oriented rings modulo point renumbering, cyclic start and face permutation",
+    "raw_sha256": "348396cf1a3d4d4fd8da505b4b0e5d7a6a5aa353ed656647cdadb9a514287137",
+    "source_artifact": "edge-J3-packet.json"
+  },
+  "schema": 1
 }

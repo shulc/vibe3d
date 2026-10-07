@@ -4064,13 +4064,14 @@ def edge_bevel_activation_gate(owner, context, tool, preview):
         "lastTopology_ = 0;" in preview and
         "cage_         = Mesh.init;" in preview and
         "if (source.edges.length == 0) return;" in formula and
-        "image.anchor = source.selectionCentroidEdges();" in formula and
-        "bool any = source.hasAnySelectedEdges();" in formula and
-        "if (!source.isEdgeSelected(ei)) continue;" in formula and
-        "if ((a==u&&b==w)||(a==w&&b==u))" in formula and
-        "if (adj) sum = sum + source.faceNormal(cast(uint)fi);" in formula and
+        "image.anchor = (low + high) * 0.5f;" in formula and
+        "const mask = source.operandEdgeMask();" in formula and
+        "foreach (ei, chosen; mask) if (chosen)" in formula and
+        "if ((v == edge[0] && next == edge[1]) ||" in formula and
+        "adjacent ~= cast(uint)fi;" in formula and
         "sum = sum + source.faceNormal(cast(uint)fi);" in formula and
-        "image.widthAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);" in formula and
+        "image.widthAxis = primary;" in formula and
+        "dot(sum, sum) < 0.0001f" in formula and
         "image.baseAnchor = image.anchor;" in formula and
         "source.selectionSignature(EditMode.Edges)" in formula and
         "image.gizmoValid = true;" in formula and
@@ -4143,9 +4144,9 @@ for target, old, new, label in (
      "", "drop selection hash"),
     ("tool", "publishOwnerFrameToReplica();",
      "", "drop installed replica memo"),
-    ("tool", "bool any = source.hasAnySelectedEdges();", "bool any = false;", "drop selected-edge branch"),
-    ("tool", "if (!source.isEdgeSelected(ei)) continue;", "", "drop selected-edge guard"),
-    ("tool", "len > 1e-6f", "len >= 0", "drop axis fallback threshold"),
+    ("tool", "const mask = source.operandEdgeMask();", "const mask = new bool[source.edges.length];", "drop selected-edge branch"),
+    ("tool", "foreach (ei, chosen; mask) if (chosen)", "", "drop selected-edge guard"),
+    ("tool", "dot(sum, sum) < 0.0001f", "dot(sum, sum) >= 0", "drop axis fallback threshold"),
     ("tool", "image.gizmoValid = true;", "", "drop valid seal"),
     ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
     ("tool", "context.prepareEdgeBevelActivation(owner)", "true", "drop enlist"),
