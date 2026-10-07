@@ -537,6 +537,7 @@ tests.unit.tool_single_operation_equivalence_test
 tests.unit.tool_state_owned_route_test
 tests.unit.toolchain_floor_test
 tests.unit.toolpipe.attr_cache_test
+tests.unit.toolpipe.local_component_frame_test
 tests.unit.toolpipe.obbox_test
 tests.unit.toolpipe.packets_test
 tests.unit.toolpipe.pipeline_order_test
@@ -570,6 +571,8 @@ tests.unit.tools.slice.loop_slice_tool_test
 tests.unit.tools.slice.slice_tool_test
 tests.unit.tools.transform.arcball_test
 tests.unit.tools.transform.item_xform_kernels_test
+tests.unit.tools.transform.local_component_frame_production_test
+tests.unit.tools.transform.local_component_rotate_sequence_test
 tests.unit.tools.transform.rotate_test
 tests.unit.tools.transform.transform_test
 tests.unit.tools.transform.xform_kernels_test
@@ -675,7 +678,6 @@ tool
 tool_disarm
 tool_input
 tool_presets
-toolpipe.local_component_frame_test
 toolpipe.obbox
 toolpipe.pipeline
 toolpipe.stages.actcenter
@@ -707,8 +709,6 @@ tools.harness.runslots
 tools.slice.slice_tool
 tools.transform.arcball
 tools.transform.item_xform_kernels
-tools.transform.local_component_frame_production_test
-tools.transform.local_component_rotate_sequence_test
 tools.transform.morph_route
 tools.transform.relocate_plane_test
 tools.transform.rotate
