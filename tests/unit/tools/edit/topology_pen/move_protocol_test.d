@@ -270,6 +270,7 @@ unittest {
     assert(frame.liveSource==[0u,1u],"kernel permutation alone retains live source neighbors");
     assert(frame.beginFrame(m,Vec3(.2,0,0)),"post-weld next frame positive");
     assert(!frame.welded && m.vertices.length==7,"new frame resets welded status and population");
+    assert(m.faces==[[0u,1u,2u,3u],[4u,5u,6u]],"changed frame restores original corner order after weld");
 }
 
 unittest {
@@ -333,6 +334,13 @@ unittest {
     auto refreshed=pen.buildPreparedDeactivate(null);
     assert(refreshed.expectedMoveGeneration==1 && pen.preparedDeactivateLocalMatches(refreshed),
         "move fingerprint captures current evaluated generation");
+    wrong.clear();
+    assert(wrong.expectedMoveFrame is null && wrong.expectedMoveGeneration==0,
+        "cleared move fingerprint releases frame and generation");
+    assert(pen.onMouseButtonUp(down,stack),"move fingerprint release positive");
+    auto released=pen.buildPreparedDeactivate(null);
+    assert(released.expectedMoveFrame is null && released.expectedMoveGeneration==0,
+        "released move has no retained frame fingerprint");
 }
 
 unittest {

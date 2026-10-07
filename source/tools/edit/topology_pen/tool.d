@@ -4424,9 +4424,9 @@ public:
         return moveElem_ == MoveElem.Vertex || moveElem_ == MoveElem.Edge;
     }
 
-    // Close an armed Move: apply the FINAL targets at the release's own
-    // pixel (task 0484); the press step records the result. The live writes
-    // only decided what the user saw on the way there. Disarms on the way out.
+    // Close an armed Move: retain the evaluated frame, or apply FINAL targets
+    // at the release's own pixel when no motion was evaluated (task 0484).
+    // The press step records that result. Disarms on the way out.
     private void finishMove(int px, int py, const ref Viewport vp, ref VectorStack vts) {
         scope(exit) clearMoveArm();
         if (!moveArmed_ || moveVerts_.length == 0) return;
