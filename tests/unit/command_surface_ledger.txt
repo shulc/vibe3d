@@ -97,7 +97,6 @@ selftest.fault | api-only: deliberate fault injector compiled only in instrument
 snap.mode | no-ui-yet: user-facing snap scope setter has no action
 tool.beginSession | api-only: test-mode interactive-session hook rejected in normal runs
 tool.clearSoftPinForTest | api-only: explicitly named test-state cleanup hook
-tool.doApply | api-only: headless commit door for an already configured tool
 tool.panelEdit | api-only: test-mode panel-edit hook rejected in normal runs
 tool.set | api-only: command-language tool activator; widgets use tool actions directly
 ui.channels | api-only: test-mode panel visibility hook rejected in normal runs
