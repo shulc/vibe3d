@@ -12,6 +12,7 @@ import shader : LitShader;
 import tools.edit.topology_pen.defs : TopoPenFactories;
 
 import std.array : join;
+import std.algorithm : sort, canFind;
 import std.file : dirEntries, readText, SpanMode;
 import std.format : format;
 import std.path : buildPath, dirName;
@@ -188,6 +189,19 @@ private string reachChain(string seed, string target, const ref Closure closure)
     return chain.join(" -> ");
 }
 
+private void pinClosure(string seed, const ref Closure closure, size_t baselineCount) {
+    const baseline = readText(buildPath(repoRoot, "tests", "unit",
+        seed ~ "_baseline_closure.txt")).strip.split('\n');
+    assert(baseline.length == baselineCount, "registrar baseline manifest population: " ~ seed);
+    auto actual = closure.queue.dup;
+    sort(actual);
+    string[] added, removed;
+    foreach (name; actual) if (!baseline.canFind(name)) added ~= name;
+    foreach (name; baseline) if (!actual.canFind(name)) removed ~= name;
+    assert(added == ["evaluated_move_weld"] && removed.length == 0,
+        format("%s exact closure delta: added=%s removed=%s", seed, added, removed));
+}
+
 // L1/L1b: the narrow registrar has no broad app vocabulary or mixin surface.
 unittest {
     const raw = readText(buildPath(repoRoot, "source",
@@ -242,7 +256,9 @@ unittest {
     // Task 9490: the radial ring start reads `workplane_fit`'s frame (+1).
     // Task 9525: Drag Weld became a topology-pen preset, `tools.edit.drag_weld` gone (-1).
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
-    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 253,
+    pinClosure("create_tool_registration", create, 253);
+    pinClosure("registration", positive, 515);
+    assert(sourceFiles >= 500 && createSeen == 1 && create.queue.length == 254,
         format("6507 import scanner population: files=%d create=%d closure=%d",
             sourceFiles, createSeen, create.queue.length));
     assert("editor_app" in positive.reached,

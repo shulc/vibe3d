@@ -1,4 +1,5 @@
 module tests.unit.edit_registration_boundary_test;
+import std.algorithm : sort, canFind;
 
 import core.exception : AssertError;
 import command_history : CommandHistory;
@@ -202,6 +203,19 @@ private string probeAppendix(string needle) {
 }
 
 // L1/L1b/L5: every zero has a same-scanner canary that must flip to one.
+private void pinClosure(string seed, const ref Closure closure, size_t baselineCount) {
+    const baseline = readText(buildPath(repoRoot, "tests", "unit",
+        seed ~ "_baseline_closure.txt")).strip.split('\n');
+    assert(baseline.length == baselineCount, "registrar baseline manifest population: " ~ seed);
+    auto actual = closure.queue.dup;
+    sort(actual);
+    string[] added, removed;
+    foreach (name; actual) if (!baseline.canFind(name)) added ~= name;
+    foreach (name; baseline) if (!actual.canFind(name)) removed ~= name;
+    assert(added == ["evaluated_move_weld"] && removed.length == 0,
+        format("%s exact closure delta: added=%s removed=%s", seed, added, removed));
+}
+
 unittest {
     const raw = readText(buildPath(repoRoot, "source",
         "edit_tool_registration.d"));
@@ -274,9 +288,11 @@ unittest {
     // Task 9490: the radial ring start reads `workplane_fit` (+1; registration held it).
     // Task 9525: `tools.edit.drag_weld` deleted (-1 each).
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
-    assert(edit.queue.length == 251 && positive.queue.length == 515,
-        format("6670 import closure census changed: edit=%d/251 "
-            ~ "registration=%d/515", edit.queue.length,
+    pinClosure("edit_tool_registration", edit, 251);
+    pinClosure("registration", positive, 515);
+    assert(edit.queue.length == 252 && positive.queue.length == 516,
+        format("6670 import closure census changed: edit=%d/252 "
+            ~ "registration=%d/516", edit.queue.length,
             positive.queue.length));
 }
 

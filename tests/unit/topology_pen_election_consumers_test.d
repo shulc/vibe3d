@@ -4,6 +4,7 @@ import std.file : readText;
 import std.path : buildPath, dirName;
 import std.string : indexOf;
 import std.algorithm : canFind;
+import tests.unit.census_symbols : countOccurrences;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, balancedSpan;
 private enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private string body(string file, string declaration) {
@@ -21,10 +22,18 @@ unittest {
         && place.canFind("return placementSnap_.worldPos;"),
         "Point placement must consume and retain its actual election");
     const move = body(tool, "Vec3[] moveTargets(");
-    assert(move.canFind("placementSnap_ = placementElection(")
-        && move.canFind("px, py, vp, dragSnap_, exclude)")
-        && move.canFind("targets[0] = primaryModelSpace().toLocalPoint(placementSnap_.worldPos);"),
-        "Move placement must consume and retain its actual election");
+    const projection = move.indexOf("projectToWindowFull(snapCenter, vp, sx, sy, sz)");
+    const election = move.indexOf("placementSnap_ = placementElection(snapCenter,");
+    const convert = move.indexOf("targets[0] = primaryModelSpace().toLocalPoint(placementSnap_.worldPos);");
+    assert(countOccurrences(move, "projectToWindowFull(snapCenter, vp, sx, sy, sz)") == 1
+        && projection >= 0 && election > projection,
+        "Move projects its resolved snap center before election exactly once");
+    assert(move.canFind("cast(int)sx, cast(int)sy, vp, dragSnap_, exclude)"),
+        "Move election transports projected resolved-center pixels");
+    assert(countOccurrences(move, "placementSnap_ = placementElection(snapCenter,") == 1,
+        "Move retains the resolved-center election answer");
+    assert(countOccurrences(move, "if (placementSnap_.snapped)") == 1 && convert > election,
+        "Move converts the retained snapped world answer into primary targets");
     const hit = body(tool, "void readHit(");
     assert(hit.canFind("placementSnap_ = placementElection("),
         "real cursor transport must produce the placement election");

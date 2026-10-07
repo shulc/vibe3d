@@ -177,6 +177,11 @@ private static immutable LedgerRow[] kSites = [
         "the topology pen's live move step (task 9493). Exclusion: `exclude`, the "
       ~ "moving set plus its symmetry partners, the `excludeVerts` of the step's "
       ~ "snap query; the release publishes unconfined"),
+    LedgerRow("TopologyPenTool.applyEvaluatedMove|publishConfinedChange", 2,
+        "raw and final primary/partner frames (task 9504). Exclusion: freezeSymmetry "
+      ~ "marks sources, partners and neighbors; liveSource transports those marks "
+      ~ "through weld reindex to live admission and rawSnapTarget. Held admission "
+      ~ "and endpoint snap exclude marked. Release settles with ordinary Position"),
 ];
 
 private struct Hit {

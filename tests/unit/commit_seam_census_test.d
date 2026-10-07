@@ -3914,29 +3914,32 @@ unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
 
     string firstHit;
     immutable size_t raw = countRawPositionWrites(sy, firstHit);
-    assert(raw == 10,
+    assert(raw == 12,
         format("source/symmetry.d: %d raw position write(s) under §5.7's "
-             ~ "predicate, expected exactly 10 — THREE production (the plain and "
+             ~ "predicate, expected exactly 12 — FIVE production (the plain and "
              ~ "the delta mirror writer's store, through which the walker "
              ~ "writes both the on-plane projection and the partner, and the "
              ~ "symmetric weld's own-mirror fuse, task 9438) plus SEVEN "
-             ~ "unittest-fixture writes below the kernels. All ten are named "
+             ~ "unittest-fixture writes below the kernels. All twelve are named "
              ~ "by text in the rows that follow. "
-             ~ "First hit: `%s`. A TWELFTH write here would be invisible to "
+             ~ "First hit: `%s`. A THIRTEENTH write here would be invisible to "
              ~ "every other row in this file, because neither census zone "
              ~ "scans this module at all (task 1903 §L0-b, §L0.3 shape (D)).",
                raw, firstHit));
 
     // The two-sided half — WHICH writes the allowance covers. The count row
-    // above reads 11 for ANY eleven raw writes, so a production write swapped
+    // above reads 12 for ANY twelve raw writes, so a production write swapped
     // for a differently-spelled one, or a fixture deleted while a production
     // one was added, would keep it green. This is the loop_slice.d idiom, run
-    // over the whole file because every one of the eleven is enumerable.
+    // over the whole file because every one of the twelve is enumerable.
     static immutable string[2][] kAllowedSymmetryWrites = [
         // --- the two PRODUCTION writes, the ones L0-b's deltas depend on ---
         ["(i, p) { mesh.vertices[i] = p; }", "2"],
         // --- the weld fuse (task 9438): its tools snapshot the mesh first ---
         ["mesh.vertices[gone] = (mesh.vertices[gone] + mesh.vertices[keep]) * 0.5f;", "1"],
+        // --- the shared corner-order Move stores (task 9504) ---
+        ["mesh.vertices[vi]=points[i];", "1"],
+        ["mesh.vertices[pi]=i<partners.length ? partners[i] : mirrorPosition(*sp,points[i]);", "1"],
         // --- the seven unittest-FIXTURE writes, a local mesh with no batch ---
         ["m.vertices[2] = baseline[2] + delta;", "2"],
         ["m.vertices[4] = baseline[4];", "1"],
@@ -3950,8 +3953,8 @@ unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
         assert(got == want,
             format("source/symmetry.d spells `%s` %d time(s); the L0-b "
                  ~ "allowance is for exactly %d. Every one of this file's "
-                 ~ "ten raw position writes is named here, so a count row "
-                 ~ "that still reads 10 over a DIFFERENT set of writes cannot "
+                 ~ "twelve raw position writes is named here, so a count row "
+                 ~ "that still reads 12 over a DIFFERENT set of writes cannot "
                  ~ "hide behind the total.", row[0], got, want));
         named += got;
     }
