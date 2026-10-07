@@ -1520,7 +1520,13 @@ public:
         const off = Vec3(offsetX_, offsetY_, offsetZ_);
         if (!isFinite(off.x) || !isFinite(off.y) || !isFinite(off.z)) return;
         const to = carriedTargets(stepOrig_, off);
-        foreach (i, vi; stepVerts_) m.vertices[vi] = to[i];
+        // 9494: the panel carries the press baseline through the same shared
+        // corner-order partner write as Move (carried_offset OFFSET_PANEL).
+        import symmetry : writeMovePositions;
+        import toolpipe.stages.symmetry : liveSymmetryStage;
+        const stage = liveSymmetryStage();
+        const sp = stage !is null && stage.enabled ? stage.publishedPacket() : null;
+        writeMovePositions(*m, sp, stepVerts_, to);
         m.commitChange(MeshEditScope.Position);
         m.syncSelection();
         if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
