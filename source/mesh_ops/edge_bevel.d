@@ -248,9 +248,6 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     width = width < 0 ? 0 : width;
     miterOffset = miterOffset < 0 ? 0 : miterOffset;
     if (width < 1e-6f && miterOffset < 1e-6f) return 0;
-    // Task 20261290: unsupported rounded/converted miter consumers refuse
-    // before mutation; positive L0 uses separate generated points below.
-    if (miterOffset > 0 && (roundLevel != 0 || widthMode)) return 0;
     if (mask.length != ed.edges.length) return 0;
     if (width < 1e-6f) return edgeBevelOffsetOnly(ed, mask, miterOffset);
     // Settled-mesh precondition (debug-only, stripped from release builds
@@ -524,6 +521,8 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
         Vec3 dir;
     }
     CornerInfo[ulong] cornerAtVF;
+    // Task20261330: the native neither-adjacent branch emits two Middle
+    // boundaries; keep its existing rail endpoints for the offset flank.
     uint[2][ulong] splitSupportAtVF;
 
     // face_index → (old_vert → new_verts[]), same substitution-table
@@ -1773,6 +1772,15 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     // keep the width rails; generate a second ordered boundary and flanks.
     // The inset producer alone adds the two distances; Middle uses local amount.
     uint[ulong] outerCorner, splitCorner;
+    uint[ulong] middleBoundary;
+    uint addMiddleBoundary(uint origin, uint far, float localAmount) {
+        const ulong key = vfKey(origin, far);
+        if (auto existing = key in middleBoundary) return *existing;
+        const uint result = ed.addVertex(edgeBevelOffsetMiddle(
+            ed.vertices[origin], ed.vertices[far], localAmount, miterOffset));
+        middleBoundary[key] = result;
+        return result;
+    }
     uint[][] miterFlanks;
     uint[] miterFlankSource;
     if (miterOffset > 0) {
@@ -1785,10 +1793,10 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
                 const uint next = ring[(i + 1) % ring.length];
                 if (c is null) {
                     if (auto support = vfKey(v, fi) in splitSupportAtVF) {
-                        const uint before = ed.addVertex(edgeBevelOffsetMiddle(
-                            ed.vertices[v], ed.vertices[prev], width, miterOffset));
-                        const uint after = ed.addVertex(edgeBevelOffsetMiddle(
-                            ed.vertices[v], ed.vertices[next], width, miterOffset));
+                        const uint before = addMiddleBoundary(v, prev,
+                            (ed.vertices[(*support)[0]] - ed.vertices[v]).length);
+                        const uint after = addMiddleBoundary(v, next,
+                            (ed.vertices[(*support)[1]] - ed.vertices[v]).length);
                         replacement ~= [before, after];
                         miterFlanks ~= [(*support)[0], (*support)[1], after, before];
                         miterFlankSource ~= fi;
@@ -1811,11 +1819,11 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
                 } else {
                     const auto a = edgeKey(v, prev) in ed.edgeIndexMap;
                     const uint far = a !is null && qualifies[*a] ? next : prev;
-                    nv = ed.addVertex(edgeBevelOffsetMiddle(ed.vertices[v],
-                        ed.vertices[far], width, miterOffset));
+                    const float localAmount = (ed.vertices[c.vert] - ed.vertices[v]).length;
+                    nv = addMiddleBoundary(v, far, localAmount);
                     if (remapUvB) {
                         const float len = (ed.vertices[far] - ed.vertices[v]).length;
-                        const float t = len > 0 ? ((width + miterOffset) / len > 1 ? 1 : (width + miterOffset) / len) : 0;
+                        const float t = len > 0 ? ((localAmount + miterOffset) / len > 1 ? 1 : (localAmount + miterOffset) / len) : 0;
                         PolyVertexBlend blend;
                         blend.add(v, 1 - t); blend.add(far, t); vertBlendB[nv] = blend;
                     }
@@ -2330,9 +2338,9 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     // `tests/unit/face_reindex_arming_test.d`'s roster is CORRECT at nine
     // sites BECAUSE of this — do not add a tenth for this family.
     foreach (i, ring; miterFlanks) {
-        newFaces ~= ring;
+        newFaces ~= threadRails(ring);
         oldOfNew ~= miterFlankSource[i];
-        if (remapUvB) noteSrc(newFaces.length - 1, uniformSrc(ring.length, miterFlankSource[i]));
+        if (remapUvB) noteSrc(newFaces.length - 1, uniformSrc(newFaces[$-1].length, miterFlankSource[i]));
     }
     rewriteFaces(ed, newFaces, FaceSource(oldOfNew));
     // The two chamfer-strip faces above fold two source faces'

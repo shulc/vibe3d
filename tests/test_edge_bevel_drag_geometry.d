@@ -1,9 +1,5 @@
 import camera_lens_control_helpers;
-// Interactive Edge Bevel width-handle regression.
-//
-// The handle is pressed through its published part-0 anchor, then held across
-// separate event batches.  This catches the old last-event/base-width mix-up:
-// its final width depended on how SDL split one physical drag into motions.
+// Real held-handle motions must update geometry as well as properties.
 
 import http_client : testBaseUrl, getJson, quiesce;
 import http_command_helpers : commandBody;
@@ -12,8 +8,6 @@ import std.json;
 import std.conv : to;
 import std.format : format;
 import std.math : fabs, sqrt;
-import core.thread : Thread;
-import core.time : msecs;
 
 import drag_helpers;
 
@@ -76,96 +70,95 @@ void selectTopFrontEdge() {
     assert(r["status"].str == "ok", "edge selection failed");
 }
 
-// Three selected edges incident to one cube corner. This is deliberately a
-// K3 junction, rather than the isolated K1 edge whose old implementation had
-// already rounded, so level changes exercise complex standing-preview topology.
-void selectCornerEdges() {
-    auto m = model();
-    int[] es = [edgeIndex(m, 6, 7), edgeIndex(m, 2, 6), edgeIndex(m, 5, 6)];
-    foreach (ei; es) assert(ei >= 0, "cube corner edge missing");
-    auto r = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("mesh.select", format(`{"mode":"edges","indices":[%d,%d,%d]}`, es[0], es[1], es[2]))));
-    assert(r["status"].str == "ok", "corner edge selection failed");
-}
 
-struct DragSetup { int x0, y0, x1, y1; }
+string geometry() { auto m = model(); return m["vertices"].toString ~ m["faces"].toString; }
 
-DragSetup armHandle() {
-    cmd("tool.set edge.bevel on");
-    settle(); // draw() must publish the ToolHandles bank first.
-
-    double sx, sy;
-    bool found;
-    fetchHandlePart(0, sx, sy, found, BASE);
-    assert(found, "edge-bevel Width part 0 missing from /api/tool/handles");
-    auto handles = getJson("/api/tool/handles")["handles"];
-    assert(handles["captured"].integer == -1, "handle unexpectedly captured before down");
-
-    // Hover twice before down: queryMouse is intentionally the tool's hit-test
-    // source and may otherwise still report the previous SDL position.
-    int x0 = cast(int)sx, y0 = cast(int)sy;
-    play(motion(0.0, x0, y0, 0) ~ "\n" ~ motion(0.03, x0, y0, 0));
-
-    auto cam = fetchCamera(BASE);
-    auto vp = viewportFromCamera(cam);
-    // Selected edge (6,7) has adjacent +Y/+Z faces, hence this frozen axis.
-    Vec3 anchor = Vec3(0.0f, 0.5f, 0.5f);
-    Vec3 axis = normalize(Vec3(0.0f, 1.0f, 1.0f));
-    float ax, ay, bx, by;
-    assert(projectToWindow(anchor, vp, ax, ay), "bevel anchor projects off camera");
-    assert(projectToWindow(anchor + axis, vp, bx, by), "bevel width axis projects off camera");
-    double dx = bx - ax, dy = by - ay;
-    double d = sqrt(dx*dx + dy*dy);
-    assert(d > 1.0, "bevel width axis too short on screen");
-    return DragSetup(x0, y0,
-        x0 + cast(int)(120.0 * dx / d), y0 + cast(int)(120.0 * dy / d));
-}
-
-
-// A positive offset on an ordinary cube endpoint must not erase the preview
-// or make a subsequent width adjustment inert (task 20261330).
-unittest {
-    cmd(commandBody("scene.reset", `{"type":"cube"}`));
-    selectTopFrontEdge();
-    auto d = armHandle();
-    auto source = model()["vertices"].toString ~ model()["faces"].toString;
-    play(button("SDL_MOUSEBUTTONDOWN", 0, d.x0, d.y0));
-    play(motion(0, d.x0 + (d.x1-d.x0)/8, d.y0 + (d.y1-d.y0)/8));
-    auto width = getJson("/api/tool/state")["width"].floating;
-    auto first = model()["vertices"].toString ~ model()["faces"].toString;
-    assert(width > 0 && first != source, "LIVE WIDTH: held gesture changes actual geometry");
-    play(button("SDL_MOUSEBUTTONUP", 0, d.x0 + (d.x1-d.x0)/8, d.y0 + (d.y1-d.y0)/8));
-
+// Compute the positive direction from the published handle and selected-source
+// bounds centre. The production bank chooses the frame; the test chooses only
+// a positive distance along its visible arm.
+int[4] heldMotion(int part, Vec3 origin, int pixels = 15) {
     double sx, sy; bool found;
-    fetchHandlePart(1, sx, sy, found, BASE);
-    assert(found, "LIVE OFFSET: part1 exists");
-    int x = cast(int)sx, y = cast(int)sy;
+    fetchHandlePart(part, sx, sy, found, BASE);
+    assert(found, "LIVE HANDLE: requested part exists");
     auto vp = viewportFromCamera(fetchCamera(BASE));
-    // Single horizontal edge: native frame up=-X, normal=(Y+Z)/sqrt2;
-    // miter column0 = cross(-X,normal).
-    auto axis = normalize(Vec3(0,1,-1));
-    float ax, ay, bx, by;
-    assert(projectToWindow(Vec3(0,.5f,.5f), vp, ax, ay));
-    assert(projectToWindow(Vec3(0,.5f,.5f)+axis, vp, bx, by));
-    double len = sqrt((bx-ax)*(bx-ax)+(by-ay)*(by-ay));
-    int dx = cast(int)(15*(bx-ax)/len), dy = cast(int)(15*(by-ay)/len);
+    float ox, oy;
+    assert(projectToWindow(origin, vp, ox, oy), "LIVE HANDLE: origin projects");
+    double dx=sx-ox, dy=sy-oy, length=sqrt(dx*dx+dy*dy);
+    assert(length>5, "LIVE HANDLE: populated projected arm");
+    int x=cast(int)sx, y=cast(int)sy;
+    int tx=x+cast(int)(pixels*dx/length), ty=y+cast(int)(pixels*dy/length);
     play(motion(0,x,y,0) ~ "\n" ~ motion(.03,x,y,0));
     play(button("SDL_MOUSEBUTTONDOWN",0,x,y));
-    assert(getJson("/api/tool/state")["dragPart"].integer == 1, "LIVE OFFSET: actual part1 captured");
-    play(motion(0,x+dx,y+dy));
-    auto state = getJson("/api/tool/state");
-    assert(state["miterOffset"].floating > 0 && fabs(state["width"].floating-width)<1e-6,
+    assert(getJson("/api/tool/state")["dragPart"].integer==part,
+        "LIVE HANDLE: actual requested part captured");
+    play(motion(0,tx,ty));
+    return [x,y,tx,ty];
+}
+void release(int[4] d) { play(button("SDL_MOUSEBUTTONUP",0,d[2],d[3])); }
+
+void checkSequence(Vec3 origin, int level=0, bool widthMode=false) {
+    cmd("tool.set edge.bevel on");
+    interactiveCmd("tool.attr edge.bevel roundLevel "~level.to!string);
+    interactiveCmd("tool.attr edge.bevel widthMode "~(widthMode ? "true" : "false"));
+    settle();
+    string source=geometry();
+    auto d=heldMotion(0,origin);
+    auto state=getJson("/api/tool/state");
+    double width=state["width"].floating;
+    string first=geometry();
+    assert(width>0 && first!=source && state["built"].type==JSONType.true_,
+        "LIVE WIDTH: held gesture changes actual geometry");
+    release(d);
+    d=heldMotion(1,origin);
+    state=getJson("/api/tool/state");
+    assert(state["miterOffset"].floating>0 && fabs(state["width"].floating-width)<1e-6,
         "LIVE OFFSET: positive independent scalar reached production");
-    auto offset = model()["vertices"].toString ~ model()["faces"].toString;
-    assert(offset != source && offset != first && state["built"].type == JSONType.true_,
+    string offset=geometry();
+    assert(offset!=source && offset!=first && state["built"].type==JSONType.true_,
         "LIVE OFFSET: held part1 changes geometry instead of erasing width preview");
-    play(button("SDL_MOUSEBUTTONUP",0,x+dx,y+dy));
-    fetchHandlePart(0,sx,sy,found,BASE); assert(found);
-    x=cast(int)sx; y=cast(int)sy;
-    play(motion(0,x,y,0) ~ "\n" ~ motion(.03,x,y,0));
-    play(button("SDL_MOUSEBUTTONDOWN",0,x,y));
-    play(motion(0,x+(d.x1-d.x0)/8,y+(d.y1-d.y0)/8));
-    auto again=model()["vertices"].toString ~ model()["faces"].toString;
-    assert(again!=offset && again!=source, "LIVE WIDTH AFTER OFFSET: actual geometry continues changing");
-    play(button("SDL_MOUSEBUTTONUP",0,x+(d.x1-d.x0)/8,y+(d.y1-d.y0)/8));
+    double miter=state["miterOffset"].floating;
+    release(d);
+    d=heldMotion(0,origin);
+    state=getJson("/api/tool/state");
+    assert(state["width"].floating>width && fabs(state["miterOffset"].floating-miter)<1e-6,
+        "LIVE WIDTH AFTER OFFSET: independent scalar survives");
+    assert(geometry()!=offset && geometry()!=source && state["built"].type==JSONType.true_,
+        "LIVE WIDTH AFTER OFFSET: actual geometry continues changing");
+    release(d);
     cmd("tool.set edge.bevel off");
+}
+
+unittest { // task20261330: ordinary endpoint support, before either release
+    foreach(mode;0..3) {
+        cmd(commandBody("scene.reset", `{"type":"cube"}`));
+        selectTopFrontEdge();
+        checkSequence(Vec3(0,.5f,.5f),mode==1?1:0,mode==2);
+    }
+}
+
+unittest { // the previously supported J3 must use the same live preview route
+    import std.file : readText;
+    auto source=parseJSON(readText("tests/fixtures/edge_bevel/offset_junction.json"))["source"];
+    cmd(commandBody("scene.loadMesh", `{"vertices":`~source["vertices"].toString~
+        `,"faces":`~source["faces"].toString~`}`));
+    auto m=model(); string indices;
+    Vec3 low, high; bool populated;
+    foreach(pair;source["selection"]["edges"].array) {
+        int ei=edgeIndex(m,cast(int)pair[0].integer,cast(int)pair[1].integer);
+        assert(ei>=0,"LIVE J3: source edge exists");
+        if(indices.length) indices~=","; indices~=ei.to!string;
+        foreach(vertex;pair.array) {
+            auto row=source["vertices"][vertex.integer];
+            auto v=Vec3(cast(float)row[0].floating,cast(float)row[1].floating,cast(float)row[2].floating);
+            if(!populated) { low=high=v; populated=true; }
+            else {
+                import std.algorithm : min,max;
+                low=Vec3(min(low.x,v.x),min(low.y,v.y),min(low.z,v.z));
+                high=Vec3(max(high.x,v.x),max(high.y,v.y),max(high.z,v.z));
+            }
+        }
+    }
+    assert(populated,"LIVE J3: source selected population");
+    cmd(commandBody("mesh.select",`{"mode":"edges","indices":[`~indices~`]}`));
+    checkSequence((low+high)*.5f);
 }
