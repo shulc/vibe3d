@@ -4286,8 +4286,8 @@ public:
             if ((targets[i] - m.vertices[vi]).length > kMoveEps) { changed = true; break; }
         if (!changed) return;
 
-        // A member snaps from its RAW target (K-W2b rule 3; K-W2c: an edge's on-plane
-        // member never searches); once one snaps the others stay at their base (K-W2c
+        // A member snaps from its RAW target (K-W2b rule 3; K-EE: an edge member
+        // searches only with single-polygon support); once one snaps the others stay at their base (K-W2c
         // rule 4); otherwise an on-plane one is projected. In CORNER order, each
         // written position mirrored onto its visible partner, last write wins (rule 1).
         import symmetry : mirrorPosition, projectOnPlane;

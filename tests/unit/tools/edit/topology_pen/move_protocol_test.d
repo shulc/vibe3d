@@ -334,6 +334,7 @@ unittest {
     auto refreshed=pen.buildPreparedDeactivate(null);
     assert(refreshed.expectedMoveGeneration==1 && pen.preparedDeactivateLocalMatches(refreshed),
         "move fingerprint captures current evaluated generation");
+    wrong=refreshed;
     wrong.clear();
     assert(wrong.expectedMoveFrame is null && wrong.expectedMoveGeneration==0,
         "cleared move fingerprint releases frame and generation");
@@ -341,6 +342,13 @@ unittest {
     auto released=pen.buildPreparedDeactivate(null);
     assert(released.expectedMoveFrame is null && released.expectedMoveGeneration==0,
         "released move has no retained frame fingerprint");
+    assert(pen.onMouseButtonDown(down,stack),"move fingerprint re-arm positive");
+    auto deactivate=pen.buildPreparedDeactivate(null);
+    assert(deactivate.expectedMoveFrame !is null,"move deactivation frame population");
+    pen.installPreparedDeactivate(deactivate);
+    auto installed=pen.buildPreparedDeactivate(null);
+    assert(installed.expectedMoveFrame is null && installed.expectedMoveGeneration==0,
+        "installed deactivation releases evaluated move frame");
 }
 
 unittest {
@@ -351,4 +359,22 @@ unittest {
     assert(!moveConnectorVeto(a,b,Vec3(1.12413285f,2.02522104f,-0.46265830f),Vec3(1.17142724f,5.52094268f,-6.76249975f)),"connector term[1] negative control");
     assert(!moveConnectorVeto(a,b,Vec3(0.72051147f,4.96856186f,-4.13775280f),Vec3(-9.09391505f,-8.66845257f,8.34198302f)),"connector term[2] negative control");
     assert(!moveConnectorVeto(a,b,Vec3(4.93318060f,-5.68015795f,-0.40053177f),Vec3(1.10710867f,-1.68013888f,-1.02883487f)),"connector term[3] negative control");
+}
+
+unittest {
+    Mesh m;
+    foreach(v;[Vec3(.1,0,0),Vec3(.4,0,0),Vec3(.4,.8,0),Vec3(.1,.8,0),
+        Vec3(-.1,.8,0),Vec3(-.4,.8,0),Vec3(-.4,0,0),Vec3(-.1,0,0),
+        Vec3(.8,0,0),Vec3(.8,.8,0),Vec3(1,.4,0),
+        Vec3(-.8,0,0),Vec3(-.8,.8,0),Vec3(-1,.4,0)]) m.addVertex(v);
+    m.addFace([0u,1,2,3]);m.addFace([4u,5,6,7]);m.addFace([8u,9,10]);m.addFace([11u,12,13]);
+    m.rebuildEdges();m.buildLoops();
+    SymmetryPacket sp;sp.pairOf=[7,6,5,4,3,2,1,0,11,12,13,8,9,10];sp.onPlane=new bool[](14);
+    auto frame=new EvaluatedMoveWeld(m,[1u,2u],true,false);frame.freezeSymmetry(&sp);
+    assert(m.vertices.length==14 && m.faces.length==4,"reciprocal weld source and target population");
+    assert(frame.beginFrame(m,Vec3(.8,.4,0)),"reciprocal weld frame positive");
+    frame.write(m,[Vec3(.8,0,0),Vec3(.8,.8,0)],[Vec3(.8,0,0),Vec3(.8,.8,0)],false);
+    frame.weld(m,[[8u,1u],[9u,2u]]);
+    assert(frame.welded && m.vertices.length==10 && m.faces.length==4,
+        "evaluated weld absorbs source endpoints and both reciprocal partners");
 }
