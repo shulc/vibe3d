@@ -775,6 +775,8 @@ private void cellS1Dormant() {
 
     tool.seedPreparedParamForTest(live);
     auto baseline = tool.stateForTest();
+    assert(baseline.width == 0.2f && baseline.roundLevel == 1 && !baseline.widthMode,
+        "S1 SEEDED STATE: actual prepared fixture reaches the reader");
     auto image = tool.buildPreparedParamUpdate("width", live);
     assert(tool.preparedParamUpdateMatches(image, live), "S1 PROJECTION: positive control");
     foreach (field; 0 .. 9) {
