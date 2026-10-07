@@ -321,6 +321,8 @@ struct XformState {
     // mutable field, so the literal is spelled out here.
     float[16] r = [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1];
     Vec3 s = Vec3(1, 1, 1);
+    // Component-basis ZYX channels; world Euler remains display. Task20261570.
+    Vec3 componentRotate = Vec3(0, 0, 0);
 }
 
 // Unified gesture frame — the orthonormal world coordinate frame frozen at
@@ -460,6 +462,8 @@ struct PreparedXfrmReplayImage {
     bool nextCacheDirty;
     bool expectedNeedsGpu;
     bool nextNeedsGpu;
+    Vec3 expectedComponentRotate;
+    Vec3 expectedGestureStartComponentRotate;
     bool expectedRunFrameValid;
     bool nextRunFrameValid;
     Vec3 expectedRunFrameOrigin;
@@ -475,6 +479,8 @@ struct PreparedXfrmReplayImage {
     Layer[] itemTargets;
     ItemXform[] expectedItemXforms;
     ItemXform[] nextItemXforms;
+    Layer[] expectedWrapperItemTargets;
+    ItemXform[] expectedWrapperItemXforms;
     PreparedXfrmRefireStateImage historyRefire;
     uint deliveryFlags;
     uint deliveryDomains;
@@ -3841,18 +3847,13 @@ public:
     // published at mouse-down.
     private bool rotateRunNeedsRebake() {
         immutable int ax = rotateSub.dragAxis;
-        // The PER-CLUSTER ACEN.Local path STAYS LEGACY (the matrix-truth model is
-        // GLOBAL-only — a single world rotation matrix re-applied about each
-        // cluster's diverged local axes diverges). It keeps the per-gesture cross-
-        // axis re-bake AND the view-ring re-bake (the view-ring is folded onto the
-        // global run.r, which the per-cluster fold does not consume), so its
-        // field carries ONE live axis per cluster gesture.
+        // Cross-channel component input rebakes on current geometry/packets.
         if (rotateGesturePerClusterLocal) {
             if (ax == 3) return true;                 // view-ring → re-bake
             if (runPriorRotateWasViewRing) return true;
-            immutable bool hx = headlessRotate.x != 0;
-            immutable bool hy = headlessRotate.y != 0;
-            immutable bool hz = headlessRotate.z != 0;
+            immutable bool hx = run.componentRotate.x != 0;
+            immutable bool hy = run.componentRotate.y != 0;
+            immutable bool hz = run.componentRotate.z != 0;
             if (ax == 0) return hy || hz;   // dragging X: any held Y/Z is cross-axis
             if (ax == 1) return hx || hz;   // dragging Y: any held X/Z is cross-axis
             if (ax == 2) return hx || hy;   // dragging Z: any held X/Y is cross-axis
@@ -4397,6 +4398,54 @@ public:
         scaleSub.setWrapperInputFrame(frame.right, frame.up, frame.axis, frame.valid);
     }
 
+    // Principal input drain; task20261570, rotation amendment exact-sample seam.
+    public final bool applyPrincipalRotateSample(int axis, float radians,
+            ref VectorStack vts) {
+        import std.math : isFinite;
+        if (activeDrag !is rotateSub || rotDragAxisIdx < 0 || rotDragAxisIdx > 2)
+            return false;
+        if (axis < 0 || axis > 2) return false;
+        if (axis != rotDragAxisIdx) return false;
+        if (!isFinite(radians)) return false;
+        import std.math : PI;
+        import math : eulerZYXFromMatrix;
+        // The physical ring supplies a local channel; world orientation supplies
+        // display. Both are absolute from gestureStart (rotation amendment).
+        Vec3 ringAxis;
+        if (frame.valid && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2) {
+            ringAxis = axis == 0 ? frame.right
+                     : axis == 1 ? frame.up
+                               : frame.axis;
+        } else if (runFrameValid) {
+            ringAxis = axis == 0 ? runFrameR
+                     : axis == 1 ? runFrameU
+                               : runFrameF;
+        } else {
+            Vec3 lbX, lbY, lbZ;
+            currentBasis(lbX, lbY, lbZ, vts);
+            ringAxis = axis == 0 ? lbX
+                     : axis == 1 ? lbY
+                               : lbZ;
+        }
+        run.r = matMul4(
+            pivotRotationMatrix(Vec3(0, 0, 0), ringAxis, radians),
+            gestureStart.r);
+        // DERIVE the panel euler from the truth (display only; lossy at
+        // gimbal is acceptable — the matrix is never lossy).
+        headlessRotate = eulerZYXFromMatrix(run.r);
+        if (rotateGesturePerClusterLocal) {
+            run.componentRotate = gestureStart.componentRotate;
+            const degrees = radians * cast(float)(180 / PI);
+            if (axis == 0) run.componentRotate.x = gestureStart.componentRotate.x + degrees;
+            else if (axis == 1) run.componentRotate.y = gestureStart.componentRotate.y + degrees;
+            else run.componentRotate.z = gestureStart.componentRotate.z + degrees;
+        }
+
+        applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
+                 /*samplePipeFromBaseline=*/true);
+        return true;
+    }
+
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (foreignEditSessionClosed_) return false;
         syncInputViewport(vts);
@@ -4576,87 +4625,7 @@ public:
                 float ang = rotateSub.pendingRotateAngle;
                 rotateSub.pendingRotateAxis = -1;
                 if (ax >= 0 && ax <= 2) {
-                    import std.math : PI;
-                    import math : eulerZYXFromMatrix;
-                    // MATRIX-AS-TRUTH — `run.r` is the run's world-space
-                    // accumulated rotation (the TRUTH); `headlessRotate` is DERIVED
-                    // from it for the panel only. The producer's `ang`
-                    // (pendingRotateAngle = totalAngle) is the WITHIN-GESTURE angle
-                    // only (totalAngle resets to 0 at every drag start, rotate.d
-                    // ~601/695). So we compose THIS gesture's incremental rotation
-                    // about the ACTUAL PHYSICAL RING AXIS — the FROZEN gizmo basis
-                    // axis runFrameR/U/F[ax] — onto the orientation captured at this
-                    // gesture's mouse-down (gestureStart.r), IN gesture
-                    // order:
-                    //     run.r = R(frozenRingAxis, ang) · gestureStart.r
-                    // Composing about the REAL ring axis (not a world canon axis) is
-                    // what fixes the non-world-basis bug: on an oblique global basis
-                    // (single-cluster acen=local→global, tilted workplane) the matrix
-                    // is the true world orientation about the displayed ring, and
-                    // composeFor applies it DIRECTLY (no Rz·Ry·Rx rebuild about a
-                    // possibly-different frame). The run baseline + run basis + pivot
-                    // stay FROZEN — NO re-bake. The held T/S are NOT touched (they
-                    // compose via the preset flags). (Per-cluster acen=local does NOT
-                    // reach the matrix path — it re-bakes per cross-axis gesture via
-                    // rotateRunNeedsRebake and stays on the legacy per-cluster fold.)
-                    //
-                    // The frozen run frame is captured at the run's first applyTRS
-                    // (M6). On the VERY FIRST motion of a fresh run the freeze has
-                    // not happened yet (applyTRS below does it), so fall back to the
-                    // live currentBasis axis for THIS frame — it equals the
-                    // about-to-be-frozen frame (currentBasis is what M6 freezes).
-                    // Gesture chaining (flex_border_handles_plan.md): when a prior
-                    // same-session gesture persisted a rotated frame, the runFrame
-                    // captured at THIS run's first applyTRS may be the STALE
-                    // world-snapped basis (a cross-axis rotate-after-rotate reuses
-                    // the run frame — no re-bake on the global matrix-truth path),
-                    // while the ring is DRAWN at R_gesture·frame. Rotate about the
-                    // DISPLAYED ring axis (the unified `frame`, persisted by the prior
-                    // gesture's settleGestureBasis, principal axes only) so apply
-                    // follows render. Self-consistent — no double-count: the render's
-                    // R_gesture = R(frame[ax], ang) is then applied to `frame`, i.e.
-                    // rotating the displayed frame about one of its OWN axes. Falls
-                    // back to runFrame (then live currentBasis) for the un-chained
-                    // first gesture / non-Border modes.
-                    Vec3 ringAxis;
-                    // Gesture-frame unification, Phase 5 — the chained ring axis
-                    // reads the unified `frame` directly. The chained gate is
-                    // inlined as `frame.valid && rotDragAxisIdx in 0..2` (the
-                    // condition the retired chained-axis flag was set under in
-                    // beginRotateDragSession; principal-ring gestures only — the
-                    // view-ring takes the ax==3 branch, not this one), and we are
-                    // already in the principal-ring branch, so `frame.{right,up,axis}`
-                    // are the frozen gesture frame's axes. Falls back to runFrame
-                    // (then live currentBasis) for the un-chained first gesture.
-                    if (frame.valid && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 2) {
-                        ringAxis = ax == 0 ? frame.right
-                                 : ax == 1 ? frame.up
-                                           : frame.axis;
-                    } else if (runFrameValid) {
-                        ringAxis = ax == 0 ? runFrameR
-                                 : ax == 1 ? runFrameU
-                                           : runFrameF;
-                    } else {
-                        Vec3 lbX, lbY, lbZ;
-                        currentBasis(lbX, lbY, lbZ, vts);
-                        ringAxis = ax == 0 ? lbX
-                                 : ax == 1 ? lbY
-                                           : lbZ;
-                    }
-                    run.r = matMul4(
-                        pivotRotationMatrix(Vec3(0, 0, 0), ringAxis, ang),
-                        gestureStart.r);
-                    // DERIVE the panel euler from the truth (display only; lossy at
-                    // gimbal is acceptable — the matrix is never lossy).
-                    headlessRotate = eulerZYXFromMatrix(run.r);
-
-                    // CPU is rebuilt from the run baseline EVERY frame so it
-                    // is never stale at mouseUp (round-1/3 B3; landed-move
-                    // parity). The fast-path then merely skips the per-frame
-                    // vertex re-upload — the GPU keeps the baseline buffer and
-                    // u_model = wrapAboutPivot(fold) bridges the rotation.
-                    applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
-                             /*samplePipeFromBaseline=*/true);
+                    if (!applyPrincipalRotateSample(ax, ang, vts)) return r;
                     // P-F Phase 3b (MAJOR-4) — the own-bank fast-path
                     // `wrapAboutPivot(lastFoldMatrix) · buffer` is valid ONLY while
                     // the GPU buffer still holds the FROZEN run baseline
@@ -4694,6 +4663,7 @@ public:
                         pivotRotationMatrix(Vec3(0, 0, 0), viewAxisLocal, ang),
                         gestureStart.r);
                     headlessRotate = eulerZYXFromMatrix(run.r);
+                    run.componentRotate = headlessRotate;
                     applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                              /*samplePipeFromBaseline=*/true);
                     // P-F Phase 3b (MAJOR-4) — same own-bank buffer-vs-baseline
@@ -5295,6 +5265,7 @@ public:
                               angleAccumRad.y * 180.0f / cast(float)PI,
                               angleAccumRad.z * 180.0f / cast(float)PI);
         run.r = matrixFromEulerZYX(headlessRotate);
+        run.componentRotate = headlessRotate;
         bool pureRotatePreset = flagR && !flagT && !flagS;
         applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                  /*samplePipeFromBaseline=*/pureRotatePreset);
@@ -5386,6 +5357,7 @@ public:
         // reads run.r. The Euler slot is the only numeric rotate input (the
         // view-ring has no numeric attr), so matrixFromEulerZYX is the exact truth.
         run.r = matrixFromEulerZYX(headlessRotate);
+        run.componentRotate = headlessRotate;
         // Task 3310 — the NUMERIC door's floor. `SX`/`SY`/`SZ` are Params bound
         // straight to `&run.s.{x,y,z}`, so a `tool.attr` write lands in the run
         // state with nothing between it and the fold: before this line a typed
@@ -5671,6 +5643,14 @@ public:
                                   !projection.wrapperRegrade) || mesh is null)
             return image;
         image.expectedLive = MeshSnapshot.capture(*mesh);
+        image.expectedWrapperItemTargets = itemTargets.dup;
+        image.expectedWrapperItemXforms.length = itemTargets.length;
+        foreach (i, target; itemTargets) {
+            if (target is null) return PreparedXfrmReplayImage.init;
+            image.expectedWrapperItemXforms[i] = target.xform;
+        }
+        image.expectedComponentRotate = run.componentRotate;
+        image.expectedGestureStartComponentRotate = gestureStart.componentRotate;
         image.expectedIndices = vertexIndicesToProcess.dup;
         image.expectedMask = toProcess.dup;
         image.expectedCount = vertexProcessCount;
@@ -5693,7 +5673,8 @@ public:
         auto prepared = buildPreparedRefireCandidate(
             liveFalloff, liveSymmetry, true,
             projection.subject == SelType.Item, image.nextElementWeights);
-        if (!prepared.applied) return image;
+        if (!prepared.applied ||
+            prepared.itemPrepared != (projection.subject == SelType.Item)) return image;
         image.candidate = prepared.mesh;
         image.nextIndices = prepared.vertexIndices;
         image.nextMask = prepared.vertexMask;
@@ -5733,6 +5714,8 @@ public:
             ref const PreparedXfrmReplayImage image, in Mesh live) const
             nothrow @nogc {
         if (!image.valid || !image.expectedLive.matches(live) ||
+            run.componentRotate != image.expectedComponentRotate ||
+            gestureStart.componentRotate != image.expectedGestureStartComponentRotate ||
             vertexIndicesToProcess != image.expectedIndices ||
             toProcess != image.expectedMask ||
             vertexProcessCount != image.expectedCount ||
@@ -5748,12 +5731,26 @@ public:
             dragSymmetry.authoringSide != image.expectedSymmetry.authoringSide ||
             !elementWeightCachesEqual(elementWeightCache_,
                                       image.expectedElementWeights) ||
-            itemTargets.length != image.itemTargets.length ||
-            image.itemTargets.length != image.expectedItemXforms.length)
+            itemTargets.length != image.expectedWrapperItemTargets.length ||
+            image.expectedWrapperItemTargets.length != image.expectedWrapperItemXforms.length ||
+            image.meshPrepared == image.itemPrepared)
             return false;
-        foreach (i, target; image.itemTargets)
+        foreach (i, target; image.expectedWrapperItemTargets)
             if (target is null || itemTargets[i] !is target ||
-                target.xform != image.expectedItemXforms[i]) return false;
+                target.xform != image.expectedWrapperItemXforms[i]) return false;
+        if (image.meshPrepared) {
+            if (image.itemTargets.length != 0 ||
+                image.expectedItemXforms.length != 0 ||
+                image.nextItemXforms.length != 0) return false;
+        } else {
+            if (image.itemTargets.length == 0 ||
+                itemTargets.length != image.itemTargets.length ||
+                image.itemTargets.length != image.expectedItemXforms.length ||
+                image.itemTargets.length != image.nextItemXforms.length) return false;
+            foreach (i, target; image.itemTargets)
+                if (target is null || itemTargets[i] !is target ||
+                    target.xform != image.expectedItemXforms[i]) return false;
+        }
         return !image.historyRefire.valid ||
             preparedRefireStateMatches(image.historyRefire);
     }
@@ -6287,6 +6284,7 @@ public:
             if (changedBanks & replayBankBit(DragBank.Rotate)) {
                 import math : matrixFromEulerZYX;
                 run.r = matrixFromEulerZYX(headlessRotate);
+                run.componentRotate = headlessRotate;
             }
             if (changedBanks & replayBankBit(DragBank.Scale))
                 run.s = normalizeScaleRunValue(run.s);

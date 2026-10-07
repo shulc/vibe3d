@@ -211,14 +211,13 @@ unittest { // a rotated NON-SQUARE face: the in-plane pair is the covariance's
     assertOrthonormalRH(f, "rotated 1x2 face");
 }
 
-unittest { // local runs the SAME computation and must not drift from select
-    // 0557 crossed these two modes and this is the property that keeps them
-    // together through a change to the frame's CONTENT.
-    auto s = frameFor(SEL_TOP_FACE, ROT_RECT, "select");
+unittest { // Local unique-long mapping; Select controls above retain world-X election.
     auto l = frameFor(SEL_TOP_FACE, ROT_RECT, "local");
-    near(l.right, s.right, "local/right", "local and select run one computation");
-    near(l.up,    s.up,    "local/up",    "local and select run one computation");
-    near(l.fwd,   s.fwd,   "local/fwd",   "local and select run one computation");
+    // Construction consequence: longest planar tangent, normal cross tangent.
+    near(l.right, Vec3(0, -.218590f, .975818f), "local/right", "unique-long rectangle tangent");
+    near(l.up, Vec3(-1, 0, 0), "local/up", "normal cross longest tangent");
+    near(l.fwd, Vec3(0, -.975818f, -.218590f), "local/fwd", "rectangle winding normal");
+    assertOrthonormalRH(l, "Local unique-long rectangle");
 }
 
 // ── 3. THE REFUSAL — the square's in-plane answer is OURS, and says so ────

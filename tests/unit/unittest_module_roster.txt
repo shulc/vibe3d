@@ -708,6 +708,7 @@ tools.slice.slice_tool
 tools.transform.arcball
 tools.transform.item_xform_kernels
 tools.transform.local_component_frame_production_test
+tools.transform.local_component_rotate_sequence_test
 tools.transform.morph_route
 tools.transform.relocate_plane_test
 tools.transform.rotate

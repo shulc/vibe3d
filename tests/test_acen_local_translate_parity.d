@@ -1,59 +1,5 @@
-// Phase 1 of the transform-single-source plan.
-//
-// What this pins (live, end-to-end, through the SDL/tool dispatch):
-//
-//   Under ACEN.Local + axis.local (≥2 disjoint clusters with their OWN
-//   signed local frames), a single-handle interactive translate drag
-//   must move every cluster by the SAME signed scalar along its OWN
-//   signed `fwd` axis. Equivalently: the basis-local TZ scalar fed into
-//   `headlessTranslate` is one number across all clusters; each
-//   cluster's vert displacement = `clusterFwd[cid] * scalar`. Clusters
-//   with OPPOSITE-signed normals (e.g. top +Y vs bottom -Y) move in
-//   OPPOSITE WORLD DIRECTIONS by the SAME magnitude — that is the
-//   "uniform amount in its own local frame" invariant.
-//
-//   The pre-refactor MoveTool drag projects the screen mouse motion
-//   onto each cluster's OWN screen-projected axis INDEPENDENTLY (see
-//   `MoveTool.applyPerClusterDelta` in `source/tools/move.d`), so per-
-//   cluster magnitudes scale with each axis's screen-projection length
-//   and diverge. The captured live drag (committed alongside this
-//   test) records 0.2291 for cluster A vs 0.3621 for cluster B along
-//   their signed `fwd` — the bug, frozen.
-//
-//   Post-refactor the wrapper computes ONE basis-local scalar per
-//   frame and pushes it into `headlessTranslate`; `applyTRS` re-uses
-//   the per-cluster kernel `applyTranslatePerCluster` which already
-//   reads each cluster's own frame. Per-cluster |scalar| converges.
-//
-// Per-cluster frame construction matches `source/toolpipe/stages/axis.d`
-// (~lines 443-473) exactly:
-//   fwd   = signed snapped average face normal of the cluster
-//   right = normalize(world+X − fwd·dot(world+X, fwd))   (world+Z when
-//           the normal is X-aligned, to avoid a degenerate tangent)
-//   up    = fwd × right
-//
-// The captured drag (manual, ACEN.Local, 3-poly asymmetric selection
-// on a clean segments-2 cube, blue Z-handle pull) has the
-// `axis.clusterFwd` values:
-//   cluster A (top -X cells, normal +Y) → fwd = +Y
-//   cluster B (bottom +X+Z cell, normal -Y) → fwd = -Y
-// and the captured world-Y motion is negative → cluster A's projection
-// onto +Y is NEGATIVE; cluster B's projection onto -Y is POSITIVE; both
-// representing the SAME basis-local scalar (negative TZ).
-//
-// Primary assertion (RED before Phase 3, GREEN after):
-//   The SIGNED basis-local scalar along each cluster's OWN signed `fwd`
-//   must AGREE across clusters within tol = 0.005. Pre-refactor
-//   cluster A reads -0.229 and cluster B reads +0.362 — divergent
-//   magnitudes AND opposite signs. Post-refactor every cluster reads
-//   the SAME signed scalar.
-//
-// Secondary assertion (RED before Phase 3, GREEN after):
-//   Recover the cluster-local scalar `s` from the post-drag mesh.
-//   Reset to a fresh scene + same selection + ACEN.Local, fire
-//   `tool.attr move TZ <s>` + `tool.doApply`, and assert drag-result
-//   ≈ numeric-result per vertex within 0.005. This pins the
-//   "drag == numeric" invariant the refactor introduces.
+// Pure Local normal-arrow drag and independent numeric parity.
+// Historical screen-plane observations: task20261570 amendment evidence.
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -67,7 +13,7 @@ import std.format : format;
 import core.thread : Thread;
 import core.time   : dur;
 
-import drag_helpers : Vec3, dot, normalize;
+import drag_helpers : Vec3, dot, normalize, fetchCamera, viewportFromCamera, gizmoSize, projectToWindow, buildDragLog;
 
 void main() {}
 
@@ -110,7 +56,7 @@ Vec3[] dumpVerts() {
 
 struct ClusterInfo {
     Vec3[] centers;        // ACEN.clusterCenters (per cluster)
-    Vec3[] fwd;            // AXIS.clusterFwd (per cluster, signed)
+    Vec3[] fwd, right, up; // All signed component axes
     Vec3   sharedRight;    // AXIS.right (shared basis from non-cluster path)
     Vec3   sharedUp;
     Vec3   sharedFwd;
@@ -133,6 +79,11 @@ ClusterInfo readClusters() {
         ci.fwd ~= Vec3(cast(float)a[0].floating,
                        cast(float)a[1].floating,
                        cast(float)a[2].floating);
+    }
+    foreach (key; ["clusterRight", "clusterUp"]) {
+        Vec3[] values;
+        foreach (v; j["axis"][key].array) values ~= vector(v);
+        if (key == "clusterRight") ci.right = values; else ci.up = values;
     }
     auto r = j["axis"]["right"].array;
     auto u = j["axis"]["up"].array;
@@ -177,150 +128,102 @@ void setupScene() {
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     cmd("tool.set move on");
     cmd("actr.local");
+    cmd("history.clear");
+    settle();
 }
 
-// Per-cluster mean displacement projected onto each cluster's signed
-// `fwd`. Returns one signed scalar per cluster.
+
+void settle() { Thread.sleep(dur!"msecs"(150)); }
+Vec3 vector(JSONValue j) {
+    auto a = j.array;
+    return Vec3(cast(float)a[0].floating, cast(float)a[1].floating, cast(float)a[2].floating);
+}
+long undoCount() { return getJson("/api/history")["undo"].array.length; }
+
+// task20261570 amendment: historical pixels grabbed a screen plane, with TY=.03.
+// Project the current prepared normal shaft and witness the real held latch.
+void normalArrowGesture() {
+    import std.string : splitLines;
+    settle();
+    auto e = getJson("/api/toolpipe/eval"); auto t = e["transform"];
+    foreach (key; ["right", "up", "fwd"]) {
+        auto d = vector(t["moveRenderFrame"][key]) - vector(e["axis"][key]);
+        assert(sqrt(dot(d,d)) < .005, "normal-arrow prepared/display frame agrees with shared producer");
+    }
+    auto c = vector(t["gizmoCenter"]); auto f = vector(t["moveRenderFrame"]["fwd"]);
+    auto cam = fetchCamera(); auto vp = viewportFromCamera(cam);
+    float size = gizmoSize(c,vp), x0,y0,x1,y1;
+    projectToWindow(c+f*(size/5),vp,x0,y0); projectToWindow(c+f*size,vp,x1,y1);
+    double dx=x1-x0,dy=y1-y0,len=sqrt(dx*dx+dy*dy);
+    assert(len>10,"normal arrow screen population");
+    int x=cast(int)(x0+.7f*dx),y=cast(int)(y0+.7f*dy);
+    auto log=buildDragLog(cam.vpX,cam.vpY,cam.width,cam.height,x,y,
+        x+cast(int)(40*dx/len),y+cast(int)(40*dy/len),12);
+    string held, release, viewport;
+    foreach(line;log.splitLines) {
+        auto v=parseJSON(line);
+        if(v["type"].str=="VIEWPORT") viewport=line~"\n";
+        if(v["type"].str=="SDL_MOUSEBUTTONUP") release=line~"\n";
+        else held~=line~"\n";
+    }
+    const floor=undoCount(); assert(floor<48,"normal-arrow history headroom");
+    {
+        scope(exit) { playAndWait(viewport~release); settle(); }
+        playAndWait(held); settle();
+        auto latched=getJson("/api/toolpipe/eval")["transform"]["moveDragAxis"].integer;
+        assert(latched==2,"normal-arrow gesture grabbed production Move normal part");
+    }
+    assert(undoCount()==floor+1,"normal-arrow gesture records exactly one entry");
+}
+
 float[] perClusterFwdScalars(Vec3[] pre, Vec3[] post_, ClusterInfo ci) {
-    Vec3[] meanDisp;
-    int[]  count;
-    meanDisp.length = ci.centers.length;
-    count.length    = ci.centers.length;
-    foreach (vi, c; ci.clusterOf) {
-        if (c < 0 || c >= cast(int)meanDisp.length) continue;
-        Vec3 d = Vec3(post_[vi].x - pre[vi].x,
-                      post_[vi].y - pre[vi].y,
-                      post_[vi].z - pre[vi].z);
-        meanDisp[c] = meanDisp[c] + d;
-        ++count[c];
-    }
+    assert(pre.length==26&&post_.length==26&&ci.centers.length==2,"old rig 26 vertices / two groups");
+    assert(getJson("/api/model")["faces"].array.length==24,"old rig 24 faces");
+    assert(ci.right.length==2&&ci.up.length==2&&ci.fwd.length==2,"complete signed component frames");
     float[] scalars;
-    scalars.length = ci.centers.length;
-    foreach (i; 0 .. meanDisp.length) {
-        assert(count[i] > 0,
-            "cluster " ~ i.to!string ~ " has no assigned vertices");
-        Vec3 m = Vec3(meanDisp[i].x / count[i],
-                      meanDisp[i].y / count[i],
-                      meanDisp[i].z / count[i]);
-        scalars[i] = dot(m, ci.fwd[i]);
+    int untouched;
+    foreach(c;0..2) {
+        Vec3 mean; int count;
+        foreach(vi,cid;ci.clusterOf) if(cid==c) { mean=mean+(post_[vi]-pre[vi]);++count; }
+        assert(count==(c==0?6:4),"old rig selected member floors 6/4");
+        mean=mean/cast(float)count;
+        float tx=dot(mean,ci.right[c]),ty=dot(mean,ci.up[c]),tz=dot(mean,ci.fwd[c]);
+        assert(fabs(tx)<.005&&fabs(ty)<.005,"normal-arrow geometry has zero off-axis channels");
+        foreach(vi,cid;ci.clusterOf) if(cid==c) {
+            auto d=post_[vi]-pre[vi]-(ci.right[c]*tx+ci.up[c]*ty+ci.fwd[c]*tz);
+            assert(sqrt(dot(d,d))<.005,"normal-arrow full component reconstruction");
+        }
+        scalars~=tz;
     }
+    foreach(vi,cid;ci.clusterOf) if(cid<0) {
+        ++untouched;auto d=post_[vi]-pre[vi];
+        assert(sqrt(dot(d,d))<.005,"normal-arrow untouched vertex");
+    }
+    assert(untouched==16,"old rig untouched population 16");
     return scalars;
 }
 
-unittest { // Per-cluster signed-fwd scalar EQUALITY (the bug Phase 3 fixes)
-    setupScene();
-
-    auto ci = readClusters();
-    assert(ci.centers.length == 2,
-        "expected 2 clusters, got " ~ ci.centers.length.to!string);
-    assert(ci.fwd.length == ci.centers.length,
-        "clusterFwd length mismatch: "
-      ~ ci.fwd.length.to!string ~ " vs "
-      ~ ci.centers.length.to!string);
-
-    auto pre = dumpVerts();
-
-    // Replay the captured live SDL drag (manual blue-Z-handle pull).
-    string log = readText("tests/events/acen_local_translate_drag.log");
-    playAndWait(log);
-
-    auto post_ = dumpVerts();
-    assert(post_.length == pre.length,
-        "mesh vertex count changed during drag");
-
-    auto scalars = perClusterFwdScalars(pre, post_, ci);
-
-    // Sanity: the drag must have actually moved geometry — otherwise
-    // the captured event log is missing the handle and we'd be
-    // testing nothing.
-    float maxAbs = 0;
-    foreach (s; scalars) {
-        float a = fabs(s);
-        if (a > maxAbs) maxAbs = a;
-    }
-    assert(maxAbs > 0.05,
-        "Drag produced no measurable per-cluster motion (|max scalar|="
-        ~ maxAbs.to!string ~ "). The captured events.log mouse pixels "
-        ~ "may not be hitting a move handle at the test's camera / "
-        ~ "viewport setup.");
-
-    // Primary assertion (refactor target):
-    //   For every cluster, the SIGNED basis-local scalar along its
-    //   OWN signed `fwd` must agree. Pre-refactor cluster A reads
-    //   -0.229 and cluster B reads +0.362 — divergent magnitudes AND
-    //   opposite signs. Post-refactor every cluster reads the SAME
-    //   signed scalar (e.g. ~-0.30 for the captured negative-Y pull);
-    //   `fwd[A] = +Y, fwd[B] = -Y` while the world displacement
-    //   tracks the single basis-local scalar.
-    //
-    // Pinning the SIGNED scalar (not just |scalar|) rules out the
-    // case where cluster A has |s|=0.229 and cluster B |s|=0.229
-    // with opposite signs — that would still be inconsistent (each
-    // cluster reading its OWN sign), distinct from the post-refactor
-    // semantics where the BASIS-LOCAL scalar is one number.
-    float s0 = scalars[0];
-    foreach (i, s; scalars) {
-        float diff = fabs(s - s0);
-        assert(diff < 0.005f,
-            "Per-cluster signed-fwd scalar divergence (Phase 3 bug):\n"
-            ~ "  cluster 0 scalar along its fwd: " ~ s0.to!string ~ "\n"
-            ~ "  cluster " ~ i.to!string
-            ~ " scalar along its fwd: " ~ s.to!string ~ "\n"
-            ~ "  |diff|: " ~ diff.to!string);
-    }
+unittest {
+    setupScene(); auto ci=readClusters(); auto pre=dumpVerts();
+    normalArrowGesture(); auto post_=dumpVerts();
+    auto scalars=perClusterFwdScalars(pre,post_,ci);
+    assert(scalars[0]>.05,"normal-arrow nonzero signed motion");
+    foreach(s;scalars) assert(fabs(s-scalars[0])<.005,"Per-cluster signed-fwd scalar divergence (Phase 3 bug)");
 }
 
-unittest { // Drag-result ≈ numeric-result per vertex (drag == numeric)
-    // Reproduces the drag to recover its basis-local scalar; then
-    // re-runs the scenario but applies that scalar through the numeric
-    // `tool.attr move TZ <s>` + `tool.doApply` path. Per-vertex
-    // equality within 0.005 demonstrates the wrapper's `applyTRS`
-    // is the SINGLE source of truth.
-    setupScene();
-    auto ci = readClusters();
-    auto preD = dumpVerts();
-    string log = readText("tests/events/acen_local_translate_drag.log");
-    playAndWait(log);
-    auto postD = dumpVerts();
-
-    // Recover the cluster-local scalar from cluster 0's signed-fwd
-    // projection (post-refactor every cluster yields the same scalar
-    // — the prior assertion already pinned this; we read cluster 0
-    // because it has more verts → more averaging).
-    auto scalars = perClusterFwdScalars(preD, postD, ci);
-    float s = scalars[0];
-
-    // The drag pulled the BLUE (Z) handle. Under axis.local the
-    // basis-local Z component of `headlessTranslate` flows to
-    // `applyTranslatePerCluster` as `localDelta.z`, multiplied per
-    // vert by `fwd[cid]`. So `TZ s` numerically reproduces the drag.
-    setupScene();
-    auto preN = dumpVerts();
-    cmd(format("tool.attr move TX 0.0"));
-    cmd(format("tool.attr move TY 0.0"));
-    cmd(format("tool.attr move TZ %.6f", s));
-    cmd("tool.doApply");
-    auto postN = dumpVerts();
-
-    // Per-vertex compare drag vs numeric.
-    assert(postD.length == postN.length,
-        "drag/numeric vertex count mismatch: "
-      ~ postD.length.to!string ~ " vs " ~ postN.length.to!string);
-    float maxDiff = 0;
-    int   worstVi = -1;
-    foreach (vi; 0 .. preD.length) {
-        Vec3 dD = Vec3(postD[vi].x - preD[vi].x,
-                       postD[vi].y - preD[vi].y,
-                       postD[vi].z - preD[vi].z);
-        Vec3 dN = Vec3(postN[vi].x - preN[vi].x,
-                       postN[vi].y - preN[vi].y,
-                       postN[vi].z - preN[vi].z);
-        Vec3 diff = Vec3(dD.x - dN.x, dD.y - dN.y, dD.z - dN.z);
-        float m = sqrt(diff.x*diff.x + diff.y*diff.y + diff.z*diff.z);
-        if (m > maxDiff) { maxDiff = m; worstVi = cast(int)vi; }
+unittest {
+    setupScene(); auto ci=readClusters(); auto preD=dumpVerts();
+    normalArrowGesture(); auto postD=dumpVerts();
+    float s=perClusterFwdScalars(preD,postD,ci)[0];
+    assert(s>.05,"drag/numeric comparison has nonzero pure TZ");
+    setupScene(); auto preN=dumpVerts();
+    cmd("tool.attr move TX 0.0"); cmd("tool.attr move TY 0.0");
+    cmd(format("tool.attr move TZ %.6f",s)); cmd("tool.doApply");
+    auto postN=dumpVerts(); assert(postD.length==postN.length,"drag/numeric vertex count");
+    float maxDiff=0;int worstVi=-1;
+    foreach(vi;0..preD.length) {
+        auto d=(postD[vi]-preD[vi])-(postN[vi]-preN[vi]);auto m=sqrt(dot(d,d));
+        if(m>maxDiff) { maxDiff=m;worstVi=cast(int)vi; }
     }
-    assert(maxDiff < 0.005f,
-        "Drag vs numeric divergence (the bug Phase 3 fixes): max per-vert "
-        ~ "drift = " ~ maxDiff.to!string ~ " at vertex "
-        ~ worstVi.to!string);
+    assert(maxDiff<.005,"Drag vs numeric divergence (the bug Phase 3 fixes): max per-vert drift = "~maxDiff.to!string~" at vertex "~worstVi.to!string);
 }

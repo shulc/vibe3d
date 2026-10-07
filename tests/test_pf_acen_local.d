@@ -210,7 +210,7 @@ RunFrame publishedRunFrame() {
 // other (opposite world directions, SAME basis-local scalar).
 struct ClusterInfo {
     Vec3[] centers;
-    Vec3[] fwd;     // signed snapped face normal per cluster (axis index 2)
+    Vec3[] fwd, right, up; // Complete signed component frames
     int[]  clusterOf;
 }
 ClusterInfo readClusters() {
@@ -227,6 +227,11 @@ ClusterInfo readClusters() {
         auto a = f.array;
         ci.fwd ~= Vec3(cast(float)a[0].floating, cast(float)a[1].floating,
                        cast(float)a[2].floating);
+    }
+    foreach(key;["clusterRight","clusterUp"]) {
+        Vec3[] values;
+        foreach(v;j["axis"][key].array) values~=vector(v);
+        if(key=="clusterRight") ci.right=values;else ci.up=values;
     }
     return ci;
 }
@@ -276,27 +281,96 @@ void moveGestureOnArrow(Vec3 axisDir, long wantCount, double mag = 60.0) {
     assert(false, "move arrow gesture did not record after retries");
 }
 
-// The committed acen=local Z-handle drag (the manual capture shared with
-// test_acen_local_translate_parity.d). Under acen=local on the [11,12,13]
-// asymmetric selection it drives the blue Z (fwd) handle, which the gizmo's low
-// blended pivot keeps clear for a deterministic, non-degenerate grab (unlike a
-// synthetic +Y/+Z grab at the same pivot, which the screen-projected handle
-// length / overlap makes flaky). Replaying it ONCE = one committed gesture; the
-// pivot/camera are pinned so a re-replay drives the SAME handle for accumulation.
-string localFwdLog;
-// Replay the captured local fwd-handle drag as ONE gesture; verify-and-retry on
-// the undo count (a stray miss records nothing -> retry).
-void localFwdGesture(long wantCount) {
-    import std.file : readText;
-    if (localFwdLog.length == 0)
-        localFwdLog = readText("tests/events/acen_local_translate_drag.log");
-    foreach (attempt; 0 .. 6) {
-        settle();
-        playAndWait(localFwdLog);
-        settle();
-        if (undoCount() == wantCount) return;
+Vec3 vector(JSONValue j) {
+    auto a = j.array;
+    return Vec3(cast(float)a[0].floating, cast(float)a[1].floating, cast(float)a[2].floating);
+}
+// task20261570 amendment: historical pixels grabbed a screen plane, with TY=.03.
+// Project the current prepared normal shaft and witness the real held latch.
+void normalArrowGesture() {
+    import std.string : splitLines;
+    settle();
+    auto e = getJson("/api/toolpipe/eval"); auto t = e["transform"];
+    foreach (key; ["right", "up", "fwd"]) {
+        auto d = vector(t["moveRenderFrame"][key]) - vector(e["axis"][key]);
+        assert(sqrt(dot(d,d)) < .005, "normal-arrow prepared/display frame agrees with shared producer");
     }
-    assert(false, "captured local fwd-handle gesture did not record after retries");
+    auto c = vector(t["gizmoCenter"]); auto f = vector(t["moveRenderFrame"]["fwd"]);
+    auto cam = fetchCamera(); auto vp = viewportFromCamera(cam);
+    float size = gizmoSize(c,vp), x0,y0,x1,y1;
+    projectToWindow(c+f*(size/5),vp,x0,y0); projectToWindow(c+f*size,vp,x1,y1);
+    double dx=x1-x0,dy=y1-y0,len=sqrt(dx*dx+dy*dy);
+    assert(len>10,"normal arrow screen population");
+    int x=cast(int)(x0+.7f*dx),y=cast(int)(y0+.7f*dy);
+    auto log=buildDragLog(cam.vpX,cam.vpY,cam.width,cam.height,x,y,
+        x+cast(int)(40*dx/len),y+cast(int)(40*dy/len),12);
+    string held, release, viewport;
+    foreach(line;log.splitLines) {
+        auto v=parseJSON(line);
+        if(v["type"].str=="VIEWPORT") viewport=line~"\n";
+        if(v["type"].str=="SDL_MOUSEBUTTONUP") release=line~"\n";
+        else held~=line~"\n";
+    }
+    const floor=undoCount(); assert(floor<48,"normal-arrow history headroom");
+    {
+        scope(exit) { playAndWait(viewport~release); settle(); }
+        playAndWait(held); settle();
+        auto latched=getJson("/api/toolpipe/eval")["transform"]["moveDragAxis"].integer;
+        assert(latched==2,"normal-arrow gesture grabbed production Move normal part");
+    }
+    assert(undoCount()==floor+1,"normal-arrow gesture records exactly one entry");
+}
+
+float[] perClusterFwdScalars(Vec3[] pre, Vec3[] post_, ClusterInfo ci) {
+    assert(pre.length==26&&post_.length==26&&ci.centers.length==2,"old rig 26 vertices / two groups");
+    assert(getJson("/api/model")["faces"].array.length==24,"old rig 24 faces");
+    assert(ci.right.length==2&&ci.up.length==2&&ci.fwd.length==2,"complete signed component frames");
+    float[] scalars;
+    int untouched;
+    foreach(c;0..2) {
+        Vec3 mean; int count;
+        foreach(vi,cid;ci.clusterOf) if(cid==c) { mean=mean+(post_[vi]-pre[vi]);++count; }
+        assert(count==(c==0?6:4),"old rig selected member floors 6/4");
+        mean=mean/cast(float)count;
+        float tx=dot(mean,ci.right[c]),ty=dot(mean,ci.up[c]),tz=dot(mean,ci.fwd[c]);
+        assert(fabs(tx)<.005&&fabs(ty)<.005,"normal-arrow geometry has zero off-axis channels");
+        foreach(vi,cid;ci.clusterOf) if(cid==c) {
+            auto d=post_[vi]-pre[vi]-(ci.right[c]*tx+ci.up[c]*ty+ci.fwd[c]*tz);
+            assert(sqrt(dot(d,d))<.005,"normal-arrow full component reconstruction");
+        }
+        scalars~=tz;
+    }
+    foreach(vi,cid;ci.clusterOf) if(cid<0) {
+        ++untouched;auto d=post_[vi]-pre[vi];
+        assert(sqrt(dot(d,d))<.005,"normal-arrow untouched vertex");
+    }
+    assert(untouched==16,"old rig untouched population 16");
+    return scalars;
+}
+
+Vec3 localFwdGesture(long wantCount) {
+    auto ci=readClusters();auto pre=dumpVerts();
+    normalArrowGesture();
+    assert(undoCount()==wantCount,"current Local normal gesture has requested history row");
+    auto scalars=perClusterFwdScalars(pre,dumpVerts(),ci);
+    foreach(v;scalars) assert(v>.01&&fabs(v-scalars[0])<.005,"same-sign pure normal increments across groups");
+    return Vec3(0,0,scalars[0]);
+}
+void assertLocalRunGeometry(Vec3[] baseline, ClusterInfo ci, Vec3 total) {
+    auto now=dumpVerts();
+    assert(baseline.length==26&&now.length==26,"run geometry population");
+    assert(fabs(total.x)<.005&&fabs(total.y)<.005,"pure normal run off-axis channels stay zero");
+    foreach(vi,c;ci.clusterOf) {
+        auto expected=baseline[vi];
+        if(c>=0) expected=expected+ci.right[c]*total.x+ci.up[c]*total.y+ci.fwd[c]*total.z;
+        auto d=now[vi]-expected;
+        assert(sqrt(dot(d,d))<.005,"full geometry from original baseline matches run-absolute vector");
+    }
+}
+void assertLocalIncrement(Vec3 before, Vec3 after, Vec3 measured) {
+    auto d=(after-before)-measured;
+    assert(measured.z>.01&&after.z>before.z,"second pure normal signed channel accumulates");
+    assert(sqrt(dot(d,d))<.005,"second gesture published difference matches independently measured increment");
 }
 
 void establishCubeBaseline() {
@@ -363,6 +437,7 @@ ClusterInfo setupLocalMoveScene() {
     settle();
     cmd("tool.set move on");
     cmd("actr.local");                  // ACEN + AXIS local: 2 disjoint clusters
+    cmd("history.clear");
     settle();
     auto ci = readClusters();
     assert(ci.centers.length == 2,
@@ -511,14 +586,11 @@ unittest {
 
     // Gesture 2 (SAME bank, same shared gizmo): the published display ACCUMULATES
     // (run-absolute, stable in the frozen gizmo frame) — past gesture 1 alone.
-    localFwdGesture(floor + 2);
+    auto increment2 = localFwdGesture(floor + 2);
     assert(undoCount() == floor + 2, "gesture 2 records a second in-session entry");
     Vec3 pubG2 = publishedTranslate();
-    double pubMagG2 = sqrt(dot(pubG2, pubG2));
-    assert(pubMagG2 > pubMagG1 + 1e-2,
-        "acen=local multi-cluster: the published run-absolute display ACCUMULATES "
-        ~ "across gestures (gizmo frame), |g1|=" ~ pubMagG1.to!string
-        ~ " |g2|=" ~ pubMagG2.to!string);
+    assertLocalIncrement(pubG1, pubG2, increment2);
+    assertLocalRunGeometry(pre, ci, pubG2);
 
     // GEOMETRY stayed per-cluster-correct after gesture 2 (clusters still diverge
     // in world space, still uniform in basis-local scalar).
@@ -550,6 +622,7 @@ unittest {
 unittest {
     auto ci = setupLocalMoveScene();
     long floor = undoCount();
+    auto baseline = dumpVerts();
 
     localFwdGesture(floor + 1);
     assert(undoCount() == floor + 1, "gesture 1 records one entry");
@@ -557,7 +630,7 @@ unittest {
     assert(rf1.valid, "the run-frame is captured after the first applyTRS");
     Vec3 pubG1 = publishedTranslate();
 
-    localFwdGesture(floor + 2);
+    auto increment2 = localFwdGesture(floor + 2);
     assert(undoCount() == floor + 2, "gesture 2 records a second entry");
     RunFrame rf2 = publishedRunFrame();
     Vec3 pubG2 = publishedTranslate();
@@ -585,10 +658,8 @@ unittest {
     assert(colinear > 0.98,
         "the run-absolute TX did NOT drift across gestures (frozen frame, not "
         ~ "re-derived); colinear dot=" ~ colinear.to!string);
-    double m1 = sqrt(dot(pubG1, pubG1)), m2 = sqrt(dot(pubG2, pubG2));
-    assert(m2 > m1 + 1e-2,
-        "the run-absolute TX accumulated (stable frozen frame): |g1|="
-        ~ m1.to!string ~ " |g2|=" ~ m2.to!string);
+    assertLocalIncrement(pubG1, pubG2, increment2);
+    assertLocalRunGeometry(baseline, ci, pubG2);
 
     cmd("tool.set move off");
     drainHistory();

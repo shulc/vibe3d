@@ -23,10 +23,6 @@ private void near(Vec3 a, Vec3 b, string label) {
     assert(abs(a.x-b.x)<2e-6 && abs(a.y-b.y)<2e-6 && abs(a.z-b.z)<2e-6,
            format("%s signed vector: actual=%s expected=%s", label, a, b));
 }
-private class Product : XfrmTransformTool {
-    this(Mesh* delegate() src, EditMode* mode) { super(src, null, mode, () => SelType.Polygon); }
-    void arm(int flags) { active=true; flagT=(flags&1)!=0; flagR=(flags&2)!=0; flagS=(flags&4)!=0; }
-}
 private void load(ref Mesh mesh, JSONValue input) {
     foreach(v; input["positions"].array) mesh.vertices ~= vector(v);
     foreach(f; input["faces"].array) {
@@ -45,6 +41,14 @@ private void load(ref Mesh mesh, JSONValue input) {
 }
 
 unittest {
+    import session_owner : Session;
+    import registry : Registry;
+    import live_registration_roles : LiveSessionRole, LiveViewModeRole, LiveView;
+    import transform_tool_registration : TransformToolDeps, registerTransformToolCommands;
+    import mesh_gpu : GpuMesh;
+    import command_history : CommandHistory;
+    import pipe_gizmo_host : PipeGizmoHost;
+    import view : View;
     auto captured=parseJSON(readText("tests/fixtures/local_component_frame/captured.json"));
     auto savedSpace=primaryModelSpaceResolver;scope(exit) primaryModelSpaceResolver=savedSpace;
     primaryModelSpaceResolver=()=>ModelSpace.world();
@@ -52,32 +56,42 @@ unittest {
     size_t outputs;
     foreach(cell;captured["cells"].array) {
         if(cell["outputPositions"].type==JSONType.null_) continue;
-        ++outputs;Mesh mesh;load(mesh,cell["input"]);EditMode mode=EditMode.Polygons;
+        foreach(id;[cell["name"].str=="scale"?"scale":"move","xfrm.transform"]) {
+        ++outputs;Mesh initial;load(initial,cell["input"]);
+        auto session=Session.bootstrap(initial);session.switchGeometryType(EditMode.Polygons);
+        ref Mesh mesh=session.editMesh();auto mode=session.editModePtr();
         const bool old=mesh.vertices.length==26;
         assert(mesh.vertices.length==(old?26:162)&&mesh.faces.length==(old?24:146),"full output input population");
         if(!old) assert(mesh.edges.length==306&&mesh.countSelectedFaces()==6,"original 306 edges / six selected polygons");
         bool[] selected=new bool[](mesh.vertices.length);foreach(fi;cell["input"]["selectedFaces"].array) foreach(vi;mesh.faces[cast(size_t)fi.integer]) selected[vi]=true;
         size_t incident;foreach(s;selected) if(s) ++incident;
         assert(incident==(old?10:24),"selected incident vertex population");
-        auto center=new ActionCenterStage(()=>&mesh,&mode,null,()=>SelType.Polygon);
-        auto axis=new AxisStage(()=>&mesh,&mode,null,()=>SelType.Polygon);
+        auto center=new ActionCenterStage(()=>&mesh,mode,null,()=>SelType.Polygon);
+        auto axis=new AxisStage(()=>&mesh,mode,null,()=>SelType.Polygon);
         g_pipeCtx=new ToolPipeContext();g_pipeCtx.pipeline.add(center);g_pipeCtx.pipeline.add(axis);
         center.mode=ActionCenterStage.Mode.Local;
         axis.mode=cell["axisMode"].str=="local"?AxisStage.Mode.Local:cell["axisMode"].str=="world"?AxisStage.Mode.World:AxisStage.Mode.Auto;
-        SubjectPacket subj;subj.mesh=&mesh;subj.editMode=mode;subj.selType=SelType.Polygon;
+        SubjectPacket subj;subj.mesh=&mesh;subj.editMode=*mode;subj.selType=SelType.Polygon;
         VectorStack stack;stack.put(&subj);assert(center.evaluate(stack)&&axis.evaluate(stack),"production output producers");
         auto cp=stack.get!ActionCenterPacket();assert(cp.clusterCenters.length==(old?2:6),format("%s full output component population: %s",cell["name"].str,cp.clusterCenters.length));
         foreach(cid,g;cell["golden"]["groups"].array) near(cp.clusterCenters[cid],vector(g["center"]),"full output component centers");
-        auto tool=new Product(()=>&mesh,&mode);tool.arm(cell["name"].str=="scale"?4:1);
+        Registry registry;GpuMesh gpu;gpu.suppressCageUpload=true;
+        View camera=new View(0,0,1098,966);ref View liveView(){return camera;}
+        registerTransformToolCommands(registry,LiveSessionRole(session),LiveViewModeRole(cast(LiveView)&liveView,mode),
+            TransformToolDeps(&gpu,new CommandHistory,()=>null,()=>null,()=>null,new PipeGizmoHost,()=>false));
+        auto tool=cast(XfrmTransformTool)registry.toolFactory(id)();assert(tool !is null,"full-output registered factory");tool.activate();
+        auto pose=tool.buildPreparedUpdateTail(stack);assert(pose.valid,"full-output prepared pose");
+        tool.installPreparedUpdateTail(pose);
         injectParamsInto(tool.params(),cell["channels"]);assert(tool.applyHeadless(),"real headless operation accepted");
         size_t untouched;
         foreach(vi,v;cell["outputPositions"].array) {
             if(!selected[vi]) {++untouched;assert(mesh.vertices[vi]==vector(cell["input"]["positions"][vi]),"unselected output exact");}
         }
         assert(untouched==(old?16:138),"untouched output population");
-        foreach(vi,v;cell["outputPositions"].array) near(mesh.vertices[vi],vector(v),cell["name"].str~" full output");
+        foreach(vi,v;cell["outputPositions"].array) near(mesh.vertices[vi],vector(v),cell["name"].str~" full output "~id);
+        }
     }
-    assert(outputs==5,"independent full output oracle population");
+    assert(outputs==10,"independent full output oracle population");
 }
 
 unittest { // Real registration products and independent Rotate operation contract.

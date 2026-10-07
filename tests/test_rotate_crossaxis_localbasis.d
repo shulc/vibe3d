@@ -47,6 +47,18 @@ import drag_helpers : Vec3, dot, cross, normalize, gizmoSize,
                       fetchCamera, viewportFromCamera, CameraState, Viewport,
                       projectToWindow, buildDragLog, playAndWait;
 
+import tools.transform.xfrm_transform : XfrmTransformTool;
+import math : NativeVec3 = Vec3, NativeViewport = Viewport, ModelSpace;
+import mesh : Mesh;
+import editmode : EditMode;
+import seltype : SelType;
+import operator : VectorStack;
+import document : primaryModelSpaceResolver;
+import toolpipe.stages.actcenter : ActionCenterStage;
+import toolpipe.stages.axis : AxisStage;
+import toolpipe.packets : SubjectPacket;
+import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
+
 void main() {}
 
 alias baseUrl = testBaseUrl;
@@ -267,7 +279,8 @@ double principalRingGesture(int axis, Vec3 center, long wantCount,
 double principalRingGestureCapture(int axisAimed, Vec3 center, long wantCount,
                                    out int outAxis, out double outDeg,
                                    out string outAttr, out double[3] outRxyz,
-                                   float arcDelta = 0.55f) {
+                                   float arcDelta = 0.55f, bool currentLocal = false) {
+    if (currentLocal) return currentLocalRingGesture(axisAimed, wantCount, outAxis, outDeg, outAttr, outRxyz, arcDelta);
     Vec3 axisVec = axisAimed == 0 ? Vec3(1,0,0)
                  : axisAimed == 1 ? Vec3(0,1,0)
                  :                  Vec3(0,0,1);
@@ -309,6 +322,113 @@ double principalRingGestureCapture(int axisAimed, Vec3 center, long wantCount,
     return 0;
 }
 
+
+// CPU proof uses the real producers/prepared tail and production press arbiter.
+// It proves readPivot is the current Rotate center; no Move-center substitution.
+private class RingProduct : XfrmTransformTool {
+    this(Mesh* delegate() src, EditMode* mode) { super(src,null,mode,()=>SelType.Polygon); }
+    void arm() { active=true;flagT=false;flagR=true;flagS=false; }
+}
+Vec3 ringVector(JSONValue j) {
+    return Vec3(cast(float)j[0].floating,cast(float)j[1].floating,cast(float)j[2].floating);
+}
+NativeVec3 nativeVector(Vec3 v) { return NativeVec3(v.x,v.y,v.z); }
+JSONValue[] localDownPackets;
+Vec3[][] localLiveOutputs;
+double currentLocalRingGesture(int axis, long wantCount, out int outAxis,
+        out double outDeg, out string outAttr, out double[3] outRxyz, float arcDelta) {
+    settle(); auto evaluation=getJson("/api/toolpipe/eval");
+    localDownPackets ~= evaluation;
+    auto center=readPivot(); auto cam=fetchCamera(); auto vp=viewportFromCamera(cam);
+    auto frame=evaluation["transform"]["rotateRingFrame"];
+    Vec3 axisVec=ringVector(frame[axis==0?"right":axis==1?"up":"fwd"]);
+    auto savedPipe=g_pipeCtx;scope(exit) g_pipeCtx=savedPipe;
+    auto savedSpace=primaryModelSpaceResolver;scope(exit) primaryModelSpaceResolver=savedSpace;
+    primaryModelSpaceResolver=()=>ModelSpace.world();
+    Mesh mesh;auto model=getJson("/api/model");
+    assert(model["vertices"].array.length==26&&model["faces"].array.length==24,"Local ring CPU old rig populations");
+    foreach(v;model["vertices"].array) mesh.vertices~=nativeVector(ringVector(v));
+    foreach(f;model["faces"].array) {
+        uint[] ring;foreach(v;f.array) ring~=cast(uint)v.integer;mesh.faces._store~=ring;
+    }
+    mesh.rebuildEdgesFromFaces();mesh.resetSelection();
+    foreach(f;getJson("/api/selection")["selectedFaces"].array) mesh.selectFace(cast(int)f.integer);
+    assert(mesh.countSelectedFaces()==3,"Local ring CPU selected polygon population");
+    EditMode mode=EditMode.Polygons;
+    auto ac=new ActionCenterStage(()=>&mesh,&mode,null,()=>SelType.Polygon);
+    auto ax=new AxisStage(()=>&mesh,&mode,null,()=>SelType.Polygon);
+    g_pipeCtx=new ToolPipeContext();g_pipeCtx.pipeline.add(ac);g_pipeCtx.pipeline.add(ax);
+    ac.mode=ActionCenterStage.Mode.Local;ax.mode=AxisStage.Mode.Local;
+    NativeViewport nvp;nvp.view=vp.view;nvp.proj=vp.proj;nvp.x=vp.x;nvp.y=vp.y;
+    nvp.width=vp.width;nvp.height=vp.height;nvp.eye=nativeVector(vp.eye);nvp.focus=nativeVector(cam.focus);
+    SubjectPacket subject;subject.mesh=&mesh;subject.editMode=mode;subject.selType=SelType.Polygon;subject.viewport=nvp;
+    VectorStack stack;stack.put(&subject);assert(ac.evaluate(stack)&&ax.evaluate(stack),"Local ring CPU real producers");
+    auto tool=new RingProduct(()=>&mesh,&mode);tool.arm();tool.activate();
+    auto image=tool.buildPreparedUpdateTail(stack);
+    auto d=image.center-nativeVector(center);
+    assert(d.length<.005,"current readPivot equals actual prepared Rotate handler center");
+    NativeVec3[3] expected=[image.basisX,image.basisY,image.basisZ];
+    foreach(i,key;["right","up","fwd"]) {
+        auto diff=expected[i]-nativeVector(ringVector(frame[key]));
+        assert(diff.length<.005,"current rendered Rotate ring agrees with prepared shared frame");
+    }
+    tool.installPreparedUpdateTail(image);
+    tool.cachedVp=nvp;
+    float radius=gizmoSize(center,vp);Vec3 right,up;localFrame(axisVec,right,up);
+    Vec3 camFwd=Vec3(-vp.view[2],-vp.view[6],-vp.view[10]);
+    float start=arcStartAngle(axisVec,camFwd,right,up);
+    bool found;int x0,y0,x1,y1;
+    // Finite visible-arc interiors, CPU arbitration before any gesture.
+    foreach(sample;0..9) {
+        float a0=start+cast(float)(PI/2)+(cast(float)sample-4)*.12f;
+        float a1=a0+arcDelta;float sx,sy,ex,ey;
+        if(!projectToWindow(center+right*(cos(a0)*radius)+up*(sin(a0)*radius),vp,sx,sy)) continue;
+        if(!projectToWindow(center+right*(cos(a1)*radius)+up*(sin(a1)*radius),vp,ex,ey)) continue;
+        x0=cast(int)sx;y0=cast(int)sy;x1=cast(int)ex;y1=cast(int)ey;
+        if(tool.pressHitPart(x0,y0,nvp)==10+axis) { found=true;break; }
+    }
+    assert(found,"current Local ring finite preflight finds requested principal part");
+    const floor=undoCount();assert(floor<48&&wantCount==floor+1,"Local ring history headroom and exact single gesture");
+    auto log=buildDragLog(cam.vpX,cam.vpY,cam.width,cam.height,x0,y0,x1,y1,24);
+    import std.string : splitLines;
+    string held,release,viewport;
+    foreach(line;log.splitLines) {
+        auto j=parseJSON(line);if(j["type"].str=="VIEWPORT") viewport=line~"\n";
+        if(j["type"].str=="SDL_MOUSEBUTTONUP") release=line~"\n";else held~=line~"\n";
+    }
+    {
+        scope(exit) { playAndWait(viewport~release);settle(); }
+        playAndWait(held);settle();
+            auto handles=getJson("/api/tool/handles")["handles"];
+        assert(handles["captured"].integer==10+axis,"Local Rotate gesture grabs requested production principal part");
+    }
+    assert(undoCount()==wantCount,"current Local ring records exactly one history row");
+    // Replay the identical input through the production scalar bank before its drain.
+    import bindbc.sdl : SDL_MouseButtonEvent, SDL_MouseMotionEvent, SDL_BUTTON_LEFT,
+        loadSDL, sdlSupport, SDL_SetModState, SDL_Keymod;
+    assert(loadSDL()==sdlSupport,"Local CPU scalar SDL binding");
+    SDL_SetModState(cast(SDL_Keymod)0);
+    SDL_MouseButtonEvent down;down.button=SDL_BUTTON_LEFT;down.x=x0;down.y=y0;
+    assert(tool.onMouseButtonDown(down,stack),"Local CPU scalar prepared press");
+    assert(tool.rotateDragAxisPublic()==axis,"Local CPU scalar physical channel");
+    int lastX=x0,lastY=y0;
+    foreach(i;1..25) {
+        SDL_MouseMotionEvent motion;
+        motion.x=x0+cast(int)(cast(double)(x1-x0)*i/24);
+        motion.y=y0+cast(int)(cast(double)(y1-y0)*i/24);
+        motion.xrel=motion.x-lastX;motion.yrel=motion.y-lastY;motion.state=1;
+        assert(tool.rotateBank().onMouseMotion(motion,stack),"Local CPU input scalar motion");
+        lastX=motion.x;lastY=motion.y;
+    }
+    outAxis=axis;outAttr=axis==0?"RX":axis==1?"RY":"RZ";
+    outDeg=tool.rotateBank().pendingRotateAngle*180/PI;
+    outRxyz=[publishedR(0),publishedR(1),publishedR(2)];
+    assert(fabs(outDeg)>5,"physical Local ring scalar exceeds five degrees");
+    localLiveOutputs ~= dumpVerts();
+    stderr.writeln("[TARGET Local ring] part=",10+axis," center=",center," frame=",frame," angle=",outDeg);
+    return outDeg;
+}
+
 // ---------------------------------------------------------------------------
 // Sequential cross-axis numeric reference: two SEPARATE tool sessions on the
 // CURRENT mesh state (the first baked + dropped, the second re-opened on the
@@ -345,6 +465,31 @@ Vec3[] numericRotateSeqRef(void delegate() setupScene,
     cmd("tool.set xfrm.transform off");
     drainHistory();
     return o;
+}
+
+Vec3[] numericLocalRotateSeqRef(void delegate() setupScene, string attr1,double a1,
+        string attr2,double a2) {
+    foreach(step;0..2) {
+        if(step==0) setupScene();
+        cmd("tool.set xfrm.transform on");
+        cmd("tool.attr xfrm.transform T false");cmd("tool.attr xfrm.transform S false");
+        cmd("tool.attr xfrm.transform R true");cmd("tool.beginSession");settle();
+        auto actual=getJson("/api/toolpipe/eval");auto expected=localDownPackets[step];
+        assert(actual["actionCenter"]["clusterOf"]==expected["actionCenter"]["clusterOf"],"numeric rearm component memberships");
+        foreach(key;["clusterCenters"]) foreach(cid,c;actual["actionCenter"][key].array) {
+            auto d=ringVector(c)-ringVector(expected["actionCenter"][key][cid]);
+            assert(dot(d,d)<.005*.005,"numeric rearm current centers");
+        }
+        foreach(key;["clusterRight","clusterUp","clusterFwd"]) foreach(cid,c;actual["axis"][key].array) {
+            auto d=ringVector(c)-ringVector(expected["axis"][key][cid]);
+            assert(dot(d,d)<.005*.005,"numeric rearm signed current axes");
+        }
+        cmd("tool.attr xfrm.transform RX 0");cmd("tool.attr xfrm.transform RY 0");cmd("tool.attr xfrm.transform RZ 0");
+        cmd(format("tool.attr xfrm.transform %s %.9f",step==0?attr1:attr2,step==0?a1:a2));settle();
+        assert(maxVertDiff(dumpVerts(),localLiveOutputs[step])<3e-2,"each full numeric Local output equals corresponding live output");
+        if(step==0) {cmd("tool.set xfrm.transform off");settle();}
+    }
+    auto result=dumpVerts();cmd("tool.set xfrm.transform off");drainHistory();return result;
 }
 
 // ===========================================================================
@@ -441,27 +586,11 @@ unittest {
 }
 
 // ===========================================================================
-// (2) acen=local, MULTI-CLUSTER segments-2 cube (DRIFTING per-cluster basis).
+// (2) Local compatibility: requested current principal rings, physical input
+// scalars, and fresh component packets at each numeric rearm. Full first and
+// second geometry are compared independently; this tied rig is not a native oracle.
 //
-// A cross-axis gizmo X-gesture then Y-gesture under acen=local on the asymmetric
-// 3-poly selection (2 disjoint clusters, per-cluster frame drifts). The resulting
-// vertex dump is captured as a hardcoded GOLDEN below (the CURRENT re-bake
-// behaviour). We assert live == golden within a tight tol, and we ALSO compute and
-// report whether that golden equals numericRotateSeqRef for the same angles —
-// i.e. is the current re-bake result already the sequential reference, or does the
-// drifting per-cluster basis make it something else?
-// ===========================================================================
-
-// NOTE on the acen=local cross-axis run: under acen=local the local gizmo basis +
-// camera make the "world-Y" ring grab RESOLVE to either the gizmo's Y or Z handle
-// run-to-run for the same aimed arc — both are genuine cross-axis runs. The test
-// reads the ACTUAL recorded axes and feeds the SAME axes/angles to the sequential
-// numeric reference, so the geometry assertion (live == seqRef) is robust to which
-// handle the second grab resolves to. (A frozen vertex golden was previously pinned
-// here to ONE specific drag (RX then RZ); it broke whenever the grab resolved to RY
-// instead — replaced by the resolution-robust seqRef assertion below.)
-
-// Build a fresh multi-cluster acen=local Rotate scene WITHOUT resetting (caller
+// // Build a fresh multi-cluster acen=local Rotate scene WITHOUT resetting (caller
 // controls the reset, so the sequential reference can re-open on a baked pose).
 // `doReset` true = a hermetic reset + fresh prim.cube; false = re-select on the
 // EXISTING mesh.
@@ -500,14 +629,7 @@ Vec3 readPivot() {
                 cast(float)c[2].floating);
 }
 
-// Is every per-cluster basis vector (right/up/fwd of every cluster) a pure signed
-// world axis (one component +/-1, the others 0)? On a stock axis-aligned cube the
-// per-cluster frame is derived from face normals, which are all world-axis-aligned,
-// so the basis NEVER drifts off the world axes — it only sign-flips between
-// clusters. This is THE fact behind the Phase-2 assessment: with an axis-aligned
-// (non-drifting) per-cluster basis the cross-axis re-bake equals a frozen-basis
-// full-Euler, so Phase 2 is geometry-neutral on this mesh. A genuinely drifting
-// (non-axis-aligned) basis would need a mesh with oblique face normals.
+// Initial stock-cube packets are signed world axes; later gestures refresh them.
 bool perClusterBasisAxisAligned() {
     auto ax = getJson("/api/toolpipe/eval")["axis"];
     bool isAxis(JSONValue v) {
@@ -539,32 +661,17 @@ unittest {
     settle();
     localPivot = readPivot();
 
-    // DOCUMENT THE CRUX: the per-cluster basis on this stock cube is axis-aligned
-    // (non-drifting). This is WHY the cross-axis re-bake below equals the frozen-
-    // basis sequential reference — and why Phase 2 (frozen basis + full Euler) is
-    // expected to be geometry-neutral on this mesh. If a future change made the
-    // per-cluster frame oblique, this would flip and the golden-vs-seqRef diff
-    // would become the real witness of re-bake-vs-frozen divergence.
-    assert(perClusterBasisAxisAligned(),
-        "acen=local on a stock axis-aligned cube yields an axis-aligned (non-"
-        ~ "drifting) per-cluster basis — the crux of the Phase-2 assessment");
-
-    long floor = undoCount();
-
-    // Cross-axis: world-X ring then world-Y ring about the local gizmo pivot. We
-    // CAPTURE which principal component each gesture actually wrote at the instant
-    // it records (a gizmo run holds ONE live axis), so the sequential reference is
-    // fed the SAME axes the live drag drove — robust to a local-gizmo ring grab
-    // resolving to a different handle than the world axis we aimed the arc at, and
-    // robust to a post-gesture settle window deactivating the tool.
+    assert(perClusterBasisAxisAligned(),"initial stock-cube signed axis control");
+    // Each live gesture preflights its requested physical ring from the current pose.
+    const floor=undoCount();assert(floor<48,"two gesture history headroom");
     int ax1; double deg1; string attr1; double[3] rxyz1;
-    principalRingGestureCapture(0, localPivot, floor + 1, ax1, deg1, attr1, rxyz1);
+    principalRingGestureCapture(0, readPivot(), floor + 1, ax1, deg1, attr1, rxyz1, .55f, true);
     assert(undoCount() == floor + 1, "gesture 1 records one in-session entry");
     assert(fabs(deg1) > 5.0, "gesture 1 left a nonzero held axis; got "
         ~ attr1 ~ "=" ~ deg1.to!string);
 
     int ax2; double deg2; string attr2; double[3] rxyz2;
-    principalRingGestureCapture(1, localPivot, floor + 2, ax2, deg2, attr2, rxyz2);
+    principalRingGestureCapture(1, readPivot(), floor + 2, ax2, deg2, attr2, rxyz2, .55f, true);
     assert(undoCount() == floor + 2, "gesture 2 records a second in-session entry");
     auto liveXY = dumpVerts();
 
@@ -593,29 +700,16 @@ unittest {
         if (firstSeqCall) { cmd("actr.local"); settle(); }
         firstSeqCall = false;
     }
-    auto seqRef = numericRotateSeqRef(&seqSetup, attr1, deg1, attr2, deg2);
+    auto seqRef = numericLocalRotateSeqRef(&seqSetup, attr1, deg1, attr2, deg2);
 
     float liveVsSeq = maxVertDiff(liveXY, seqRef);
     stderr.writeln("[MEASURE acen=local] g1=", attr1, "(", deg1, ") g2=", attr2,
         "(", deg2, ") live-vs-numericRotateSeqRef maxVertDiff=", liveVsSeq);
 
-    // --- CORRECTNESS WITNESS (matrix-as-truth) ---------------------------------
-    // The acen=local cross-axis run keeps the LEGACY per-cluster re-bake (the
-    // matrix-truth model is global-only), so its TWO gestures bake their held axis
-    // into geometry between sessions. The geometry-correctness witness is that the
-    // live cross-axis result equals the SEQUENTIAL numeric reference for the SAME
-    // two captured axes/angles. On the world-aligned (non-drifting) per-cluster
-    // basis of this cube that holds EXACTLY.
-    //
-    // We assert against `seqRef` rather than a frozen vertex golden: the golden was
-    // pinned to ONE specific drag whose gesture-2 ring grab resolved to a specific
-    // handle (RZ), but the grab can resolve to RY vs RZ run-to-run for the same
-    // aimed arc (camera/gizmo geometry). seqRef is fed the ACTUAL captured axes, so
-    // it is robust to that resolution variance while still pinning the geometry.
+    // Full local triples replay physical input scalars on freshly checked packets.
     assert(liveVsSeq < 3e-2,
         "ASSERT (acen=local cross-axis): live geometry == sequential "
-        ~ "numericRotateSeqRef for the captured axes/angles (per-cluster re-bake on "
-        ~ "a world-aligned basis reproduces the sequential bake). max per-vert diff = "
+        ~ "numeric Local full-channel replay for physical ring scalars and refreshed packets. max per-vert diff = "
         ~ liveVsSeq.to!string);
 }
 

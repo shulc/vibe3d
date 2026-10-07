@@ -367,9 +367,9 @@ mixin template XfrmApplyImpl() {
                             pivotRotationMatrix(Vec3(0, 0, 0), axis,
                                 deg * cast(float)(PI / 180.0)), rotLin);
                     }
-                    rot(rx, headlessRotate.x);
-                    rot(ry, headlessRotate.y);
-                    rot(rz, headlessRotate.z);
+                    rot(rx, run.componentRotate.x);
+                    rot(ry, run.componentRotate.y);
+                    rot(rz, run.componentRotate.z);
                 }
             }
             float[16] scaleLin = identityMatrix;

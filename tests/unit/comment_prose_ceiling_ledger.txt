@@ -11,7 +11,7 @@
 source-files 577
 task-citation-lines 5214
 citing-files 457
-long-comment-runs 262
+long-comment-runs 261
 files-with-long-runs 141
 
 # Exact per-file task-citation allowances, sorted by path.
@@ -605,7 +605,7 @@ allow-runs source/tools/transform/transform.d 2
 allow-runs source/tools/transform/xform_kernels.d 1
 allow-runs source/tools/transform/xfrm_apply.d 1
 allow-runs source/tools/transform/xfrm_item.d 1
-allow-runs source/tools/transform/xfrm_transform.d 4
+allow-runs source/tools/transform/xfrm_transform.d 3
 allow-runs source/tsan_preinit.d 1
 allow-runs source/ui/channel_rows.d 1
 allow-runs source/ui/image_rows.d 3
