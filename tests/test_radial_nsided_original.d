@@ -275,3 +275,49 @@ unittest {
     }
     cmd("tool.set xfrm.radialAlignTool off");
 }
+
+// Task 20261210: real viewport delivery, frozen original postimages and navigation.
+unittest {
+    import drag_helpers : fetchCamera, buildDragLog, playAndWait;
+    auto f = parseJSON(readText("tests/fixtures/radial_nsided_original.json"));
+    auto before = loadOriginal(f);
+    cmd("tool.set xfrm.radialAlignTool on");
+    attrs(f["cells"][0]);
+    const token = getJson("/api/tool/state")["session"]["token"].integer;
+    void click(ubyte button = 1, uint mods = 0) {
+        auto cam = fetchCamera();
+        const x = cam.vpX + cam.width / 2, y = cam.vpY + cam.height / 2;
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+            x, y, x, y, 1, mods, button));
+    }
+    // Excluded gestures must leave both geometry and history alone.
+    foreach (button; [cast(ubyte)2, cast(ubyte)3]) {
+        click(button); restored(before);
+        assert(getJson("/api/history")["undo"].array.length == 1,
+            "navigation button must not apply radial");
+    }
+    click(1, 0x100); restored(before); // left Alt navigation
+    assert(getJson("/api/history")["undo"].array.length == 1,
+        "Alt navigation must not apply radial");
+    foreach (c; 0..2) {
+        attrs(f["cells"][c]);
+        click();
+        score(f, before, c, "viewport-click");
+        assert(getJson("/api/history")["undo"].array.length == c + 2,
+            "one Apply history row per viewport click, not per release or motion");
+        assert(getJson("/api/tool/state")["session"]["token"].integer == token,
+            "viewport Apply preserves armed session");
+    }
+    void navigate(bool redo) {
+        const mod = redo ? 0x41 : 0x40;
+        playAndWait(format(`{"t":50,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":%s,"repeat":0}` ~ "\n" ~
+            `{"t":80,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":%s,"repeat":0}` ~ "\n", mod, mod));
+    }
+    navigate(false); score(f, before, 0, "viewport-nav-undo");
+    navigate(false); restored(before);
+    navigate(true); score(f, before, 0, "viewport-nav-redo6");
+    navigate(true); score(f, before, 1, "viewport-nav-redo5");
+    assert(getJson("/api/history")["undo"].array.length == 3,
+        "navigation Redo restores both click rows");
+    cmd("tool.set xfrm.radialAlignTool off");
+}

@@ -2947,6 +2947,12 @@ void main(string[] args) {
             if (session !is null) session.recordAppliedToolCommand(cmd);
         });
     ApplicationCommandBinding commandBinding;
+    // Publish the application dispatch closure before factory registration;
+    // its binding is resolved only when a later UI action invokes it.
+    void delegate(string, string) uiCommandDelegate;
+    uiCommandDelegate = (string id, string paramsJson) {
+        commandBinding.dispatchUi(id, paramsJson);
+    };
     GuardedActionController guardController;
     auto guardModalState = new GuardModalState();
 
@@ -3718,6 +3724,7 @@ void main(string[] args) {
     // doc/tasks/done/0415-registration-app-decomp.md.
     // -------------------------------------------------------------------------
     EditorApp app;
+    app.uiCommandDelegate = uiCommandDelegate;
     // `meshDg`, not `mesh` -- task 0419 found the UI-panel block reads
     // `mesh.foo()` bare-dot (no explicit call parens); `mesh` in EditorApp
     // is now a `@property ref Mesh mesh()` method backed by this field
@@ -4367,7 +4374,6 @@ void main(string[] args) {
 
     // Application dispatch surfaces used by panels and the main loop. They are
     // bound below independently of whether the HTTP listener is enabled.
-    void delegate(string, string) uiCommandDelegate;
     void delegate(size_t) replayUndoEntry;
     // FormsPanel write path: dispatches a `tool.attr` exactly like
     // uiCommandDelegate but marks the built ToolAttrCommand `interactive`
@@ -4785,9 +4791,6 @@ void main(string[] args) {
         guardController,
         cast(void delegate(Command))&raiseCommandNotice,
         cast(void delegate(string))&raiseNotice);
-    uiCommandDelegate = (string id, string paramsJson) {
-        commandBinding.dispatchUi(id, paramsJson);
-    };
 
     // Task 7420: the browser file chooser's resume ports, built ONCE here and
     // drained every frame after the flush and the guard's settle. Every port
@@ -4810,7 +4813,6 @@ void main(string[] args) {
         commandBinding.replayHistoryEntry(index);
     };
     formsPanel.setTweakEndHook(() { commandBinding.endInteractiveTweak(); });
-    app.uiCommandDelegate = uiCommandDelegate;
     app.formsInteractiveDispatch = formsInteractiveDispatch;
     app.replayUndoEntry = replayUndoEntry;
     import ui.action_menu : bindActionMenu;

@@ -134,7 +134,7 @@ private XfrmTransformTool buildUnifiedTransform(LiveSessionRole owner,
 /// Register the transform/deform/convolve factory family through live roles.
 /// Convolve products intentionally retain their gesture-specific bindings.
 void registerTransformToolCommands(ref Registry reg, LiveSessionRole owner,
-        LiveViewModeRole live, TransformToolDeps deps) {
+        LiveViewModeRole live, TransformToolDeps deps, void delegate() viewportApply = null) {
     reg.registerTool("move", typedToolFactory!XfrmTransformTool(
         () => buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.move)));
     reg.registerTool("rotate", typedToolFactory!XfrmTransformTool(
@@ -165,6 +165,7 @@ void registerTransformToolCommands(ref Registry reg, LiveSessionRole owner,
         auto t = new RadialAlignTool(
             () => &owner.activeMesh(), deps.gpu(), live.modeCell());
         t.setUndoBindings(deps.history(), deps.vertexEditFactory());
+        t.bindViewportApply(viewportApply);
         return t;
     }));
     // These remain command-wrapper tools with gesture bindings, not members of

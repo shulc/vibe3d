@@ -171,7 +171,8 @@ private void registerTransformTools(EditorApp app) {
         LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()),
         TransformToolDeps(app.gpuPtr, app.history, app.vxEditFactory,
             app.morphEditFactory, app.layerXformEditFactory, app.pipeGizmoHost,
-            () => explore.enabled && logw.enabled));
+            () => explore.enabled && logw.enabled),
+        () => app.uiCommandDelegate("tool.doApply", ""));
 }
 
 version (unittest)

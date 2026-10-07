@@ -13,7 +13,10 @@ import editmode;
 import math : Vec3, Viewport;
 import shader;
 import params : Param;
-import tool : ToolSessionPolicy, HeadlessSourcePolicy;
+import tool : ToolSessionPolicy, HeadlessSourcePolicy, InputBindable;
+import bindbc.sdl : SDL_MouseButtonEvent, SDL_GetModState;
+import tool_input : InputBinding, InputButton, InputMod, InputPhase, ToolAction,
+    toButton, toMods;
 import change_bus : MeshEditScope;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import document : Layer;
@@ -21,24 +24,18 @@ import prepared_transform_activation : PreparedTransformActivationOwner;
 import prepared_tool_effect : PreparedTransformActivationEffect,
     PreparedTransformActivationKind;
 
-/// Radial Align tool (`xfrm.radialAlignTool`) — falloff-aware deform
-/// tool, same structural family as Bend/Push (tools/bend.d, tools/push.d):
-/// `params()` + `applyHeadless()` only, driven via
-/// `tool.attr xfrm.radialAlignTool <attr> <v>; tool.doApply` from the
-/// panel (Post-Mode auto-apply). No interactive gizmo drag — the
-/// reference tool's own handle layout (`radHandleX/Y/Z`) is
-/// viewport-only and was never captured (task 0361 toolcard: "no
-/// handles.png/gizmo screenshot taken this round"), so this mirrors
-/// Bend/Push's existing headless-attr-driven precedent rather than
-/// inventing an undocumented drag gesture.
+/// Radial Align uses the existing Apply command for panel and plain viewport
+/// clicks (task 20261210; doc/tasks/work/20261210-radial-viewport-apply.md).
+/// Native handles/drag remain deferred; a click changes no parameters.
 ///
 /// Shared target/source law (tasks 9490, 20261040, 20261110): Circle retains its start/search;
 /// N-sided uses integer knot ownership and double chords. Weight blends source
 /// to target with falloff evaluated at the target (task 9446, K-F2).
-class RadialAlignTool : TransformTool, PreparedToolDoorClient {
+class RadialAlignTool : TransformTool, PreparedToolDoorClient, InputBindable {
 private:
     // "circle" / "nside" — see align_kernels.radialAlignTargets's doc
     // comment (CONFIRMED no cylinder/sphere mode exists).
+    void delegate() viewportApply_;
     string headlessMode   = "circle";
     int    headlessSide   = 4;
     int    headlessRotate = 0;   // N-Sided-only slot offset
@@ -48,6 +45,32 @@ private:
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
         super(meshSrc, gpu, editMode);
+    }
+
+    void bindViewportApply(void delegate() apply) { viewportApply_ = apply; }
+
+    override const(InputBinding)[] bindings() const {
+        static immutable rows = [InputBinding(InputButton.Left, InputMod.None, 0)];
+        return rows;
+    }
+
+    override bool onToolAction(ToolAction action, InputPhase phase,
+            ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (phase == InputPhase.Down) viewportApply_();
+        return true;
+    }
+
+    override void onInputResetAll() {}
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (viewportApply_ is null) return false;
+        return dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
+            InputPhase.Down, e, vts);
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        return dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
+            InputPhase.Up, e, vts);
     }
 
     override string name() const { return "Radial Align"; }
@@ -63,8 +86,7 @@ public:
     }
 
     // Task 0393: headlessMode/headlessSide/headlessRotate/headlessAngle/
-    // headlessWeight are STICKY tool-defaults (this tool has no interactive
-    // gesture — they're the whole "setting" surface), already restored onto
+    // headlessWeight are STICKY tool-defaults, already restored onto
     // these fields by the attribute cache recall (prepareStickyToolDefaults, from
     // the prepared arm) BEFORE activate() runs — don't reset them back
     // to the constructor defaults here. A brand-new (never-activated) tool

@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 577
-task-citation-lines 5216
+task-citation-lines 5215
 citing-files 457
 long-comment-runs 262
 files-with-long-runs 141
@@ -370,7 +370,7 @@ allow source/tools/alignment/align_kernels.d 6
 allow source/tools/alignment/array_tool.d 7
 allow source/tools/alignment/linear_align_tool.d 5
 allow source/tools/alignment/mirror.d 20
-allow source/tools/alignment/radial_align_tool.d 5
+allow source/tools/alignment/radial_align_tool.d 4
 allow source/tools/alignment/radial_array_tool.d 11
 allow source/tools/alignment/radial_sweep_tool.d 12
 allow source/tools/common/command_wrapper.d 18

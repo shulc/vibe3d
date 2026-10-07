@@ -328,7 +328,7 @@ unittest {
 // L3c: signature and tuple identity prevent a broad context from replacing
 // the seven narrow collaborators.
 static assert(is(typeof(&registerTransformToolCommands) == void function(
-    ref Registry, LiveSessionRole, LiveViewModeRole, TransformToolDeps)),
+    ref Registry, LiveSessionRole, LiveViewModeRole, TransformToolDeps, void delegate())),
     "6506 transform registrar signature changed");
 static assert(TransformToolDeps.tupleof.length == 7,
     "6506 TransformToolDeps field count changed");
@@ -405,7 +405,8 @@ unittest {
         ~ "LiveViewModeRole(app.cameraViewDg, app.sessionOwner.editModePtr()), "
         ~ "TransformToolDeps(app.gpuPtr, app.history, app.vxEditFactory, "
         ~ "app.morphEditFactory, app.layerXformEditFactory, app.pipeGizmoHost, "
-        ~ "() => explore.enabled && logw.enabled)); }";
+        ~ "() => explore.enabled && logw.enabled), "
+        ~ "() => app.uiCommandDelegate( , )); }";
     enum policyMarker = "app.pipeGizmoHost, ";
     const policyAt = collapsed.indexOf(policyMarker);
     const deferredPolicy = policyAt >= 0
