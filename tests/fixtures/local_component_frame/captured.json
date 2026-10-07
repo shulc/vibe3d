@@ -22571,5 +22571,15 @@
         0.6123720688283355
       ]
     }
-  ]
+  ],
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "debug-live",
+    "captured_utc": "unknown",
+    "harness": null,
+    "task": "20261570",
+    "notes": "Observed input meshes, signed frames, output positions and normal operands; normalized and reconstructed checks are derived. Original active polygon chronology is unavailable and remains null."
+  }
 }

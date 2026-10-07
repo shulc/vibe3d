@@ -4869,5 +4869,15 @@
         ]
       }
     ]
-  ]
+  ],
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "debug-live",
+    "captured_utc": "unknown",
+    "harness": null,
+    "task": "20261570",
+    "notes": "Observed input, sequential positions, physical indices, angles and signed groups; counterpredictions and reconstruction checks are derived."
+  }
 }

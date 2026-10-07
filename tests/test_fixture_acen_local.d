@@ -1,10 +1,8 @@
-// Reference-parity: actr.local per-cluster transforms on a CLEAN segments-2
-// cube (empty reset so prim.cube is the only geometry — appending onto the
-// default reset cube would double the shared corners). Each disjoint cluster
-// transforms about its OWN center along its OWN local frame (fwd=normal).
+// Current typed Local contracts plus complete immutable historical diagnostics.
+// Historical manual input metadata is unresolved; no historical parity claim.
 import fixture_helpers;
 void main() {}
 unittest {
     enum string json = import("fixtures/acen_local.json");
-    runParitySuite(json);
+    runLocalContractSuite(json);
 }

@@ -60,11 +60,9 @@
 // subject — every rig recorded — and answers a signed world permutation on a
 // rotated one.
 //
-// This file is about the mode ROUTING, not about the frame's content, so the
-// rotated case below still asserts only what THIS file is responsible for:
-// that Local and Select agree, and that both still TRACK the selection rather
-// than collapsing to the world identity. What the rotated frame should BE is
-// asserted in `test_axis_oriented_box.d` and nowhere here.
+// The rotated square below pins independent Local compatibility, Select's
+// oblique frame and SelectAuto identity. Its tied Local construction retains
+// the existing world-normal snap; it supplies no generic native tie law.
 
 import http_client : testBaseUrl;
 import http_command_helpers : commandBody;
@@ -291,7 +289,7 @@ enum string ROTATED_CUBE = `{"vertices":[`
     ~ `[0.5,0.183013,0.683013],[-0.5,0.183013,0.683013]],`
     ~ `"faces":[[0,1,2,3],[5,4,7,6],[4,0,3,7],[1,5,6,2],[3,2,6,7],[4,5,1,0]]}`;
 
-unittest { // Local and Select stay in lockstep off the world axes too
+unittest { // Independent Local tied compatibility and Select oblique controls
     ok(post(BASE ~ "/api/command", commandBody("scene.reset")), "reset");
     auto lm = post(BASE ~ "/api/command", commandBody("scene.loadMesh", ROTATED_CUBE));
     assert(parseJSON(cast(string)lm)["status"].str == "ok",
@@ -312,16 +310,21 @@ unittest { // Local and Select stay in lockstep off the world axes too
     auto loc = read("local");
     auto sa  = read("selectauto");
 
-    // NOT ASSERTED HERE, DELIBERATELY: what `sel.fwd` should be. That is the
-    // oriented box's business and it is pinned, exactly, in
-    // `test_axis_oriented_box.d`. This file asserts the ROUTING — which mode
-    // reads which frame — and duplicating the frame's value here would mean
-    // two files to update for one law.
-    assert(fabs(sel.up.x - loc.up.x) < 1e-5 && fabs(sel.up.y - loc.up.y) < 1e-5
-           && fabs(sel.up.z - loc.up.z) < 1e-5,
-           "local and select run one computation and must agree on a rotated "
-           ~ "subject too; got select up " ~ show(sel.up) ~ " and local up "
-           ~ show(loc.up));
+    // Tied tangent compatibility construction (20261570); the retained helper
+    // snaps the normal before alignment. This is not a native square oracle.
+    void signedSlot(Vec3 got, Vec3 want, string label) {
+        assert(fabs(got.x-want.x)<1e-5 && fabs(got.y-want.y)<1e-5
+            && fabs(got.z-want.z)<1e-5, "rotated square signed " ~ label);
+    }
+    signedSlot(sel.right, Vec3(-1,0,0), "Select right control");
+    signedSlot(sel.up, Vec3(0,.5,-.8660254), "Select up control");
+    signedSlot(sel.fwd, Vec3(0,-.8660254,-.5), "Select fwd control");
+    signedSlot(sa.right, PX, "Auto right control");
+    signedSlot(sa.up, PY, "Auto up control");
+    signedSlot(sa.fwd, PZ, "Auto fwd control");
+    signedSlot(loc.right, PX, "Local right compatibility");
+    signedSlot(loc.up, PZ, "Local up compatibility");
+    signedSlot(loc.fwd, Vec3(0,-1,0), "Local fwd compatibility");
     // Both still TRACK the selection: the frame is not the world identity.
     //
     // This assertion was written as `fabs(loc.up.y - 1.0f) > 0.5f` — one

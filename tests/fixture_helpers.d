@@ -300,7 +300,8 @@ private int[] resolveCentroids(JSONValue centroidsArr, string ctx) {
 // Not `private` — reused by tests/stage_helpers.d (task 0342) to run a
 // fixture's `mesh_build` steps through the SAME step vocabulary (reset /
 // select / translate / ...) instead of re-deriving mesh setup logic.
-void runStep(JSONValue step, string name, string phase, size_t i) {
+void runStep(JSONValue step, string name, string phase, size_t i,
+             void delegate(string) observer = null) {
     string ctx = format("%s: %s step %d", name, phase, i);
     if ("reset" in step) {
         // {"reset":true} → default cube; {"reset":true,"empty":true} → empty
@@ -536,8 +537,11 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
             cmd(format(`tool.pipe.attr falloff start "%g,%g,%g"`, a[0], a[1], a[2]), ctx);
             cmd(format(`tool.pipe.attr falloff end "%g,%g,%g"`,   b[0], b[1], b[2]), ctx);
         }
+        if (observer !is null) observer("before-attr");
         cmd(format("tool.attr %s %s %g", tl, at, vv), ctx);
+        if (observer !is null) observer("after-attr");
         cmd("tool.doApply", ctx);
+        if (observer !is null) observer("after-apply");
         cmd(format("tool.set %s off", tl), ctx);
     } else if ("loop_slice" in step) {
         // Loop Slice tool (topology op — adds verts/edges/faces). Activates on
@@ -999,39 +1003,11 @@ void runParitySuite(string fixtureJson) {
 // assert every vertex landed on its reference `after` within tolerance.
 private void runOneParity(string name, double tol,
                           JSONValue input, JSONValue op, JSONValue expectedPairs) {
-    double matchTol2 = tol * tol;  // matching uses the same radius as the assert
-
-    foreach (i, step; input.array)
-        runStep(step, name, "input", i);
-
-    // Snapshot vibe3d's pre-op vertices (selection doesn't move geometry).
-    auto preV  = readVertices();
-    auto pairs = expectedPairs.array;
-    // vibe3d's vertex count may EXCEED the reference's: a segmented box leaves
-    // coincident un-welded duplicates at seams (same position, separate verts).
-    // We match by position (many vibe3d verts → one reference pair), so only
-    // require vibe3d has at least as many verts as reference pairs.
-    assert(preV.length >= pairs.length,
-        format("%s: vibe3d vertex count %d < reference pair count %d",
-               name, preV.length, pairs.length));
-
-    // For each vibe3d vertex, find the reference pair whose `before` matches
-    // its pre-op position; that pair's `after` is the golden for this vertex.
-    auto expected = new double[3][](preV.length);
-    foreach (j, pv; preV) {
-        ptrdiff_t hit = -1;
-        foreach (k, pr; pairs) {
-            auto b = pr["before"].array;
-            double[3] bb = [asDouble(b[0]), asDouble(b[1]), asDouble(b[2])];
-            if (dist2(pv, bb) <= matchTol2) { hit = k; break; }
-        }
-        assert(hit >= 0,
-            format("%s: vibe3d pre-op vertex %d at [%.4f,%.4f,%.4f] has no "
-                   ~ "matching reference `before` (primitive mismatch?)",
-                   name, j, pv[0], pv[1], pv[2]));
-        auto a = pairs[hit]["after"].array;
-        expected[j] = [asDouble(a[0]), asDouble(a[1]), asDouble(a[2])];
-    }
+    auto observed = observeParityCase(name, tol, input, expectedPairs);
+    auto preV = observed.before;
+    auto expected = observed.historical;
+    assert(preV.length >= expectedPairs.array.length,
+        name ~ ": parity vertex population");
 
     foreach (i, step; op.array)
         runStep(step, name, "op", i);
@@ -3857,5 +3833,483 @@ void runCommandDivergenceSuite(string fixtureJson) {
                            ~ "case never measured the dimension the gap lives "
                            ~ "in.", cn));
         }
+    }
+}
+
+// 20261570 finite typed constructions; historical arrays remain diagnostic.
+// Evidence: private task gate-completion. No production fitter/packet oracle.
+private alias LocalVector = double[3];
+private LocalVector lvAdd(LocalVector a, LocalVector b) { foreach(k;0..3) a[k]+=b[k]; return a; }
+private LocalVector lvSub(LocalVector a, LocalVector b) { foreach(k;0..3) a[k]-=b[k]; return a; }
+private LocalVector lvMul(LocalVector a, double b) { foreach(k;0..3) a[k]*=b; return a; }
+private double lvDot(LocalVector a, LocalVector b) { return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+private LocalVector lvCross(LocalVector a, LocalVector b) { return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]; }
+private LocalVector lvUnit(LocalVector a) { return lvMul(a,1/sqrt(lvDot(a,a))); }
+private LocalVector lvRotate(LocalVector p, LocalVector n, LocalVector c, double degrees) {
+    import std.math : sin, cos;
+    auto d=lvSub(p,c); double t=degrees*PI/180;
+    return lvAdd(c,lvAdd(lvAdd(lvMul(d,cos(t)),lvMul(lvCross(n,d),sin(t))),lvMul(n,lvDot(n,d)*(1-cos(t)))));
+}
+private struct LocalFrame { LocalVector right, up, normal, center; }
+private void alignLocalContract(ref LocalFrame f, LocalFrame first) {
+    // Packet axes and strict comparisons are float32 in the accepted contract.
+    foreach(ref axis;[&f.right,&f.up,&f.normal]) foreach(ref value;(*axis)[]) value=cast(float)value;
+    double packetDot(LocalVector a,LocalVector b) { return cast(float)lvDot(a,b); }
+    int nearest(LocalVector v) {
+        double r=fabs(packetDot(v,f.right)),u=fabs(packetDot(v,f.up)),a=fabs(packetDot(v,f.normal));
+        return r>u && r>a ? 0 : u>a ? 1 : 2;
+    }
+    int j=nearest(first.normal),k=nearest(first.up);
+    LocalVector[3] basis=[f.right,f.up,f.normal];
+    bool negA=lvDot(first.normal,basis[j])<0,negU=lvDot(first.up,basis[k])<0;
+    if(j==2 && k==0) f.up=lvMul(f.right,negA!=negU ? -1 : 1);
+    else if(j==2 && k==1) f.up=lvMul(f.up,negA!=negU ? -1 : 1);
+    else if(j!=2 && k==1 && lvDot(first.up,f.up)<0) f.up=lvMul(f.up,-1);
+    f.right=lvCross(f.up,f.normal);
+}
+private struct LocalFacts {
+    bool[string] values;
+    void set(string name, bool value) { values[name]=value; }
+}
+private string[] validateLocalContract(LocalFacts f) {
+    string[] failures;
+    foreach(name,valid;f.values) if(!valid) failures~=name;
+    failures.sort;
+    return failures;
+}
+private void assertLocalContract(LocalFacts f, string name) {
+    auto failed=validateLocalContract(f);
+    assert(failed.length==0, name ~ ": current Local contract " ~ failed.to!string);
+}
+private struct HistoricalReport {
+    size_t compared, mismatches;
+    double maxResidual = 0;
+    long firstVertex = -1, firstChannel = -1;
+    LocalVector firstActual = [0,0,0], firstExpected = [0,0,0];
+    string disposition() { return mismatches==0 ? "agreement" : "disagreement"; }
+}
+private HistoricalReport compareHistoricalPairs(LocalVector[] actual, LocalVector[] expected, double tol) {
+    import std.math : isFinite;
+    assert(actual.length==expected.length,"historical comparator population");
+    HistoricalReport r;
+    foreach(i,p;actual) foreach(k;0..3) {
+        double d=fabs(p[k]-expected[i][k]);
+        assert(isFinite(d),"historical comparator finite residual");
+        ++r.compared;
+        if(d>r.maxResidual) r.maxResidual=d;
+        if(d>tol) {
+            ++r.mismatches;
+            if(r.firstVertex<0) { r.firstVertex=i;r.firstChannel=k;r.firstActual=p;r.firstExpected=expected[i]; }
+        }
+    }
+    return r;
+}
+private struct LocalObservation { JSONValue model, selection; LocalVector[] before, historical; }
+private LocalObservation observeParityCase(string name,double tol,JSONValue input,JSONValue pairs) {
+    foreach(i,step;input.array) runStep(step,name,"input",i);
+    LocalObservation o;
+    o.model=parseJSON(cast(string)get(BASE~"/api/model"));
+    o.selection=parseJSON(cast(string)get(BASE~"/api/selection"));
+    o.before=readVertices();
+    foreach(p;o.before) {
+        ptrdiff_t hit=-1;
+        foreach(k,pair;pairs.array) if(dist2(p,jvec3(pair["before"]))<=tol*tol) {hit=k;break;}
+        assert(hit>=0,name~": historical before mapping");
+        o.historical~=jvec3(pairs[hit]["after"]);
+    }
+    return o;
+}
+private struct LocalOracle {
+    LocalFrame[] frames;
+    int[] membership;
+    LocalVector[] output;
+    LocalFacts facts;
+}
+private LocalOracle deriveLocalContract(LocalObservation o,JSONValue cs,size_t cell) {
+    import std.math : atan2, cos, sin, isFinite;
+    LocalOracle q;
+    auto p=o.before;auto rings=o.model["faces"].array;
+    size_t[5] populations=[26,26,56,98,98], untouched=[16,16,32,75,75];
+    size_t[][5] sizes=[[6,4],[6,4],[4,4,4,4,4,4],[6,8,9],[6,8,9]];
+    size_t[5] faceCounts=[24,24,54,96,96], selections=[3,3,6,9,9];
+    q.facts.set("population",p.length==populations[cell] && rings.length==faceCounts[cell]
+        && cs["expected_pairs"].array.length==populations[cell]);
+    q.facts.set("selection-population",o.selection["selectedFaces"].array.length==selections[cell]);
+    bool[] used=new bool[](p.length); bool bijective=true;
+    foreach(pair;cs["expected_pairs"].array) {
+        size_t hits;size_t index;
+        foreach(vi,v;p) if(dist2(v,jvec3(pair["before"]))<=1e-6) {++hits;index=vi;}
+        if(hits!=1 || used[index]) bijective=false;
+        used[index]=true;
+    }
+    q.facts.set("before-bijection",bijective);
+    if(cell<2) {
+        auto card=parseJSON(import("fixtures/local_component_frame/captured.json"))["cells"].array[7]["input"];
+        int[] mapping;bool correspondence=p.length==card["positions"].array.length;
+        foreach(v;p) {int hit=-1;foreach(i,x;card["positions"].array) if(dist2(v,jvec3(x))<1e-10)hit=cast(int)i;mapping~=hit;if(hit<0)correspondence=false;}
+        bool oriented(JSONValue ring,JSONValue target) {
+            if(ring.array.length!=target.array.length)return false;
+            foreach(start;0..target.array.length) {
+                bool equal=true;
+                foreach(k,vi;ring.array) if(mapping[cast(size_t)vi.integer]!=target.array[(start+k)%target.array.length].integer)equal=false;
+                if(equal)return true;
+            }
+            return false;
+        }
+        foreach(ring;rings) {size_t hits;foreach(target;card["faces"].array)if(oriented(ring,target))++hits;if(hits!=1)correspondence=false;}
+        foreach(fi;o.selection["selectedFaces"].array) {
+            size_t hits;foreach(target;card["selectedFaces"].array)if(oriented(rings[cast(size_t)fi.integer],card["faces"].array[cast(size_t)target.integer]))++hits;
+            if(hits!=1)correspondence=false;
+        }
+        q.facts.set("old-rig-immutable-correspondence",correspondence && rings.length==card["faces"].array.length);
+    }
+
+    int[][] neighbors=new int[][](p.length);
+    bool[] selected=new bool[](p.length);
+    bool ringCorrespondence=true;
+    auto authored=cs["input"].array[$-1]["select"]["coords"].array;
+    foreach(si,fi;o.selection["selectedFaces"].array) {
+        auto ring=rings[cast(size_t)fi.integer].array;
+        // Full physical ring correspondence, preserving the captured oriented ring.
+        bool matches=false;
+        foreach(spec;authored) {
+            if(spec.array.length!=ring.length) continue;
+            bool all=true;
+            foreach(v;ring) {
+                bool found=false;foreach(x;spec.array) if(dist2(p[cast(size_t)v.integer],jvec3(x))<=1e-6) found=true;
+                if(!found) all=false;
+            }
+            if(all) matches=true;
+        }
+        if(!matches) ringCorrespondence=false;
+        foreach(k,v;ring) {
+            int a=cast(int)v.integer,b=cast(int)ring[(k+1)%ring.length].integer;
+            selected[a]=true;selected[b]=true;neighbors[a]~=b;neighbors[b]~=a;
+        }
+    }
+    q.facts.set("selected-ring-correspondence",ringCorrespondence);
+    q.membership=new int[](p.length);q.membership[]=-1;
+    int[][] groups;
+    foreach(seed;0..p.length) if(selected[seed] && q.membership[seed]<0) {
+        int cid=cast(int)groups.length;int[] group,queue=[cast(int)seed];q.membership[seed]=cid;
+        for(size_t i=0;i<queue.length;++i) {int vi=queue[i];group~=vi;
+            foreach(n;neighbors[vi]) if(q.membership[n]<0) {q.membership[n]=cid;queue~=n;}
+        }
+        group.sort;groups~=group;
+    }
+    size_t[] actualSizes;size_t untouchedCount;
+    foreach(g;groups) actualSizes~=g.length;
+    foreach(cid;q.membership) if(cid<0) ++untouchedCount;
+    q.facts.set("membership",actualSizes==sizes[cell]);
+    q.facts.set("untouched-population",untouchedCount==untouched[cell]);
+    bool domain=true;
+    foreach(v;p) foreach(value;v) if(!isFinite(value)) domain=false;
+    LocalVector[] vertexNormals=new LocalVector[](p.length);vertexNormals[]=[0,0,0];
+    foreach(ringValue;rings) {
+        auto ring=ringValue.array;LocalVector first=[0,0,0];
+        foreach(k,v;ring) {
+            size_t vi=cast(size_t)v.integer;
+            auto normal=lvUnit(lvCross(lvSub(p[cast(size_t)ring[(k+1)%ring.length].integer],p[vi]),
+                lvSub(p[cast(size_t)ring[(k+ring.length-1)%ring.length].integer],p[vi])));
+            if(k==0) first=normal;
+            else if(lvDot(normal,first)<0) normal=lvMul(normal,-1);
+            vertexNormals[vi]=lvAdd(vertexNormals[vi],normal);
+        }
+    }
+    foreach(ref n;vertexNormals) n=lvUnit(n);
+    foreach(cid,g;groups) {
+        if(g.length<3) domain=false;
+        LocalFrame f;auto lo=p[g[0]],hi=lo;LocalVector reference=[0,0,0];
+        foreach(vi;g) {reference=lvAdd(reference,vertexNormals[vi]);foreach(k;0..3) {if(p[vi][k]<lo[k])lo[k]=p[vi][k];if(p[vi][k]>hi[k])hi[k]=p[vi][k];}}
+        f.center=lvMul(lvAdd(lo,hi),.5);reference=lvUnit(reference);
+        foreach(value;reference) if(!isFinite(value)) domain=false;
+        int normalAxis=-1;foreach(k;0..3) if(hi[k]-lo[k]<1e-8) normalAxis=k;
+        if(normalAxis<0) {domain=false;normalAxis=0;}
+        f.normal=[0,0,0];f.normal[normalAxis]=reference[normalAxis]<0 ? -1 : 1;
+        int a=(normalAxis+1)%3,b=(normalAxis+2)%3;
+        double mx=0,my=0,xx=0,xy=0,yy=0;
+        foreach(vi;g) {double x=p[vi][a]-f.center[a],y=p[vi][b]-f.center[b];mx+=x;my+=y;xx+=x*x;xy+=x*y;yy+=y*y;}
+        double divisor=1.0/(2*g.length);mx*=divisor;my*=divisor;
+        xx=xx*divisor-mx*mx;xy=xy*divisor-mx*my;yy=yy*divisor-my*my;
+        double theta=.5*atan2(2*xy,xx-yy);LocalVector tangent=[0,0,0];tangent[a]=cos(theta);tangent[b]=sin(theta);
+        auto other=lvCross(f.normal,tangent);
+        double extent(LocalVector axis) {double low=double.infinity,high=-double.infinity;foreach(vi;g) {double v=lvDot(p[vi],axis);if(v<low)low=v;if(v>high)high=v;}return high-low;}
+        double e=extent(tangent),eOther=extent(other);
+        if(eOther>e) {tangent=other;double tmp=e;e=eOther;eOther=tmp;}
+        if(!(isFinite(e) && e>0 && eOther>1e-6*e)) domain=false;
+        if(fabs(e-eOther)<=1e-6*e) tangent=normalAxis==0 ? cast(LocalVector)[0,0,1] : cast(LocalVector)[1,0,0];
+        int dominant=0;foreach(k;1..3) if(fabs(tangent[k])>fabs(tangent[dominant]))dominant=k;
+        if(tangent[dominant]<0)tangent=lvMul(tangent,-1);
+        f.up=lvUnit(lvCross(f.normal,tangent));f.right=lvUnit(lvCross(f.up,f.normal));
+        if(cid>0) alignLocalContract(f,q.frames[0]);
+        q.frames~=f;
+    }
+    q.facts.set("finite-planar-identity-domain",domain);
+    // Immutable old-rig card correspondence is pinned after full mesh/ring mapping.
+    if(cell<2) {
+        q.facts.set("old-rig-signed-frame",q.frames.length==2
+            && dist2(q.frames[0].right,[0,0,1])<1e-10 && dist2(q.frames[0].up,[1,0,0])<1e-10
+            && dist2(q.frames[0].normal,[0,1,0])<1e-10 && dist2(q.frames[0].center,[-.25,.5,0])<1e-10
+            && dist2(q.frames[1].right,[0,0,1])<1e-10 && dist2(q.frames[1].up,[-1,0,0])<1e-10
+            && dist2(q.frames[1].normal,[0,-1,0])<1e-10 && dist2(q.frames[1].center,[.25,-.5,.25])<1e-10);
+    }
+    auto ft=cs["op"].array[0]["acen_transform"];int axis=ft["attr"].str[1]-'X';double value=asDouble(ft["value"]);
+    bool rotate=ft["tool"].str=="rotate";
+    q.output=p.dup;
+    foreach(vi,cid;q.membership) if(cid>=0) {
+        auto f=q.frames[cid];LocalVector[3] axes=[f.right,f.up,f.normal];
+        q.output[vi]=rotate ? lvRotate(p[vi],axes[axis],f.center,value) : lvAdd(p[vi],lvMul(axes[axis],value));
+    }
+    // Compute every competing prediction before apply; post-output is never an oracle.
+    foreach(candidate;["worldY","normal-or-tangent","frame0-only","origin-pivot"]) {
+        double separation=0;size_t witness,channel;LocalVector wrongWitness;
+        foreach(vi,cid;q.membership) if(cid>=0) {
+            auto f=q.frames[cid];LocalVector[3] axes=[f.right,f.up,f.normal];auto n=axes[axis],center=f.center;
+            if(candidate=="worldY") n=[0,1,0];
+            if(candidate=="normal-or-tangent") n=axis==2 ? f.up : f.normal;
+            if(candidate=="frame0-only") {auto first=q.frames[0];n=axis==2 ? first.normal : first.up;}
+            if(candidate=="origin-pivot") center=[0,0,0];
+            if(!rotate && candidate=="origin-pivot") continue; // Translation has no pivot operand.
+            auto wrong=rotate ? lvRotate(p[vi],n,center,value) : lvAdd(p[vi],lvMul(n,value));
+            foreach(k;0..3) if(fabs(wrong[k]-q.output[vi][k])>separation) {separation=fabs(wrong[k]-q.output[vi][k]);witness=vi;channel=k;wrongWitness=wrong;}
+        }
+        if(!rotate && candidate=="origin-pivot") continue;
+        q.facts.set("separation-"~candidate,separation>.001);
+        import std.stdio : writefln;
+        writefln("LOCAL-DISCRIMINATOR %s %s v%s[%s] expected=%s candidate=%s separation=%s",cs["name"].str,candidate,witness,channel,q.output[witness],wrongWitness,separation);
+    }
+    return q;
+}
+private JSONValue localGet(string endpoint) { return parseJSON(cast(string)get(BASE~"/api/"~endpoint)); }
+private struct LocalSnapshots { JSONValue beforeAttr, afterAttr, afterApply, beforePacket, authoredPacket, beforeSelection, afterSelection; long beforeHistory, afterHistory; }
+private void checkLocalSnapshots(ref LocalFacts facts, LocalObservation o, LocalOracle q, LocalSnapshots s, JSONValue ft) {
+    bool sameVertices(JSONValue model) {return model["vertices"]==o.model["vertices"];}
+    facts.set("before-apply",sameVertices(s.beforeAttr) && sameVertices(s.afterAttr));
+    facts.set("history",s.beforeHistory<48 && s.afterHistory==s.beforeHistory+1);
+    facts.set("topology",s.afterApply["vertices"].array.length==o.before.length
+        && s.afterApply["faces"]==o.model["faces"] && s.afterApply["edges"]==o.model["edges"]);
+    facts.set("selection",s.beforeSelection==o.selection && s.afterSelection==o.selection);
+    bool packet=true;auto ac=s.beforePacket["actionCenter"];auto ax=s.beforePacket["axis"];
+    packet=ac["clusterCenters"].array.length==q.frames.length
+        && ax["clusterRight"].array.length==q.frames.length && ax["clusterUp"].array.length==q.frames.length
+        && ax["clusterFwd"].array.length==q.frames.length && ac["clusterOf"].array.length==q.membership.length;
+    if(packet) {
+        foreach(vi,cid;q.membership) if(ac["clusterOf"].array[vi].integer!=cid) packet=false;
+        foreach(cid,f;q.frames) {
+            foreach(slot;["right","up","fwd"]) {
+                LocalVector want=slot=="right" ? f.right : slot=="up" ? f.up : f.normal;
+                string key=slot=="right" ? "clusterRight" : slot=="up" ? "clusterUp" : "clusterFwd";
+                if(dist2(jvec3(ax[key].array[cid]),want)>1e-10)packet=false;
+                if(cid==0 && dist2(jvec3(ax[slot]),want)>1e-10)packet=false;
+            }
+            if(dist2(jvec3(ac["clusterCenters"].array[cid]),f.center)>1e-10)packet=false;
+        }
+    }
+    facts.set("signed-packet-centers",packet);
+    auto tr=s.authoredPacket["transform"];auto desired=ft["attr"].str;
+    int channel=desired[1]-'X';bool channels=true;
+    foreach(family;["translate","rotate","scale"]) foreach(k;0..3) {
+        double want=family=="scale" ? 1 : 0;
+        if(family==(ft["tool"].str=="move" ? "translate" : "rotate") && k==channel) want=asDouble(ft["value"]);
+        if(fabs(asDouble(tr[family].array[k])-want)>1e-5)channels=false;
+    }
+    facts.set("authored-published-channel",channels);
+    bool output=true,untouched=true;
+    foreach(vi,v;s.afterApply["vertices"].array) {
+        if(vi>=q.output.length) {output=false;continue;}
+        foreach(k;0..3) if(fabs(asDouble(v.array[k])-q.output[vi][k])>.001) output=false;
+        if(q.membership[vi]<0 && jvec3(v)!=o.before[vi]) untouched=false;
+    }
+    facts.set("current-output",output);
+    facts.set("untouched-exact",untouched);
+}
+private void localHelperControls() {
+    // Independent valid/one-field-corrupted validator inputs, not caught assertions.
+    LocalFacts good;foreach(name;["before-apply","history","topology","selection","signed-packet-centers",
+        "authored-published-channel","current-output","untouched-exact","population","selection-population",
+        "before-bijection","selected-ring-correspondence","membership","untouched-population",
+        "finite-planar-identity-domain","old-rig-signed-frame","old-rig-immutable-correspondence","separation-worldY","separation-normal-or-tangent",
+        "separation-frame0-only","separation-origin-pivot"]) good.set(name,true);
+    assert(validateLocalContract(good).length==0,"Local helper valid acceptance");
+    foreach(name;good.values.keys) {
+        LocalFacts bad;bad.values=good.values.dup;bad.values[name]=false;
+        assert(validateLocalContract(bad)==[name],"Local helper corrupted rejection "~name);
+    }
+    LocalFrame first=LocalFrame([0,0,1],[1,0,0],[0,1,0],[-.25,.5,0]);
+    LocalFrame bottom=LocalFrame([1,0,0],[0,0,1],[0,-1,0],[.25,-.5,.25]);
+    alignLocalContract(bottom,first);
+    assert(bottom.right==cast(LocalVector)[0,0,1] && bottom.up==cast(LocalVector)[-1,0,0]
+        && bottom.normal==cast(LocalVector)[0,-1,0],"Local helper captured PRE to POST alignment");
+    auto equal=compareHistoricalPairs([[0,0,0]],[[0,0,0]],.001);
+    assert(equal.compared==3 && equal.mismatches==0 && equal.maxResidual==0 && equal.firstVertex==-1
+        && equal.disposition()=="agreement","historical comparator equal control");
+    auto unequal=compareHistoricalPairs([[0,2,0]],[[0,0,0]],.001);
+    assert(unequal.compared==3 && unequal.mismatches==1 && unequal.maxResidual==2 && unequal.firstVertex==0
+        && unequal.firstChannel==1 && unequal.disposition()=="disagreement","historical comparator unequal control");
+}
+private bool localFixtureIntegrity(string fixtureJson) {
+    import std.digest.sha : sha256Of;
+    import std.digest : toHexString;
+    return sha256Of(fixtureJson).toHexString=="00D8477B30B37C2B64400189A6DCD9DBCE0F5087242DB7746C08E32B7308A8BC";
+}
+private bool localSelectorValid(string selector, string censusValue) {
+    bool known=selector=="ALL";
+    foreach(name;["local_move_TY","local_rotate_RY","local_move_TZ_sixface","local_move_TZ_tripatch_seg4","local_move_TY_tripatch_seg4"])
+        if(selector==name) known=true;
+    return known && (censusValue=="0" || censusValue=="1") && (censusValue!="1" || selector!="ALL");
+}
+private bool localPopulationValid(size_t cases,size_t checked,size_t reports,bool all) {
+    return cases==5 && checked==(all ? 5 : 1) && reports==checked;
+}
+void runLocalContractSuite(string fixtureJson) {
+    import std.process : environment;
+    import std.digest.sha : sha256Of;
+    import std.digest : toHexString;
+    import std.stdio : writeln, writefln, File;
+    string reportPath=environment.get("VIBE3D_ACEN_LOCAL_REPORT", "");
+    size_t checked,reports;
+    File reportFile;
+    if(reportPath.length) reportFile=File(reportPath,"w");
+    void emit(string line) {
+        import std.algorithm : startsWith;
+        if(line.startsWith("HISTORICAL ")) ++reports;
+        writeln(line); if(reportFile.isOpen) {reportFile.writeln(line);reportFile.flush();}
+    }
+    assert(localFixtureIntegrity(fixtureJson),
+        "Local immutable fixture integrity");
+    auto fx=parseJSON(fixtureJson);requireProvenance(fx,fx["name"].str);
+    assert(fx["cases"].array.length==5,"Local ALL population floor five");
+    string[] names=["local_move_TY","local_rotate_RY","local_move_TZ_sixface","local_move_TZ_tripatch_seg4","local_move_TY_tripatch_seg4"];
+    string selector=environment.get("VIBE3D_ACEN_LOCAL_CASE","ALL");
+    string censusValue=environment.get("VIBE3D_ACEN_LOCAL_CENSUS","0");
+    assert(localSelectorValid(selector,censusValue),"Local selector refuses empty/unknown or invalid census dispatch");
+    bool census=censusValue=="1";
+    assert(localSelectorValid("ALL","0") && localSelectorValid("local_move_TY","1"),"Local selector valid controls");
+    foreach(bad;["","unknown"]) assert(!localSelectorValid(bad,"0"),"Local selector unknown rejection control");
+    assert(!localSelectorValid("ALL","1"),"Local census one case rejection control");
+    assert(!localSelectorValid("ALL","garbage"),"Local census vocabulary rejection control");
+    assert(!localFixtureIntegrity(fixtureJson~" "),"Local integrity corruption rejection control");
+    assert(localPopulationValid(5,5,5,true) && localPopulationValid(5,1,1,false),"Local population valid controls");
+    assert(!localPopulationValid(0,5,5,true),"Local population floor rejection control");
+    assert(!localPopulationValid(5,1,1,true),"Local ALL dispatch rejection control");
+    assert(!localPopulationValid(5,5,4,true),"Local report population rejection control");
+    if("VIBE3D_ACEN_LOCAL_CASE" !in environment)
+        assert(selector=="ALL","Local unset selector defaults ALL");
+    localHelperControls();
+    foreach(cell,cs;fx["cases"].array) {
+        assert(cs["name"].str==names[cell],"Local immutable case identities");
+        if(selector!="ALL" && selector!=cs["name"].str) continue;
+        string name=cs["name"].str;double tol=asDouble(fx["tolerance"]);
+        auto o=observeParityCase(name,tol,cs["input"],cs["expected_pairs"]);
+        auto q=deriveLocalContract(o,cs,cell);
+        JSONValue oracle;oracle["case"]=JSONValue(name);oracle["beforeModel"]=o.model;oracle["beforeSelection"]=o.selection;
+        JSONValue[] frames,outputs;
+        foreach(f;q.frames) {JSONValue frame;frame["right"]=JSONValue(f.right[]);frame["up"]=JSONValue(f.up[]);
+            frame["normal"]=JSONValue(f.normal[]);frame["center"]=JSONValue(f.center[]);frames~=frame;}
+        foreach(v;q.output) outputs~=JSONValue(v[]);
+        oracle["frames"]=JSONValue(frames);oracle["expectedCurrent"]=JSONValue(outputs);oracle["membership"]=JSONValue(q.membership);
+        emit("LOCAL-PREAPPLY-ORACLE "~oracle.toString);
+        cmd("history.clear",name);
+        LocalSnapshots s;
+        void observer(string phase) {
+            auto model=localGet("model"),packet=localGet("toolpipe/eval"),selection=localGet("selection");
+            auto history=localGet("history");
+            if(phase=="before-attr") {s.beforeAttr=model;s.beforePacket=packet;s.beforeSelection=selection;s.beforeHistory=history["undo"].array.length;}
+            if(phase=="after-attr") {s.afterAttr=model;s.authoredPacket=packet;}
+            if(phase=="after-apply") {s.afterApply=model;s.afterSelection=selection;s.afterHistory=history["undo"].array.length;}
+            JSONValue record;record["case"]=JSONValue(name);record["phase"]=JSONValue(phase);record["model"]=model;
+            record["packet"]=packet;record["selection"]=selection;record["history"]=history;
+            emit("LOCAL-OBSERVATION "~record.toString);
+        }
+        foreach(i,step;cs["op"].array)runStep(step,name,"op",i,&observer);
+        LocalVector[] actual;foreach(v;s.afterApply["vertices"].array)actual~=jvec3(v);
+        auto report=compareHistoricalPairs(actual,o.historical,tol);
+        emit(format("HISTORICAL %s compared=%s mismatches=%s maxResidual=%.17g first=v%s[%s] actual=%s expected=%s disposition=%s input=historical-input-unresolved parity=UNCLAIMED",
+            name,report.compared,report.mismatches,report.maxResidual,report.firstVertex,report.firstChannel,
+            report.firstActual,report.firstExpected,report.disposition()));
+        assert(report.compared==3*cs["expected_pairs"].array.length,"Local historical coordinate completeness");
+        checkLocalSnapshots(q.facts,o,q,s,cs["op"].array[0]["acen_transform"]);
+        emit("CURRENT-DIAGNOSTIC "~name~" failures="~validateLocalContract(q.facts).to!string);
+        assertLocalContract(q.facts,name);
+        localSnapshotControls(o,q,s,cs["op"].array[0]["acen_transform"]);
+        localChannelControls(o,q,s,cs["op"].array[0]["acen_transform"]);
+        localDerivationControls(o,cs,cell);
+        ++checked;
+        // Census retains exact historic equality LAST, after complete observations.
+        if(census) assert(report.mismatches==0,name~": historical equality census "~report.disposition());
+    }
+    assert(localPopulationValid(fx["cases"].array.length,checked,reports,selector=="ALL"),"Local checked population/dispatch/report completeness");
+    emit(format("CURRENT-TYPED-CONTRACT checked=%s; HISTORICAL-PARITY=UNCLAIMED",checked));
+}
+
+private JSONValue localCopy(JSONValue v) { return parseJSON(v.toString); }
+private void localSnapshotControls(LocalObservation o, LocalOracle q, LocalSnapshots valid, JSONValue ft) {
+    import std.algorithm : canFind;
+    foreach(name;["before-apply","history","topology","selection","signed-packet-centers","authored-published-channel","current-output","untouched-exact","before-apply-initial","history-headroom","topology-edges","topology-count","packet-center","packet-global","packet-right","packet-normal","packet-membership","packet-population"]) {
+        auto s=valid;
+        s.beforeAttr=localCopy(valid.beforeAttr);s.afterAttr=localCopy(valid.afterAttr);s.afterApply=localCopy(valid.afterApply);
+        s.beforePacket=localCopy(valid.beforePacket);s.authoredPacket=localCopy(valid.authoredPacket);s.afterSelection=localCopy(valid.afterSelection);
+        string fact=name;
+        switch(name) {
+            case "before-apply-initial":s.beforeAttr["vertices"].array[0].array[0]=JSONValue(123.0);fact="before-apply";break;
+            case "history-headroom":s.beforeHistory=48;s.afterHistory=49;fact="history";break;
+            case "topology-edges":s.afterApply["edges"].array[0].array[0]=JSONValue(123);fact="topology";break;
+            case "topology-count":s.afterApply["vertices"]=JSONValue(s.afterApply["vertices"].array~JSONValue([0,0,0]));fact="topology";break;
+            case "packet-center":s.beforePacket["actionCenter"]["clusterCenters"].array[0].array[0]=JSONValue(123.0);fact="signed-packet-centers";break;
+            case "packet-global":s.beforePacket["axis"]["right"].array[0]=JSONValue(123.0);fact="signed-packet-centers";break;
+            case "packet-right":s.beforePacket["axis"]["clusterRight"].array[0].array[0]=JSONValue(123.0);fact="signed-packet-centers";break;
+            case "packet-normal":s.beforePacket["axis"]["clusterFwd"].array[0].array[0]=JSONValue(123.0);fact="signed-packet-centers";break;
+            case "packet-membership":s.beforePacket["actionCenter"]["clusterOf"].array[0]=JSONValue(123);fact="signed-packet-centers";break;
+            case "packet-population":s.beforePacket["axis"]["clusterUp"]=JSONValue(s.beforePacket["axis"]["clusterUp"].array[0..$-1]);fact="signed-packet-centers";break;
+            case "before-apply": s.afterAttr["vertices"].array[0].array[0]=JSONValue(123.0);break;
+            case "history": s.afterHistory=s.beforeHistory;break;
+            case "topology": s.afterApply["faces"].array[0].array[0]=JSONValue(123);break;
+            case "selection": s.afterSelection["mode"]=JSONValue("vertices");break;
+            case "signed-packet-centers": s.beforePacket["axis"]["clusterUp"].array[0].array[0]=JSONValue(123.0);break;
+            case "authored-published-channel": s.authoredPacket["transform"]["scale"].array[0]=JSONValue(123.0);break;
+            case "current-output": s.afterApply["vertices"].array[0].array[0]=JSONValue(123.0);break;
+            case "untouched-exact":
+                size_t vi;while(q.membership[vi]>=0)++vi;
+                s.afterApply["vertices"].array[vi].array[0]=JSONValue(asDouble(s.afterApply["vertices"].array[vi].array[0])+1e-6);break;
+            default: assert(false,"Local snapshot control identity");
+        }
+        LocalFacts bad;checkLocalSnapshots(bad,o,q,s,ft);
+        assert(validateLocalContract(bad).canFind(fact),"Local corrupted snapshot rejection "~name);
+    }
+}
+private void localChannelControls(LocalObservation o,LocalOracle q,LocalSnapshots valid,JSONValue ft) {
+    import std.algorithm : canFind;
+    foreach(family;["translate","rotate","scale"]) foreach(k;0..3) {
+        auto s=valid;s.authoredPacket=localCopy(valid.authoredPacket);
+        s.authoredPacket["transform"][family].array[k]=JSONValue(123.0);
+        LocalFacts bad;checkLocalSnapshots(bad,o,q,s,ft);
+        assert(validateLocalContract(bad).canFind("authored-published-channel"),"Local corrupted authored field rejection "~family~k.to!string);
+    }
+}
+private void localDerivationControls(LocalObservation original, JSONValue originalCase, size_t cell) {
+    import std.algorithm : canFind;
+    foreach(name;["population","selection-population","before-bijection","selected-ring-correspondence","membership","untouched-population","finite-planar-identity-domain","old-rig-signed-frame","old-rig-immutable-correspondence"]) {
+        if((name=="old-rig-signed-frame" || name=="old-rig-immutable-correspondence") && cell>=2) continue;
+        auto o=original;auto cs=localCopy(originalCase);
+        o.model=localCopy(original.model);o.selection=localCopy(original.selection);o.before=original.before.dup;
+        switch(name) {
+            case "population": cs["expected_pairs"]=JSONValue(cs["expected_pairs"].array[0..$-1]);break;
+            case "selection-population":
+            case "membership":
+            case "untouched-population": o.selection["selectedFaces"]=JSONValue(o.selection["selectedFaces"].array[0..$-1]);break;
+            case "before-bijection": cs["expected_pairs"].array[0]["before"]=cs["expected_pairs"].array[1]["before"];break;
+            case "selected-ring-correspondence":
+                cs["input"].array[$-1]["select"]["coords"]=JSONValue([JSONValue([JSONValue([123,123,123])])]);break;
+            case "finite-planar-identity-domain":
+                foreach(vi,ref v;o.before) {v[0]+=.01*vi*vi;v[1]+=.02*vi*vi;v[2]+=.03*vi*vi;}break;
+            case "old-rig-signed-frame": foreach(ref v;o.before)v[0]+=.01;break;
+            case "old-rig-immutable-correspondence":
+                auto reversed=o.model["faces"].array[0].array.dup;
+                import std.algorithm : reverse;
+                reversed.reverse;o.model["faces"].array[0]=JSONValue(reversed);break;
+            default: assert(false,"Local derivation control identity");
+        }
+        auto bad=deriveLocalContract(o,cs,cell);
+        assert(validateLocalContract(bad.facts).canFind(name),"Local corrupted derivation rejection "~name);
     }
 }
