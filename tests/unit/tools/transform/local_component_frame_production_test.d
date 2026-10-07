@@ -164,13 +164,25 @@ unittest { // Construction controls for transported normals and alignment branch
     foreach(n;normals) near(n,Vec3(0,0,1),"concave later corner sign corrected before virtual normal");
     ItemXform posed;posed.rot=Vec3(180,0,0);posed.scl=Vec3(1.3f,.8f,1.1f);
     auto space=posed.modelSpace();primaryModelSpaceResolver=()=>space;
-    EditMode mode=EditMode.Polygons;
-    auto center=new ActionCenterStage(()=>&mesh,&mode);auto axis=new AxisStage(()=>&mesh,&mode);
+    EditMode mode=EditMode.Polygons;SelType subject=SelType.Polygon;
+    auto center=new ActionCenterStage(()=>&mesh,&mode);auto axis=new AxisStage(()=>&mesh,&mode,null,()=>subject);
     g_pipeCtx=new ToolPipeContext();g_pipeCtx.pipeline.add(center);g_pipeCtx.pipeline.add(axis);
     center.mode=ActionCenterStage.Mode.Local;axis.mode=AxisStage.Mode.Local;
     Vec3 r,u,f;axis.currentBasis(r,u,f);
     near(f,normalize(space.toWorldDir(Vec3(0,0,1))),"actual Local normal uses layer linear transport");
     assert(f.z<-.99f,"nonidentity transport separates omitted direction map");
+    subject=SelType.Item;axis.currentBasis(r,u,f);
+    near(r,Vec3(1,0,0),"Item stale polygon selection retains compatibility right");
+    near(u,Vec3(0,1,0),"Item stale polygon selection retains compatibility up");
+    near(f,Vec3(0,0,1),"Item stale polygon selection retains compatibility normal");
+    subject=SelType.Vertex;mode=EditMode.Vertices;
+    foreach(vi;0..mesh.vertices.length) mesh.selectVertex(cast(int)vi);
+    axis.mode=AxisStage.Mode.Select;Vec3 cr,cu,cf;axis.currentBasis(cr,cu,cf);
+    axis.mode=AxisStage.Mode.Local;axis.currentBasis(r,u,f);
+    near(r,cr,"vertex mode with stale polygons retains compatibility right");
+    near(u,cu,"vertex mode with stale polygons retains compatibility up");
+    near(f,cf,"vertex mode with stale polygons retains compatibility normal");
+    subject=SelType.Polygon;mode=EditMode.Polygons;
     primaryModelSpaceResolver=()=>ModelSpace.world();
     Vec3[][] rights=[[Vec3(1,0,0),Vec3(0,1,0)],[Vec3(1,0,0),Vec3(-1,0,0)],
                     [Vec3(1,0,0),Vec3(0,0,1)],[Vec3(1,0,0),Vec3(0,1,0)],
