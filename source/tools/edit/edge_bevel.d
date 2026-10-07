@@ -15,8 +15,10 @@ import mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
 import math;
 import editmode : EditMode;
 import params : Param;
-import handler : Arrow, ToolHandles, HandleState, HandlePart, firstHitPart, gizmoSize;
-import viewport_scheme : schemeColor, SchemeColor;
+import handler : CubicArrow, ToolHandles, HandleState, HandlePart, firstHitPart,
+    gizmoSize, gizmoPixelSize, gizmoBoxHalfPx, GIZMO_STROKE_SCALE_SHAFT_PX,
+    GIZMO_ALPHA_ARM;
+import viewport_scheme : axisColor;
 import drag : screenAxisDelta;
 import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
@@ -91,7 +93,7 @@ private struct EdgeBevelScalarDescriptor {
 }
 
 private struct EdgeBevelHandleBank {
-    Arrow widthArrow, miterArrow;
+    CubicArrow widthArrow, miterArrow;
     EdgeBevelScalarDescriptor[2] scalars = [
         EdgeBevelScalarDescriptor(EdgeBevelScalar.width, EdgeBevelBasis.normal),
         EdgeBevelScalarDescriptor(EdgeBevelScalar.miterOffset, EdgeBevelBasis.tangent),
@@ -189,17 +191,18 @@ private:
     int   dragStartMX, dragStartMY;
 
     EdgeBevelHandleBank handleBank_;
-    @property Arrow widthArrow() { return handleBank_.widthArrow; }
-    @property const(Arrow) widthArrow() const { return handleBank_.widthArrow; }
-    Arrow       replicaArrow_;
-    Arrow       replicaMiterArrow_;
+    @property CubicArrow widthArrow() { return handleBank_.widthArrow; }
+    @property const(CubicArrow) widthArrow() const { return handleBank_.widthArrow; }
+    CubicArrow       replicaArrow_;
+    CubicArrow       replicaMiterArrow_;
     // One draw-only frame image is shared by every foreign cell.  The owner
     // publishes its frozen frame here; after a selection change the first
     // replica refreshes it and the remaining replicas plus the owner reuse it.
     PreparedEdgeBevelActivationImage replicaImage_;
     ToolHandles toolHandles;
 
-    enum Vec3 WIDTH_COLOR = schemeColor(SchemeColor.toolOffset);
+    enum Vec3 WIDTH_COLOR = axisColor(2);
+    enum Vec3 MITER_COLOR = axisColor(0);
 
 public:
     version(unittest) final void seedPreparedParamForTest(ref Mesh live,
@@ -220,11 +223,17 @@ public:
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-        handleBank_.widthArrow = new Arrow(Vec3(0,0,0), Vec3(0,1,0), WIDTH_COLOR);
-        handleBank_.miterArrow = new Arrow(Vec3(0,0,0), Vec3(0,0,0), WIDTH_COLOR);
+        handleBank_.widthArrow = new CubicArrow(Vec3(0,0,0), Vec3(0,1,0), WIDTH_COLOR);
+        handleBank_.miterArrow = new CubicArrow(Vec3(0,0,0), Vec3(0,0,0), MITER_COLOR);
         handleBank_.miterArrow.setVisible(true);
-        replicaArrow_ = new Arrow(Vec3(0,0,0), Vec3(0,1,0), WIDTH_COLOR);
-        replicaMiterArrow_ = new Arrow(Vec3(0,0,0), Vec3(1,0,0), WIDTH_COLOR);
+        replicaArrow_ = new CubicArrow(Vec3(0,0,0), Vec3(0,1,0), WIDTH_COLOR);
+        replicaMiterArrow_ = new CubicArrow(Vec3(0,0,0), Vec3(1,0,0), MITER_COLOR);
+        foreach (h; [handleBank_.widthArrow, handleBank_.miterArrow,
+                     replicaArrow_, replicaMiterArrow_]) {
+            h.lineWidth = GIZMO_STROKE_SCALE_SHAFT_PX;
+            h.alpha = GIZMO_ALPHA_ARM;
+            h.doubledShaft = true;
+        }
         toolHandles = new ToolHandles();
     }
 
@@ -503,6 +512,9 @@ public:
         widthArrow.start = anchorW + ax.dir * (armLen / 6.0f);
         widthArrow.end   = anchorW + ax.dir * armLen;
         widthArrow.color = WIDTH_COLOR;
+        // Same clamped cube extent as Scale; endpoints remain the drag frame.
+        widthArrow.fixedCubeHalf = gizmoPixelSize(anchorW, vp, gizmoBoxHalfPx());
+        handleBank_.miterArrow.fixedCubeHalf = widthArrow.fixedCubeHalf;
         const auto miterAx = os.axis(miterAxis);
         handleBank_.miterArrow.start = anchorW + miterAx.dir * (armLen / 6.0f);
         handleBank_.miterArrow.end = anchorW + miterAx.dir * armLen;
@@ -544,6 +556,8 @@ private:
         replicaArrow_.start = anchorW + ax.dir * (armLen / 6.0f);
         replicaArrow_.end = anchorW + ax.dir * armLen;
         replicaArrow_.color = WIDTH_COLOR;
+        replicaArrow_.fixedCubeHalf = gizmoPixelSize(anchorW, vp, gizmoBoxHalfPx());
+        replicaMiterArrow_.fixedCubeHalf = replicaArrow_.fixedCubeHalf;
         replicaArrow_.draw(shader, vp);
         const auto miterAx = os.axis(image.miterAxis);
         replicaMiterArrow_.start = anchorW + miterAx.dir * (armLen / 6.0f);
@@ -782,11 +796,12 @@ public:
                 cachedVp.width, cachedVp.height);
         }
 
-        final void replicaArrowForTest(out Vec3 start, out Vec3 end,
+        final const(CubicArrow)[2] replicaArrowForTest(out Vec3 start, out Vec3 end,
                                        out size_t drawId) const {
             start = replicaArrow_.start;
             end = replicaArrow_.end;
             drawId = replicaArrow_.drawIdentity();
+            return [replicaArrow_, replicaMiterArrow_];
         }
 
         final void widthArrowForTest(out Vec3 start, out Vec3 end,

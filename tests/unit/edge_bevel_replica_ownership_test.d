@@ -7,14 +7,15 @@ import bindbc.sdl;
 import display_state : DrawPlan;
 import editmode : EditMode;
 import eventlog : parkOverrideMouse, setOverrideMouse;
-import handler : Arrow, HandleState, getGizmoPixels, setGizmoPixels;
+import handler : CubicArrow, gizmoPixelSize, gizmoBoxHalfPx, GIZMO_ALPHA_ARM,
+    GIZMO_STROKE_SCALE_SHAFT_PX, HandleState, getGizmoPixels, setGizmoPixels;
 import math : Vec3, Viewport, isOrtho, lookAt, orthographicMatrix,
     projectToWindowFull;
 import mesh : Mesh, edgeKey;
 import mesh_gpu : GpuMesh;
 import operator : VectorStack;
 import overlay_space : OverlaySpace;
-import perf_probe : g_fc;
+import perf_probe : g_fc, DrawPass;
 import shader : LitShader, Shader;
 import std.conv : to;
 import std.file : readText;
@@ -90,6 +91,7 @@ private void drawOverlay(ViewportSceneRenderer renderer, Tool tool,
     g_fc.reset();
     g_fc.beginFrame();
     renderer.drawToolOverlaysForTest(overlayInputs(tool), mode, vp, shader);
+    g_fc.endFrame();
 }
 
 private void assertNear(float actual, float expected, float tolerance,
@@ -381,7 +383,14 @@ private void cellC2_replicaThenOwner(ViewportSceneRenderer renderer,
 private void assertReplicaB(EdgeBevelTool tool, ref Viewport replicaVp) {
     Vec3 start, end;
     size_t drawId;
-    tool.replicaArrowForTest(start, end, drawId);
+    const cubes = tool.replicaArrowForTest(start, end, drawId);
+    foreach (cube; cubes) {
+        assert(cube.fixedCubeHalf == gizmoPixelSize(Vec3(1.5f, 6, 0),
+            replicaVp, gizmoBoxHalfPx()), "REPLICA CUBE SIZE: Scale clamped extent");
+        assert(cube.alpha == GIZMO_ALPHA_ARM &&
+            cube.lineWidth == GIZMO_STROKE_SCALE_SHAFT_PX && cube.doubledShaft,
+            "REPLICA CUBE STEM: Scale stroke and fill conventions");
+    }
     assertVecNear(start, Vec3(1.5f, 7, 0), 1e-4f,
                   "REPLICA WORLD START");
     assertVecNear(end, Vec3(1.5f, 12, 0), 1e-4f,
@@ -391,6 +400,8 @@ private void assertReplicaB(EdgeBevelTool tool, ref Viewport replicaVp) {
     assertProjected(end, replicaVp, 600.0f, 120.0f,
                     "REPLICA FRESH PROJECTED END");
     const pass = g_fc.lastHandlePass();
+    assert(g_fc.last().pass[DrawPass.handles].verts == 40,
+        "REPLICA CUBE RASTER: doubled stem and 36-vertex cube head");
     // Native fallback column0 is parallel to this replica camera.
     assert(pass.submitted == 1, format(
         "REPLICA HANDLE SUBMISSIONS: expected visible width only=1 got %s (tol 0)",
@@ -737,7 +748,7 @@ private void cellC10_replicaMirrorsResidentPaint(
     drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
     tool.replicaPaintForTest(replicaBase, replicaResolved,
                              replicaState, replicaEngaged);
-    assertVecNear(replicaBase, Vec3(0.20f, 0.45f, 1.00f), 0,
+    assertVecNear(replicaBase, Vec3(0.20f, 0.40f, 1.00f), 0,
                   "REPLICA BASE COLOR");
     assert(replicaState == ownerState && !replicaEngaged, format(
         "REPLICA HOT STATE: expected %s/false got %s/%s",
@@ -919,7 +930,30 @@ private void cellCapturedPreparedBasis(ViewportSceneRenderer renderer, Shader sh
     tool.installPreparedActivation(image);
     drawOverlay(renderer, tool, OverlayMode.Interactive, vp, shader);
     auto parts = tool.handlePartsForTest();
-    auto width = cast(Arrow)parts[0].h; auto miter = cast(Arrow)parts[1].h;
+    auto width = cast(CubicArrow)parts[0].h; auto miter = cast(CubicArrow)parts[1].h;
+    assert(width !is null && miter !is null,
+        "CUBE REGISTRATION: both picked parts reuse Scale CubicArrow");
+    import viewport_scheme : axisColor;
+    assert(width.color == axisColor(2) && miter.color == axisColor(0),
+        "CUBE COLORS: blue Width and red Mitering");
+    const half = gizmoPixelSize(base, vp, gizmoBoxHalfPx());
+    assert(width.fixedCubeHalf == half && miter.fixedCubeHalf == half,
+        "CUBE SIZE: both heads use Scale clamped extent");
+    assert(width.alpha == GIZMO_ALPHA_ARM && miter.alpha == GIZMO_ALPHA_ARM &&
+        width.lineWidth == GIZMO_STROKE_SCALE_SHAFT_PX &&
+        miter.lineWidth == GIZMO_STROKE_SCALE_SHAFT_PX &&
+        width.doubledShaft && miter.doubledShaft,
+        "CUBE STEM: shared Scale stroke and fill conventions");
+    assert(g_fc.last().pass[DrawPass.handles].verts == 80,
+        "CUBE RASTER: two doubled Scale stems and two 36-vertex cube heads");
+    foreach (i, cube; [width, miter]) {
+        const dir = (cube.end - cube.start) / (cube.end - cube.start).length;
+        float x, y, z;
+        assert(projectToWindowFull(cube.end - dir * half, vp, x, y, z),
+            "CUBE PICK: head center projects");
+        assert(tool.firstBankHitForTest(cast(int)x, cast(int)y, vp) == i,
+            "CUBE PICK: drawn head selects its registered scalar part");
+    }
     assertVecNear((width.end - width.start) * (1 / (width.end - width.start).length),
         normal, 1e-6f, "CAPTURED BASIS: ID0 consumes column2");
     assertVecNear((miter.end - miter.start) * (1 / (miter.end - miter.start).length),
@@ -941,7 +975,7 @@ private void cellTwoHandleEvents(ViewportSceneRenderer renderer, Shader shader,
     eventFrame.widthAxis = Vec3(1, 0, 0);
     tool.installPreparedActivation(eventFrame);
     drawOverlay(renderer, tool, OverlayMode.Interactive, vp, shader);
-    auto arrow = cast(Arrow) tool.handlePartsForTest()[1].h;
+    auto arrow = cast(CubicArrow) tool.handlePartsForTest()[1].h;
     float x, y, depth;
     assert(projectToWindowFull((arrow.start + arrow.end) * 0.5f, vp, x, y, depth),
         "MITER EVENT: visible projected handle");
