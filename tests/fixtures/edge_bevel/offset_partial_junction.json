@@ -387,7 +387,33 @@
       ]
     ]
   },
-  "provenance": "Independent SDK geometry capture, 2026-10-07, isolated reference MCP+GDB. Partial three-of-four junction; point renumbering and cyclic starts allowed, orientation retained.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "debug-live",
+    "captured_utc": "2026-10-07",
+    "comparison": "positions and oriented rings modulo point renumbering, cyclic start and face permutation; winding retained",
+    "precision": "SDK float32 positions; native identifiers are process-local",
+    "acceptance": "XFAIL for complete point parity: exactly one inherited width-only support-point discrepancy, independently reproduced at offset0 and pinned by knownWidthGap. Every other point and every oriented polygon must match in control and positive offset; no complete native geometry parity claimed.",
+    "known_gap_task": 20261381,
+    "evidence": [
+      "toolcards/edge.bevel/multi-edge-crash-20261007/report.md",
+      "doc/tasks/evidence/20261400-edge-partial-width-control/report.md"
+    ],
+    "raw_artifacts": [
+      {
+        "case": "positive",
+        "path": "toolcards/edge.bevel/multi-edge-crash-20261007/lookup-discriminator/partial_junction.json",
+        "sha256": "b83d146c7903a2e1a06069fb71049035237d6b1fe70149c28f5de44792c12b33"
+      },
+      {
+        "case": "control",
+        "path": "doc/tasks/evidence/20261400-edge-partial-width-control/partial_junction.json",
+        "sha256": "7612119c50e02a814809b7058e8188b7e4c6a6866511feb7888253016f4ceba4"
+      }
+    ]
+  },
   "control": {
     "vertices": [
       [

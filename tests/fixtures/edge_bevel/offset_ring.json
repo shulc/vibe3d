@@ -637,7 +637,39 @@
       ]
     ]
   },
-  "provenance": "User source captured read-only 2026-10-07; reference SDK geometry captured independently 2026-10-07 through isolated reference MCP+GDB. Point renumbering, face permutation and cyclic ring starts allowed; winding retained.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "debug-live",
+    "captured_utc": "2026-10-07",
+    "comparison": "positions and oriented rings modulo point renumbering, cyclic start and face permutation; winding retained",
+    "precision": "SDK float32 positions; native identifiers are process-local",
+    "acceptance": "Full frozen geometry comparison for the four captured Inset level0 cells only; no parity claim for uncaptured graph or mode settings.",
+    "evidence": "toolcards/edge.bevel/multi-edge-crash-20261007/report.md",
+    "raw_artifacts": [
+      {
+        "case": "control",
+        "path": "toolcards/edge.bevel/multi-edge-crash-20261007/ring-control.json",
+        "sha256": "660f249320322c48364a5f74a65206e793f6f5e8d3948d58599ed6a23836de03"
+      },
+      {
+        "case": "positive",
+        "path": "toolcards/edge.bevel/multi-edge-crash-20261007/ring-positive.json",
+        "sha256": "7ae1025c6c7a814875691d1e6d9574185c363fba1ddb4fca83e80a5917b74b8d"
+      },
+      {
+        "case": "crossing",
+        "path": "toolcards/edge.bevel/multi-edge-crash-20261007/ring-crossing.json",
+        "sha256": "409f2e1e8d8a5c7df68850874d210f01a263dd67e126e32b6c8339a297ae3486"
+      },
+      {
+        "case": "exact_user_0222",
+        "path": "toolcards/edge.bevel/multi-edge-crash-20261007/exact-0222/ring-exact.json",
+        "sha256": "a00cd15eb4e40be4c6df06ce1d124f083a39167cedfd0713681d9c4c8138a685"
+      }
+    ]
+  },
   "cases": [
     {
       "name": "control",

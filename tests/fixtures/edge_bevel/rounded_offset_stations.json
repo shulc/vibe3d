@@ -1,4 +1,53 @@
 {
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference_token": "ref-editor@11.2v3",
+    "method": "debug-live",
+    "captured_utc": "2026-10-07",
+    "comparison": "positions and oriented rings modulo point renumbering, cyclic start and face permutation; winding retained",
+    "precision": "SDK float32 positions; native identifiers are process-local",
+    "acceptance": "Inset cells compare complete frozen points and oriented polygons. Width cells are XFAIL for complete point parity: exactly four inherited profile discrepancies at offset0; positive offset retains those four plus exactly three derived station discrepancies. knownWidthGaps pins the exact identities and positions, with every other point and every oriented polygon required to match; no complete native Width-profile parity claimed.",
+    "known_gap_task": 20261420,
+    "evidence": [
+      "doc/tasks/evidence/10860-edge-bevel/rounded-hub-capture-20261007/report.md",
+      "doc/tasks/evidence/10860-edge-bevel/rounded-hub-capture-20261007/additional-controls/report.md"
+    ],
+    "raw_archive": "doc/tasks/evidence/10860-edge-bevel/rounded-hub-capture-20261007/raw.zip",
+    "raw_archive_sha256": "3a5ab25bc9b767acf11e7147e8b9cf8b23e6d790895de26295cf3a685e823186",
+    "raw_artifacts": [
+      {
+        "case": "hub_control_inset",
+        "path": "hub_control_inset.json",
+        "sha256": "08cd24e54db1cb0a83da33d5149b1bc4603d4ccf08ab966860d78b75666425e8"
+      },
+      {
+        "case": "hub_positive_inset",
+        "path": "hub_positive_inset.json",
+        "sha256": "5c73f066c8c9646c82b306e2d7de93bbe5b2938e2a67e3baf8ad77b7701c7674"
+      },
+      {
+        "case": "all_positive_inset",
+        "path": "all_positive_inset.json",
+        "sha256": "a18ec8a2ddb3bbbb4a8ba7a0378e2db9d365efae78057eaf9e873b096b83b8e7"
+      },
+      {
+        "case": "skew_positive_inset",
+        "path": "additional-controls/skew_positive_inset.json",
+        "sha256": "e306d5d14725e5818c4abfa77ee79ec483d3c83baf32e2d8aff61e5dc8f2b050"
+      },
+      {
+        "case": "hub_positive_width",
+        "path": "hub_positive_width.json",
+        "sha256": "823fd0ca0fa241b533c9626ca8c6796642db226ad43c08684287fa398f72206d"
+      },
+      {
+        "case": "hub_control_width",
+        "path": "additional-controls/hub_control_width.json",
+        "sha256": "f2af021c7e0c9d6e2754655ee893313c2428496073944615f987867f70542b8d"
+      }
+    ]
+  },
   "source": {
     "vertices": [
       [
