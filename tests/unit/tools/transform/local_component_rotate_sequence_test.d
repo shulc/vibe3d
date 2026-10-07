@@ -300,6 +300,8 @@ unittest {
             assert(image.expectedWrapperItemTargets.ptr!=second.expectedWrapperItemTargets.ptr&&image.expectedWrapperItemXforms.ptr!=second.expectedWrapperItemXforms.ptr,"snapshot arrays own distinct storage");
             auto changed=image;changed.expectedWrapperItemTargets=null;
             assert(!r.tool.preparedReplayMatches(changed,*r.mp),"wrapper target count refusal");
+            changed=image;changed.expectedWrapperItemTargets=null;changed.expectedWrapperItemXforms=null;
+            assert(!r.tool.preparedReplayMatches(changed,*r.mp),"coherent empty wrapper snapshot count refusal");
             changed=image;changed.expectedWrapperItemXforms=image.expectedWrapperItemXforms.dup~itemPose;
             assert(!r.tool.preparedReplayMatches(changed,*r.mp),"wrapper xform count refusal");
             changed=image;changed.expectedWrapperItemTargets=image.expectedWrapperItemTargets.dup;changed.expectedWrapperItemTargets[0]=new Layer;
