@@ -51,7 +51,7 @@ import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf, e
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import tools.edit.topology_pen.render : PenRenderOps;
 import tools.edit.topology_pen.snap_guide : PenSnapGuide, admitsMoveElement;
-import evaluated_move_weld : EvaluatedMoveWeld, searchMoveElement, pairedMoveEnds, evaluatedMoveHandle, heldMoveEngages;
+import evaluated_move_weld : EvaluatedMoveWeld, searchMoveElement, pairedMoveEnds, evaluatedMoveHandle, heldMoveEngages, moveEndpointSearch;
 import tools.edit.topology_pen.json   : PenStateJsonOps;
 import bvh_pick              : BvhPick, BackgroundRayPicker, SurfaceHit;
 import command_history      : CommandHistory, PreparedHistoryKind;
@@ -2407,7 +2407,7 @@ public:
         uint[2][] pairs;
         foreach (i, vi; verts) {
             if (vi >= m.vertices.length) continue;   // stale arm — defensive
-            if (moveElem_ == MoveElem.Edge && m.vertexPolygonCounts()[vi] != 1) continue; // 9504: measured source support
+            if (moveElem_ == MoveElem.Edge && !moveEndpointSearch(SnapType.Edge,m.vertexPolygonCounts()[vi])) continue; // 9504: measured source support
             immutable int t = rawSnapTarget(i < at.length ? at[i] : m.vertices[vi], vp, verts);
             if (t >= 0) pairs ~= symmetricWeldPairs(*m, sym, cast(uint)t, vi);
         }
@@ -4299,7 +4299,7 @@ public:
         auto t = new int[](moveVerts_.length);
         bool snapped = false;
         foreach (i, vi; moveVerts_) {
-            const bool ask = search && (moveElem_ != MoveElem.Edge || m.vertexPolygonCounts()[vi] == 1);
+            const bool ask = search && moveEndpointSearch(moveElem_ == MoveElem.Edge ? SnapType.Edge : SnapType.Vertex,m.vertexPolygonCounts()[vi]);
             t[i] = ask ? rawSnapTarget(targets[i], vp, exclude) : -1;
             snapped = snapped || t[i] >= 0;
         }
@@ -4388,7 +4388,7 @@ public:
             bool snapped;
             foreach(i,vi;moveVerts_) {
                 const support=m.vertexPolygonCounts()[vi];
-                const ask=moveElem_==MoveElem.Vertex || moveElem_==MoveElem.Edge && support==1;
+                const ask=held.index<0 && moveEndpointSearch(type,support);
                 found[i]=ownMirror ? sp.pairOf[vi] : ask ? rawSnapTarget(rawTargets[i],vp,moveFrame_.marked) : -1;
                 snapped=snapped || found[i]>=0;
             }

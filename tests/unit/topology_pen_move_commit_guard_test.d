@@ -62,3 +62,10 @@ unittest {
         "census: a scanned body is empty (" ~ hook.length.to!string ~ ", "
         ~ prepared.length.to!string ~ ")");
 }
+
+unittest {
+    // 9504: a helper-domain test alone cannot protect production wiring.
+    // All three consumers must call the common endpoint admission predicate.
+    assert(countOccurrences(toolCode(), "moveEndpointSearch(") == 3,
+        "endpoint eligibility must serve evaluated, constrained and release producers");
+}

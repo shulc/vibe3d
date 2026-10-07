@@ -58,7 +58,8 @@ final class EvaluatedMoveWeld {
     bool beginFrame(ref Mesh mesh, Vec3 handle) {
         if (evaluated_ && handle == handle_) return false;
         handle_ = handle;
-        basis_.restore(mesh);
+        if (welded_ || mesh.vertices.length != basis_.vertices.length) basis_.restore(mesh);
+        else mesh.vertices[] = basis_.vertices;
         liveSource_ = marked_.dup;
         welded_ = false;
         evaluated_ = true;
@@ -90,13 +91,6 @@ final class EvaluatedMoveWeld {
         auto edit = MeshEditBatch(mesh, MeshEditScope.Geometry | MeshEditScope.Marks);
         welded_ = edit.weldVertexPairs(expanded) != 0;
         auto delta = edit.close();
-        uint[] retained;
-        foreach(vi;liveSource_) {
-            bool absorbed;
-            foreach(p;expanded) if(p[1]==vi) absorbed=true;
-            if(!absorbed) retained~=vi;
-        }
-        liveSource_=retained;
         foreach (entry; delta.log) if (entry.kind == MeshOpEntry.Kind.Reindex) {
             uint[] survivors;
             foreach (vi; liveSource_)
@@ -105,6 +99,10 @@ final class EvaluatedMoveWeld {
             liveSource_ = survivors;
         }
     }
+}
+
+bool moveEndpointSearch(SnapType type, size_t polygonCount) {
+    return type == SnapType.Vertex || type == SnapType.Edge && polygonCount == 1;
 }
 
 struct MoveElementHit {

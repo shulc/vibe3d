@@ -499,7 +499,7 @@ unittest { // law-neutral: the weld ignores the snap SCOPE and reaches the whole
 void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
                   int[][] faces = [[0, 1, 2, 3]], bool sym = false, double[] press = null,
                   int[] hide = null, int gestures = 1, int[2][] stops = null,
-                  void delegate(size_t) probe = null) {
+                  void delegate(size_t) probe = null, bool interior = false) {
     immutable bool grabV1 = press is null;
     if (grabV1) press = pts[1].dup;
     auto r = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
@@ -524,6 +524,7 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
     if (sym) foreach (c; ["axis x", "offset 0", "enabled true"]) cmd("tool.pipe.attr symmetry " ~ c);
     cmd("tool.set mesh.topoPen on");
     cmd("tool.attr mesh.topoPen mode move");
+    cmd("tool.attr mesh.topoPen innerSnap " ~ (interior ? "true" : "false"));
     assert(snapEnabled(), "rig: the pen's activation arms the snap enable");
     auto vp = viewportFromCameraMatrices();
     float sx, sy, ex, ey;
@@ -548,9 +549,15 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
         if (sym && i + 1 == logs.length && grabV1 && g == 0) {
             size_t j;   // the grab's partner: v1's mirror image in `pts`
             foreach (k, a; pts) if (a[0] == -pts[1][0] && a[1] == pts[1][1]) j = k;
-            const v = readVerticesLayer(1), p = v[1], q = v[j];
-            assert(j > 1 && approxVec(Vec3(-p[0], p[1], p[2]), q, 1e-4),
-                format("held: partner v%d %s must mirror the grab %s", j, q, p));
+            const v = readVerticesLayer(1);
+            // 9504: evaluated welds remove the source during motion. Original
+            // indices can name bystanders afterward; captured compacted frames
+            // are checked by the callers and move_partner_lag's prefix cells.
+            if (v.length == pts.length) {
+                const p = v[1], q = v[j];
+                assert(j > 1 && approxVec(Vec3(-p[0], p[1], p[2]), q, 1e-4),
+                    format("held: partner v%d %s must mirror the grab %s", j, q, p));
+            } else assert(v.length < pts.length, "held evaluated weld must reduce the original population");
         }
         auto pr = postJson("/api/play-events", log);
         assert("error" !in pr, "/api/play-events failed: " ~ pr.toString);
@@ -758,10 +765,13 @@ unittest { // KW2_Nw2: the live raw snap of an on-plane vertex
          [[12, 6], [20, 10], [32, 16]], (k) {
              const v = readVerticesLayer(1);
              counts ~= v.length;
-             seen ~= v[0];
+             seen ~= v[readFacesLayer(1)[0][0]];
          });
-    assert(counts.length == 6 && counts[0 .. 5] == [14, 14, 14, 14, 14],
-        format("KW2_Nw2: %d probes, vertex counts %s: nothing welds before the release",
+    // 9504: the static move body evaluates the weld during motion. The old
+    // pre-release 14-count was an implementation assumption, not shot evidence.
+    // Keep the captured initial 14 and final 13; follow the surviving corner.
+    assert(counts.length == 6 && counts == [14, 14, 14, 13, 13, 13],
+        format("KW2_Nw2: %d probes, evaluated vertex counts %s: absorption begins at the snapped frame",
                counts.length, counts));
     foreach (k, want; [[0.0, -0.06], [0.0, -0.1], [0.4, -0.26], [0.4, -0.26]])
         assert(abs(seen[k + 1][0] - want[0]) <= 1e-6
@@ -808,13 +818,23 @@ unittest { // KW2_Nw2: the live raw snap of an on-plane vertex
 /// Drag the element under `press` by `n` steps of `step` px; the layer-1 vertices after
 /// each step in `shots` (ascending, < n), at the motion's end and after the release.
 double[3][][] kw2c(double[3][] pts, int[][] faces, double[2] press, int n, int[2] step,
-                   int[] shots, bool sym) {
+                   int[] shots, bool sym, bool interior = false) {
     int[2][] stops;
     foreach (k; shots) stops ~= [k * step[0], k * step[1]];
     double[3][][] seen;
     sameQuadMove(pts, [press[0] + n * step[0] / 100.0, press[1] - n * step[1] / 100.0, 0],
                  n * step[0], n * step[1], faces, sym, press.dup, null, 1, stops,
-                 (k) { if (k > 0) seen ~= readVerticesLayer(1).dup; });
+                 (k) { if (k > 0) {
+                     auto v = readVerticesLayer(1).dup;
+                     const current = readFacesLayer(1);
+                     // 9504: source corners keep their identity across live
+                     // compaction. Original vertex indices can be bystanders.
+                     assert(current.length >= 2, "kw2c source polygon population");
+                     const actual = v.dup;
+                     foreach(fi; 0 .. 2) foreach(ci, original; faces[fi])
+                         v[original] = actual[current[fi][ci]];
+                     seen ~= v;
+                 } }, interior);
     assert(seen.length == shots.length + 2, format("kw2c: %d reads", seen.length));
     return seen;
 }
@@ -872,10 +892,12 @@ unittest { // W2c_P20: an edge's on-plane member never searches; W2c_E2: off-pla
                readFacesLayer(1)));
 
     // The same with a static tri vertex (-0.15,-0.05) 5 px from v0's raw end: the
-    // on-plane member still never searches (rule 4, the search points), live or at the drop.
+    // source member has TWO polygons, so it never searches. Make the target
+    // tri two-sided and enable interior vertex candidates: RAW's one-polygon
+    // edge phase cannot intercept this endpoint-search control (9504).
     auto q = kw2c([[0.0, 0.0, 0.0], [0.3, 0.2, 0.0], [0.3, 0.6, 0.0], [-0.3, 0.2, 0.0],
                    [-0.3, 0.6, 0.0], [-0.15, -0.05, 0.0], [-0.3, -0.05, 0.0], [-0.3, -0.2, 0.0]],
-                  [[0, 1, 2], [0, 4, 3], [5, 6, 7]], [0.15, 0.1], 5, [-3, 0], [3], true);
+                  [[0, 1, 2], [0, 4, 3], [5, 6, 7], [7, 6, 5]], [0.15, 0.1], 5, [-3, 0], [3], true, true);
     assert(near(q[1][0], [0.0, 0.0], 6e-3) && q[$ - 1].length == 8 && near(q[$ - 1][0], [0.0, 0.0], 6e-3),
         format("W2c_P20 + static target: v0 held %s, after the drop %s (V %d): it must neither snap "
              ~ "nor weld", q[1][0], q[$ - 1][0], q[$ - 1].length));
