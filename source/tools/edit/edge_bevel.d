@@ -17,7 +17,7 @@ import editmode : EditMode;
 import params : Param;
 import handler : Arrow, ToolHandles, HandleState, HandlePart, firstHitPart, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
-import drag : axisArmDeltaUnsnapped;
+import drag : screenAxisDelta;
 import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -427,8 +427,9 @@ public:
         // screen and the geometry follows it.
         const auto os = OverlaySpace.ofPrimary();
         const auto ax = os.axis(dragPart == PART_WIDTH ? widthAxis : miterAxis);
-        const float delta = ax.toLocal(axisArmDeltaUnsnapped(e.x, e.y,
-            dragStartMX, dragStartMY, os.pos(anchor), ax.dir, cachedVp, skip));
+        const Vec3 worldDelta = screenAxisDelta(e.x, e.y, dragStartMX, dragStartMY,
+            os.pos(anchor), ax.dir, cachedVp, skip);
+        const float delta = ax.toLocal(dot(worldDelta, ax.dir));
         if (!skip) {
             updateScalar(dragPart, delta);
             rebuildPreview();

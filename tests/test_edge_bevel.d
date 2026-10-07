@@ -331,11 +331,16 @@ unittest {
     postSelect("edges", [ei]);
     // (postSelect "edges" enters Edges mode automatically)
 
+    auto historyBefore = parseJSON(get(testBaseUrl() ~ "/api/history"))["undo"].array.length;
     auto r = postCommandRaw(`{"id":"mesh.bevel","params":{"width":0.0}}`);
     assert(r["status"].str == "error", "C: expected error for width=0, got " ~ r["status"].str);
     auto m = getModel();
     assert(m["vertexCount"].integer == 8, "C: mesh should be unchanged (8 verts)");
     assert(m["faceCount"].integer   == 6, "C: mesh should be unchanged (6 faces)");
+    assert(m["vertices"] == before["vertices"] && m["faces"] == before["faces"],
+        "C: zero-only refusal must preserve exact geometry");
+    assert(parseJSON(get(testBaseUrl() ~ "/api/history"))["undo"].array.length == historyBefore,
+        "C: zero-only refusal must not add history");
 }
 
 // ---------------------------------------------------------------------------

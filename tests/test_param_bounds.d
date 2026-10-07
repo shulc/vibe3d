@@ -136,6 +136,10 @@ bool isCountLike(JSONValue p) {
 // per params.d:799-837's opt-in-enforcement rationale). Format:
 // "<registeredId>.<paramName>".
 immutable string[] blockAAllowlist = [
+    "edge.bevel.miterOffset",
+        // Scalar distance: the name heuristic matches "iter" inside "miter".
+        // tools/edit/edge_bevel.d passes it to bevelEdgesByMask; its positive
+        // branch traverses selected mesh incidence, never an offset-sized loop.
     // --- Mandated 4 (doc/param_bounds_plan.md §3.A) ---
     "mesh.sweep.count",
         // reject sentinel: count<2 -> status!=ok (test_mesh_sweep.d:234-253);

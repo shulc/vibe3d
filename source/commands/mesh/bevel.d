@@ -146,7 +146,7 @@ class MeshBevel : Command, Operator {
     private float            width_      = 0.1f;
     private int              roundLevel_ = 0;
     private bool             widthMode_  = false;
-    private float            miterOffset_;
+    private float            miterOffset_ = 0.0f;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
