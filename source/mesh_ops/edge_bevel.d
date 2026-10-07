@@ -2775,6 +2775,24 @@ private size_t edgeBevelOffsetOnly(ref MeshEditBatch ed, const bool[] mask, floa
             if (left && right) {
                 nv = ed.addVertex(edgeBevelOffsetCorner(ed.vertices[v],
                     ed.vertices[prev], ed.vertices[next], ed.faceNormal(fi), 0, offset));
+                // Task 20261490: register the affine position weights in the
+                // donor face's corner space (PolyVertexBlend contract). A
+                // collapsed corner has no basis and retains its origin map;
+                // geometry and point ordering stay with the existing producer.
+                const Vec3 u = ed.vertices[prev] - ed.vertices[v];
+                const Vec3 w = ed.vertices[next] - ed.vertices[v];
+                const Vec3 displacement = ed.vertices[nv] - ed.vertices[v];
+                const Vec3 area = cross(u, w);
+                const double denominator = dot(area, area);
+                float previousWeight = 0, nextWeight = 0;
+                if (denominator > 0) {
+                    previousWeight = cast(float)(dot(cross(displacement, w), area) / denominator);
+                    nextWeight = cast(float)(dot(cross(u, displacement), area) / denominator);
+                }
+                PolyVertexBlend blend;
+                blend.add(v, 1 - previousWeight - nextWeight);
+                blend.add(prev, previousWeight); blend.add(next, nextWeight);
+                blends[nv] = blend;
                 if (selectedDegree[v] == degree[v]) {
                     flanks ~= [v, middle[middleKey(v, next)], nv, middle[middleKey(v, prev)]];
                     flankDonors ~= fi;

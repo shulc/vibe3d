@@ -324,3 +324,115 @@ unittest {
         " existingPointXfail=", existingPointGap, " failed=", failed);
     assert(failed == 0, "ZERO WIDTH CORPUS: complete native geometry required");
 }
+
+private float affineMapValue(Vec3 p, uint face) {
+    return .17f * p.x + .31f * p.y - .23f * p.z + face * 2;
+}
+
+private void offsetCornerMaps(bool constant) {
+    import mesh : MapDomain, kUvMapName;
+    import std.math : abs;
+    import std.stdio : writeln;
+    auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/zero_width_ring.json"));
+    size_t cells, components, insetUses, seamUses;
+    foreach (caseIndex; [5, 6, 11, 13, 15]) {
+        auto cell = fixture["cases"][caseIndex];
+        auto m = sourceMesh(cell["source"]);
+        auto mask = selected(m, cell["selection"]);
+        const sourceVertices = m.vertices.length;
+        uint[] degree = new uint[](sourceVertices), chosen = new uint[](sourceVertices);
+        foreach (i, e; m.edges) foreach (v; e) {
+            ++degree[v]; if (mask[i]) ++chosen[v];
+        }
+        uint[] donors, flanks;
+        foreach (fi0, ring; m.faces) {
+            const uint fi = cast(uint)fi0;
+            donors ~= fi;
+            foreach (i, v; ring) {
+                const uint prev = ring[(i + ring.length - 1) % ring.length];
+                const uint next = ring[(i + 1) % ring.length];
+                const bool left = mask[m.edgeIndexMap[edgeKey(v, prev)]];
+                const bool right = mask[m.edgeIndexMap[edgeKey(v, next)]];
+                if ((left && right && chosen[v] == degree[v]) ||
+                    (!left && !right && chosen[v] > 0)) flanks ~= fi;
+            }
+            foreach (i, v; ring)
+                if (mask[m.edgeIndexMap[edgeKey(v, ring[(i + 1) % ring.length])]]) flanks ~= fi;
+        }
+        donors ~= flanks;
+        m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+        size_t oldLoop;
+        foreach (fi, ring; m.faces) foreach (v; ring) {
+            auto map = m.meshMap(kUvMapName);
+            map.data[2 * oldLoop] = constant ? .75f : cast(float)(fi + 1);
+            map.data[2 * oldLoop + 1] = constant ? .75f : affineMapValue(m.vertices[v], cast(uint)fi);
+            ++oldLoop;
+        }
+        assert(oldLoop == m.loops.length, "OFFSET UV: all source corners populated");
+        auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+        const n = ed.bevelEdgesByMask(mask, 0, 0, true, .12f);
+        ed.close();
+        assert(n == cell["selection"]["edges"].array.length, "OFFSET UV: every selected span consumed");
+        assert(m.faces.length == donors.length, "OFFSET UV: every destination face has its donor");
+        auto map = m.meshMap(kUvMapName);
+        assert(map.data.length == 2 * m.loops.length, "OFFSET UV: populated destination plane");
+        size_t loop;
+        uint[uint] firstDonor;
+        foreach (fi, ring; m.faces) foreach (v; ring) {
+            const uint donor = donors[fi];
+            const float tag = constant ? .75f : cast(float)(donor + 1);
+            const float value = constant ? .75f : affineMapValue(m.vertices[v], donor);
+            assert(abs(map.data[2 * loop] - tag) < 1e-6f,
+                "OFFSET UV: constant source and donor island must survive");
+            assert(abs(map.data[2 * loop + 1] - value) < 2e-6f,
+                "OFFSET UV: nonconstant affine corner interpolation must survive");
+            if (v >= sourceVertices) ++insetUses;
+            if (auto first = v in firstDonor) {
+                if (*first != donor) ++seamUses;
+            } else firstDonor[v] = donor;
+            ++loop;
+        }
+        assert(loop == m.loops.length, "OFFSET UV: every destination corner checked");
+        components += map.data.length;
+        ++cells;
+    }
+    writeln("OFFSET-UV constant=", constant, " cells=", cells, " components=", components,
+        " newVertexUses=", insetUses, " seamUses=", seamUses);
+    assert(cells == 5, "OFFSET UV: K2, full fan, partial apex, skew and unequal spans");
+    assert(components == 624, "OFFSET UV: measured destination component population");
+    assert(insetUses == 188, "OFFSET UV: measured inserted vertex corner population");
+    assert(seamUses == 159, "OFFSET UV: measured distinct donor uses on shared vertices");
+}
+
+unittest { offsetCornerMaps(true); }
+unittest { offsetCornerMaps(false); }
+
+unittest {
+    import mesh : MapDomain, kUvMapName;
+    import std.math : abs;
+    import std.stdio : writeln;
+    auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/zero_width_ring.json"));
+    auto cell = fixture["cases"][5];
+    auto m = sourceMesh(cell["source"]);
+    auto mask = selected(m, cell["selection"]);
+    // The selected top corner is collinear: no unique affine coordinate basis.
+    m.vertices[6] = (m.vertices[5] + m.vertices[7]) * .5f;
+    m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    foreach (i, ref value; m.meshMap(kUvMapName).data) value = .25f + i * .01f;
+    const oldOriginU = m.meshMap(kUvMapName).data[12];
+    const oldOriginV = m.meshMap(kUvMapName).data[13];
+    auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+    assert(ed.bevelEdgesByMask(mask, 0, 0, true, .12f) == 2,
+        "OFFSET UV DEGENERATE: two selected spans");
+    ed.close();
+    assert(m.vertices.length == 14 && m.faces.length == 12 && m.loops.length == 48,
+        "OFFSET UV DEGENERATE: geometry populations preserved");
+    const uint corner = m.faces[1][2];
+    assert(corner == 13, "OFFSET UV DEGENERATE: established inset point index");
+    auto map = m.meshMap(kUvMapName);
+    assert(map.data.length == 96, "OFFSET UV DEGENERATE: populated map plane");
+    assert(abs(map.data[12] - oldOriginU) < 1e-6f &&
+        abs(map.data[13] - oldOriginV) < 1e-6f,
+        "OFFSET UV DEGENERATE: collapsed basis carries the donor origin corner");
+    writeln("OFFSET-UV-DEGENERATE cells=1 components=", map.data.length, " corner=", corner);
+}
