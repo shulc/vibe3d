@@ -2716,40 +2716,50 @@ Vec3 edgeBevelOffsetCorner(Vec3 origin, Vec3 previous, Vec3 next,
 }
 
 private size_t edgeBevelOffsetOnly(ref MeshEditBatch ed, const bool[] mask, float offset) {
-    // Task 20261360: zero width retains the selected edge. Shared directed
-    // Middle boundaries trim each adjoining corner and close its flank; the
-    // captured closed fan needs endpoint triangles as well as strip quads.
-    // Evidence: doc/tasks/evidence/20261360-edge-zero-width-topology.
-    foreach (ring; ed.faces) foreach (i, v; ring) {
-        auto a = edgeKey(v, ring[(i + ring.length - 1) % ring.length]) in ed.edgeIndexMap;
-        auto b = edgeKey(v, ring[(i + 1) % ring.length]) in ed.edgeIndexMap;
-        if (a !is null && b !is null && mask[*a] && mask[*b]) return 0;
-    }
+    // Zero width retains original endpoint identities; full selected fans trim
+    // their selected sides at shared directed stations.
+    // The same Middle/Corner producers trim one/two selected corner sides;
+    // each directed selected side closes a flank (task 20261470, private
+    // zero-width-rings-20261007; single-edge endpoint topology: task 20261360).
     uint[2][] selectedPairs;
     size_t processed;
     foreach (i, chosen; mask) if (chosen) { ++processed; selectedPairs ~= ed.edges[i]; }
     if (processed == 0) return 0;
+    uint[] degree = new uint[](ed.vertices.length), selectedDegree = new uint[](ed.vertices.length);
+    foreach (i, edge; ed.edges) foreach (v; edge) {
+        ++degree[v];
+        if (mask[i]) ++selectedDegree[v];
+    }
     auto rewrite = ed.beginCornerRewrite();
     PolyVertexBlend[uint] blends;
     uint[][] result, flanks;
     uint[] donors, flankDonors, cornerSources;
     uint[ulong] middle;
     ulong middleKey(uint v, uint far) { return (cast(ulong)v << 32) | far; }
+    void addMiddle(uint v, uint far) {
+        const ulong key = middleKey(v, far);
+        if (key in middle) return;
+        const uint nv = ed.addVertex(edgeBevelOffsetMiddle(ed.vertices[v], ed.vertices[far], 0, offset));
+        middle[key] = nv;
+        const float len = (ed.vertices[far] - ed.vertices[v]).length;
+        const float t = len > 0 ? (offset / len > 1 ? 1 : offset / len) : 0;
+        PolyVertexBlend blend; blend.add(v, 1 - t); blend.add(far, t); blends[nv] = blend;
+    }
+    // Preserve the established one-selected-corner point order, then complete
+    // the touched fan's other unselected slots and full-hub selected stations.
     foreach (ring; ed.faces) foreach (i, v; ring) {
         const uint prev = ring[(i + ring.length - 1) % ring.length];
         const uint next = ring[(i + 1) % ring.length];
         auto a = edgeKey(v, prev) in ed.edgeIndexMap;
         auto b = edgeKey(v, next) in ed.edgeIndexMap;
         const bool left = a !is null && mask[*a], right = b !is null && mask[*b];
-        if (left == right) continue;
-        const uint far = left ? next : prev;
-        const ulong key = middleKey(v, far);
-        if (key in middle) continue;
-        const uint nv = ed.addVertex(edgeBevelOffsetMiddle(ed.vertices[v], ed.vertices[far], 0, offset));
-        middle[key] = nv;
-        const float len = (ed.vertices[far] - ed.vertices[v]).length;
-        const float t = len > 0 ? (offset / len > 1 ? 1 : offset / len) : 0;
-        PolyVertexBlend blend; blend.add(v, 1 - t); blend.add(far, t); blends[nv] = blend;
+        if (left != right) addMiddle(v, left ? next : prev);
+    }
+    foreach (i, edge; ed.edges) foreach (endpoint; 0 .. 2) {
+        const uint v = edge[endpoint], far = edge[1 - endpoint];
+        if (selectedDegree[v] == 0) continue;
+        if (mask[i] && selectedDegree[v] != degree[v]) continue;
+        addMiddle(v, far);
     }
     foreach (fi0, ring; ed.faces) {
         const uint fi = cast(uint)fi0;
@@ -2762,7 +2772,14 @@ private size_t edgeBevelOffsetOnly(ref MeshEditBatch ed, const bool[] mask, floa
             auto b = edgeKey(v, next) in ed.edgeIndexMap;
             const bool left = a !is null && mask[*a], right = b !is null && mask[*b];
             uint nv = v;
-            if (left != right) {
+            if (left && right) {
+                nv = ed.addVertex(edgeBevelOffsetCorner(ed.vertices[v],
+                    ed.vertices[prev], ed.vertices[next], ed.faceNormal(fi), 0, offset));
+                if (selectedDegree[v] == degree[v]) {
+                    flanks ~= [v, middle[middleKey(v, next)], nv, middle[middleKey(v, prev)]];
+                    flankDonors ~= fi;
+                }
+            } else if (left != right) {
                 const uint far = left ? next : prev;
                 nv = middle[middleKey(v, far)];
             } else {
@@ -2781,7 +2798,9 @@ private size_t edgeBevelOffsetOnly(ref MeshEditBatch ed, const bool[] mask, floa
             const uint next = ring[(i + 1) % ring.length];
             auto e = edgeKey(v, next) in ed.edgeIndexMap;
             if (e is null || !mask[*e]) continue;
-            flanks ~= [v, next, replacement[next], replacement[v]]; flankDonors ~= fi;
+            const uint start = middle.get(middleKey(v, next), v);
+            const uint end = middle.get(middleKey(next, v), next);
+            flanks ~= [start, end, replacement[next], replacement[v]]; flankDonors ~= fi;
         }
     }
     foreach (i, ring; flanks) {

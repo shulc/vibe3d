@@ -57,7 +57,7 @@ private void closedGraph(ref Mesh m, string witness, size_t boundaryCount=0) {
     foreach(u;used) assert(u,witness~": no orphan points");
 }
 private void compareGeometry(ref Mesh m, JSONValue expected, string witness,
-                             JSONValue knownWidthGap=JSONValue.init) {
+                             JSONValue knownWidthGap=JSONValue.init, size_t retainedPrefix=0) {
     assert(m.vertices.length==expected["vertices"].array.length,witness~": full point population");
     assert(m.faces.length==expected["faces"].array.length,witness~": full polygon population");
     uint[] ids=new uint[](m.vertices.length);
@@ -68,6 +68,7 @@ private void compareGeometry(ref Mesh m, JSONValue expected, string witness,
     foreach(i,v;m.vertices) {
         size_t match=size_t.max;
         foreach(j,row;expected["vertices"].array) {
+            if (used[j] || (i < retainedPrefix && i != j)) continue;
             auto q=Vec3(scalar(row[0]),scalar(row[1]),scalar(row[2]));
             if((v-q).length<2e-6f) {
                 assert(match==size_t.max,witness~": unique point match");match=j;
@@ -273,4 +274,53 @@ unittest {
         ed.close();
         closedGraph(m, format("ROUNDED OFFSET L2 layout%s mode%s", layout, widthMode));
     }
+}
+
+unittest {
+    import std.stdio : writeln;
+    auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/zero_width_ring.json"));
+    assert(fixture["cases"].array.length == 17, "ZERO WIDTH CORPUS: seventeen independent captures");
+    uint cells, failed, existingWidthGap, existingPointGap;
+    foreach (cell; fixture["cases"].array) {
+        const witness = "ZERO WIDTH CORPUS " ~ cell["name"].str;
+        try {
+            auto m = sourceMesh(cell.object.get("source", fixture["source"]));
+            auto mask = selected(m, cell.object.get("selection", fixture["selection"]));
+            const sourceCount = m.vertices.length;
+            const width = scalar(cell["width"]), offset = scalar(cell["offset"]);
+            const selectionCount = cell.object.get("selection", fixture["selection"])["edges"].array.length;
+            auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+            const n = ed.bevelEdgesByMask(mask, width, cast(int)cell["roundLevel"].integer, cell["widthMode"].boolean, offset);
+            ed.close();
+            assert(n == (width == 0 && offset == 0 ? 0 : selectionCount),
+                witness ~ ": positive offset consumes every selected span");
+            if (auto baseline = "existingWidthGeometry" in cell.object) {
+                assert(cell["knownGapTask"].integer == 20261471, witness ~ ": recorded width gap task");
+                bool differs;
+                try { compareGeometry(m, cell["expected"], witness); }
+                catch (Throwable error) { differs = true; }
+                assert(differs, witness ~ ": inherited width geometry must differ from native");
+                compareGeometry(m, *baseline, witness ~ " EXISTING WIDTH XFAIL");
+                ++existingWidthGap;
+                writeln(witness, " EXISTING-WIDTH-XFAIL task=20261471");
+            } else {
+                compareGeometry(m, cell["expected"], witness,
+                    cell.object.get("knownWidthGap", JSONValue.init), width == 0 ? sourceCount : 0);
+                if ("knownWidthGap" in cell.object) {
+                    ++existingPointGap;
+                    writeln(witness, " EXISTING-POINT-XFAIL task=20261381");
+                } else writeln(witness, " NATIVE-EXACT ", m.vertices.length, "V", m.edges.length, "E", m.faces.length, "F");
+            }
+            closedGraph(m, witness, cell.object.get("boundaryCount", JSONValue(0)).integer);
+        } catch (Throwable error) {
+            ++failed; writeln(witness, " FAIL ", error.msg);
+        }
+        ++cells;
+    }
+    assert(cells == 17, "ZERO WIDTH CORPUS: measured population floor");
+    assert(existingWidthGap == 1, "ZERO WIDTH CORPUS: exactly one independently observed whole-width XFAIL");
+    assert(existingPointGap == 1, "ZERO WIDTH CORPUS: exactly one inherited support-point XFAIL");
+    writeln("ZERO-WIDTH-CORPUS cells=", cells, " existingWidthXfail=", existingWidthGap,
+        " existingPointXfail=", existingPointGap, " failed=", failed);
+    assert(failed == 0, "ZERO WIDTH CORPUS: complete native geometry required");
 }

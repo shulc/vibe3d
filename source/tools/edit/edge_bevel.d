@@ -690,8 +690,8 @@ private:
     }
 
     // TOPOLOGY KEY (task 1620): the operand mask, `roundLevel` (the ring
-    // count), `widthMode` — and the zero crossing: `width == 0` builds
-    // nothing, so dragging through zero makes geometry vanish and reappear
+    // count), `widthMode` — and the joint zero crossing: both scalars zero
+    // builds nothing, so crossing that state makes geometry vanish and reappear
     // while (mask, roundLevel) sits still. `widthMode` only reinterprets the
     // width, but a dropdown changes at human speed: keying it costs an extra
     // rebuild and buys not proving that no width mode collapses a face.
@@ -705,7 +705,8 @@ private:
     // cage on the placement path and the live mesh on a key change, so the
     // batch lands on the mesh the kernel actually gets. The mask is the L1
     // funnel: the selection, else every VISIBLE edge (tasks 9434, 1903, 0613).
-    // A zero width builds nothing: the kernel refuses it before any edit.
+    // Zero width with positive miter offset keeps the selected edge and trims
+    // its adjoining faces through the same kernel used by preview and apply.
     size_t operation(ref Mesh target) {
         auto ed = MeshEditBatch.unrecorded(target, kEdgeBevelEditScope);
         const n = ed.bevelEdgesByMask(target.operandEdgeMask(), state_.width,

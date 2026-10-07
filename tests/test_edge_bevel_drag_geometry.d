@@ -191,3 +191,40 @@ unittest { // Actual user ring selection, including the crash's nonzero offset.
         cmd("tool.set edge.bevel off");
     }
 }
+
+unittest { // task 20261470: zero-width offset is a live ring edit.
+    import std.file : readText;
+    auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/zero_width_ring.json"));
+    auto source = fixture["source"];
+    cmd(commandBody("scene.loadMesh", `{"vertices":` ~ source["vertices"].toString ~
+        `,"faces":` ~ source["faces"].toString ~ `}`));
+    auto m = model(); string indices;
+    foreach (pair; fixture["selection"]["edges"].array) {
+        int ei = edgeIndex(m, cast(int)pair[0].integer, cast(int)pair[1].integer);
+        assert(ei >= 0, "LIVE ZERO WIDTH: source selected edge exists");
+        if (indices.length) indices ~= ",";
+        indices ~= ei.to!string;
+    }
+    cmd(commandBody("mesh.select", `{"mode":"edges","indices":[` ~ indices ~ `]}`));
+    cmd("tool.set edge.bevel on");
+    interactiveCmd("tool.attr edge.bevel widthMode true");
+    interactiveCmd("tool.attr edge.bevel width 0");
+    interactiveCmd("tool.attr edge.bevel miterOffset 0");
+    settle();
+    const original = geometry();
+    auto d = heldMotion(1, Vec3(.026f, .138f, -.038f));
+    auto state = getJson("/api/tool/state");
+    const first = geometry();
+    assert(state["width"].floating == 0 && state["miterOffset"].floating > 0,
+        "LIVE ZERO WIDTH: independent offset changes while width stays zero");
+    assert(state["built"].type == JSONType.true_ && first != original && model()["vertexCount"].integer == 108,
+        "LIVE ZERO WIDTH: held offset builds the complete ring geometry");
+    release(d);
+    const before = state["miterOffset"].floating;
+    d = heldMotion(1, Vec3(.026f, .138f, -.038f));
+    state = getJson("/api/tool/state");
+    assert(state["width"].floating == 0 && state["miterOffset"].floating > before && geometry() != first,
+        "LIVE ZERO WIDTH: second offset gesture changes complete geometry again");
+    release(d);
+    cmd("tool.set edge.bevel off");
+}
