@@ -460,3 +460,32 @@ unittest {
 
     cmd("tool.set edge.bevel off");
 }
+
+// Task 20261270: parameter images retain signed miter separately from width.
+// Geometry parity for nonzero miter is not asserted by this navigation cell.
+unittest {
+    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command",
+        commandBody("scene.reset", `{"type":"cube"}`)));
+    assert(reset["status"].str == "ok", "miter session reset failed");
+    selectTopFrontEdge();
+    cmd("tool.set edge.bevel on"); settle();
+    interactiveCmd("tool.attr edge.bevel width 0.06"); settle();
+    const widthImage = model()["vertices"].toString;
+    interactiveCmd("tool.attr edge.bevel miterOffset -0.03"); settle();
+    auto state = getJson("/api/tool/state");
+    assert(fabs(state["width"].floating - 0.06) < 1e-6 &&
+        fabs(state["miterOffset"].floating + 0.03) < 1e-6,
+        "miter session write must preserve the independent width");
+    navigate(false);
+    state = getJson("/api/tool/state");
+    assert(fabs(state["width"].floating - 0.06) < 1e-6 &&
+        fabs(state["miterOffset"].floating) < 1e-6 &&
+        model()["vertices"].toString == widthImage,
+        "miter session undo must restore the prior parameter and mesh image");
+    navigate(true);
+    state = getJson("/api/tool/state");
+    assert(fabs(state["width"].floating - 0.06) < 1e-6 &&
+        fabs(state["miterOffset"].floating + 0.03) < 1e-6,
+        "miter session redo must restore its signed image");
+    cmd("tool.set edge.bevel off");
+}

@@ -17,7 +17,7 @@ import editmode : EditMode;
 import params : Param;
 import handler : Arrow, ToolHandles, HandleState, HandlePart, firstHitPart, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
-import drag : screenAxisDelta;
+import drag : axisArmDeltaUnsnapped;
 import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -46,7 +46,7 @@ import core.stdc.string : memcmp;
 struct PreparedEdgeBevelActivationImage {
     MeshSnapshot before;
     bool valid, gizmoValid;
-    Vec3 anchor, baseAnchor, widthAxis;
+    Vec3 anchor, baseAnchor, widthAxis, miterAxis;
     ulong gizmoSelHash;
     void clear() nothrow @nogc {
         this = PreparedEdgeBevelActivationImage.init;
@@ -54,7 +54,7 @@ struct PreparedEdgeBevelActivationImage {
 }
 
 // S1 (task 20261220): one parameter state and ordered scalar bank retain the
-// current width path; dormant modes and miter descriptors are not admission.
+// independent scalar bindings; profile and checkbox fields remain dormant.
 // Reviewed descriptor authority: private evidence/10860-edge-bevel/modes-handles-static-20261007.
 enum EdgeBevelProfile { round, square, sharp }
 private enum EdgeBevelScalar { width, miterOffset }
@@ -126,8 +126,8 @@ alias PreparedEdgeBevelParamImage = PreparedStateParamImage!(EdgeBevelParamProje
 // Topology-creating tool, modelled on PolyExtrudeTool. ToolSession records
 // a mesh and attribute image for each completed gesture.
 //
-// Operative handle (the second bank entry stays dormant):
-//   PART_WIDTH = BLUE Arrow along the averaged adjacent-face normal.
+// Ordered scalar handles:
+//   PART_WIDTH follows the normal; PART_MITER follows the prepared tangent.
 //
 // Headless: tool.set edge.bevel on; tool.attr edge.bevel width <v>;
 //           tool.doApply → applyHeadless(); ToolDoApplyCommand wraps undo.
@@ -143,8 +143,8 @@ class EdgeBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
             // The operation begins at the arm (topology-redo law 1; captured
             // script cell + three UI cells `s01 armed=True`).
             opensAt: OpensAt.arm,
-            imageAttrs: ["width", "roundLevel", "widthMode"],
-            haulAttrs: ["width", "roundLevel", "widthMode"],
+            imageAttrs: ["width", "roundLevel", "widthMode", "miterOffset"],
+            haulAttrs: ["width", "roundLevel", "widthMode", "miterOffset"],
             // captured: the tool's activation resets these (topology-redo S6r)
             activationResetAttrs: ["width"],
             // captured: a refire records no new mesh image (topology-redo S7r)
@@ -162,7 +162,7 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-    // Defaults are ours; dormant fields have no public parameter or kernel reader.
+    // Defaults are ours; profile and checkbox fields remain dormant.
     EdgeBevelState state_;
 
     bool         active;
@@ -176,9 +176,11 @@ private:
     Vec3 anchor;
     Vec3 baseAnchor;
     Vec3 widthAxis;
+    Vec3 miterAxis;
     ulong gizmoSelHash;
 
     enum int PART_WIDTH = 0;
+    enum int PART_MITER = 1;
     int   dragPart = -1;
     // One drag has one screen-space origin.  Width is written back as an
     // absolute value from that origin, so replay/coalescing cannot make the
@@ -189,6 +191,7 @@ private:
     @property Arrow widthArrow() { return handleBank_.widthArrow; }
     @property const(Arrow) widthArrow() const { return handleBank_.widthArrow; }
     Arrow       replicaArrow_;
+    Arrow       replicaMiterArrow_;
     // One draw-only frame image is shared by every foreign cell.  The owner
     // publishes its frozen frame here; after a selection change the first
     // replica refreshes it and the remaining replicas plus the owner reuse it.
@@ -218,8 +221,9 @@ public:
         this.litShader = litShader;
         handleBank_.widthArrow = new Arrow(Vec3(0,0,0), Vec3(0,1,0), WIDTH_COLOR);
         handleBank_.miterArrow = new Arrow(Vec3(0,0,0), Vec3(0,0,0), WIDTH_COLOR);
-        handleBank_.miterArrow.setVisible(false);
+        handleBank_.miterArrow.setVisible(true);
         replicaArrow_ = new Arrow(Vec3(0,0,0), Vec3(0,1,0), WIDTH_COLOR);
+        replicaMiterArrow_ = new Arrow(Vec3(0,0,0), Vec3(1,0,0), WIDTH_COLOR);
         toolHandles = new ToolHandles();
     }
 
@@ -227,6 +231,7 @@ public:
         if (widthArrow !is null) widthArrow.destroy();
         if (handleBank_.miterArrow !is null) handleBank_.miterArrow.destroy();
         if (replicaArrow_ !is null) replicaArrow_.destroy();
+        if (replicaMiterArrow_ !is null) replicaMiterArrow_.destroy();
     }
 
     override string name() const { return "Edge Bevel"; }
@@ -238,6 +243,7 @@ public:
             Param.float_("width", "Width", &state_.width, 0.0f),
             Param.int_("roundLevel", "Round Level", &state_.roundLevel, 0),
             Param.bool_("widthMode", "Width Mode", &state_.widthMode, false),
+            Param.float_("miterOffset", "Miter Offset", &state_.miterOffset, 0.0f),
         ];
     }
 
@@ -252,7 +258,7 @@ public:
         source = mesh; if (source is null) return image;
         image.before = MeshSnapshot.capture(*source); image.valid = true;
         image.gizmoValid = gizmoValid; image.anchor = anchor;
-        image.baseAnchor = baseAnchor; image.widthAxis = widthAxis;
+        image.baseAnchor = baseAnchor; image.widthAxis = widthAxis; image.miterAxis = miterAxis;
         image.gizmoSelHash = gizmoSelHash;
         computePreparedGizmoFrame(*source, image);
         return image;
@@ -264,7 +270,7 @@ public:
         active = true; built = false; dragPart = -1;
         preview_.reset(); image.before.moveInto(before);
         gizmoValid = image.gizmoValid; anchor = image.anchor;
-        baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;
+        baseAnchor = image.baseAnchor; widthAxis = image.widthAxis; miterAxis = image.miterAxis;
         gizmoSelHash = image.gizmoSelHash;
         publishOwnerFrameToReplica();
         image.clear();
@@ -393,9 +399,9 @@ public:
         dragStartMX   = e.x; dragStartMY = e.y;
         handleBank_.snapshotStarts(state_);
 
-        if (part == PART_WIDTH) {
+        if (part == PART_WIDTH || part == PART_MITER) {
             sessionStepBegins();
-            dragPart = PART_WIDTH;
+            dragPart = part;
             toolHandles.setHaul(part);
             return true;
         }
@@ -419,17 +425,24 @@ public:
         // both roles, so the arm the pixels are dotted against is the arm on
         // screen and the geometry follows it.
         const auto os = OverlaySpace.ofPrimary();
-        const auto ax = os.axis(widthAxis);
-        Vec3 delta = screenAxisDelta(e.x, e.y, dragStartMX, dragStartMY,
-                                     os.pos(anchor), ax.dir, cachedVp, skip);
+        const auto ax = os.axis(dragPart == PART_WIDTH ? widthAxis : miterAxis);
+        const float delta = ax.toLocal(axisArmDeltaUnsnapped(e.x, e.y,
+            dragStartMX, dragStartMY, os.pos(anchor), ax.dir, cachedVp, skip));
         if (!skip) {
-            float d = ax.toLocal(dot(delta, ax.dir));
-            handleBank_.scalars[0].delta = d;
-            state_.width = handleBank_.scalars[0].start + handleBank_.scalars[0].delta;
-            if (state_.width < 0.0f) state_.width = 0.0f;
+            updateScalar(dragPart, delta);
             rebuildPreview();
         }
         return true;
+    }
+
+    // Task 20261270: captured ID0/attr1 and ID1/attr7 use independent
+    // cumulative press snapshots. Live signed miter callbacks are distinct
+    // from the unresolved native release clamp (paired task evidence).
+    private void updateScalar(int part, float delta) nothrow @nogc {
+        handleBank_.scalars[part].delta = delta;
+        const float value = handleBank_.scalars[part].start + delta;
+        if (part == PART_WIDTH) state_.width = value < 0 ? 0 : value;
+        else state_.miterOffset = value;
     }
 
     // Read-only test seams.  The handle registry remains the hit-testing
@@ -444,6 +457,7 @@ public:
         root["width"]      = JSONValue(state_.width);
         root["roundLevel"] = JSONValue(state_.roundLevel);
         root["widthMode"]  = JSONValue(state_.widthMode);
+        root["miterOffset"] = JSONValue(state_.miterOffset);
         root["built"]      = JSONValue(built);
         root["dragPart"]   = JSONValue(dragPart);
         return root;
@@ -457,6 +471,8 @@ public:
             // replica remains absent from ToolHandles and cannot become hot.
             replicaArrow_.setState(widthArrow.getState());
             replicaArrow_.setEngaged(widthArrow.isEngaged());
+            replicaMiterArrow_.setState(handleBank_.miterArrow.getState());
+            replicaMiterArrow_.setEngaged(handleBank_.miterArrow.isEngaged());
             drawReplica(shader, vp);
             return;
         }
@@ -486,6 +502,9 @@ public:
         widthArrow.start = anchorW + ax.dir * (armLen / 6.0f);
         widthArrow.end   = anchorW + ax.dir * armLen;
         widthArrow.color = WIDTH_COLOR;
+        const auto miterAx = os.axis(miterAxis);
+        handleBank_.miterArrow.start = anchorW + miterAx.dir * (armLen / 6.0f);
+        handleBank_.miterArrow.end = anchorW + miterAx.dir * armLen;
 
         toolHandles.begin();
         auto parts = handleBank_.handleParts();
@@ -497,6 +516,7 @@ public:
         toolHandles.update(hmx, hmy, vp);
 
         widthArrow.draw(shader, vp);
+        handleBank_.miterArrow.draw(shader, vp);
     }
 
 private:
@@ -507,7 +527,7 @@ private:
         PreparedEdgeBevelActivationImage image;
         image.gizmoValid = gizmoValid;
         image.baseAnchor = baseAnchor;
-        image.widthAxis = widthAxis;
+        image.widthAxis = widthAxis; image.miterAxis = miterAxis;
         image.gizmoSelHash = gizmoSelHash;
         if (dragPart < 0 && !built) {
             immutable ulong signature = mesh.selectionSignature(EditMode.Edges);
@@ -524,6 +544,10 @@ private:
         replicaArrow_.end = anchorW + ax.dir * armLen;
         replicaArrow_.color = WIDTH_COLOR;
         replicaArrow_.draw(shader, vp);
+        const auto miterAx = os.axis(image.miterAxis);
+        replicaMiterArrow_.start = anchorW + miterAx.dir * (armLen / 6.0f);
+        replicaMiterArrow_.end = anchorW + miterAx.dir * armLen;
+        replicaMiterArrow_.draw(shader, vp);
     }
 
     private void ensureReplicaFrame(ulong signature,
@@ -537,6 +561,7 @@ private:
             replicaImage_.anchor = ownerImage.anchor;
             replicaImage_.baseAnchor = ownerImage.baseAnchor;
             replicaImage_.widthAxis = ownerImage.widthAxis;
+            replicaImage_.miterAxis = ownerImage.miterAxis;
             replicaImage_.gizmoSelHash = ownerImage.gizmoSelHash;
         }
         if (replicaImage_.valid && replicaImage_.gizmoSelHash == signature)
@@ -551,7 +576,7 @@ private:
     void computeGizmoFrame() {
         PreparedEdgeBevelActivationImage image;
         image.gizmoValid = gizmoValid; image.anchor = anchor;
-        image.baseAnchor = baseAnchor; image.widthAxis = widthAxis;
+        image.baseAnchor = baseAnchor; image.widthAxis = widthAxis; image.miterAxis = miterAxis;
         image.gizmoSelHash = gizmoSelHash;
         computePreparedGizmoFrame(*mesh, image);
         publishGizmoFrame(image);
@@ -561,7 +586,7 @@ private:
     private void publishGizmoFrame(
             ref const PreparedEdgeBevelActivationImage image) {
         gizmoValid = image.gizmoValid; anchor = image.anchor;
-        baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;
+        baseAnchor = image.baseAnchor; widthAxis = image.widthAxis; miterAxis = image.miterAxis;
         gizmoSelHash = image.gizmoSelHash;
     }
 
@@ -572,6 +597,7 @@ private:
         replicaImage_.anchor = anchor;
         replicaImage_.baseAnchor = baseAnchor;
         replicaImage_.widthAxis = widthAxis;
+        replicaImage_.miterAxis = miterAxis;
         replicaImage_.gizmoSelHash = gizmoSelHash;
     }
 
@@ -604,6 +630,8 @@ private:
         }
         float len = sqrt(sum.x*sum.x + sum.y*sum.y + sum.z*sum.z);
         image.widthAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
+        Vec3 binormal;
+        perpendicularFrame(image.widthAxis, image.miterAxis, binormal);
         image.baseAnchor = image.anchor;
         image.gizmoSelHash = source.selectionSignature(EditMode.Edges);
         image.gizmoValid = true;
@@ -668,6 +696,7 @@ private:
 
 public:
     version(unittest) {
+        final void updateScalarForTest(int part, float delta) { updateScalar(part, delta); }
         final EdgeBevelState stateForTest() const { return state_; }
         final void stateForTest(EdgeBevelState state) { state_ = state; }
         final HandlePart[2] handlePartsForTest() { return handleBank_.handleParts(); }
@@ -768,6 +797,7 @@ public:
             appendRaw(bytes, anchor);
             appendRaw(bytes, baseAnchor);
             appendRaw(bytes, widthAxis);
+            appendRaw(bytes, miterAxis);
             appendRaw(bytes, gizmoSelHash);
             appendRaw(bytes, dragPart);
             appendRaw(bytes, built);
@@ -795,6 +825,10 @@ public:
             appendRaw(bytes, widthArrow.end);
             appendRaw(bytes, widthArrow.color);
             bytes ~= widthArrow.handlerStateBytesForTest();
+            appendRaw(bytes, handleBank_.miterArrow.start);
+            appendRaw(bytes, handleBank_.miterArrow.end);
+            appendRaw(bytes, handleBank_.miterArrow.color);
+            bytes ~= handleBank_.miterArrow.handlerStateBytesForTest();
             immutable counts = preview_.counts();
             appendRaw(bytes, counts.fullRebuilds);
             appendRaw(bytes, counts.placements);
@@ -853,7 +887,7 @@ public:
             preparedFrameForTest(ref Mesh source) const {
         PreparedEdgeBevelActivationImage image;
         image.gizmoValid = gizmoValid; image.anchor = anchor;
-        image.baseAnchor = baseAnchor; image.widthAxis = widthAxis;
+        image.baseAnchor = baseAnchor; image.widthAxis = widthAxis; image.miterAxis = miterAxis;
         image.gizmoSelHash = gizmoSelHash;
         computePreparedGizmoFrame(source, image);
         return image;

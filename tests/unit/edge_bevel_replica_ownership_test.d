@@ -7,7 +7,7 @@ import bindbc.sdl;
 import display_state : DrawPlan;
 import editmode : EditMode;
 import eventlog : parkOverrideMouse, setOverrideMouse;
-import handler : HandleState, getGizmoPixels, setGizmoPixels;
+import handler : Arrow, HandleState, getGizmoPixels, setGizmoPixels;
 import math : Vec3, Viewport, isOrtho, lookAt, orthographicMatrix,
     projectToWindowFull;
 import mesh : Mesh;
@@ -20,7 +20,7 @@ import std.conv : to;
 import std.file : readText;
 import std.format : format;
 import std.math : abs;
-import std.json : JSONValue;
+import std.json : JSONValue, parseJSON;
 import params : injectParamsInto;
 import std.process : environment;
 import std.string : indexOf;
@@ -281,11 +281,11 @@ private void assertOwnerA(EdgeBevelTool tool, ref Viewport ownerVp) {
         "OWNER CACHED VIEWPORT WIDTH: expected 800 got %s (tol 0)",
         read.cachedWidth));
     const pass = g_fc.lastHandlePass();
-    assert(pass.writes == 2, format(
-        "OWNER HANDLE DRAWS: expected shaft+head=2 got %s (tol 0)",
+    assert(pass.writes == 4, format(
+        "OWNER HANDLE DRAWS: expected two shafts+heads=4 got %s (tol 0)",
         pass.writes));
-    assert(pass.submitted == 1, format(
-        "OWNER HANDLE SUBMISSIONS: expected 1 got %s (tol 0)",
+    assert(pass.submitted == 2, format(
+        "OWNER HANDLE SUBMISSIONS: expected 2 got %s (tol 0)",
         pass.submitted));
     assert(pass.ids[0] == drawId, format(
         "OWNER HANDLE ID: expected %s got %s (tol 0)",
@@ -345,8 +345,8 @@ private void cellC1_ownerOnly(ViewportSceneRenderer renderer, Shader shader,
     assert(registered.length == 2, "S1 REGISTRATION: complete ordered bank");
     assert(registered[0]["part"].integer == 0 && registered[0]["visible"].boolean,
         "S1 REGISTERED WIDTH: eligible first part");
-    assert(registered[1]["part"].integer == 1 && !registered[1]["visible"].boolean,
-        "S1 REGISTERED MITER: ineligible second part");
+    assert(registered[1]["part"].integer == 1 && registered[1]["visible"].boolean,
+        "TWO HANDLES: eligible second part");
     const read = tool.readInteractionForTest();
     assert(read.gizmoSelHash == sigA, format(
         "OWNER SELECTION SIGNATURE: expected %s got %s (tol 0)",
@@ -391,8 +391,8 @@ private void assertReplicaB(EdgeBevelTool tool, ref Viewport replicaVp) {
     assertProjected(end, replicaVp, 600.0f, 120.0f,
                     "REPLICA FRESH PROJECTED END");
     const pass = g_fc.lastHandlePass();
-    assert(pass.submitted == 1, format(
-        "REPLICA HANDLE SUBMISSIONS: expected 1 got %s (tol 0)",
+    assert(pass.submitted == 2, format(
+        "REPLICA HANDLE SUBMISSIONS: expected 2 got %s (tol 0)",
         pass.submitted));
     assert(pass.ids[0] == drawId, format(
         "REPLICA HANDLE ID: expected replica %s got %s (tol 0)",
@@ -501,8 +501,8 @@ private void cellC4_invalidOwnerFrame(ViewportSceneRenderer renderer,
     assert(sigB != 0, "C4 SELECTION SIGNATURE: expected nonzero got 0");
     const before = tool.interactionStateBytesForTest();
     drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
-    assert(g_fc.lastHandlePass().submitted == 1, format(
-        "REPLICA DREW NOTHING on a valid current selection: submitted == %s, expected 1",
+    assert(g_fc.lastHandlePass().submitted == 2, format(
+        "REPLICA DREW NOTHING on a valid current selection: submitted == %s, expected 2",
         g_fc.lastHandlePass().submitted));
     assertReplicaB(tool, replicaVp);
     assertStateEqual(before, tool.interactionStateBytesForTest(),
@@ -769,12 +769,20 @@ private void cellS1Dormant() {
     auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
     scope(exit) tool.destroy();
     auto params = tool.params();
-    assert(params.length == 3, "S1 ADMISSION: only implemented parameters");
+    assert(params.length == 4, "S1 ADMISSION: scalar parameter admission");
     assert(params[0].name == "width" && params[1].name == "roundLevel" &&
         params[2].name == "widthMode", "S1 ADMISSION: retained parameter order");
-    assert(tool.sessionPolicy().imageAttrs == ["width", "roundLevel", "widthMode"],
-        "S1 SESSION: dormant fields have no session admission");
+    assert(tool.sessionPolicy().imageAttrs == ["width", "roundLevel", "widthMode", "miterOffset"],
+        "TWO HANDLES: independent session field admission");
 
+    assert(params[3].name == "miterOffset", "MITER PARAM: public schema name");
+    assert(tool.sessionPolicy().haulAttrs == ["width", "roundLevel", "widthMode", "miterOffset"],
+        "MITER SESSION: independent haul field");
+    auto miterWrite = JSONValue.emptyObject;
+    miterWrite["miterOffset"] = JSONValue(-0.06f);
+    injectParamsInto(params, miterWrite);
+    assert(tool.stateForTest().miterOffset == -0.06f && tool.stateForTest().width == 0,
+        "MITER PARAM: actual binding is signed and isolated");
     const initial = tool.stateForTest();
     auto modeWrite = JSONValue.emptyObject;
     modeWrite["widthMode"] = JSONValue(true);
@@ -815,8 +823,10 @@ private void cellS1Dormant() {
     }
     auto zero = baseline;
     zero.width = 0.0f;
+    zero.miterOffset = 0.0f;
     tool.stateForTest(zero);
     auto zeroImage = tool.buildPreparedParamUpdate("width", live);
+    assert(tool.preparedParamUpdateMatches(zeroImage, live), "ZERO IMAGE: positive control");
     zero.width = -0.0f;
     tool.stateForTest(zero);
     assert(!tool.preparedParamUpdateMatches(zeroImage, live),
@@ -843,11 +853,104 @@ private void cellS1Dormant() {
     const parts = tool.handlePartsForTest();
     assert(parts.length == 2 && parts[0].part == 0 && parts[1].part == 1 &&
         parts[0].h !is parts[1].h, "S1 BANK: ordered distinct parts");
-    assert(parts[0].h.isVisible() && !parts[1].h.isVisible(),
-        "S1 DORMANT: miter is ineligible");
+    assert(parts[0].h.isVisible() && parts[1].h.isVisible(),
+        "TWO HANDLES: both parts eligible");
     Viewport vp = testViewport(800, 600, 5);
     assert(tool.firstBankHitForTest(-10000, -10000, vp) == -1,
         "S1 BANK: populated miss");
+}
+
+private void cellTwoHandleCallbacks() {
+    const fixture = parseJSON(readText("tests/fixtures/edge_bevel/two_handles_live.json"));
+    const moves = fixture["moves"].array;
+    assert(moves.length == 5, "LIVE FIXTURE: two width and three miter callbacks");
+    Mesh live = twoQuadsFixture(); GpuMesh gpu; EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    foreach (i, row; moves) {
+        const int part = cast(int) row["id"].integer;
+        assert(row["attr"].integer == (part == 0 ? 1 : 7),
+            "LIVE FIXTURE: independent callback attribute identity");
+        if (i == 0 || i == 2) {
+            auto state = tool.stateForTest();
+            state.width = cast(float) row["start0"].floating;
+            state.miterOffset = cast(float) row["start1"].floating;
+            tool.stateForTest(state); tool.snapshotStartsForTest();
+        }
+        tool.updateScalarForTest(part,
+            cast(float) row[part == 0 ? "delta0" : "delta1"].floating);
+        const state = tool.stateForTest();
+        assert(abs((part == 0 ? state.width : state.miterOffset) -
+            row["value"].floating) < 1e-7, "LIVE CALLBACK: bound cumulative value");
+        assert(abs((part == 0 ? state.miterOffset : state.width) -
+            row[part == 0 ? "start1" : "start0"].floating) < 1e-7,
+            "LIVE CALLBACK: other field unchanged");
+    }
+    auto state = tool.stateForTest();
+    tool.snapshotStartsForTest();
+    tool.updateScalarForTest(1, 0.03f);
+    assert(abs(tool.stateForTest().miterOffset - (state.miterOffset + 0.03f)) < 1e-7,
+        "SECOND PRESS: independent nonzero miter start");
+}
+
+private void cellCapturedPreparedBasis(ViewportSceneRenderer renderer, Shader shader,
+        ref GpuMesh gpu, ref Viewport vp) {
+    const fixture = parseJSON(readText("tests/fixtures/edge_bevel/two_handles_live.json"));
+    const origin = fixture["origin"].array;
+    const matrix = fixture["matrix_row_major"].array;
+    assert(origin.length == 3 && matrix.length == 9, "BASIS FIXTURE: full captured frame");
+    Mesh live = twoQuadsFixture(); selectionA(live); EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    Mesh* source;
+    auto image = tool.buildPreparedActivation(source);
+    image.anchor = image.baseAnchor = Vec3(cast(float)origin[0].floating,
+        cast(float)origin[1].floating, cast(float)origin[2].floating);
+    image.widthAxis = Vec3(cast(float)matrix[2].floating,
+        cast(float)matrix[5].floating, cast(float)matrix[8].floating);
+    image.miterAxis = Vec3(cast(float)matrix[0].floating,
+        cast(float)matrix[3].floating, cast(float)matrix[6].floating);
+    const base = image.baseAnchor; const normal = image.widthAxis; const tangent = image.miterAxis;
+    tool.installPreparedActivation(image);
+    drawOverlay(renderer, tool, OverlayMode.Interactive, vp, shader);
+    auto parts = tool.handlePartsForTest();
+    auto width = cast(Arrow)parts[0].h; auto miter = cast(Arrow)parts[1].h;
+    assertVecNear((width.end - width.start) * (1 / (width.end - width.start).length),
+        normal, 1e-6f, "CAPTURED BASIS: ID0 consumes column2");
+    assertVecNear((miter.end - miter.start) * (1 / (miter.end - miter.start).length),
+        tangent, 1e-6f, "CAPTURED BASIS: ID1 consumes column0");
+    assertVecNear(width.start - (width.end - width.start) * 0.2f, base, 1e-6f,
+        "CAPTURED ORIGIN: ID0 shared base");
+    assertVecNear(miter.start - (miter.end - miter.start) * 0.2f, base, 1e-6f,
+        "CAPTURED ORIGIN: ID1 shared base");
+}
+
+private void cellTwoHandleEvents(ViewportSceneRenderer renderer, Shader shader,
+        ref GpuMesh gpu, ref Viewport vp) {
+    Mesh live = twoQuadsFixture(); selectionA(live); EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    tool.activate();
+    drawOverlay(renderer, tool, OverlayMode.Interactive, vp, shader);
+    auto arrow = cast(Arrow) tool.handlePartsForTest()[1].h;
+    float x, y, depth;
+    assert(projectToWindowFull((arrow.start + arrow.end) * 0.5f, vp, x, y, depth),
+        "MITER EVENT: visible projected handle");
+    setOverrideMouse(cast(int)x, cast(int)y);
+    drawOverlay(renderer, tool, OverlayMode.Interactive, vp, shader);
+    SDL_MouseButtonEvent press; press.button = SDL_BUTTON_LEFT;
+    press.x = cast(int)x; press.y = cast(int)y; VectorStack stack;
+    assert(tool.onMouseButtonDown(press, stack), "MITER EVENT: production press accepted");
+    assert(tool.readInteractionForTest().dragPart == 1, "MITER EVENT: part1 owns haul");
+    const width = tool.stateForTest().width;
+    SDL_MouseMotionEvent motion; motion.x = press.x; motion.y = press.y + 12;
+    assert(tool.onMouseMotion(motion, stack), "MITER EVENT: production move accepted");
+    const miter = tool.stateForTest().miterOffset;
+    assert(miter != 0, "MITER EVENT: second handle writes its scalar");
+    assert(tool.stateForTest().width == width, "MITER EVENT: first handle field isolation");
+    SDL_MouseButtonEvent release; release.button = SDL_BUTTON_LEFT;
+    assert(tool.onMouseButtonUp(release, stack), "MITER EVENT: production release accepted");
+    assert(tool.stateForTest().miterOffset == miter, "MITER EVENT: release preserves live field");
 }
 
 unittest { runReplicaOwnershipWitness(); }
@@ -907,6 +1010,9 @@ private void runReplicaOwnershipWitness() {
     premiseFloors(replicaVp, ownerVp);
     cellC0_arrangementCensus();
     cellS1Dormant();
+    cellTwoHandleCallbacks();
+    cellCapturedPreparedBasis(renderer, shader, gpu, ownerVp);
+    cellTwoHandleEvents(renderer, shader, gpu, ownerVp);
     cellC1_ownerOnly(renderer, shader, gpu, ownerVp);
     cellC2_replicaThenOwner(renderer, shader, gpu, replicaVp, ownerVp);
     cellC3_freshness(renderer, shader, gpu, replicaVp, ownerVp);
