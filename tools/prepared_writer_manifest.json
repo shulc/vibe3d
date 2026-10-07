@@ -394,7 +394,7 @@
       "product_types": [
         "RadialAlignTool"
       ],
-      "semantic_sha256": "a8793b5021f4019e30d088223c75980e2f42f0aed5dc2523f9250ae3013f22e2",
+      "semantic_sha256": "f9bffd3c734709149932827fef7c6d4280b38c8efae7a3190949446733d8be95",
       "symbol": "registerTool(\"xfrm.radialAlignTool\")"
     },
     {
