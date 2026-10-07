@@ -106,6 +106,7 @@ private struct EdgeBevelHandleBank {
     void snapshotStarts(const ref EdgeBevelState state) nothrow @nogc {
         scalars[0].start = state.width;
         scalars[1].start = state.miterOffset;
+        scalars[0].delta = scalars[1].delta = 0.0f;
     }
 }
 

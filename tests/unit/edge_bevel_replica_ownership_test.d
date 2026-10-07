@@ -880,6 +880,10 @@ private void cellTwoHandleCallbacks() {
         tool.updateScalarForTest(part,
             cast(float) row[part == 0 ? "delta0" : "delta1"].floating);
         const state = tool.stateForTest();
+        const deltas = tool.scalarStartsDeltasForTest();
+        assert(abs(deltas[2] - row["delta0"].floating) < 1e-7 &&
+            abs(deltas[3] - row["delta1"].floating) < 1e-7,
+            "LIVE CALLBACK: independent per-press deltas");
         assert(abs((part == 0 ? state.width : state.miterOffset) -
             row["value"].floating) < 1e-7, "LIVE CALLBACK: bound cumulative value");
         assert(abs((part == 0 ? state.miterOffset : state.width) -
