@@ -583,6 +583,16 @@ public:
         publishState();
     }
 
+    /// Shared partition service for independent Axis Local (task 20261570).
+    /// The cache and current world AABB centers remain owned here.
+    bool queryLocalComponentPartition(Mesh* expectedMesh, EditMode expectedMode,
+                                      out Vec3[] centers, out int[] clusterOf) {
+        if (mesh_ is null || mesh_ !is expectedMesh || editMode_ is null
+            || *editMode_ != expectedMode) return false;
+        computeLocalClustersFull(centers, clusterOf);
+        return centers.length > 0;
+    }
+
     /// Drop the Local-mode partition + adjacency cache. Called on reset and
     /// whenever the cache key is known to be stale. (The key check in
     /// computeLocalClustersFull also catches selection / topology changes
@@ -1633,53 +1643,38 @@ private:
     // O(E·V) per dequeued element as the old inline scans were.
     void buildFaceClusterMembership(ref int[] clusterOf, ref int cid) {
         if (!mesh_.hasAnySelectedFaces()) return;
-        size_t nF = mesh_.faces.length;
-        int[]  clusterOfFace = new int[](nF);
-        foreach (ref c; clusterOfFace) c = -1;
-        // Build face adjacency via a shared-edge map: each undirected vertex
-        // pair (v0,v1) maps to the faces incident on it; two faces sharing a
-        // key are edge-adjacent. O(total face corners) to build.
-        uint[][ulong] facesByEdgeKey;
-        foreach (fi; 0 .. nF) {
-            const(uint)[] f = mesh_.faces[fi];
-            foreach (i; 0 .. f.length) {
-                ulong k = edgeKey(f[i], f[(i + 1) % f.length]);
-                facesByEdgeKey[k] ~= cast(uint)fi;
+        // Selected boundary edges join marked vertices; stored vertex seeds
+        // own order and shared points once (20261570, local component model).
+        uint[][] neighbors = new uint[][](mesh_.vertices.length);
+        bool[] marked = new bool[](mesh_.vertices.length);
+        foreach (fi, face; mesh_.faces) {
+            if (!mesh_.isFaceSelected(fi)) continue;
+            foreach (i, vi; face) {
+                uint next = face[(i + 1) % face.length];
+                marked[vi] = true;
+                neighbors[vi] ~= next;
+                neighbors[next] ~= vi;
             }
         }
-        foreach (start; 0 .. nF) {
-            if (!mesh_.isFaceSelected(start) || clusterOfFace[start] != -1) continue;
-            uint[] queue; queue ~= cast(uint)start;
-            clusterOfFace[start] = cid;
-            while (queue.length > 0) {
-                uint cur = queue[0]; queue = queue[1 .. $];
-                const(uint)[] f = mesh_.faces[cur];
-                foreach (i; 0 .. f.length) {
-                    ulong k = edgeKey(f[i], f[(i + 1) % f.length]);
-                    foreach (other; facesByEdgeKey[k]) {
-                        if (other == cur) continue;
-                        if (!mesh_.isFaceSelected(other) || clusterOfFace[other] != -1) continue;
-                        clusterOfFace[other] = cid;
-                        queue ~= other;
-                    }
+        foreach (start; 0 .. marked.length) {
+            if (!marked[start] || clusterOf[start] != -1) continue;
+            uint[] queue = [cast(uint)start];
+            clusterOf[start] = cid;
+            for (size_t head = 0; head < queue.length; ++head) {
+                foreach (other; neighbors[queue[head]]) {
+                    if (clusterOf[other] != -1) continue;
+                    clusterOf[other] = cid;
+                    queue ~= other;
                 }
             }
-            cid++;
+            ++cid;
         }
-        // Project face cluster ids onto verts. A vertex shared between
-        // two disjoint clusters keeps the lowest cid (deterministic).
-        foreach (fi; 0 .. nF) {
-            int c = clusterOfFace[fi];
-            if (c == -1) continue;
-            foreach (vi; mesh_.faces[fi]) {
-                if (clusterOf[vi] == -1 || c < clusterOf[vi])
-                    clusterOf[vi] = c;
-            }
+        _cachedFaceClusterOf = new int[](mesh_.faces.length);
+        foreach (ref c; _cachedFaceClusterOf) c = -1;
+        foreach (fi, face; mesh_.faces) {
+            if (!mesh_.isFaceSelected(fi) || face.length == 0) continue;
+            _cachedFaceClusterOf[fi] = clusterOf[face[0]];
         }
-        // Stash the per-face partition so the single-pivot first-center
-        // (average of face centroids in cluster 0) can be recomputed from
-        // cache without redoing the BFS.
-        _cachedFaceClusterOf = clusterOfFace;
     }
 
     void buildEdgeClusterMembership(ref int[] clusterOf, ref int cid) {
@@ -2654,8 +2649,8 @@ unittest {
 // they now share ONE BFS body. Uses a cube with two OPPOSITE, disconnected
 // selected faces (indices 4 and 5 — the y=+0.5 and y=-0.5 faces; opposite
 // faces of a cube never share an edge) so cluster-0's average centroid is a
-// DISCRIMINATING value (0, 0.5, 0), not merely a count — a seed-order or
-// cluster-0-identity regression would return face 5's centroid (0, -0.5, 0)
+// DISCRIMINATING value (0, -0.5, 0), not merely a count — a seed-order or
+// cluster-0-identity regression would return face 4's centroid (0, 0.5, 0)
 // instead and this would catch it, whereas a same-count check would not.
 // ---------------------------------------------------------------------------
 unittest {
@@ -2669,16 +2664,14 @@ unittest {
 
     Mesh cube = makeCube();
     cube.resetSelection();   // size the selection arrays to the geometry
-    cube.selectFace(4);   // y=+0.5 face, centroid (0, 0.5, 0) — lowest-index
-                          // selected face, so this is cluster 0.
-    cube.selectFace(5);   // y=-0.5 face, centroid (0, -0.5, 0) — a second,
-                          // disconnected island (cluster 1).
+    cube.selectFace(4);   // y=+0.5 face; minimum stored vertex 2, cluster 1.
+    cube.selectFace(5);   // y=-0.5 face; contains stored vertex 0, cluster 0.
     Mesh* meshPtr = &cube;
     EditMode em = EditMode.Polygons;
     auto acs = new ActionCenterStage(() => meshPtr, &em);
     acs.mode = ActionCenterStage.Mode.Local;
 
-    immutable Vec3 cluster0Centroid = Vec3(0, 0.5f, 0);   // face 4's own centroid
+    immutable Vec3 cluster0Centroid = Vec3(0, -0.5f, 0);  // face 5 contains stored vertex 0
 
     // Display path: computeCenter() via the public currentCenter() wrapper —
     // this is the const arm the D5 rewrite casts through.
@@ -2696,7 +2689,7 @@ unittest {
         ~ "Local center post-dedup");
     assert(vecEq(displayCenter, cluster0Centroid),
         "the returned center must be cluster-0's (lowest-index island, "
-        ~ "face 4) centroid, NOT the whole-selection centroid nor face 5's — "
+        ~ "face 5) centroid, NOT the whole-selection centroid nor face 4's — "
         ~ "this is what discriminates BFS seed-order / cluster-0 identity");
 }
 

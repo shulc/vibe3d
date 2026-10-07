@@ -1,7 +1,7 @@
 module toolpipe.stages.axis;
 
 import std.format : format;
-import std.math   : abs, sqrt;
+import std.math   : abs, sqrt, isFinite;
 
 import math    : Vec3, Viewport, cross, dot, normalize, frameMatrix, frameMatrixInverse,
                  applyAffine, ModelSpace;
@@ -11,7 +11,7 @@ import seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAxis, ToolSwitchTransient,
                            PresetClaimable;
 // pipeline imports moved to packet-only — Phase 6 cleanup
-import toolpipe.packets  : AxisPacket;
+import toolpipe.packets  : AxisPacket, ActionCenterPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath, installPreparedStatePath;
 import document          : Layer;
@@ -36,8 +36,8 @@ import params            : IntEnumEntry, wireTagForValue, valueForWireTag,
 //                  (per phase7_2_plan §6 — Y-up convention).
 //   - Select      — the selection's own frame (computeSelectionBboxBasis);
 //                  world/workplane when nothing is selected.
-//   - Local       — the same selection frame globally, plus a per-cluster
-//                  frame when ACEN.Local splits the selection.
+//   - Local       — shared admitted component frame, with compatibility
+//                  construction outside the planar polygon domain.
 //   - SelectAuto  — selection ACTION CENTRE, AUTO axis. Deliberately NOT the
 //                  selection frame: centre and frame are separate inputs and
 //                  this is the mode that separates them.
@@ -87,6 +87,16 @@ class AxisStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
         AxisPacket pkt;
         Vec3 r, u, f;
         computeBasis(r, u, f, subjType);
+        Vec3[] localRight, localUp, localFwd;
+        bool symmetryEnabled = false;
+        import toolpipe.packets : SymmetryPacket;
+        if (auto sym = vts.get!SymmetryPacket()) symmetryEnabled = sym.enabled;
+        bool localFrames = mode == Mode.Local
+            && resolveLocalFrames(vts.get!ActionCenterPacket(), subjType,
+                                  symmetryEnabled, localRight, localUp, localFwd);
+        if (localFrames) {
+            r = localRight[0]; u = localUp[0]; f = localFwd[0];
+        }
         pkt.right   = r;
         pkt.up      = u;
         pkt.fwd     = f;
@@ -120,21 +130,27 @@ class AxisStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
         {
             if (auto acen = vts.get!ActionCenterPacket()) {
                 if (acen.clusterCenters.length >= 2) {
-                    int n = cast(int)acen.clusterCenters.length;
-                    pkt.clusterRight = new Vec3[](n);
-                    pkt.clusterUp    = new Vec3[](n);
-                    pkt.clusterFwd   = new Vec3[](n);
-                    foreach (cid; 0 .. n) {
-                        Vec3 cr, cu, cf;
-                        if (computeClusterBasis(acen.clusterOf,
-                                                cid, cr, cu, cf)) {
-                            pkt.clusterRight[cid] = cr;
-                            pkt.clusterUp[cid]    = cu;
-                            pkt.clusterFwd[cid]   = cf;
-                        } else {
-                            pkt.clusterRight[cid] = r;
-                            pkt.clusterUp[cid]    = u;
-                            pkt.clusterFwd[cid]   = f;
+                    if (localFrames) {
+                        pkt.clusterRight = localRight;
+                        pkt.clusterUp = localUp;
+                        pkt.clusterFwd = localFwd;
+                    } else {
+                        int n = cast(int)acen.clusterCenters.length;
+                        pkt.clusterRight = new Vec3[](n);
+                        pkt.clusterUp    = new Vec3[](n);
+                        pkt.clusterFwd   = new Vec3[](n);
+                        foreach (cid; 0 .. n) {
+                            Vec3 cr, cu, cf;
+                            if (computeCompatibilityClusterBasis(acen.clusterOf,
+                                                    cid, cr, cu, cf)) {
+                                pkt.clusterRight[cid] = cr;
+                                pkt.clusterUp[cid]    = cu;
+                                pkt.clusterFwd[cid]   = cf;
+                            } else {
+                                pkt.clusterRight[cid] = r;
+                                pkt.clusterUp[cid]    = u;
+                                pkt.clusterFwd[cid]   = f;
+                            }
                         }
                     }
                 }
@@ -376,10 +392,83 @@ public:
     /// `liveSelType()` source (not a field cached from evaluate() — review
     /// Blocker 2) for the item-mode guard.
     void currentBasis(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
-        computeBasis(right, up, fwd, liveSelType());
+        const subjType = liveSelType();
+        computeBasis(right, up, fwd, subjType);
+        import toolpipe.stages.symmetry : liveSymmetryStage;
+        auto sym = liveSymmetryStage();
+        Vec3[] r, u, f;
+        if (mode == Mode.Local && resolveLocalFrames(null, subjType,
+                sym !is null && sym.enabled, r, u, f)) {
+            right = r[0]; up = u[0]; fwd = f[0];
+        }
     }
 
 private:
+    // One resolver constructs the entire admitted collection before publishing
+    // its representative or alignment (20261570, local component model).
+    bool resolveLocalFrames(const ActionCenterPacket* upstream,
+                            SelType subject, bool symmetryEnabled,
+                            out Vec3[] right, out Vec3[] up, out Vec3[] normal) const {
+        import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.stages.actcenter : ActionCenterStage;
+        import toolpipe.obbox : obbFromPoints, EPS_DEGENERATE,
+                               localComponentFrameFromBox, alignLocalComponentFrames;
+        if (subject == SelType.Item || symmetryEnabled || mesh_ is null
+            || editMode_ is null || *editMode_ != EditMode.Polygons
+            || !mesh_.hasAnySelectedFaces()) return false;
+        Vec3[] centers;
+        const(int)[] membership;
+        if (upstream !is null && upstream.clusterCenters.length >= 2
+            && upstream.clusterOf.length == mesh_.vertices.length) {
+            centers = upstream.clusterCenters.dup;
+            membership = upstream.clusterOf;
+        } else {
+            if (g_pipeCtx is null) return false;
+            auto service = cast(ActionCenterStage)g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+            int[] partition;
+            if (service is null || !service.queryLocalComponentPartition(mesh_, *editMode_, centers, partition)) return false;
+            membership = partition;
+        }
+        if (centers.length == 0) return false;
+        const auto ms = itemSpace();
+        auto normals = localVirtualVertexNormals(mesh_);
+        right = new Vec3[](centers.length);
+        up = new Vec3[](centers.length);
+        normal = new Vec3[](centers.length);
+        foreach (cid; 0 .. centers.length) {
+            Vec3[] points;
+            Vec3 reference = Vec3(0, 0, 0);
+            foreach (vi, c; membership) {
+                if (c != cid) continue;
+                auto point = ms.toWorldPoint(mesh_.vertices[vi]);
+                if (!finiteLocalVector(point)) return false;
+                points ~= point;
+                reference = reference + ms.toWorldDir(normals[vi]);
+            }
+            if (points.length < 3 || !finiteLocalVector(reference)
+                || dot(reference, reference) <= 0) return false;
+            reference = normalize(reference);
+            if (!finiteLocalVector(reference) || dot(reference, reference) <= 0) return false;
+            auto box = obbFromPoints(points, reference);
+            int lo = 0, hi = 0;
+            foreach (i; 1 .. 3) {
+                if (box.size[i] < box.size[lo]) lo = i;
+                if (box.size[i] > box.size[hi]) hi = i;
+            }
+            int middle = 3 - lo - hi;
+            if (lo == hi || !(box.size[hi] > 0)
+                || !(box.size[middle] > EPS_DEGENERATE * box.size[hi])
+                || !(box.size[lo] <= EPS_DEGENERATE * box.size[hi])) return false;
+            if (box.size[hi] - box.size[middle] <= EPS_DEGENERATE * box.size[hi]) {
+                if (!computeCompatibilityClusterBasis(membership, cast(int)cid, right[cid], up[cid], normal[cid])) return false;
+            } else {
+                localComponentFrameFromBox(box, right[cid], up[cid], normal[cid]);
+            }
+        }
+        alignLocalComponentFrames(right, up, normal);
+        return true;
+    }
+
     // `subjType` is the subject's SelType AT THE POINT OF USE — the caller's
     // packet (evaluate()) or a freshly-queried live value (currentBasis()),
     // never a field cached from some earlier, possibly unrelated evaluate()
@@ -464,34 +553,8 @@ private:
                     return;
                 goto case Mode.Auto;
             case Mode.Local:
-                // Local's GLOBAL frame is the SELECTION's frame, the same
-                // computation Select runs. Measured on a cube with its +Y face
-                // selected: `local` and `select` install a bit-identical
-                // (+X, −Z, +Y) — the reference reaches it through a different
-                // axis tool, but on a component selection the two agree and the
-                // frame is emphatically not the world axes, which is what this
-                // branch used to return.
-                //
-                // WHAT SEPARATES THEM IS NOT MEASURED HERE. The reference runs
-                // `local` and `select` as different code; a subject whose ITEM
-                // transform is rotated would separate them and no such rig has
-                // been recorded. Our item-oriented frame is Mode.Pivot, so
-                // routing Local at the selection is the reading that fits this
-                // stage; revisit if a rotated-item measurement lands.
-                //
-                // No selection ⇒ fall through to Auto (workplane / world),
-                // exactly what this branch did before, so the whole-mesh
-                // subject is untouched. That fallback is deliberate: the
-                // reference takes a separate no-box path when the selection is
-                // empty and that path has NOT been read, so we do not guess it.
-                //
-                // The per-cluster Local basis is published separately in
-                // evaluate() (clusterRight/Up/Fwd when ACEN.Local has ≥2
-                // clusters) and is unchanged; this is the frame the gizmo uses
-                // when there is one cluster, which until now disagreed with the
-                // per-cluster one on the very same selection.
-                //
-                // Item mode 0614: same guard as Element/Select above.
+                // Compatibility global frame; the shared admitted Local
+                // collection replaces it in evaluate/currentBasis.
                 if (subjType != SelType.Item && computeSelectionBboxBasis(r, u, f))
                     return;
                 goto case Mode.Auto;
@@ -733,7 +796,7 @@ private:
     // disjoint clusters so each cluster gets its own world-axis-snapped
     // basis. Returns false when the cluster has no vertices, or in edit
     // modes (Edges) where the bbox-extent fallback alone is unhelpful.
-    bool computeClusterBasis(const(int)[] clusterOf, int cid,
+    bool computeCompatibilityClusterBasis(const(int)[] clusterOf, int cid,
                              out Vec3 right, out Vec3 up, out Vec3 fwd) const {
         if (mesh_ is null || editMode_ is null) return false;
         if (clusterOf.length != mesh_.vertices.length) return false;
@@ -1441,4 +1504,29 @@ unittest {
         assert(abs(dot(u, Vec3(0, 1, 0))) > 0.999f,
             "control: and its up is still its own face normal");
     }
+}
+
+private bool finiteLocalVector(Vec3 v) { return isFinite(v.x) && isFinite(v.y) && isFinite(v.z); }
+
+/// All incident unit corner contributions, normalized per vertex before layer
+/// linear transport (20261570, local component model). Select remains separate.
+Vec3[] localVirtualVertexNormals(const Mesh* mesh) {
+    Vec3[] normals = new Vec3[](mesh.vertices.length);
+    foreach (ref n; normals) n = Vec3(0, 0, 0);
+    Vec3 unitCorner(Vec3 v) {
+        return finiteLocalVector(v) && dot(v, v) > 0 ? normalize(v) : Vec3(0, 0, 0);
+    }
+    foreach (face; mesh.faces) {
+        if (face.length < 3) continue;
+        Vec3 first = unitCorner(cross(mesh.vertices[face[1]] - mesh.vertices[face[0]],
+                                    mesh.vertices[face[$-1]] - mesh.vertices[face[0]]));
+        foreach (i, vi; face) {
+            Vec3 corner = unitCorner(cross(mesh.vertices[face[(i+1)%face.length]] - mesh.vertices[vi],
+                                         mesh.vertices[face[(i+face.length-1)%face.length]] - mesh.vertices[vi]));
+            if (i > 0 && dot(corner, first) < 0) corner = -corner;
+            normals[vi] = normals[vi] + corner;
+        }
+    }
+    foreach (ref n; normals) n = unitCorner(n);
+    return normals;
 }

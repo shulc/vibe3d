@@ -675,6 +675,7 @@ tool
 tool_disarm
 tool_input
 tool_presets
+toolpipe.local_component_frame_test
 toolpipe.obbox
 toolpipe.pipeline
 toolpipe.stages.actcenter
@@ -706,6 +707,7 @@ tools.harness.runslots
 tools.slice.slice_tool
 tools.transform.arcball
 tools.transform.item_xform_kernels
+tools.transform.local_component_frame_production_test
 tools.transform.morph_route
 tools.transform.relocate_plane_test
 tools.transform.rotate

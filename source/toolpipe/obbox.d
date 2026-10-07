@@ -163,6 +163,53 @@ struct ObbFrame {
     @property bool ok() const { return source != ObbSource.None; }
 }
 
+// Local geometry keeps signed normals and canonical tangents independently
+// of Select mapping (20261570; doc/local_component_frame_model_2026-10-07.md).
+void localComponentFrameFromBox(const ObbFrame box,
+                               out Vec3 right, out Vec3 up, out Vec3 normal)
+    @safe pure nothrow @nogc {
+    int lo = 0, hi = 0;
+    foreach (i; 1 .. 3) {
+        if (box.size[i] < box.size[lo]) lo = i;
+        if (box.size[i] > box.size[hi]) hi = i;
+    }
+    normal = normalize(box.m[lo]);
+    Vec3 tangent = normalize(box.m[hi]);
+    float[3] components = [tangent.x, tangent.y, tangent.z];
+    int dominant = 0;
+    foreach (i; 1 .. 3)
+        if (abs(components[i]) > abs(components[dominant])) dominant = i;
+    if (components[dominant] < 0) tangent = -tangent;
+    up = normalize(cross(normal, tangent));
+    right = normalize(cross(up, normal));
+}
+
+void alignLocalComponentFrames(Vec3[] right, Vec3[] up, const(Vec3)[] normal)
+    @safe pure nothrow @nogc {
+    int nearest(Vec3 target, Vec3 r, Vec3 u, Vec3 n, out bool negative) {
+        float[3] d = [dot(target, r), dot(target, u), dot(target, n)];
+        int i = abs(d[0]) > abs(d[1]) && abs(d[0]) > abs(d[2]) ? 0
+              : abs(d[1]) > abs(d[2]) ? 1 : 2;
+        negative = d[i] < 0;
+        return i;
+    }
+    foreach (i; 1 .. normal.length) {
+        bool negA, negU;
+        int j = nearest(normal[0], right[i], up[i], normal[i], negA);
+        int k = nearest(up[0], right[i], up[i], normal[i], negU);
+        bool changed = false;
+        if (j == 2 && k == 0) {
+            up[i] = negA != negU ? -right[i] : right[i];
+            changed = true;
+        } else if ((j == 2 && k == 1 && negA != negU)
+                   || (j != 2 && k == 1 && dot(up[0], up[i]) < 0)) {
+            up[i] = -up[i];
+            changed = true;
+        }
+        if (changed) right[i] = cross(up[i], normal[i]);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Numerical Recipes `jacobi`, for a symmetric 3x3.
 //
