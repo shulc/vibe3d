@@ -27,6 +27,7 @@ commands.workplane
 constraint
 drag
 drag_identity
+edge_bevel_offset_cube_test
 edit_session
 eventlog
 falloff_rmb_discipline_test
