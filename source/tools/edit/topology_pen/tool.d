@@ -50,7 +50,8 @@ import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf, e
                                snapCursor, SnapResult;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import tools.edit.topology_pen.render : PenRenderOps;
-import tools.edit.topology_pen.snap_guide : PenSnapGuide;
+import tools.edit.topology_pen.snap_guide : PenSnapGuide, admitsMoveElement;
+import evaluated_move_weld : EvaluatedMoveWeld, searchMoveElement, pairedMoveEnds, evaluatedMoveHandle, heldMoveEngages;
 import tools.edit.topology_pen.json   : PenStateJsonOps;
 import bvh_pick              : BvhPick, BackgroundRayPicker, SurfaceHit;
 import command_history      : CommandHistory, PreparedHistoryKind;
@@ -120,6 +121,8 @@ struct PreparedTopologyPenDeactivateImage {
     uint[] expectedMoveVerts;
     Vec3[] expectedMoveBase;
     bool expectedMoveDirty, expectedMoveWelded;
+    EvaluatedMoveWeld expectedMoveFrame;
+    ulong expectedMoveGeneration;
     void clear() nothrow @nogc {
         valid = false;
         expectedHit = ConstrainHitPacket.init;
@@ -130,6 +133,7 @@ struct PreparedTopologyPenDeactivateImage {
         expectedMoveElem = MoveElem.None;
         expectedMoveVerts = null; expectedMoveBase = null;
         expectedMoveDirty = expectedMoveWelded = false;
+        expectedMoveFrame = null; expectedMoveGeneration = 0;
     }
 }
 
@@ -396,6 +400,7 @@ private:
     package int          moveStartX_, moveStartY_;
     package bool         moveDirty_ = false;
     bool         moveWelded_ = false;
+    EvaluatedMoveWeld moveFrame_;
 
     // --- The press STEP (plan 8646). Every bound chord press is one topology
     // step of the session: `openPressStep` opens it before the mode handler
@@ -1640,6 +1645,8 @@ public:
         image.expectedMoveBase = moveBase_.dup;
         image.expectedMoveDirty = moveDirty_;
         image.expectedMoveWelded = moveWelded_;
+        image.expectedMoveFrame = moveFrame_;
+        image.expectedMoveGeneration = moveFrame_ is null ? 0 : moveFrame_.generation;
         // No history here (plan 8646): the session's close records an open
         // press step before this door runs (`ToolSession.close`).
         image.valid = true; return image;
@@ -1659,7 +1666,9 @@ public:
             moveVerts_ == image.expectedMoveVerts &&
             moveBase_ == image.expectedMoveBase &&
             moveDirty_ == image.expectedMoveDirty &&
-            moveWelded_ == image.expectedMoveWelded;
+            moveWelded_ == image.expectedMoveWelded &&
+            moveFrame_ is image.expectedMoveFrame &&
+            (moveFrame_ is null ? 0 : moveFrame_.generation) == image.expectedMoveGeneration;
     }
 
     final void installPreparedDeactivate(
@@ -1670,7 +1679,7 @@ public:
         dragSnap_ = SnapPacket.init;
         moveArmed_.armed = false; grabbedVert_ = -1;
         moveElem_ = MoveElem.None; moveVerts_ = null; moveBase_ = null;
-        moveDirty_ = moveWelded_ = false;
+        moveDirty_ = moveWelded_ = false; moveFrame_ = null;
         image.clear();
     }
 
@@ -2398,8 +2407,7 @@ public:
         uint[2][] pairs;
         foreach (i, vi; verts) {
             if (vi >= m.vertices.length) continue;   // stale arm — defensive
-            if (moveElem_ == MoveElem.Edge && sym && sym.pairOf.length == m.vertices.length
-                && sym.onPlane[vi]) continue;   // an edge's on-plane member never searches (K-W2c P20)
+            if (moveElem_ == MoveElem.Edge && m.vertexPolygonCounts()[vi] != 1) continue; // 9504: measured source support
             immutable int t = rawSnapTarget(i < at.length ? at[i] : m.vertices[vi], vp, verts);
             if (t >= 0) pairs ~= symmetricWeldPairs(*m, sym, cast(uint)t, vi);
         }
@@ -3671,7 +3679,7 @@ public:
         auto ring = fillRingFromSeed(cast(uint)seedEi, e.x, e.y, vp);
         if (ring.length >= 3) { commitFill(ring); return true; }
 
-        armMoveOnEdge(cast(uint)seedEi, e);
+        armMoveOnEdge(cast(uint)seedEi, e, pickOcclusionOf(vts));
         return true;
     }
 
@@ -3729,7 +3737,7 @@ public:
         int grabbed;
         const other = queryPressTarget(e.x, e.y, vp, pickOcclusionOf(vts), vts.get!SubjectPacket());
         const kind = grabTargetElement(other, grabbed);
-        if (kind != MoveElem.None) return armMoveOn(kind, grabbed, e, axis);
+        if (kind != MoveElem.None) return armMoveOn(kind, grabbed, e, axis, pickOcclusionOf(vts));
         if (other.source >= 0 && other.owner.mesh !is mesh) return false;
         if (findSourceVertex(e.x, e.y, vp) >= 0 || overPrimaryEdgeOrFace(e.x, e.y, vp)) return false;
         if (axis) return false;   // an axis move has nothing to place
@@ -4033,7 +4041,7 @@ public:
         int index;
         immutable MoveElem kind = resolveGrabTarget(e.x, e.y, vp, index, pickOcclusionOf(vts), vts.get!SubjectPacket());
         if (kind == MoveElem.None) return false;
-        return armMoveOn(kind, index, e, axis);
+        return armMoveOn(kind, index, e, axis, pickOcclusionOf(vts));
     }
 
     // Fill's destructive refusal (task 0488) grabs a border edge the search
@@ -4041,14 +4049,14 @@ public:
     // factored out of `armMoveElement` above rather than duplicated: one
     // definition of what "the Move gesture is now armed on this element"
     // means, so the two entry points can never drift.
-    private bool armMoveOnEdge(uint ei, ref const SDL_MouseButtonEvent e) {
+    private bool armMoveOnEdge(uint ei, ref const SDL_MouseButtonEvent e, bool occlusion = false) {
         auto m = mesh;
         if (m is null || ei >= m.edges.length) return false;
-        return armMoveOn(MoveElem.Edge, cast(int)ei, e);
+        return armMoveOn(MoveElem.Edge, cast(int)ei, e, false, occlusion);
     }
 
     private bool armMoveOn(MoveElem kind, int index, ref const SDL_MouseButtonEvent e,
-                           bool axis = false) {
+                           bool axis = false, bool occlusion = false) {
         auto m = mesh;
         if (m is null) return false;
 
@@ -4084,6 +4092,7 @@ public:
 
         moveElem_    = kind;
         moveVerts_   = uniq;
+        moveFrame_ = new EvaluatedMoveWeld(*m, uniq, innerSnap_, occlusion);
         moveBase_.length = uniq.length;
         foreach (i, vi; uniq) moveBase_[i] = m.vertices[vi];
         moveAnchor_  = pressAnchor(kind, index, e.x, e.y, pressVp_);
@@ -4264,6 +4273,10 @@ public:
                                   bool search = false) {
         auto m = mesh;
         if (m is null || targets.length != moveVerts_.length) return;
+        if (moveFrame_ !is null && dragSnap_.enabled && !moveAxisLock_) {
+            applyEvaluatedMove(targets, vts);
+            return;
+        }
         foreach (vi; moveVerts_)
             if (vi >= m.vertices.length) return;   // stale arm — defensive
 
@@ -4286,17 +4299,18 @@ public:
         auto t = new int[](moveVerts_.length);
         bool snapped = false;
         foreach (i, vi; moveVerts_) {
-            const bool ask = search && !(moveElem_ == MoveElem.Edge && sp && sp.onPlane[vi]);
+            const bool ask = search && (moveElem_ != MoveElem.Edge || m.vertexPolygonCounts()[vi] == 1);
             t[i] = ask ? rawSnapTarget(targets[i], vp, exclude) : -1;
             snapped = snapped || t[i] >= 0;
         }
+        Vec3[] points;
         foreach (i, vi; moveVerts_) {
             const Vec3 w = t[i] >= 0 ? m.vertices[t[i]] : snapped ? moveBase_[i]
                          : sp && sp.onPlane[vi] ? projectOnPlane(*sp, targets[i]) : targets[i];
-            m.vertices[vi] = w;
-            const int pi = sp ? sp.pairOf[vi] : -1;   // -1: unpaired or on the plane
-            if (pi >= 0 && !m.isVertexHidden(pi)) m.vertices[pi] = mirrorPosition(*sp, w);
+            points~=w;
         }
+        import symmetry : writeMovePositions;
+        writeMovePositions(*m,sp,moveVerts_,points);
         m.publishConfinedChange(MeshEditScope.Position);
         moveDirty_ = true;
 
@@ -4305,12 +4319,109 @@ public:
         refreshDisplay(m, gpu_);
     }
 
-    // Which live drag steps search (K-W2c): a vertex grab always; an edge grab while
-    // the cursor is within 32 px of the press (rule 4); a polygon grab never (not captured).
+    private void applyEvaluatedMove(const(Vec3)[] targets, ref VectorStack vts) {
+        auto m = mesh;
+        if (!moveFrame_.evaluated) {
+            bool changed;
+            foreach(i,p;targets) if((p-moveBase_[i]).length>1e-4f) changed=true;
+            if(!changed) return;
+        }
+        const vp = viewportOf(vts);
+        const type = moveElem_ == MoveElem.Vertex ? SnapType.Vertex
+                   : moveElem_ == MoveElem.Edge ? SnapType.Edge : SnapType.Polygon;
+        const ms = primaryModelSpace();
+        const raw = moveAnchor_ + moveOffset_;
+        Vec3 ro, rd;
+        screenPointToRay(moveStartX_+0.5f,moveStartY_+0.5f,vp,ro,rd);
+        const ray = ms.toLocalDir(rd);
+        moveFrame_.freezeSymmetry(vts.get!SymmetryPacket());
+        auto live = searchMoveElement(*m, ms, vp, moveAnchor_, type,
+            (SnapType t, int i) => admitsMoveElement(*m,t,i,moveFrame_.liveSource,
+                false,false,backFace_,ray),
+            (Vec3 p) => !moveFrame_.occlusion || pressVisible(p,vp), moveOffset_);
+        Vec3 handle = evaluatedMoveHandle(live,raw);
+        bool ownMirror;
+        if (moveElem_==MoveElem.Vertex) {
+            ownMirror=moveFrame_.mirrorCenter(targets[0],ms,vp,
+                topoPenSnapAcceptPx(vp,dragSnap_),handle);
+            if(!ownMirror) {
+                const target=rawSnapTarget(targets[0],vp,moveFrame_.liveSource);
+                handle=target>=0 ? m.vertices[target] : targets[0];
+            }
+        }
+        if (!moveFrame_.beginFrame(*m,handle)) return;
+        auto sp = moveFrame_.symmetry;
+        const frameRaw=moveElem_==MoveElem.Vertex ? targets.dup : carriedTargets(moveBase_,handle-moveAnchor_);
+        import symmetry : writeMovePositions;
+        writeMovePositions(*m,sp,moveVerts_,frameRaw);
+        m.publishConfinedChange(MeshEditScope.Position);
+        auto held = searchMoveElement(*m,ms,vp,handle,type,
+            (SnapType t, int i) => admitsMoveElement(*m,t,i,moveVerts_,
+                true,innerSnap_,backFace_,ray,sp,moveFrame_.marked),
+            (Vec3 p) => !moveFrame_.occlusion || pressVisible(p,vp));
+        uint[2][] pairs;
+        if (heldMoveEngages(held)) {
+            uint[2] sourceSide;
+            if (moveElem_ == MoveElem.Edge) sourceSide = [moveVerts_[0],moveVerts_[1]];
+            else {
+                auto sideHit = searchMoveElement(*m,ms,vp,handle,SnapType.Polygon,
+                    (SnapType t,int i) => m.faces[i] == moveVerts_);
+                sourceSide = sideHit.side;
+            }
+            Vec3[] positions;
+            foreach(vi;sourceSide) foreach(i,v;moveVerts_) if(v==vi) positions~=moveBase_[i];
+            pairs = pairedMoveEnds(positions,sourceSide,*m,held.side);
+            const shift = ((m.vertices[pairs[0][0]]-positions[0])
+                         +(m.vertices[pairs[1][0]]-positions[1]))*0.5f;
+            Vec3[] points;
+            foreach(i,vi;moveVerts_) {
+                Vec3 point = moveBase_[i]+shift;
+                foreach(p;pairs) if(p[1]==vi) point=m.vertices[p[0]];
+                points~=point;
+            }
+            moveFrame_.write(*m,targets,points,false);
+        } else {
+            const off=handle-moveAnchor_;
+            auto rawTargets=moveElem_==MoveElem.Vertex ? targets.dup : carriedTargets(moveBase_,off);
+            auto points=rawTargets.dup;
+            auto found=new int[](moveVerts_.length);
+            bool snapped;
+            foreach(i,vi;moveVerts_) {
+                const support=m.vertexPolygonCounts()[vi];
+                const ask=moveElem_==MoveElem.Vertex || moveElem_==MoveElem.Edge && support==1;
+                found[i]=ownMirror ? sp.pairOf[vi] : ask ? rawSnapTarget(rawTargets[i],vp,moveFrame_.marked) : -1;
+                snapped=snapped || found[i]>=0;
+            }
+            foreach(i,vi;moveVerts_) {
+                if(found[i]>=0) {
+                    import symmetry : projectOnPlane;
+                    points[i]=ownMirror ? projectOnPlane(*sp,rawTargets[i]) : m.vertices[found[i]];
+                    pairs~=[cast(uint)found[i],vi];
+                }
+                else if(snapped) points[i]=moveBase_[i];
+                else if(sp.onPlane.length==m.vertices.length && sp.onPlane[vi]) {
+                    import symmetry : projectOnPlane;
+                    points[i]=projectOnPlane(*sp,points[i]);
+                }
+            }
+            moveFrame_.write(*m,rawTargets,points,snapped && !ownMirror);
+        }
+        m.publishConfinedChange(MeshEditScope.Position);
+        moveFrame_.weld(*m,pairs);
+        // A refused kernel absorption preserves free movement (loose geometry
+        // is still a valid Move subject). Never leave a refused snap written.
+        if(pairs.length && !moveFrame_.welded) moveFrame_.write(*m,frameRaw,frameRaw,false);
+        moveWelded_=moveFrame_.welded;
+        moveDirty_=true;
+        m.syncSelection();
+        if(gpu_ !is null) gpu_.upload(*m);
+        refreshDisplay(m,gpu_);
+    }
+
+    // The constrained position-only route retains endpoint searching. Edge
+    // source support, rather than cursor travel, decides eligibility (9504).
     private bool liveSearch(int px, int py) const {
-        immutable int dx = px - moveStartX_, dy = py - moveStartY_;
-        return moveElem_ == MoveElem.Vertex
-            || moveElem_ == MoveElem.Edge && dx * dx + dy * dy <= 32 * 32;
+        return moveElem_ == MoveElem.Vertex || moveElem_ == MoveElem.Edge;
     }
 
     // Close an armed Move: apply the FINAL targets at the release's own
@@ -4319,19 +4430,26 @@ public:
     private void finishMove(int px, int py, const ref Viewport vp, ref VectorStack vts) {
         scope(exit) clearMoveArm();
         if (!moveArmed_ || moveVerts_.length == 0) return;
-        const targets = moveTargets(px, py, vp);
-        applyMoveTargets(targets, vts);
+        bool evaluated = moveFrame_ !is null && moveFrame_.evaluated;
+        const targets = evaluated ? null : moveTargets(px, py, vp);
+        if (!evaluated) applyMoveTargets(targets, vts);
+        evaluated = moveFrame_ !is null && moveFrame_.evaluated;
         noteMoveOffset();
         // The destructive landing (task 0555), inside the same step. Gated on
         // `moveDirty_`: a grab that never moved anything cannot have been
         // "brought to within" anything, and welding on a bare click would eat
         // any vertex that merely happened to sit inside the acceptance radius.
-        if (moveDirty_ && weldMovedVertices(moveVerts_, vp, targets, vts.get!SymmetryPacket())) {
+        if (!evaluated && moveDirty_ && weldMovedVertices(moveVerts_, vp, targets, vts.get!SymmetryPacket())) {
             moveWelded_ = true;
             afterWeld();
-            // Compaction changes element indices; feedback names the surviving target.
-            if (placementSnap_.snapped)
-                placementSnap_ = placementElection(placementSnap_.worldPos, px, py, vp, dragSnap_);
+        }
+        // Every evaluated weld compacted element indices. Re-elect only the
+        // readout at the retained world point; this does not evaluate geometry.
+        if (moveWelded_ && placementSnap_.snapped) {
+            float sx,sy,sz;
+            if(projectToWindowFull(placementSnap_.worldPos,vp,sx,sy,sz))
+                placementSnap_=placementElection(placementSnap_.worldPos,
+                    cast(int)sx,cast(int)sy,vp,dragSnap_);
         }
         // The descriptor of this press (S7a), before the resync below clears
         // the arm. A weld compacted the indices and absorbed the grabbed
@@ -4353,6 +4471,7 @@ public:
     // notification, no row.
     private void noteMoveOffset() {
         if (moveElem_ != MoveElem.Vertex || movePerspectiveGuideAccepted_) { writeOffset(moveOffset_); return; }
+        if(moveFrame_ !is null && moveFrame_.evaluated) { writeOffset(moveFrame_.offset); return; }
         auto m = mesh;
         if (m is null || moveVerts_.length == 0 || moveBase_.length != moveVerts_.length)
             return;
@@ -4459,6 +4578,7 @@ public:
         moveBase_    = null;
         moveDirty_   = false;
         moveWelded_  = false;
+        moveFrame_ = null;
     }
 
     // P3 (doc/topopen_p3_plan.md), on the Shift+LMB "Duplicate" overlay slot
@@ -4510,7 +4630,7 @@ public:
         // hub-fan's fourth drag), so the press arms that gesture and its
         // release and record are the move's own.
         immutable BuildCase c = classifySource(src);
-        if (c == BuildCase.None) return armMoveOn(MoveElem.Vertex, src, e);
+        if (c == BuildCase.None) return armMoveOn(MoveElem.Vertex, src, e, false, pickOcclusionOf(vts));
 
         sourceVert_     = src;
         dragArmed_      = true;

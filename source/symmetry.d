@@ -4,6 +4,7 @@ import std.algorithm : sort, max;
 import std.math      : abs;
 
 import math : Vec3, dot;
+static import math;
 import mesh : Mesh;
 import editmode : EditMode;
 import toolpipe.packets : SymmetryPacket;
@@ -1193,4 +1194,31 @@ unittest { // T-R3 row 2 — applySymmetryMirrorDelta has the identical hole
         assert(!touched[4],
             "delta-mirror: a dropped write must not claim the partner was touched");
     }
+}
+
+// 9504: one corner-ordered move producer. Optional captured partner positions
+// carry a vertex snap's held lag; ordinary/edge writes use exact reflection.
+void writeMovePositions(ref Mesh mesh, const(SymmetryPacket)* sp,
+        const(uint)[] vertices, const(Vec3)[] points,
+        const(Vec3)[] partners = null) {
+    foreach(i,vi;vertices) {
+        mesh.vertices[vi]=points[i];
+        const pi=sp !is null && sp.pairOf.length==mesh.vertices.length ? sp.pairOf[vi] : -1;
+        if(pi>=0 && !mesh.isVertexHidden(pi))
+            mesh.vertices[pi]=i<partners.length ? partners[i] : mirrorPosition(*sp,points[i]);
+    }
+}
+
+// 9504: own-partner hit uses the current reflected point, then the existing
+// symmetric weld owns absorption on the plane. The query retains client reach.
+bool moveMirrorCenter(const ref SymmetryPacket sp,uint source,Vec3 point,
+        math.ModelSpace space,const ref math.Viewport view,float reach,ref Vec3 center) {
+    import math : projectToWindowFull;
+    if(source>=sp.pairOf.length || sp.pairOf[source]<0) return false;
+    float ax,ay,az,bx,by,bz;
+    if(!projectToWindowFull(space.toWorldPoint(point),view,ax,ay,az)
+        || !projectToWindowFull(space.toWorldPoint(mirrorPosition(sp,point)),view,bx,by,bz)) return false;
+    if((ax-bx)*(ax-bx)+(ay-by)*(ay-by)>reach*reach) return false;
+    center=projectOnPlane(sp,point);
+    return true;
 }

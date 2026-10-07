@@ -696,6 +696,7 @@ tools.edit.poly_bevel
 tools.edit.poly_extrude
 tools.edit.tack
 tools.edit.topology_pen.gestures_test
+tools.edit.topology_pen.move_protocol_test
 tools.edit.topology_pen.press_compatibility_test
 tools.edit.topology_pen.reapply_test
 tools.harness.hostspace

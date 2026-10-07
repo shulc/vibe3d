@@ -20,7 +20,8 @@ import mesh              : Mesh, MeshTopoKey;
 import math              : Vec3, Viewport, dot, screenPointToRay, projectToWindowFull;
 import document          : primaryModelSpace;
 import toolpipe.guide    : SnapGuide, GuideDrawState, kGuidePrioritySeed;
-import toolpipe.packets  : SnapType;
+import toolpipe.packets  : SnapType, SymmetryPacket;
+import evaluated_move_weld : moveFaceNormal, movePolygonNeighbors, moveConnectedGeometryAdmits;
 
 /// True if edge `ei` is INTERIOR — shared by two or more polygons.
 ///
@@ -404,4 +405,46 @@ final class PenSnapGuide : SnapGuide {
     float outerPushedPx() const { return outerPx_; }
     GuideDrawState drawState() const { return draw_; }
     bool  isAimed() const { return aimed_; }
+}
+
+// 9504: target admission uses live support; held admission uses the press
+// graph. Interior matching requires paired polygon neighbors (10810).
+package bool admitsMoveElement(ref Mesh m, SnapType type, int index,
+        const(uint)[] source, bool held, bool interior, bool backFace,
+        Vec3 ray, const(SymmetryPacket)* symmetry = null, const(uint)[] marks = null) {
+    import toolpipe.packets : SymmetryPacket;
+    if (index < 0) return false;
+    uint[] corners;
+    if (type == SnapType.Edge) {
+        if (index >= m.edges.length || m.isEdgeHidden(index)) return false;
+        corners = [m.edges[index][0],m.edges[index][1]];
+    } else if (type == SnapType.Polygon) {
+        if (index >= m.faces.length || m.isFaceHidden(index)) return false;
+        corners = m.faces[index];
+    } else return false;
+    foreach (vi; corners) {
+        if (m.isVertexHidden(vi) || (vi < m.vertexMarks.length && (m.vertexMarks[vi] & Mesh.Marks.Lock))) return false;
+        foreach (v; source) if (vi == v) return false;
+        foreach(v;marks) if(vi==v) return false;
+    }
+    if (type == SnapType.Edge) {
+        const counts = m.edgePolygonCounts();
+        if (held && interior) {
+            if (source.length != 2 || !((movePolygonNeighbors(m,source[0],corners[0]) && movePolygonNeighbors(m,source[1],corners[1]))
+                || (movePolygonNeighbors(m,source[0],corners[1]) && movePolygonNeighbors(m,source[1],corners[0])))) return false;
+        } else if (counts[index] != 1) return false;
+        if (held && symmetry !is null && symmetry.pairOf.length == m.vertices.length) {
+            foreach (vi; source)
+                if (symmetry.onPlane[vi]) return false;
+            if (source.length == 2 && symmetry.pairOf[source[0]] == source[1]) return false;
+        }
+    }
+    if (!backFace) {
+        Vec3 normal = Vec3(0,0,0);
+        if (type == SnapType.Polygon) normal = moveFaceNormal(m,cast(uint)index);
+        else foreach (fi; m.facesAroundEdge(cast(uint)index)) normal = normal + moveFaceNormal(m,cast(uint)fi);
+        if (dot(normal,ray) > 0) return false;
+    }
+    if(held && type==SnapType.Edge && !moveConnectedGeometryAdmits(m,source,[corners[0],corners[1]])) return false;
+    return true;
 }

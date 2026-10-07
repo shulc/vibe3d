@@ -4441,6 +4441,9 @@ unittest {
     scope(exit) setBackgroundSnapSources(null, null);
 
     auto t       = new TopologyPenTool();
+    // 0545 native snap preset explicitly sets innerSnap=1. Correct the probe
+    // after 9504 adds its decoded paired-connector admission; keep its golden.
+    t.innerSnap_ = true;
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
     auto session = bindPenSession(t, history);
@@ -4483,6 +4486,11 @@ unittest {
 
     SDL_MouseMotionEvent motion;
     motion.x = pressX + dx / 2; motion.y = pressY + dy / 2;
+    t.onMouseMotion(motion, vts);
+
+    // The 9504 release retains the last delivered motion. Deliver the intended
+    // final position before release, as the captured drag did.
+    motion.x = pressX + dx; motion.y = pressY + dy;
     t.onMouseMotion(motion, vts);
 
     SDL_MouseButtonEvent up;
