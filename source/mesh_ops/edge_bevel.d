@@ -1913,8 +1913,31 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
         foreach (t; 1 .. n) r0[t] = r0Interior[t - 1];
         foreach (t; 1 .. n) r1[t] = r1Interior[t - 1];
 
-        foreach (t; 0 .. n) {
-            newFaces ~= [r0[t], r1[t], r1[t + 1], r0[t + 1]];
+        // Task 20261380, rounded-fullhub capture: offset cuts subdivide each
+        // longitudinal strip row. Reuse each station chain in adjacent bands;
+        // its endpoints are the same split corners the offset flanks consume.
+        uint[] offsetStation(uint[] nearRail, uint[] farRail, uint nearL,
+                             uint nearR, uint farVertex) {
+            auto splitL = vfKey(nearL, farVertex) in splitCorner;
+            if (splitL is null) return null;
+            immutable uint a = *splitL;
+            immutable uint b = splitCorner[vfKey(nearR, farVertex)];
+            uint[] chain = new uint[](n + 1);
+            chain[0] = a; chain[n] = b;
+            foreach (t; 1 .. n)
+                chain[t] = ed.addVertex(edgeBevelOffsetMiddle(
+                    ed.vertices[nearRail[t]], ed.vertices[farRail[t]], 0, miterOffset));
+            return chain;
+        }
+        uint[][] stations = [r0];
+        auto nearStation = offsetStation(r0, r1, cV0L.vert, cV0R.vert, sp.v1);
+        auto farStation = offsetStation(r1, r0, cV1L.vert, cV1R.vert, sp.v0);
+        if (nearStation.length) stations ~= nearStation;
+        if (farStation.length) stations ~= farStation;
+        stations ~= r1;
+        foreach (j; 0 .. stations.length - 1) foreach (t; 0 .. n) {
+            newFaces ~= [stations[j][t], stations[j + 1][t],
+                         stations[j + 1][t + 1], stations[j][t + 1]];
             // Only the two END rings of a rounded strip stand on original
             // edges; every interior arc point is off them and has no
             // measured value, so it stays zero.

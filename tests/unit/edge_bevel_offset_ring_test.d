@@ -53,7 +53,7 @@ private void closedGraph(ref Mesh m, string witness, size_t boundaryCount=0) {
         if(count==1) ++actualBoundary;
         else assert(orientation[key]==0,witness~": adjacent rings opposed");
     }
-    assert(actualBoundary==boundaryCount,format("%s: boundary count %s vs %s",witness,actualBoundary,boundaryCount));
+    if (boundaryCount != size_t.max) assert(actualBoundary==boundaryCount,format("%s: boundary count %s vs %s",witness,actualBoundary,boundaryCount));
     foreach(u;used) assert(u,witness~": no orphan points");
 }
 private void compareGeometry(ref Mesh m, JSONValue expected, string witness,
@@ -62,6 +62,8 @@ private void compareGeometry(ref Mesh m, JSONValue expected, string witness,
     assert(m.faces.length==expected["faces"].array.length,witness~": full polygon population");
     uint[] ids=new uint[](m.vertices.length);
     bool[] used=new bool[](ids.length);
+    const widthGaps = knownWidthGap.type == JSONType.object ? [knownWidthGap]
+        : knownWidthGap.type == JSONType.array ? knownWidthGap.array : null;
     size_t gapCount;
     foreach(i,v;m.vertices) {
         size_t match=size_t.max;
@@ -71,21 +73,21 @@ private void compareGeometry(ref Mesh m, JSONValue expected, string witness,
                 assert(match==size_t.max,witness~": unique point match");match=j;
             }
         }
-        if(match==size_t.max && knownWidthGap.type==JSONType.object) {
-            const uint refIndex=cast(uint)knownWidthGap["referencePointIndex"].integer;
-            auto old=knownWidthGap["existingPosition"], refPosition=knownWidthGap["referencePosition"];
+        if (match == size_t.max) foreach (gap; widthGaps) {
+            const uint refIndex = cast(uint)gap["referencePointIndex"].integer;
+            auto old = gap["existingPosition"], refPosition = gap["referencePosition"];
             auto oldPoint=Vec3(scalar(old[0]),scalar(old[1]),scalar(old[2]));
             auto expectedPoint=Vec3(scalar(refPosition[0]),scalar(refPosition[1]),scalar(refPosition[2]));
             auto row=expected["vertices"][refIndex];
             auto actualExpected=Vec3(scalar(row[0]),scalar(row[1]),scalar(row[2]));
             assert((actualExpected-expectedPoint).length<1e-7f,witness~": known width gap reference stays frozen");
-            if((v-oldPoint).length<1e-7f) { match=refIndex;++gapCount; }
+            if((v-oldPoint).length<1e-7f) { match=refIndex;++gapCount;break; }
         }
         assert(match!=size_t.max,format("%s: unmatched point %s %s",witness,i,v));
         assert(!used[match],witness~": bijective point identity");
         used[match]=true;ids[i]=cast(uint)match;
     }
-    assert(gapCount==(knownWidthGap.type==JSONType.object ? 1 : 0),
+    assert(gapCount == widthGaps.length,
         witness~": exactly the independently observed width-only gap, no extra discrepancies");
     bool[] matched=new bool[](m.faces.length);
     foreach(ring;m.faces) {
@@ -166,5 +168,109 @@ unittest {
             positive?"PARTIAL OFFSET WITH KNOWN WIDTH GAP":"PARTIAL WIDTH BASELINE XFAIL",
             fixture["knownWidthGap"]);
         closedGraph(m,"PARTIAL JUNCTION");
+    }
+}
+
+unittest {
+    auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/rounded_offset_stations.json"));
+    assert(fixture["cases"].array.length == 6, "ROUNDED OFFSET: independent station captures");
+    foreach (cell; fixture["cases"].array) {
+        // Preserve the independently captured width-only hub profile gap
+        // (20261420). The positive result adds its three derived station gaps;
+        // every other point and every oriented polygon must match the capture.
+        if (cell["widthMode"].boolean)
+            assert(cell["knownWidthGaps"].array.length == (scalar(cell["offset"]) == 0 ? 4 : 7),
+                "ROUNDED OFFSET: exact inherited width profile discrepancy population");
+        auto m = sourceMesh(cell.object.get("source", fixture["source"]));
+        auto mask = selected(m, cell["selection"]);
+        auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+        assert(ed.bevelEdgesByMask(mask, scalar(cell["width"]),
+            cast(int)cell["roundLevel"].integer, cell["widthMode"].boolean,
+            scalar(cell["offset"])) == cell["selection"]["edges"].array.length,
+            "ROUNDED OFFSET: every selected span consumed");
+        ed.close();
+        const witness = "ROUNDED OFFSET " ~ cell["name"].str;
+        compareGeometry(m, cell["expected"], witness,
+            cell.object.get("knownWidthGaps", JSONValue.init));
+        closedGraph(m, witness);
+    }
+}
+
+private Mesh corpusMesh(int layout) {
+    import mesh : makeCube;
+    auto m = makeCube();
+    if (layout >= 6) {
+        m.faces.length = m.faces.length - 1;
+        m.rebuildEdges(); m.buildLoops();
+    }
+    return m;
+}
+private bool[] corpusSelection(ref Mesh m, int layout) {
+    auto mask = new bool[](m.edges.length);
+    foreach (i, e; m.edges) {
+        switch (layout) {
+            case 0: mask[i] = edgeKey(e[0], e[1]) == edgeKey(6, 7); break;
+            case 1: mask[i] = (e[0] == 6 || e[1] == 6) && !(e[0] == 2 || e[1] == 2); break;
+            case 2: mask[i] = e[0] == 6 || e[1] == 6; break;
+            case 3: mask[i] = e[0] >= 4 && e[1] >= 4; break;
+            case 4: mask[i] = true; break;
+            case 5: mask[i] = e[0] == 6 || e[1] == 6 || e[0] == 0 || e[1] == 0; break;
+            case 6: mask[i] = e[0] >= 4 && e[1] >= 4; break;
+            case 7: mask[i] = true; break;
+            default: assert(0);
+        }
+    }
+    return mask;
+}
+
+unittest {
+    import std.stdio : writeln;
+    uint cells, failed;
+    foreach (layout; 0 .. 8) foreach (config; 0 .. 6) {
+        auto m = corpusMesh(layout);
+        auto mask = corpusSelection(m, layout);
+        const float width = config == 0 ? 0 : .06f;
+        const float offset = config == 1 ? 0 : .222f;
+        const int level = config >= 4 ? 1 : 0;
+        const bool widthMode = config == 3 || config == 5;
+        auto oldV = m.vertices.dup;
+        uint[][] oldF;
+        foreach (f; m.faces) oldF ~= f.dup;
+        const id = format("OFFSET CORPUS layout%s config%s width%s offset%s round%s mode%s",
+            layout, config, width, offset, level, widthMode);
+        if (layout < 6 && width > 0 && offset > 0) {
+            auto control = corpusMesh(layout);
+            auto cm = corpusSelection(control, layout);
+            auto ce = MeshEditBatch.unrecorded(control, kEdgeBevelEditScope);
+            assert(ce.bevelEdgesByMask(cm, width, level, widthMode, 0) > 0);
+            ce.close();
+            closedGraph(control, id ~ " WIDTH-ONLY CONTROL");
+        }
+        try {
+            auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+            auto n = ed.bevelEdgesByMask(mask, width, level, widthMode, offset);
+            ed.close();
+            if (n == 0) assert(m.vertices == oldV && m.faces == oldF, id ~ ": atomic refusal");
+            else closedGraph(m, id, layout >= 6 ? size_t.max : 0);
+        } catch (Throwable e) {
+            ++failed;
+            writeln(id, " FAIL ", e.msg);
+        }
+        ++cells;
+    }
+    assert(cells == 48, "OFFSET CORPUS: independent population");
+    writeln("OFFSET-CORPUS cells=", cells, " failed=", failed);
+    assert(failed == 0, "Independent geometry corpus failed");
+}
+
+unittest {
+    foreach (layout; [2, 4, 5]) foreach (widthMode; [false, true]) {
+        auto m = corpusMesh(layout);
+        auto mask = corpusSelection(m, layout);
+        auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+        assert(ed.bevelEdgesByMask(mask, .06f, 2, widthMode, .222f) > 0,
+            "ROUNDED OFFSET L2: selected spans consumed");
+        ed.close();
+        closedGraph(m, format("ROUNDED OFFSET L2 layout%s mode%s", layout, widthMode));
     }
 }
