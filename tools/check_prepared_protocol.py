@@ -4048,7 +4048,7 @@ def edge_bevel_activation_gate(owner, context, tool, preview):
         tool.count("image.gizmoSelHash = gizmoSelHash;") == 4 and
         "active = true; built = false; dragPart = -1;\n"
         "        preview_.reset();" in installer and
-        not installer_image_writes(pt, ("width_",)) and
+        not installer_image_writes(pt, (r"state_(?:\s*\.\s*\w+)?",)) and
         "preview_.reset(); image.before.moveInto(before);" in installer and
         "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
         "baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;" in installer and
@@ -4058,7 +4058,6 @@ def edge_bevel_activation_gate(owner, context, tool, preview):
         installer.find("gizmoSelHash = image.gizmoSelHash;") <
             installer.find("publishOwnerFrameToReplica();") <
             installer.find("image.clear();") and
-        not re.search(r"\b(roundLevel_|widthMode_)\s*=", installer) and
         "void reset() nothrow @nogc" in preview and
         "hasLast_      = false;" in preview and
         "last_         = PreviewTopologyKey.init;" in preview and
@@ -4116,15 +4115,19 @@ for target, old, new, label in (
     ("tool", "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
      "        if (!image.valid) return;",
      "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
-     "        if (!image.valid) return; roundLevel_ = 0;", "reset round preset"),
+     "        if (!image.valid) return; state_.roundLevel = 0;", "reset round preset"),
     ("tool", "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
      "        if (!image.valid) return;",
      "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
-     "        if (!image.valid) return; widthMode_ = false;", "reset width mode preset"),
+     "        if (!image.valid) return; state_.widthMode = false;", "reset width mode preset"),
     ("tool", "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
      "        if (!image.valid) return;",
      "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
-     "        if (!image.valid) return; width_ = 0.0f;", "restore width write"),
+     "        if (!image.valid) return; state_.width = 0.0f;", "restore width write"),
+    ("tool", "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return;",
+     "ref PreparedEdgeBevelActivationImage image) nothrow @nogc {\n"
+     "        if (!image.valid) return; state_ = EdgeBevelState.init;", "reset state record"),
     ("tool", "preview_.reset(); image.before.moveInto(before);",
      "image.before.moveInto(before);", "retain preview scratch"),
     ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
