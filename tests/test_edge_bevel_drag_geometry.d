@@ -162,3 +162,32 @@ unittest { // the previously supported J3 must use the same live preview route
     cmd(commandBody("mesh.select",`{"mode":"edges","indices":[`~indices~`]}`));
     checkSequence((low+high)*.5f);
 }
+
+unittest { // Actual user ring selection, including the crash's nonzero offset.
+    import std.file : readText;
+    auto fixture=parseJSON(readText("tests/fixtures/edge_bevel/offset_ring.json"));
+    auto source=fixture["source"];
+    foreach(initialOffset;[0.0,.222]) {
+        cmd(commandBody("scene.loadMesh", `{"vertices":`~source["vertices"].toString~
+            `,"faces":`~source["faces"].toString~`}`));
+        auto m=model(); string indices;
+        foreach(pair;fixture["selection"]["edges"].array) {
+            int ei=edgeIndex(m,cast(int)pair[0].integer,cast(int)pair[1].integer);
+            assert(ei>=0,"LIVE RING: source edge exists");
+            if(indices.length) indices~=",";indices~=ei.to!string;
+        }
+        cmd(commandBody("mesh.select",`{"mode":"edges","indices":[`~indices~`]}`));
+        cmd("tool.set edge.bevel on");
+        interactiveCmd("tool.attr edge.bevel miterOffset "~initialOffset.to!string);
+        settle();
+        auto before=geometry();
+        auto d=heldMotion(0,Vec3(0,0,0),8);
+        auto state=getJson("/api/tool/state");
+        assert(state["width"].floating>0 && fabs(state["miterOffset"].floating-initialOffset)<1e-6,
+            "LIVE RING: actual first handle changes width, preserves offset");
+        assert(state["built"].type==JSONType.true_ && geometry()!=before,
+            "LIVE RING: geometry changes before releasing the first handle");
+        release(d);
+        cmd("tool.set edge.bevel off");
+    }
+}

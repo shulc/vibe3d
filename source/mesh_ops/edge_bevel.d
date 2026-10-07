@@ -1768,7 +1768,7 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
         return s;
     }
 
-    // Task 20261290, private evidence/10860-edge-bevel/modes-handles-static-20261007:
+    // Tasks 20261290/20261380, private evidence/10860-edge-bevel and offset_ring:
     // keep the width rails; generate a second ordered boundary and flanks.
     // The inset producer alone adds the two distances; Middle uses local amount.
     uint[ulong] outerCorner, splitCorner;
@@ -1808,14 +1808,18 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
                     nv = ed.addVertex(edgeBevelOffsetCorner(ed.vertices[v],
                         ed.vertices[prev], ed.vertices[next], ed.faceNormal(fi),
                         width, miterOffset));
-                    const uint before = ed.addVertex(edgeBevelOffsetMiddle(
-                        ed.vertices[c.vert], ed.vertices[cornerAtVF[vfKey(prev, fi)].vert], 0, miterOffset));
-                    const uint after = ed.addVertex(edgeBevelOffsetMiddle(
-                        ed.vertices[c.vert], ed.vertices[cornerAtVF[vfKey(next, fi)].vert], 0, miterOffset));
-                    splitCorner[vfKey(c.vert, prev)] = before;
-                    splitCorner[vfKey(c.vert, next)] = after;
-                    miterFlanks ~= [c.vert, after, nv, before];
-                    miterFlankSource ~= fi;
+                    // Inner strip stations belong to a complete selected fan;
+                    // partial turns retain their existing width rails.
+                    if (c.isFullHub) {
+                        const uint before = ed.addVertex(edgeBevelOffsetMiddle(
+                            ed.vertices[c.vert], ed.vertices[cornerAtVF[vfKey(prev, fi)].vert], 0, miterOffset));
+                        const uint after = ed.addVertex(edgeBevelOffsetMiddle(
+                            ed.vertices[c.vert], ed.vertices[cornerAtVF[vfKey(next, fi)].vert], 0, miterOffset));
+                        splitCorner[vfKey(c.vert, prev)] = before;
+                        splitCorner[vfKey(c.vert, next)] = after;
+                        miterFlanks ~= [c.vert, after, nv, before];
+                        miterFlankSource ~= fi;
+                    }
                 } else {
                     const auto a = edgeKey(v, prev) in ed.edgeIndexMap;
                     const uint far = a !is null && qualifies[*a] ? next : prev;
