@@ -4081,7 +4081,7 @@ private LocalOracle deriveLocalContract(LocalObservation o,JSONValue cs,size_t c
     return q;
 }
 private JSONValue localGet(string endpoint) { return parseJSON(cast(string)get(BASE~"/api/"~endpoint)); }
-private struct LocalSnapshots { JSONValue beforeAttr, afterAttr, afterApply, beforePacket, authoredPacket, beforeSelection, afterSelection; long beforeHistory, afterHistory; }
+private struct LocalSnapshots { size_t observedPhases; JSONValue beforeAttr, afterAttr, afterApply, beforePacket, authoredPacket, beforeSelection, afterSelection; long beforeHistory, afterHistory; }
 private void checkLocalSnapshots(ref LocalFacts facts, LocalObservation o, LocalOracle q, LocalSnapshots s, JSONValue ft) {
     bool sameVertices(JSONValue model) {return model["vertices"]==o.model["vertices"];}
     facts.set("before-apply",sameVertices(s.beforeAttr) && sameVertices(s.afterAttr));
@@ -4114,9 +4114,9 @@ private void checkLocalSnapshots(ref LocalFacts facts, LocalObservation o, Local
         if(fabs(asDouble(tr[family].array[k])-want)>1e-5)channels=false;
     }
     facts.set("authored-published-channel",channels);
-    bool output=true,untouched=true;
-    foreach(vi,v;s.afterApply["vertices"].array) {
-        if(vi>=q.output.length) {output=false;continue;}
+    import std.algorithm : min;
+    bool output=s.afterApply["vertices"].array.length==q.output.length,untouched=true;
+    foreach(vi,v;s.afterApply["vertices"].array[0..min(s.afterApply["vertices"].array.length,q.output.length)]) {
         foreach(k;0..3) if(fabs(asDouble(v.array[k])-q.output[vi][k])>.001) output=false;
         if(q.membership[vi]<0 && jvec3(v)!=o.before[vi]) untouched=false;
     }
@@ -4165,7 +4165,7 @@ void runLocalContractSuite(string fixtureJson) {
     import std.process : environment;
     import std.digest.sha : sha256Of;
     import std.digest : toHexString;
-    import std.stdio : writeln, writefln, File;
+    import std.stdio : writeln, writefln, File, stdout;
     string reportPath=environment.get("VIBE3D_ACEN_LOCAL_REPORT", "");
     size_t checked,reports;
     File reportFile;
@@ -4173,7 +4173,7 @@ void runLocalContractSuite(string fixtureJson) {
     void emit(string line) {
         import std.algorithm : startsWith;
         if(line.startsWith("HISTORICAL ")) ++reports;
-        writeln(line); if(reportFile.isOpen) {reportFile.writeln(line);reportFile.flush();}
+        writeln(line); stdout.flush(); if(reportFile.isOpen) {reportFile.writeln(line);reportFile.flush();}
     }
     assert(localFixtureIntegrity(fixtureJson),
         "Local immutable fixture integrity");
@@ -4212,6 +4212,7 @@ void runLocalContractSuite(string fixtureJson) {
         cmd("history.clear",name);
         LocalSnapshots s;
         void observer(string phase) {
+            ++s.observedPhases;
             auto model=localGet("model"),packet=localGet("toolpipe/eval"),selection=localGet("selection");
             auto history=localGet("history");
             if(phase=="before-attr") {s.beforeAttr=model;s.beforePacket=packet;s.beforeSelection=selection;s.beforeHistory=history["undo"].array.length;}
@@ -4222,6 +4223,7 @@ void runLocalContractSuite(string fixtureJson) {
             emit("LOCAL-OBSERVATION "~record.toString);
         }
         foreach(i,step;cs["op"].array)runStep(step,name,"op",i,&observer);
+        assert(localObservationComplete(s),"Local observation completeness before diagnostics");
         LocalVector[] actual;foreach(v;s.afterApply["vertices"].array)actual~=jvec3(v);
         auto report=compareHistoricalPairs(actual,o.historical,tol);
         emit(format("HISTORICAL %s compared=%s mismatches=%s maxResidual=%.17g first=v%s[%s] actual=%s expected=%s disposition=%s input=historical-input-unresolved parity=UNCLAIMED",
@@ -4233,6 +4235,7 @@ void runLocalContractSuite(string fixtureJson) {
         assertLocalContract(q.facts,name);
         localSnapshotControls(o,q,s,cs["op"].array[0]["acen_transform"]);
         localChannelControls(o,q,s,cs["op"].array[0]["acen_transform"]);
+        localCoordinateControls(o,q,s,cs["op"].array[0]["acen_transform"]);
         localDerivationControls(o,cs,cell);
         ++checked;
         // Census retains exact historic equality LAST, after complete observations.
@@ -4245,12 +4248,13 @@ void runLocalContractSuite(string fixtureJson) {
 private JSONValue localCopy(JSONValue v) { return parseJSON(v.toString); }
 private void localSnapshotControls(LocalObservation o, LocalOracle q, LocalSnapshots valid, JSONValue ft) {
     import std.algorithm : canFind;
-    foreach(name;["before-apply","history","topology","selection","signed-packet-centers","authored-published-channel","current-output","untouched-exact","before-apply-initial","history-headroom","topology-edges","topology-count","packet-center","packet-global","packet-right","packet-normal","packet-membership","packet-population"]) {
+    foreach(name;["before-apply","history","topology","selection","signed-packet-centers","authored-published-channel","current-output","untouched-exact","before-apply-initial","selection-initial","history-headroom","topology-edges","topology-count","packet-center","packet-global","packet-right","packet-normal","packet-membership","packet-population"]) {
         auto s=valid;
         s.beforeAttr=localCopy(valid.beforeAttr);s.afterAttr=localCopy(valid.afterAttr);s.afterApply=localCopy(valid.afterApply);
-        s.beforePacket=localCopy(valid.beforePacket);s.authoredPacket=localCopy(valid.authoredPacket);s.afterSelection=localCopy(valid.afterSelection);
+        s.beforeSelection=localCopy(valid.beforeSelection);s.beforePacket=localCopy(valid.beforePacket);s.authoredPacket=localCopy(valid.authoredPacket);s.afterSelection=localCopy(valid.afterSelection);
         string fact=name;
         switch(name) {
+            case "selection-initial":s.beforeSelection["mode"]=JSONValue("vertices");fact="selection";break;
             case "before-apply-initial":s.beforeAttr["vertices"].array[0].array[0]=JSONValue(123.0);fact="before-apply";break;
             case "history-headroom":s.beforeHistory=48;s.afterHistory=49;fact="history";break;
             case "topology-edges":s.afterApply["edges"].array[0].array[0]=JSONValue(123);fact="topology";break;
@@ -4311,5 +4315,37 @@ private void localDerivationControls(LocalObservation original, JSONValue origin
         }
         auto bad=deriveLocalContract(o,cs,cell);
         assert(validateLocalContract(bad.facts).canFind(name),"Local corrupted derivation rejection "~name);
+    }
+}
+
+private bool localObservationComplete(LocalSnapshots s) {
+    return s.observedPhases==3 && s.beforeAttr.type==JSONType.object
+        && s.afterAttr.type==JSONType.object && s.afterApply.type==JSONType.object;
+}
+private void localCoordinateControls(LocalObservation o,LocalOracle q,LocalSnapshots valid,JSONValue ft) {
+    import std.algorithm : canFind;
+    assert(localObservationComplete(valid),"Local observation valid control");
+    foreach(field;["count","before","authored","apply"]) {
+        auto bad=valid;
+        if(field=="count")bad.observedPhases=2;
+        if(field=="before")bad.beforeAttr=JSONValue(null);
+        if(field=="authored")bad.afterAttr=JSONValue(null);
+        if(field=="apply")bad.afterApply=JSONValue(null);
+        assert(!localObservationComplete(bad),"Local missing observation rejection "~field);
+    }
+    size_t selected,untouched;
+    while(q.membership[selected]<0)++selected;
+    while(q.membership[untouched]>=0)++untouched;
+    foreach(vi;[selected,untouched]) foreach(k;0..3) {
+        auto bad=valid;bad.afterApply=localCopy(valid.afterApply);
+        auto value=asDouble(bad.afterApply["vertices"].array[vi].array[k]);
+        bad.afterApply["vertices"].array[vi].array[k]=JSONValue(value+.01);
+        LocalFacts facts;checkLocalSnapshots(facts,o,q,bad,ft);
+        assert(validateLocalContract(facts).canFind("current-output"),"Local every-coordinate output rejection "~k.to!string);
+        if(vi==untouched) {
+            bad.afterApply["vertices"].array[vi].array[k]=JSONValue(value+1e-6);
+            checkLocalSnapshots(facts,o,q,bad,ft);
+            assert(validateLocalContract(facts).canFind("untouched-exact"),"Local every-coordinate untouched rejection "~k.to!string);
+        }
     }
 }
