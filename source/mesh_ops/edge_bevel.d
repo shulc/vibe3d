@@ -243,10 +243,27 @@ enum uint kEdgeBevelEditScope = MeshEditScope.Geometry | MeshEditScope.Marks;
 ///     edge (no second face) has no dihedral and keeps the raw value.
 /// Returns the count of edges actually processed (0 ⇒ no-op, all skipped).
 size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
-                        int roundLevel = 0, bool widthMode = false) {
+                        int roundLevel = 0, bool widthMode = false, float miterOffset = 0) {
     const mask = ed.maskMinusHiddenEdges(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
-    if (width < 1e-6f) return 0;
+    width = width < 0 ? 0 : width;
+    miterOffset = miterOffset < 0 ? 0 : miterOffset;
+    if (width < 1e-6f && miterOffset < 1e-6f) return 0;
+    // Task 20261290: unsupported rounded/converted miter consumers refuse
+    // before mutation; positive L0 uses separate generated points below.
+    if (miterOffset > 0 && (roundLevel != 0 || widthMode)) return 0;
     if (mask.length != ed.edges.length) return 0;
+    if (width < 1e-6f) return edgeBevelOffsetOnly(ed, mask, miterOffset);
+    if (miterOffset > 0) {
+        bool[] touched = new bool[](ed.vertices.length);
+        foreach (ei, chosen; mask) if (chosen) {
+            touched[ed.edges[ei][0]] = true; touched[ed.edges[ei][1]] = true;
+        }
+        foreach (ring; ed.faces) foreach (i, v; ring) if (touched[v]) {
+            auto a = edgeKey(v, ring[(i + ring.length - 1) % ring.length]) in ed.edgeIndexMap;
+            auto b = edgeKey(v, ring[(i + 1) % ring.length]) in ed.edgeIndexMap;
+            if ((a is null || !mask[*a]) && (b is null || !mask[*b])) return 0;
+        }
+    }
     // Settled-mesh precondition (debug-only, stripped from release builds
     // — task 0724 / audit-4 M6). The open-fan rim arm resolves each
     // bordering edge's selection through edgeIndexMap (`selectedEdge`),
@@ -1761,6 +1778,65 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
         return s;
     }
 
+    // Task 20261290, private evidence/10860-edge-bevel/modes-handles-static-20261007:
+    // keep the width rails; generate a second ordered boundary and flanks.
+    // The inset producer alone adds the two distances; Middle uses local amount.
+    uint[ulong] outerCorner, splitCorner;
+    uint[][] miterFlanks;
+    uint[] miterFlankSource;
+    if (miterOffset > 0) {
+        foreach (fi0, ring; ed.faces) {
+            const uint fi = cast(uint)fi0;
+            uint[] replacement;
+            foreach (i, v; ring) {
+                auto c = vfKey(v, fi) in cornerAtVF;
+                if (c is null) { replacement ~= v; continue; }
+                const uint prev = ring[(i + ring.length - 1) % ring.length];
+                const uint next = ring[(i + 1) % ring.length];
+                uint nv;
+                if (c.kind == CornerKind.Miter) {
+                    nv = ed.addVertex(edgeBevelOffsetCorner(ed.vertices[v],
+                        ed.vertices[prev], ed.vertices[next], ed.faceNormal(fi),
+                        width, miterOffset));
+                    const uint before = ed.addVertex(edgeBevelOffsetMiddle(
+                        ed.vertices[c.vert], ed.vertices[cornerAtVF[vfKey(prev, fi)].vert], 0, miterOffset));
+                    const uint after = ed.addVertex(edgeBevelOffsetMiddle(
+                        ed.vertices[c.vert], ed.vertices[cornerAtVF[vfKey(next, fi)].vert], 0, miterOffset));
+                    splitCorner[vfKey(c.vert, prev)] = before;
+                    splitCorner[vfKey(c.vert, next)] = after;
+                    miterFlanks ~= [c.vert, after, nv, before];
+                    miterFlankSource ~= fi;
+                } else {
+                    const auto a = edgeKey(v, prev) in ed.edgeIndexMap;
+                    const uint far = a !is null && qualifies[*a] ? next : prev;
+                    nv = ed.addVertex(edgeBevelOffsetMiddle(ed.vertices[v],
+                        ed.vertices[far], width, miterOffset));
+                    if (remapUvB) {
+                        const float len = (ed.vertices[far] - ed.vertices[v]).length;
+                        const float t = len > 0 ? ((width + miterOffset) / len > 1 ? 1 : (width + miterOffset) / len) : 0;
+                        PolyVertexBlend blend;
+                        blend.add(v, 1 - t); blend.add(far, t); vertBlendB[nv] = blend;
+                    }
+                }
+                outerCorner[vfKey(v, fi)] = nv;
+                replacement ~= nv;
+            }
+            foreach (i, v; ring) {
+                const uint next = ring[(i + 1) % ring.length];
+                auto ep = edgeKey(v, next) in ed.edgeIndexMap;
+                if (ep is null || !qualifies[*ep]) continue;
+                auto a = vfKey(v, fi) in cornerAtVF;
+                auto b = vfKey(next, fi) in cornerAtVF;
+                if (a is null || b is null) continue;
+                const uint start = splitCorner.get(vfKey(a.vert, next), a.vert);
+                const uint end = splitCorner.get(vfKey(b.vert, v), b.vert);
+                miterFlanks ~= [start, end, outerCorner[vfKey(next, fi)], outerCorner[vfKey(v, fi)]];
+                miterFlankSource ~= fi;
+            }
+            baseFaces[fi] = replacement;
+        }
+    }
+
     foreach (fi; 0 .. baseFaces.length) {
         newFaces ~= threadRails(baseFaces[fi]);
         // A rebuilt original face keeps reading its own island; its slide
@@ -1793,14 +1869,21 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
                                                      Mesh.faceAttrOr(ed.faceMarks, sp.fR));
 
         if (roundLevel == 0 || !roundedSpan[si]) {
-            newFaces ~= [cV0L.vert, cV1L.vert, cV1R.vert, cV0R.vert];
-            // THE per-corner case: each side of the strip reads the face it
-            // slid out of (task 0697).
-            if (remapUvB)
-                noteSrc(newFaces.length - 1, [sp.fL, sp.fL, sp.fR, sp.fR]);
-            oldOfNew ~= kNoSource;
-            chamferWordIdx ~= cast(uint)(newFaces.length - 1);
-            chamferWordVal ~= word;
+            uint[] left = [cV0L.vert], right = [cV0R.vert];
+            if (auto q = vfKey(cV0L.vert, sp.v1) in splitCorner) {
+                left ~= *q; right ~= splitCorner[vfKey(cV0R.vert, sp.v1)];
+            }
+            if (auto q = vfKey(cV1L.vert, sp.v0) in splitCorner) {
+                left ~= *q; right ~= splitCorner[vfKey(cV1R.vert, sp.v0)];
+            }
+            left ~= cV1L.vert; right ~= cV1R.vert;
+            foreach (j; 0 .. left.length - 1) {
+                newFaces ~= [left[j], left[j + 1], right[j + 1], right[j]];
+                if (remapUvB) noteSrc(newFaces.length - 1, [sp.fL, sp.fL, sp.fR, sp.fR]);
+                oldOfNew ~= kNoSource;
+                chamferWordIdx ~= cast(uint)(newFaces.length - 1);
+                chamferWordVal ~= word;
+            }
             continue;
         }
 
@@ -2244,6 +2327,11 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     // So the arming is DECLINED here and now, not merely postponed, and
     // `tests/unit/face_reindex_arming_test.d`'s roster is CORRECT at nine
     // sites BECAUSE of this — do not add a tenth for this family.
+    foreach (i, ring; miterFlanks) {
+        newFaces ~= ring;
+        oldOfNew ~= miterFlankSource[i];
+        if (remapUvB) noteSrc(newFaces.length - 1, uniformSrc(ring.length, miterFlankSource[i]));
+    }
     rewriteFaces(ed, newFaces, FaceSource(oldOfNew));
     // The two chamfer-strip faces above fold two source faces'
     // faceMarks into one word no single `oldOfNew` entry can express —
@@ -2560,3 +2648,93 @@ static foreach (n; ["bevelEdgesByMask"])
       ~ "the free function would go unreachable while all of them stayed "
       ~ "green. An in-struct `alias` counts: it makes `hasMember` answer true, "
       ~ "which is why plan §2.7 forbids it (task 1903 §2.7, §4.5).");
+
+// Separate point producers for the positive offset boundary (task 20261290).
+Vec3 edgeBevelOffsetMiddle(Vec3 origin, Vec3 far, float localAmount, float offset) {
+    const Vec3 axis = far - origin;
+    const float len = axis.length;
+    float t = len > 0 ? (localAmount + offset) / len : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return origin + axis * t;
+}
+
+Vec3 edgeBevelOffsetCorner(Vec3 origin, Vec3 previous, Vec3 next,
+        Vec3 polygonNormal, float inset, float offset) {
+    import std.math : acos;
+    const Vec3 r = origin - previous, q = next - origin;
+    Vec3 normal = safeNormalize(cross(r, q));
+    if (dot(normal, polygonNormal) < 0) normal = normal * -1;
+    const float cosine = dot(safeNormalize(r), safeNormalize(q));
+    if (acos(cosine < -1 ? -1 : cosine > 1 ? 1 : cosine) < 0.00017453292519943296)
+        normal = polygonNormal;
+    const Vec3 n0 = safeNormalize(cross(normal, r));
+    const Vec3 n1 = safeNormalize(cross(normal, q));
+    Vec3 a = n0 + n1;
+    const Vec3 b = n0 * (inset + offset);
+    const float ab = dot(a, b), bb = dot(b, b);
+    if (ab != 0) a = a * (bb / ab);
+    else if (bb == 0 && dot(a, a) != 0) a = Vec3(0,0,0);
+    else return origin;
+    return origin + a;
+}
+
+private size_t edgeBevelOffsetOnly(ref MeshEditBatch ed, const bool[] mask, float offset) {
+    // Task 20261290: zero width retains the original selected edge. Each
+    // one-sided support receives its own Middle boundary and flanking polygon.
+    foreach (ring; ed.faces) foreach (i, v; ring) {
+        auto a = edgeKey(v, ring[(i + ring.length - 1) % ring.length]) in ed.edgeIndexMap;
+        auto b = edgeKey(v, ring[(i + 1) % ring.length]) in ed.edgeIndexMap;
+        if (a !is null && b !is null && mask[*a] && mask[*b]) return 0;
+    }
+    uint[2][] selectedPairs;
+    size_t processed;
+    foreach (i, chosen; mask) if (chosen) { ++processed; selectedPairs ~= ed.edges[i]; }
+    if (processed == 0) return 0;
+    auto rewrite = ed.beginCornerRewrite();
+    PolyVertexBlend[uint] blends;
+    uint[][] result, flanks;
+    uint[] donors, flankDonors, cornerSources;
+    foreach (fi0, ring; ed.faces) {
+        const uint fi = cast(uint)fi0;
+        uint[uint] replacement;
+        uint[] rebuilt;
+        foreach (i, v; ring) {
+            const uint prev = ring[(i + ring.length - 1) % ring.length];
+            const uint next = ring[(i + 1) % ring.length];
+            auto a = edgeKey(v, prev) in ed.edgeIndexMap;
+            auto b = edgeKey(v, next) in ed.edgeIndexMap;
+            const bool left = a !is null && mask[*a], right = b !is null && mask[*b];
+            uint nv = v;
+            if (left != right) {
+                const uint far = left ? next : prev;
+                nv = ed.addVertex(edgeBevelOffsetMiddle(ed.vertices[v], ed.vertices[far], 0, offset));
+                const float len = (ed.vertices[far] - ed.vertices[v]).length;
+                const float t = len > 0 ? (offset / len > 1 ? 1 : offset / len) : 0;
+                PolyVertexBlend blend; blend.add(v, 1 - t); blend.add(far, t); blends[nv] = blend;
+            }
+            replacement[v] = nv; rebuilt ~= nv; cornerSources ~= fi;
+        }
+        result ~= rebuilt; donors ~= fi;
+        foreach (i, v; ring) {
+            const uint next = ring[(i + 1) % ring.length];
+            auto e = edgeKey(v, next) in ed.edgeIndexMap;
+            if (e is null || !mask[*e]) continue;
+            flanks ~= [v, next, replacement[next], replacement[v]]; flankDonors ~= fi;
+        }
+    }
+    foreach (i, ring; flanks) {
+        result ~= ring; donors ~= flankDonors[i];
+        foreach (_; ring) cornerSources ~= flankDonors[i];
+    }
+    rewriteFaces(ed, result, FaceSource(donors));
+    ed.declareCornerProvenance(rewrite.carried(ed.faces.range, cornerSources, blends));
+    ed.resizeFaceSelection();
+    ed.rebuildEdges(); ed.buildLoops();
+    ed.clearEdgeSelectionResize();
+    foreach (pair; selectedPairs) {
+        auto edge = edgeKey(pair[0], pair[1]) in ed.edgeIndexMap;
+        if (edge !is null) ed.selectEdge(cast(int)*edge);
+    }
+    ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
+    return processed;
+}

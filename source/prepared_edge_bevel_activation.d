@@ -107,7 +107,7 @@ version(unittest) unittest {
         tool.preparedActivationDirtyForTest());
     assert(context.validate()); context.install(); context.install();
     assert(tool.preparedActivationForTest(count, first, livePtr, true,
-        Vec3(0,0,0), Vec3(0,0,0), Vec3(0,1,0), expectedHash) &&
+        Vec3(0,0,0), Vec3(0,0,0), Vec3(0,0,1), expectedHash) &&
         context.installTraceForTest() == [25,8]);
 
     Mesh empty;
@@ -147,7 +147,7 @@ version(unittest) unittest {
     assert(selectedFrame.gizmoValid);
     assert(selectedFrame.anchor == selectedEdge.selectionCentroidEdges());
     assert(selectedFrame.baseAnchor == selectedFrame.anchor);
-    assert(selectedFrame.widthAxis == selectedAxis);
+    assert((selectedFrame.widthAxis - selectedAxis).length < 1e-6f);
     assert(selectedFrame.gizmoSelHash ==
         selectedEdge.selectionSignature(EditMode.Edges));
 

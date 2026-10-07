@@ -244,7 +244,7 @@ public:
             Param.float_("width", "Width", &state_.width, 0.0f),
             Param.int_("roundLevel", "Round Level", &state_.roundLevel, 0),
             Param.bool_("widthMode", "Width Mode", &state_.widthMode, false),
-            Param.float_("miterOffset", "Miter Offset", &state_.miterOffset, 0.0f),
+            Param.float_("miterOffset", "Miter Offset", &state_.miterOffset, 0.0f).min(0.0f).enforceBounds(),
         ];
     }
 
@@ -307,7 +307,7 @@ public:
     }
 
     public override bool hasUncommittedEdit() const {
-        return active && dragPart >= 0 && built && state_.width != 0.0f;
+        return active && dragPart >= 0 && built && (state_.width != 0.0f || state_.miterOffset != 0.0f);
     }
 
     public override void cancelUncommittedEdit() {
@@ -378,7 +378,7 @@ public:
         // key it remembers no longer describes what is standing.
         preview_.reset();
         if (mesh.edges.length == 0) return false;
-        if (state_.width == 0.0f) return true;
+        if (state_.width == 0.0f && state_.miterOffset == 0.0f) return true;
         if (operation(*mesh) == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -437,13 +437,12 @@ public:
     }
 
     // Task 20261270: captured ID0/attr1 and ID1/attr7 use independent
-    // cumulative press snapshots. Live signed miter callbacks are distinct
-    // from the unresolved native release clamp (paired task evidence).
+    // cumulative press snapshots; raw delta survives the effective zero floor.
     private void updateScalar(int part, float delta) nothrow @nogc {
         handleBank_.scalars[part].delta = delta;
         const float value = handleBank_.scalars[part].start + delta;
         if (part == PART_WIDTH) state_.width = value < 0 ? 0 : value;
-        else state_.miterOffset = value;
+        else state_.miterOffset = value < 0 ? 0 : value;
     }
 
     // Read-only test seams.  The handle registry remains the hit-testing
@@ -607,32 +606,72 @@ private:
         version(unittest) ++preparedGizmoFrameCallsForTest_;
         image.gizmoValid = false;
         if (source.edges.length == 0) return;
-        image.anchor = source.selectionCentroidEdges();
-        // widthAxis = averaged normal of adjacent faces of selected edges.
+        // Task 20261290: selected-endpoint bounds and the captured edge normal/
+        // grouped edge-up producer feed one owner frame; columns 2/0 bind IDs 0/1.
+        const mask = source.operandEdgeMask();
+        Vec3 low, high;
         Vec3 sum = Vec3(0,0,0);
-        bool any = source.hasAnySelectedEdges();
-        foreach (fi; 0 .. source.faces.length) {
-            if (any) {
-                bool adj = false;
-                auto f = source.faces[fi];
-                foreach (k; 0..f.length) {
-                    foreach (ei; 0 .. source.edges.length) {
-                        if (!source.isEdgeSelected(ei)) continue;
-                        uint a = source.edges[ei][0], b = source.edges[ei][1];
-                        uint u = f[k], w = f[(k+1)%f.length];
-                        if ((a==u&&b==w)||(a==w&&b==u)) { adj = true; break; }
-                    }
-                    if (adj) break;
+        bool populated;
+        struct Direction { Vec3 axis; float weight; uint count; }
+        Direction[] directions;
+        foreach (ei, chosen; mask) if (chosen) {
+            const auto edge = source.edges[ei];
+            foreach (v; edge) {
+                const Vec3 point = source.vertices[v];
+                if (!populated) { low = high = point; populated = true; }
+                else {
+                    low = Vec3(point.x < low.x ? point.x : low.x,
+                        point.y < low.y ? point.y : low.y, point.z < low.z ? point.z : low.z);
+                    high = Vec3(point.x > high.x ? point.x : high.x,
+                        point.y > high.y ? point.y : high.y, point.z > high.z ? point.z : high.z);
                 }
-                if (adj) sum = sum + source.faceNormal(cast(uint)fi);
-            } else {
-                sum = sum + source.faceNormal(cast(uint)fi);
             }
+            uint[] adjacent;
+            foreach (fi, ring; source.faces) {
+                foreach (i, v; ring) {
+                    const uint next = ring[(i + 1) % ring.length];
+                    if ((v == edge[0] && next == edge[1]) ||
+                        (v == edge[1] && next == edge[0])) {
+                        adjacent ~= cast(uint)fi;
+                        sum = sum + source.faceNormal(cast(uint)fi);
+                        break;
+                    }
+                }
+            }
+            // An up direction needs the two-sided representative polygon.
+            if (adjacent.length < 2) continue;
+            Vec3 direction = source.vertices[edge[1]] - source.vertices[edge[0]];
+            const float weight = direction.length;
+            if (weight == 0) continue;
+            direction = direction * (1 / weight);
+            bool grouped;
+            foreach (ref group; directions) {
+                const float agreement = dot(group.axis, direction);
+                if (abs(agreement) <= 0.55f) continue;
+                if (agreement < 0) direction = direction * -1;
+                group.axis = safeNormalize((group.axis * group.count + direction) * (1.0f / (group.count + 1)));
+                group.weight += weight; ++group.count;
+                grouped = true; break;
+            }
+            if (!grouped) directions ~= Direction(direction, weight, 1);
         }
-        float len = sqrt(sum.x*sum.x + sum.y*sum.y + sum.z*sum.z);
-        image.widthAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
-        Vec3 binormal;
-        perpendicularFrame(image.widthAxis, image.miterAxis, binormal);
+        if (!populated) return;
+        image.anchor = (low + high) * 0.5f;
+        Vec3 primary = safeNormalize(sum), up = Vec3(0,1,0);
+        if (dot(sum, sum) < 0.0001f) primary = Vec3(0,0,1);
+        else if (directions.length) {
+            size_t best;
+            foreach (i; 1 .. directions.length) {
+                if (directions[i].weight > directions[best].weight ||
+                    (directions[i].weight == directions[best].weight &&
+                        abs(directions[i].axis.y) < abs(directions[best].axis.y))) best = i;
+            }
+            up = directions[best].axis;
+            if (up.y < 0) up = up * -1;
+            primary = safeNormalize(primary - up * dot(primary, up));
+        }
+        image.widthAxis = primary;
+        image.miterAxis = cross(up, primary);
         image.baseAnchor = image.anchor;
         image.gizmoSelHash = source.selectionSignature(EditMode.Edges);
         image.gizmoValid = true;
@@ -656,8 +695,8 @@ private:
     // width, but a dropdown changes at human speed: keying it costs an extra
     // rebuild and buys not proving that no width mode collapses a face.
     PreviewTopologyKey previewKey(ref Mesh cage) {
-        return PreviewTopologyKey.make(cage.operandEdgeMask(), state_.width == 0.0f,
-            state_.roundLevel, state_.widthMode ? 1 : 0);
+        return PreviewTopologyKey.make(cage.operandEdgeMask(), state_.width == 0.0f && state_.miterOffset == 0.0f,
+            state_.roundLevel, state_.widthMode ? 1 : 0, state_.miterOffset > 0 ? 1 : 0);
     }
     // The one operation: preview and scripted apply.
     // Unrecorded — a preview frame records nothing, and the gesture's record
@@ -669,7 +708,7 @@ private:
     size_t operation(ref Mesh target) {
         auto ed = MeshEditBatch.unrecorded(target, kEdgeBevelEditScope);
         const n = ed.bevelEdgesByMask(target.operandEdgeMask(), state_.width,
-            state_.roundLevel, state_.widthMode);
+            state_.roundLevel, state_.widthMode, state_.miterOffset);
         ed.close();
         return n;
     }

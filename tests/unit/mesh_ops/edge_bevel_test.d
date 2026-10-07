@@ -6760,3 +6760,102 @@ unittest { // THE REVERT, MEASURED IN BOTH STATES — and it is the row Stage L7
           ~ "describe, not about the harness (task 1903 Stage G).");
     }
 }
+
+unittest { // task 20261290: independently frozen positive offset geometry
+    import std.json : parseJSON, JSONValue;
+    import std.file : readText;
+    import std.format : format;
+    auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/offset_junction.json"));
+    Mesh source;
+    foreach (v; fixture["source"]["vertices"].array)
+        source.addVertex(Vec3(cast(float)v[0].floating, cast(float)v[1].floating, cast(float)v[2].floating));
+    foreach (f; fixture["source"]["faces"].array) {
+        uint[] ring; foreach (v; f.array) ring ~= cast(uint)v.integer;
+        source.addFace(ring);
+    }
+    source.rebuildEdges(); source.buildLoops();
+    bool[] mask = new bool[](source.edges.length);
+    foreach (pair; fixture["source"]["selection"]["edges"].array) {
+        auto key = edgeKey(cast(uint)pair[0].integer, cast(uint)pair[1].integer);
+        mask[source.edgeIndexMap[key]] = true;
+    }
+    foreach (positive; [false, true]) {
+        import snapshot : MeshSnapshot;
+        Mesh m; auto image = MeshSnapshot.capture(source); image.restore(m);
+        auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+        assert(ed.bevelEdgesByMask(mask, .06f, 0, false, positive ? .03f : 0) == 3,
+            "OFFSET GEOMETRY: three source edges consumed");
+        ed.close();
+        auto expected = fixture[positive ? "positive" : "control"];
+        assert(m.vertices.length == expected["vertices"].array.length,
+            format("OFFSET GEOMETRY: vertex population %s", m.vertices.length));
+        assert(m.faces.length == expected["faces"].array.length,
+            format("OFFSET GEOMETRY: face population %s", m.faces.length));
+        uint[] map = new uint[](m.vertices.length);
+        bool[] used = new bool[](map.length);
+        foreach (i, v; m.vertices) {
+            size_t match = size_t.max;
+            foreach (j, row; expected["vertices"].array) {
+                auto refV = Vec3(cast(float)row[0].floating, cast(float)row[1].floating, cast(float)row[2].floating);
+                if ((v - refV).length < 2e-6f) { assert(match == size_t.max, "OFFSET GEOMETRY: ambiguous point identity"); match = j; }
+            }
+            assert(match != size_t.max, format("OFFSET GEOMETRY: unmatched point %s %s", i, v));
+            assert(!used[match], "OFFSET GEOMETRY: duplicate point identity"); used[match] = true;
+            map[i] = cast(uint)match;
+        }
+        bool[] matched = new bool[](m.faces.length);
+        foreach (ring; m.faces) {
+            size_t found = size_t.max;
+            foreach (j, row; expected["faces"].array) {
+                if (matched[j] || ring.length != row.array.length) continue;
+                foreach (rotation; 0 .. ring.length) {
+                    bool same = true;
+                    foreach (k, v; ring) if (map[v] != row[(k + rotation) % ring.length].integer) { same = false; break; }
+                    if (same) { found = j; break; }
+                }
+                if (found != size_t.max) break;
+            }
+            assert(found != size_t.max, format("OFFSET GEOMETRY: unmatched oriented ring %s", ring));
+            matched[found] = true;
+        }
+    }
+}
+
+unittest { // task 20261290: width zero is a real offset edit
+    import std.json : parseJSON;
+    import std.file : readText;
+    import std.format : format;
+    auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/offset_only.json"));
+    Mesh m;
+    foreach (row; fixture["source"]["vertices"].array)
+        m.addVertex(Vec3(cast(float)row[0].floating, cast(float)row[1].floating, cast(float)row[2].floating));
+    foreach (row; fixture["source"]["faces"].array) {
+        uint[] ring; foreach (v; row.array) ring ~= cast(uint)v.integer; m.addFace(ring);
+    }
+    m.rebuildEdges(); m.buildLoops();
+    bool[] mask = new bool[](m.edges.length); mask[m.edgeIndexMap[edgeKey(0,1)]] = true;
+    auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+    assert(ed.bevelEdgesByMask(mask, 0, 0, false, .03f) == 1,
+        "OFFSET ONLY: zero width consumes selected edge");
+    ed.close();
+    assert(m.vertices.length == 10 && m.faces.length == 4,
+        "OFFSET ONLY: actual source changes to ten points and four polygons");
+    foreach (i, row; fixture["output"]["vertices"].array) {
+        const Vec3 expected = Vec3(cast(float)row[0].floating, cast(float)row[1].floating, cast(float)row[2].floating);
+        assert((m.vertices[i] - expected).length < 2e-6f, format("OFFSET ONLY: ordered point %s", i));
+    }
+    bool[] matched = new bool[](m.faces.length);
+    foreach (ring; m.faces) {
+        bool found;
+        foreach (j, row; fixture["output"]["faces"].array) {
+            if (matched[j] || row.array.length != ring.length) continue;
+            foreach (rotation; 0 .. ring.length) {
+                bool same = true;
+                foreach (k, v; ring) if (v != row[(k + rotation) % ring.length].integer) { same = false; break; }
+                if (same) { matched[j] = true; found = true; break; }
+            }
+            if (found) break;
+        }
+        assert(found, "OFFSET ONLY: full oriented polygon output");
+    }
+}

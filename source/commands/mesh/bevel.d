@@ -146,6 +146,7 @@ class MeshBevel : Command, Operator {
     private float            width_      = 0.1f;
     private int              roundLevel_ = 0;
     private bool             widthMode_  = false;
+    private float            miterOffset_;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -190,6 +191,7 @@ class MeshBevel : Command, Operator {
         if (editMode == EditMode.Edges)
             return [
                 Param.float_("width", "Width", &width_, 0.1f),
+                Param.float_("miterOffset", "Miter Offset", &miterOffset_, 0).min(0.0f).enforceBounds(),
                 Param.int_("roundLevel", "Round Level", &roundLevel_, 0)
                     .min(0).max(MAX_ROUND_LEVEL).enforceBounds(),
                 // `widthMode` selects how `width` maps to the along-face corner
@@ -319,7 +321,7 @@ class MeshBevel : Command, Operator {
             // somebody flipped it without the point-domain payload).
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kEdgeBevelEditScope);
-                n = ed.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
+                n = ed.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_, miterOffset_);
                 ed.close();
             }
             // Task 1180: the kernel leaves the new band's FACES selected —
@@ -328,7 +330,7 @@ class MeshBevel : Command, Operator {
             // its edges and the vertices they span, and none of its faces. So
             // convert here, at the command layer, leaving the kernel (and the
             // other callers that read its face selection) untouched.
-            if (n > 0) {
+            if (n > 0 && width_ >= 1e-6f) {
                 uint[] band;
                 foreach (fi, sel; mesh.selectedFaces)
                     if (sel) band ~= cast(uint) fi;

@@ -461,31 +461,109 @@ unittest {
     cmd("tool.set edge.bevel off");
 }
 
-// Task 20261270: parameter images retain signed miter separately from width.
-// Geometry parity for nonzero miter is not asserted by this navigation cell.
+// Task 20261290: requested negative scalar is effectively zero. The raw
+// drag delta is separate; typed clamping does not create a fictitious edit.
 unittest {
-    auto reset = parseJSON(cast(string)post(BASE ~ "/api/command",
-        commandBody("scene.reset", `{"type":"cube"}`)));
-    assert(reset["status"].str == "ok", "miter session reset failed");
-    selectTopFrontEdge();
-    cmd("tool.set edge.bevel on"); settle();
+    cmd(commandBody("scene.reset", `{"type":"cube"}`));
+    selectTopFrontEdge(); cmd("tool.set edge.bevel on"); settle();
     interactiveCmd("tool.attr edge.bevel width 0.06"); settle();
-    const widthImage = model()["vertices"].toString;
+    const widthImage = model()["vertices"].toString ~ model()["faces"].toString;
     interactiveCmd("tool.attr edge.bevel miterOffset -0.03"); settle();
     auto state = getJson("/api/tool/state");
-    assert(fabs(state["width"].floating - 0.06) < 1e-6 &&
-        fabs(state["miterOffset"].floating + 0.03) < 1e-6,
-        "miter session write must preserve the independent width");
-    navigate(false);
-    state = getJson("/api/tool/state");
-    assert(fabs(state["width"].floating - 0.06) < 1e-6 &&
-        fabs(state["miterOffset"].floating) < 1e-6 &&
-        model()["vertices"].toString == widthImage,
-        "miter session undo must restore the prior parameter and mesh image");
-    navigate(true);
-    state = getJson("/api/tool/state");
-    assert(fabs(state["width"].floating - 0.06) < 1e-6 &&
-        fabs(state["miterOffset"].floating + 0.03) < 1e-6,
-        "miter session redo must restore its signed image");
+    assert(fabs(state["width"].floating - 0.06) < 1e-6 && state["miterOffset"].floating == 0,
+        "MITER FLOOR: effective value zero preserves width");
+    assert(model()["vertices"].toString ~ model()["faces"].toString == widthImage,
+        "MITER FLOOR: clamped request preserves complete width geometry");
     cmd("tool.set edge.bevel off");
+}
+
+void loadOffsetSource(JSONValue fixture) {
+    cmd("tool.set edge.bevel off");
+    auto source = fixture["source"];
+    cmd(commandBody("scene.loadMesh", `{"vertices":` ~ source["vertices"].toString ~
+        `,"faces":` ~ source["faces"].toString ~ `}`));
+    auto current = model();
+    string indices;
+    foreach (pair; source["selection"]["edges"].array) {
+        const int index = edgeIndex(current, cast(int)pair[0].integer, cast(int)pair[1].integer);
+        assert(index >= 0, "OFFSET DOORS: selected source edge exists");
+        if (indices.length) indices ~= ",";
+        indices ~= index.to!string;
+    }
+    cmd(commandBody("mesh.select", `{"mode":"edges","indices":[` ~ indices ~ `]}`));
+}
+
+void checkOffsetGeometry(JSONValue actual, JSONValue expected, string witness) {
+    assert(actual["vertices"].array.length == expected["vertices"].array.length,
+        witness ~ ": complete point population");
+    assert(actual["faces"].array.length == expected["faces"].array.length,
+        witness ~ ": complete polygon population");
+    int[] ids = new int[](actual["vertices"].array.length);
+    bool[] used = new bool[](ids.length);
+    foreach (i, point; actual["vertices"].array) {
+        int match = -1;
+        foreach (j, row; expected["vertices"].array) {
+            double squared = 0;
+            foreach (k; 0 .. 3) { const double d = point[k].floating - row[k].floating; squared += d*d; }
+            if (squared < 4e-12) { assert(match == -1, witness ~ ": unique point identity"); match = cast(int)j; }
+        }
+        assert(match >= 0 && !used[match], format("%s: full captured point output index=%s point=%s match=%s", witness, i, point, match));
+        ids[i] = match; used[match] = true;
+    }
+    bool[] matched = new bool[](actual["faces"].array.length);
+    foreach (ring; actual["faces"].array) {
+        bool found;
+        foreach (j, row; expected["faces"].array) {
+            if (matched[j] || row.array.length != ring.array.length) continue;
+            foreach (rotation; 0 .. ring.array.length) {
+                bool same = true;
+                foreach (k, v; ring.array) if (ids[v.integer] != row[(k+rotation)%ring.array.length].integer) { same = false; break; }
+                if (same) { matched[j] = true; found = true; break; }
+            }
+            if (found) break;
+        }
+        assert(found, witness ~ ": full captured oriented connectivity");
+    }
+}
+
+unittest { // task 20261290: operative offset through both actual product doors
+    import std.file : readText;
+    auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/offset_junction.json"));
+    foreach (toolDoor; [false, true]) {
+        loadOffsetSource(fixture);
+        const sourceGeometry = model()["vertices"].toString ~ model()["faces"].toString;
+        if (toolDoor) {
+            cmd("tool.set edge.bevel on");
+            cmd("tool.attr edge.bevel width 0.06");
+            cmd("tool.attr edge.bevel roundLevel 0");
+            cmd("tool.attr edge.bevel miterOffset -0.03");
+            auto state = getJson("/api/tool/state");
+            assert(fabs(state["width"].floating - .06) < 1e-7 && state["miterOffset"].floating == 0,
+                "OFFSET TOOL: floor isolates width from requested negative offset");
+            cmd("tool.attr edge.bevel miterOffset 0.03");
+            state = getJson("/api/tool/state");
+            assert(fabs(state["width"].floating - .06) < 1e-7 && fabs(state["miterOffset"].floating - .03) < 1e-7,
+                "OFFSET TOOL: independently stored positive scalar");
+            cmd("tool.doApply");
+        } else cmd(commandBody("mesh.bevel", `{"width":0.06,"roundLevel":0,"miterOffset":0.03}`));
+        auto result = model();
+        checkOffsetGeometry(result, fixture["positive"], toolDoor ? "OFFSET TOOL APPLY" : "OFFSET COMMAND APPLY");
+        const resultGeometry = result["vertices"].toString ~ result["faces"].toString;
+        cmd("history.undo");
+        assert(model()["vertices"].toString ~ model()["faces"].toString == sourceGeometry,
+            "OFFSET DOORS: undo restores full cage");
+        cmd("history.redo");
+        assert(model()["vertices"].toString ~ model()["faces"].toString == resultGeometry,
+            "OFFSET DOORS: redo restores exact produced geometry");
+    }
+    auto only = parseJSON(readText("tests/fixtures/edge_bevel/offset_only.json"));
+    foreach (toolDoor; [false, true]) {
+        loadOffsetSource(only);
+        if (toolDoor) {
+            cmd("tool.set edge.bevel on"); cmd("tool.attr edge.bevel width 0");
+            cmd("tool.attr edge.bevel roundLevel 0"); cmd("tool.attr edge.bevel miterOffset 0.03");
+            cmd("tool.doApply");
+        } else cmd(commandBody("mesh.bevel", `{"width":0,"roundLevel":0,"miterOffset":0.03}`));
+        checkOffsetGeometry(model(), only["output"], toolDoor ? "OFFSET ONLY TOOL" : "OFFSET ONLY COMMAND");
+    }
 }

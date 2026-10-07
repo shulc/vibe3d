@@ -10,7 +10,7 @@ import eventlog : parkOverrideMouse, setOverrideMouse;
 import handler : Arrow, HandleState, getGizmoPixels, setGizmoPixels;
 import math : Vec3, Viewport, isOrtho, lookAt, orthographicMatrix,
     projectToWindowFull;
-import mesh : Mesh;
+import mesh : Mesh, edgeKey;
 import mesh_gpu : GpuMesh;
 import operator : VectorStack;
 import overlay_space : OverlaySpace;
@@ -391,8 +391,9 @@ private void assertReplicaB(EdgeBevelTool tool, ref Viewport replicaVp) {
     assertProjected(end, replicaVp, 600.0f, 120.0f,
                     "REPLICA FRESH PROJECTED END");
     const pass = g_fc.lastHandlePass();
-    assert(pass.submitted == 2, format(
-        "REPLICA HANDLE SUBMISSIONS: expected 2 got %s (tol 0)",
+    // Native fallback column0 is parallel to this replica camera.
+    assert(pass.submitted == 1, format(
+        "REPLICA HANDLE SUBMISSIONS: expected visible width only=1 got %s (tol 0)",
         pass.submitted));
     assert(pass.ids[0] == drawId, format(
         "REPLICA HANDLE ID: expected replica %s got %s (tol 0)",
@@ -501,8 +502,8 @@ private void cellC4_invalidOwnerFrame(ViewportSceneRenderer renderer,
     assert(sigB != 0, "C4 SELECTION SIGNATURE: expected nonzero got 0");
     const before = tool.interactionStateBytesForTest();
     drawOverlay(renderer, tool, OverlayMode.Visual, replicaVp, shader);
-    assert(g_fc.lastHandlePass().submitted == 2, format(
-        "REPLICA DREW NOTHING on a valid current selection: submitted == %s, expected 2",
+    assert(g_fc.lastHandlePass().submitted == 1, format(
+        "REPLICA VISIBLE WIDTH: submitted == %s, expected 1",
         g_fc.lastHandlePass().submitted));
     assertReplicaB(tool, replicaVp);
     assertStateEqual(before, tool.interactionStateBytesForTest(),
@@ -781,8 +782,8 @@ private void cellS1Dormant() {
     auto miterWrite = JSONValue.emptyObject;
     miterWrite["miterOffset"] = JSONValue(-0.06f);
     injectParamsInto(params, miterWrite);
-    assert(tool.stateForTest().miterOffset == -0.06f && tool.stateForTest().width == 0,
-        "MITER PARAM: actual binding is signed and isolated");
+    assert(tool.stateForTest().miterOffset == 0.0f && tool.stateForTest().width == 0,
+        "MITER PARAM: effective zero floor and isolated binding");
     const initial = tool.stateForTest();
     auto modeWrite = JSONValue.emptyObject;
     modeWrite["widthMode"] = JSONValue(true);
@@ -885,7 +886,7 @@ private void cellTwoHandleCallbacks() {
             abs(deltas[3] - row["delta1"].floating) < 1e-7,
             "LIVE CALLBACK: independent per-press deltas");
         assert(abs((part == 0 ? state.width : state.miterOffset) -
-            row["value"].floating) < 1e-7, "LIVE CALLBACK: bound cumulative value");
+            (row["value"].floating < 0 ? 0 : row["value"].floating)) < 1e-7, "LIVE CALLBACK: effective bound cumulative value");
         assert(abs((part == 0 ? state.miterOffset : state.width) -
             row[part == 0 ? "start1" : "start0"].floating) < 1e-7,
             "LIVE CALLBACK: other field unchanged");
@@ -934,7 +935,11 @@ private void cellTwoHandleEvents(ViewportSceneRenderer renderer, Shader shader,
     Mesh live = twoQuadsFixture(); selectionA(live); EditMode mode = EditMode.Edges;
     auto tool = new EdgeBevelTool(() => &live, &gpu, &mode, LitShader.init);
     scope(exit) tool.destroy();
-    tool.activate();
+    Mesh* eventSource;
+    auto eventFrame = tool.buildPreparedActivation(eventSource);
+    eventFrame.miterAxis = Vec3(0, 1, 0);
+    eventFrame.widthAxis = Vec3(1, 0, 0);
+    tool.installPreparedActivation(eventFrame);
     drawOverlay(renderer, tool, OverlayMode.Interactive, vp, shader);
     auto arrow = cast(Arrow) tool.handlePartsForTest()[1].h;
     float x, y, depth;
@@ -947,7 +952,15 @@ private void cellTwoHandleEvents(ViewportSceneRenderer renderer, Shader shader,
     assert(tool.onMouseButtonDown(press, stack), "MITER EVENT: production press accepted");
     assert(tool.readInteractionForTest().dragPart == 1, "MITER EVENT: part1 owns haul");
     const width = tool.stateForTest().width;
-    SDL_MouseMotionEvent motion; motion.x = press.x; motion.y = press.y + 12;
+    float ax, ay, az, bx, by, bz;
+    assert(projectToWindowFull(arrow.start, vp, ax, ay, az) &&
+        projectToWindowFull(arrow.end, vp, bx, by, bz), "MITER EVENT: scalar axis projects");
+    import std.math : sqrt;
+    const float projected = sqrt((bx-ax)*(bx-ax) + (by-ay)*(by-ay));
+    assert(projected > 0, "MITER EVENT: positive projected axis population");
+    SDL_MouseMotionEvent motion;
+    motion.x = press.x + cast(int)(64 * (bx-ax) / projected);
+    motion.y = press.y + cast(int)(64 * (by-ay) / projected);
     assert(tool.onMouseMotion(motion, stack), "MITER EVENT: production move accepted");
     const miter = tool.stateForTest().miterOffset;
     assert(miter != 0, "MITER EVENT: second handle writes its scalar");
@@ -1028,4 +1041,38 @@ private void runReplicaOwnershipWitness() {
     cellC9_oneDeriveForAllReplicas(renderer, shader, gpu, replicaVp, ownerVp);
     cellC10_replicaMirrorsResidentPaint(renderer, shader, gpu,
                                         replicaVp, ownerVp);
+}
+
+unittest { // task 20261290: measured asymmetric source owner frame
+    import std.json : parseJSON;
+    import std.file : readText;
+    auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/frame_source.json"));
+    auto receipt = parseJSON(readText("tests/fixtures/edge_bevel/two_handles_live.json"));
+    Mesh source;
+    foreach (row; fixture["vertices"].array)
+        source.addVertex(Vec3(cast(float)row[0].floating, cast(float)row[1].floating, cast(float)row[2].floating));
+    foreach (row; fixture["faces"].array) {
+        uint[] ring; foreach (v; row.array) ring ~= cast(uint)v.integer; source.addFace(ring);
+    }
+    source.rebuildEdges(); source.buildLoops(); source.resizeEdgeSelection();
+    foreach (pair; fixture["selection"]["edges"].array) {
+        auto key = edgeKey(cast(uint)pair[0].integer, cast(uint)pair[1].integer);
+        source.selectEdge(cast(int)source.edgeIndexMap[key]);
+    }
+    GpuMesh gpu; EditMode mode = EditMode.Edges;
+    auto tool = new EdgeBevelTool(() nothrow @nogc => &source, &gpu, &mode, LitShader.init);
+    scope(exit) tool.destroy();
+    auto frame = tool.preparedFrameForTest(source);
+    auto origin = receipt["origin"];
+    auto matrix = receipt["matrix_row_major"];
+    assert(frame.gizmoValid, "FRAME SOURCE: selected endpoint population");
+    assert((frame.baseAnchor - Vec3(cast(float)origin[0].floating,
+        cast(float)origin[1].floating, cast(float)origin[2].floating)).length < 2e-6,
+        "FRAME ORIGIN: captured bounding box center");
+    assert((frame.widthAxis - Vec3(cast(float)matrix[2].floating,
+        cast(float)matrix[5].floating, cast(float)matrix[8].floating)).length < 2e-6,
+        "FRAME WIDTH: native matrix column two");
+    assert((frame.miterAxis - Vec3(cast(float)matrix[0].floating,
+        cast(float)matrix[3].floating, cast(float)matrix[6].floating)).length < 2e-6,
+        "FRAME MITER: native matrix column zero");
 }
