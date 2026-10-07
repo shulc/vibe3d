@@ -459,7 +459,7 @@ private void ordinaryPolygonMove(PenMode mode,float extent, bool closed = false,
 unittest {
     import tools.edit.topology_pen.defs : PenMode;
     version (PolygonPointOnly) {} else {
-        ordinaryPolygonMove(PenMode.Move,.3f);
+        version (PolygonLargeOnly) {} else ordinaryPolygonMove(PenMode.Move,.3f);
         ordinaryPolygonMove(PenMode.Move,1f);
         ordinaryPolygonMove(PenMode.Move,1f,true);
         ordinaryPolygonMove(PenMode.Move,1f,false,1);
@@ -470,7 +470,7 @@ unittest {
 unittest {
     import tools.edit.topology_pen.defs : PenMode;
     version (PolygonMoveOnly) {} else {
-        ordinaryPolygonMove(PenMode.Point,.3f);
+        version (PolygonLargeOnly) {} else ordinaryPolygonMove(PenMode.Point,.3f);
         ordinaryPolygonMove(PenMode.Point,1f);
         ordinaryPolygonMove(PenMode.Point,1f,true);
         ordinaryPolygonMove(PenMode.Point,1f,false,1);
@@ -496,10 +496,96 @@ unittest {
     m.faces=m.faces[0..2];m.addFace([6u,5,4]);m.rebuildEdges();m.buildLoops();
     assert(!polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],1,Vec3(2.5,.4,0),corners,ends),
         "polygon target without border sides has no pair");
-    assert(!polygonMoveSides(m,[0u,1],m.vertices[0..2],1,Vec3(2.5,.4,0),corners,ends),
+    m.faces=m.faces[0..2];m.rebuildEdges();m.buildLoops();
+    bool safeNoPair(const(uint)[] source,const(Vec3)[] positions,uint face) {
+        try { return !polygonMoveSides(m,source,positions,face,Vec3(2.5,.4,0),corners,ends); }
+        catch (Throwable) { return false; }
+    }
+    assert(safeNoPair([0u,1],m.vertices[0..2],1),
         "polygon side selection rejects an incomplete source outline");
-    assert(!polygonMoveSides(m,[0u,1,2,3],m.vertices[0..3],1,Vec3(2.5,.4,0),corners,ends),
+    assert(safeNoPair([0u,1,2,3],m.vertices[0..3],1),
         "polygon side selection rejects incomplete press positions");
-    assert(!polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],3,Vec3(2.5,.4,0),corners,ends),
+    assert(safeNoPair([0u,1,2,3],m.vertices[0..4],3),
         "polygon side selection rejects an absent target polygon");
+}
+
+// Unequal endpoint costs and nonplanar adjacent corners independently expose
+// both orientation vetoes; reversed stored edges retain the same side geometry.
+unittest {
+    import evaluated_move_weld : polygonMoveSides;
+    {
+        Mesh m;
+        foreach (v;[Vec3(-2,-1,0),Vec3(2,-1,1),Vec3(2,1,0),Vec3(-2,1,0),Vec3(4,0,1),Vec3(2,-1,0),Vec3(3,1,1)]) m.addVertex(v);
+        m.addFace([0u,1,2,3]);m.addFace([4u,5,6]);m.rebuildEdges();m.buildLoops();
+        uint[2] corners,ends;
+        assert(polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],1,Vec3(3,0,0),corners,ends),
+            "reverse endpoint cost accepted population");
+        assert(corners==[3u,0] && ends==[6u,5],
+            "polygon reverse endpoint cost retains the accepted minimum pair");
+    }
+    {
+        Mesh m;
+        foreach (v;[Vec3(-2,-1,0),Vec3(2,-1,1),Vec3(2,1,0),Vec3(-2,1,0),Vec3(4,0,1),Vec3(2,-1,0),Vec3(3,1,1)]) m.addVertex(v);
+        m.addFace([0u,1,2,3]);m.addFace([4u,5,6]);m.rebuildEdges();m.buildLoops();
+        uint[2] corners,ends;
+        assert(polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],1,Vec3(3,0,0),corners,ends),
+            "handle-centered source side accepted population");
+        assert(corners==[3u,0] && ends==[6u,5],
+            "polygon handle-centered source side retains the accepted minimum pair");
+    }
+    {
+        Mesh m;
+        foreach (v;[Vec3(-2,-1,0),Vec3(2,-1,-1),Vec3(2,1,0),Vec3(-2,1,2),Vec3(2,-1,0),Vec3(5,2,2),Vec3(3,-1,-1)]) m.addVertex(v);
+        m.addFace([0u,1,2,3]);m.addFace([4u,5,6]);m.rebuildEdges();m.buildLoops();
+        uint[2] corners,ends;
+        assert(polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],1,Vec3(3,0,0),corners,ends),
+            "after-corner orientation veto accepted population");
+        assert(corners==[3u,0] && ends==[5u,6],
+            "polygon after-corner orientation veto retains the accepted minimum pair");
+    }
+    {
+        Mesh m;
+        foreach (v;[Vec3(-2,-1,0),Vec3(2,-1,-1),Vec3(2,1,0),Vec3(-2,1,0),Vec3(5,1,-2),Vec3(4,2,1),Vec3(2,2,1)]) m.addVertex(v);
+        m.addFace([0u,1,2,3]);m.addFace([4u,5,6]);m.rebuildEdges();m.buildLoops();
+        uint[2] corners,ends;
+        assert(polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],1,Vec3(3,0,0),corners,ends),
+            "before-corner orientation veto accepted population");
+        assert(corners==[2u,3] && ends==[4u,6],
+            "polygon before-corner orientation veto retains the accepted minimum pair");
+    }
+    {
+        Mesh m;
+        foreach (v;[Vec3(-2,-1,0),Vec3(2,-1,-1),Vec3(2,1,0),Vec3(-2,1,2),Vec3(2,-1,0),Vec3(5,2,2),Vec3(3,-1,-1)]) m.addVertex(v);
+        m.addFace([0u,1,2,3]);m.addFace([4u,5,6]);m.rebuildEdges();m.buildLoops();
+        foreach (ref edge;m.edges) edge=[edge[1],edge[0]];
+        uint[2] corners,ends;
+        assert(polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],1,Vec3(3,0,0),corners,ends),
+            "reversed-side previous neighbor accepted population");
+        assert(corners==[0u,3] && ends==[6u,5],
+            "polygon reversed-side previous neighbor retains the accepted minimum pair");
+    }
+    {
+        Mesh m;
+        foreach (v;[Vec3(-2,-1,0),Vec3(2,-1,-1),Vec3(2,1,0),Vec3(-2,1,0),Vec3(5,1,-2),Vec3(4,2,1),Vec3(2,2,1)]) m.addVertex(v);
+        m.addFace([0u,1,2,3]);m.addFace([4u,5,6]);m.rebuildEdges();m.buildLoops();
+        foreach (ref edge;m.edges) edge=[edge[1],edge[0]];
+        uint[2] corners,ends;
+        assert(polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],1,Vec3(3,0,0),corners,ends),
+            "reversed-side next neighbor accepted population");
+        assert(corners==[3u,2] && ends==[6u,4],
+            "polygon reversed-side next neighbor retains the accepted minimum pair");
+    }
+}
+
+unittest {
+    import evaluated_move_weld : polygonMoveSides;
+    Mesh m;
+    foreach(v;[Vec3(-1,-1,0),Vec3(1,-1,0),Vec3(1,1,0),Vec3(-1,1,0),
+        Vec3(2,-1,0),Vec3(2,1,0),Vec3(4,1,0),Vec3(4,-1,0)]) m.addVertex(v);
+    m.addFace([0u,1,2,3]);m.addFace([4u,5,6,7]);m.rebuildEdges();m.buildLoops();
+    uint[2] corners,ends;
+    assert(polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],1,Vec3(3,0,0),corners,ends),
+        "equal-cost polygon sides have an admitted population");
+    assert(corners==[0u,1] && ends==[5u,6],
+        "equal-cost polygon sides retain the first accepted pair");
 }
