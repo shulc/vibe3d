@@ -1,4 +1,169 @@
 {
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "from-trace",
+    "captured_utc": "unknown",
+    "notes": "Multiple historical observation times are recorded per case; no single fixture capture time. Geometry and scalars are observed; named identity complements are derived. Static authority remains private."
+  },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "S01",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "connect": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "D07",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "mode": "linear"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "S25",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "mode": "linear"
+            }
+          },
+          {
+            "op": "bridge",
+            "values": {
+              "connect": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "S26",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "connect": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "D08",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "segments": 3
+            }
+          }
+        ]
+      },
+      {
+        "cell": "S03",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "mode": "curve"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "S04",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "mode": "smooth"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "S17",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "tension": 0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "S18",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "tension": 50
+            }
+          }
+        ]
+      },
+      {
+        "cell": "S19",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "tension": 100
+            }
+          }
+        ]
+      },
+      {
+        "cell": "P50",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "tension": "50%"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "P100",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "tension": "100%"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "followup-variant",
+        "drove": [
+          {
+            "op": "bridge",
+            "values": {
+              "mode": "linear"
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "Partial drive record: only completed explicit scalar writes, preserving literal request tokens. Per-case blocks name inherited and GUI gaps; observed values are not defaults or executed writes."
+  },
   "schema": 1,
   "classification": "observed geometry and scalar attributes; explicitly named identity mappings are derived",
   "cases": [
@@ -12326,7 +12491,32 @@
         "input_row": 4,
         "output_row": 14,
         "probe_row": 13,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T17:48:03.624848+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "S01",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "connect": false
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     },
     {
@@ -25614,7 +25804,18 @@
         "input_row": 17,
         "output_row": 28,
         "probe_row": 30,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "gui-gesture",
+        "captured_utc": "2026-10-06T17:51:02.575825+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "unrecoverable",
+        "why": "Historical GUI write values are unavailable in executable requests."
       }
     },
     {
@@ -38902,7 +39103,32 @@
         "input_row": 31,
         "output_row": 36,
         "probe_row": 37,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T17:55:35.662374+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "D07",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "mode": "linear"
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     },
     {
@@ -52190,7 +52416,18 @@
         "input_row": 41,
         "output_row": 47,
         "probe_row": 48,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T18:02:35.201066+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "unrecoverable",
+        "why": "No scalar attribute writes in this cell; inherited tool values have no recovered drive record."
       }
     },
     {
@@ -55403,7 +55640,38 @@
         "input_row": 49,
         "output_row": 57,
         "probe_row": 58,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T18:06:05.523519+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "S25",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "mode": "linear"
+                }
+              },
+              {
+                "op": "bridge",
+                "values": {
+                  "connect": true
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     },
     {
@@ -58393,7 +58661,32 @@
         "input_row": 59,
         "output_row": 65,
         "probe_row": 66,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T18:08:18.330495+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "S26",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "connect": false
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     },
     {
@@ -71336,7 +71629,32 @@
         "input_row": 67,
         "output_row": 73,
         "probe_row": 74,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T18:10:49.256324+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "D08",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "segments": 3
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     },
     {
@@ -84279,7 +84597,32 @@
         "input_row": 75,
         "output_row": 81,
         "probe_row": 82,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T18:13:50.707990+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "S03",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "mode": "curve"
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     },
     {
@@ -97222,7 +97565,32 @@
         "input_row": 83,
         "output_row": 89,
         "probe_row": 90,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T18:16:39.952569+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "S04",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "mode": "smooth"
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     },
     {
@@ -110165,7 +110533,32 @@
         "input_row": 92,
         "output_row": 98,
         "probe_row": 99,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T18:21:21.069663+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "S17",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "tension": 0
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     },
     {
@@ -123108,7 +123501,32 @@
         "input_row": 102,
         "output_row": 108,
         "probe_row": 109,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T18:22:38.525703+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "S18",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "tension": 50
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     },
     {
@@ -136051,7 +136469,32 @@
         "input_row": 111,
         "output_row": 117,
         "probe_row": 118,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T18:25:06.912220+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "S19",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "tension": 100
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     },
     {
@@ -148994,7 +149437,32 @@
         "input_row": 119,
         "output_row": 125,
         "probe_row": 126,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T18:27:17.404148+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "P50",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "tension": "50%"
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     },
     {
@@ -161937,7 +162405,32 @@
         "input_row": 128,
         "output_row": 134,
         "probe_row": 135,
-        "operation_occurrence": -1
+        "operation_occurrence": -1,
+        "effective_occurrence": -1,
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T18:30:21.227773+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "P100",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "tension": "100%"
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     }
   ],
@@ -165124,7 +165617,17 @@
         "acceptance_commit": "7fa1898a18087628304cd2669471bcde7a41a438",
         "classification": "observed; identity complement derived",
         "input_member": "capture/S25-full-source-SDK.json",
-        "output_member": "capture/S25-post-SDK.json"
+        "output_member": "capture/S25-post-SDK.json",
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T20:35:00.422594+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "unrecoverable",
+        "why": "No scalar attribute writes in this cell; inherited tool values have no recovered drive record."
       }
     },
     {
@@ -168983,7 +169486,31 @@
         "acceptance_commit": "7fa1898a18087628304cd2669471bcde7a41a438",
         "classification": "observed; identity complement derived",
         "input_member": "capture/variant-full-source-SDK.json",
-        "output_member": "capture/variant-post-SDK.json"
+        "output_member": "capture/variant-post-SDK.json",
+        "source": "live-capture",
+        "reference": "ref-editor@11.2v3",
+        "method": "from-trace",
+        "captured_utc": "2026-10-06T20:38:50.316981+00:00",
+        "notes": "Historical observation receipt time; identity complements are derived from same-cell identities. This is not a promotion time or a claim about the position reader precision."
+      },
+      "parameters": {
+        "schema": 1,
+        "state": "recorded",
+        "derived_from": "capture",
+        "cells": [
+          {
+            "cell": "followup-variant",
+            "drove": [
+              {
+                "op": "bridge",
+                "values": {
+                  "mode": "linear"
+                }
+              }
+            ]
+          }
+        ],
+        "notes": "Only explicit completed scalar writes are recorded; inherited values, historical defaults and other observed scalars have no drive-value authority."
       }
     }
   ]
