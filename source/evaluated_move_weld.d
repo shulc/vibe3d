@@ -30,6 +30,11 @@ final class EvaluatedMoveWeld {
         foreach(vi;source_) previous_~=mesh.vertices[vi];
         liveSource_ = source.dup;
     }
+    bool ownsSource(const(uint)[] source, const(Vec3)[] positions) const {
+        if (source != source_ || positions.length != source_.length) return false;
+        foreach (i, vi; source_) if (positions[i] != basis_.vertices[vi]) return false;
+        return true;
+    }
     bool occlusion() const nothrow @nogc { return occlusion_; }
     ulong generation() const nothrow @nogc { return generation_; }
     bool evaluated() const nothrow @nogc { return evaluated_; }
@@ -166,6 +171,55 @@ MoveElementHit searchMoveElement(ref Mesh mesh, ModelSpace space,
         }
     }
     return best;
+}
+
+// 9504: polygon side ownership is resolved over border-side pairs, independently
+// of target pixel admission. Center each source side at the handle, minimize
+// paired endpoint distance, and retain the adjacent-corner orientation vetoes.
+bool polygonMoveSides(ref Mesh mesh, const(uint)[] source, const(Vec3)[] basis,
+        uint targetFace, Vec3 handle, out uint[2] sourceCorners, out uint[2] targetSide) {
+    if (source.length < 3 || basis.length != source.length || targetFace >= mesh.faces.length)
+        return false;
+    const target = mesh.faces[targetFace];
+    const support = mesh.edgePolygonCounts();
+    bool found;
+    double best;
+    foreach (i, a; source) {
+        const b = source[(i+1)%source.length];
+        const edge = mesh.edgeIndex(a,b);
+        if (a == b || edge < 0 || support[edge] != 1) continue;
+        uint[2] corners = mesh.edges[edge][0] == a
+            ? [cast(uint)i,cast(uint)((i+1)%source.length)]
+            : [cast(uint)((i+1)%source.length),cast(uint)i];
+        const shift = handle - (basis[corners[0]] + basis[corners[1]])*0.5f;
+        const p = basis[corners[0]]+shift, q = basis[corners[1]]+shift;
+        foreach (j, x; target) {
+            const y = target[(j+1)%target.length];
+            const te = mesh.edgeIndex(x,y);
+            if (x == y || te < 0 || support[te] != 1) continue;
+            auto ends = mesh.edges[te];
+            const u = mesh.vertices[ends[0]], v = mesh.vertices[ends[1]];
+            double squared(Vec3 a, Vec3 b) {
+                const double dx=cast(double)a.x-b.x,dy=cast(double)a.y-b.y,dz=cast(double)a.z-b.z;
+                return dx*dx+dy*dy+dz*dz;
+            }
+            const forward = squared(p,u)+squared(q,v);
+            const reverse = squared(p,v)+squared(q,u);
+            const cost = reverse < forward ? reverse : forward;
+            if (found && cost >= best) continue;
+            if (reverse < forward) ends = [ends[1],ends[0]];
+            auto previous = (corners[0]+source.length-1)%source.length;
+            if (previous == corners[1]) previous = (corners[0]+1)%source.length;
+            auto next = (corners[1]+1)%source.length;
+            if (next == corners[0]) next = (corners[1]+source.length-1)%source.length;
+            const before = basis[previous]+shift, after = basis[next]+shift;
+            const t0=mesh.vertices[ends[0]],t1=mesh.vertices[ends[1]];
+            if (dot(cross(p-before,q-before),cross(t0-before,t1-before)) < 0) continue;
+            if (dot(cross(q-p,after-p),cross(t1-t0,after-t0)) < 0) continue;
+            found=true;best=cost;sourceCorners=corners;targetSide=ends;
+        }
+    }
+    return found;
 }
 
 uint[2][] pairedMoveEnds(const(Vec3)[] sourcePositions, uint[2] sourceSide,

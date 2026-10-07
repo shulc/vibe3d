@@ -51,7 +51,7 @@ import snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf, e
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import tools.edit.topology_pen.render : PenRenderOps;
 import tools.edit.topology_pen.snap_guide : PenSnapGuide, admitsMoveElement;
-import evaluated_move_weld : EvaluatedMoveWeld, searchMoveElement, pairedMoveEnds, evaluatedMoveHandle, heldMoveEngages, moveEndpointSearch;
+import evaluated_move_weld : EvaluatedMoveWeld, searchMoveElement, pairedMoveEnds, evaluatedMoveHandle, heldMoveEngages, moveEndpointSearch, polygonMoveSides;
 import tools.edit.topology_pen.json   : PenStateJsonOps;
 import bvh_pick              : BvhPick, BackgroundRayPicker, SurfaceHit;
 import command_history      : CommandHistory, PreparedHistoryKind;
@@ -4321,6 +4321,8 @@ public:
 
     private void applyEvaluatedMove(const(Vec3)[] targets, ref VectorStack vts) {
         auto m = mesh;
+        // Resolve the press-owned population before restoring or publishing a frame.
+        if (!moveFrame_.ownsSource(moveVerts_,moveBase_)) return;
         if (!moveFrame_.evaluated) {
             bool changed;
             foreach(i,p;targets) if((p-moveBase_[i]).length>1e-4f) changed=true;
@@ -4360,17 +4362,14 @@ public:
                 true,innerSnap_,backFace_,ray,sp,moveFrame_.marked),
             (Vec3 p) => !moveFrame_.occlusion || pressVisible(p,vp));
         uint[2][] pairs;
-        if (heldMoveEngages(held)) {
-            uint[2] sourceSide;
-            if (moveElem_ == MoveElem.Edge) sourceSide = [moveVerts_[0],moveVerts_[1]];
-            else {
-                auto sideHit = searchMoveElement(*m,ms,vp,handle,SnapType.Polygon,
-                    (SnapType t,int i) => m.faces[i] == moveVerts_);
-                sourceSide = sideHit.side;
-            }
-            Vec3[] positions;
-            foreach(vi;sourceSide) foreach(i,v;moveVerts_) if(v==vi) positions~=moveBase_[i];
-            pairs = pairedMoveEnds(positions,sourceSide,*m,held.side);
+        uint[2] sourceCorners = [0u,1u], targetSide = held.side;
+        const engages = heldMoveEngages(held) && (moveElem_ == MoveElem.Edge
+            || polygonMoveSides(*m,moveVerts_,moveBase_,cast(uint)held.index,
+                handle,sourceCorners,targetSide));
+        if (engages) {
+            const uint[2] sourceSide = [moveVerts_[sourceCorners[0]],moveVerts_[sourceCorners[1]]];
+            const positions = [moveBase_[sourceCorners[0]],moveBase_[sourceCorners[1]]];
+            pairs = pairedMoveEnds(positions,sourceSide,*m,targetSide);
             const shift = ((m.vertices[pairs[0][0]]-positions[0])
                          +(m.vertices[pairs[1][0]]-positions[1]))*0.5f;
             Vec3[] points;

@@ -378,3 +378,128 @@ unittest {
     assert(frame.welded && m.vertices.length==10 && m.faces.length==4,
         "evaluated weld absorbs source endpoints and both reciprocal partners");
 }
+
+import tools.edit.topology_pen.defs : PenMode;
+
+private void ordinaryPolygonMove(PenMode mode,float extent, bool closed = false, uint stale = 0) {
+    import tools.edit.topology_pen.tool : TopologyPenTool;
+    import toolpipe.packets : SubjectPacket, SnapPacket;
+    import operator : VectorStack;
+    import bindbc.sdl;
+    import math : lookAt, perspectiveMatrix;
+    import std.math : PI;
+    loadSDL(); SDL_SetModState(cast(SDL_Keymod)0);
+    import display_sync : activeMeshResolver;
+    Mesh offscreen;auto savedResolver=activeMeshResolver;activeMeshResolver=()=>&offscreen;
+    scope(exit) activeMeshResolver=savedResolver;
+    Mesh m;
+    foreach(v;[Vec3(2.5,-.5,0),Vec3(2.5,.5,0),Vec3(3,0,0),
+        Vec3(-extent,-extent,0),Vec3(extent,-extent,0),Vec3(extent,extent,0),Vec3(-extent,extent,0)]) m.addVertex(v);
+    m.addFace([0u,1,2]);m.addFace([3u,4,5,6]);
+    if (closed) m.addFace([6u,5,4,3]);
+    m.rebuildEdges();m.buildLoops();
+    m.resizeVertexSelection();m.resizeEdgeSelection();m.resizeFaceSelection();m.resizeAllMeshMaps();
+    Viewport vp;vp.width=800;vp.height=800;vp.eye=Vec3(0,0,5);
+    vp.view=lookAt(vp.eye,Vec3(0,0,0),Vec3(0,1,0));vp.proj=perspectiveMatrix(PI/2,1,.1,100);
+    import tools.edit.topology_pen.defs : PenMode;
+    auto pen=new TopologyPenTool();pen.penMode_=mode;pen.meshSrc_=()=>&m;pen.backFace_=true;
+    SubjectPacket subject;subject.mesh=&m;subject.viewport=vp;subject.pickFacesDrawn=true;
+    SnapPacket snap;snap.enabled=true;VectorStack stack;stack.put(&subject);stack.put(&snap);
+    SDL_MouseButtonEvent down;down.button=SDL_BUTTON_LEFT;down.x=400;down.y=400;
+    assert(pen.onMouseButtonDown(down,stack),"ordinary polygon press consumed");
+    assert(pen.moveArmed_ && pen.moveVerts_==[3u,4u,5u,6u],"ordinary polygon press population");
+    if (stale) {
+        import change_bus : changeBus;
+        const before = m.vertices.dup, faces = m.faces.dup;
+        const deliveries = changeBus.deliveryCount, topology = m.mutationVersion;
+        const image = pen.buildPreparedDeactivate(null);
+        if (stale == 1) pen.moveVerts_[0] = 0;
+        else if (stale == 2) pen.moveBase_ = pen.moveBase_[0..3];
+        else pen.moveBase_[0] = Vec3(9,9,9);
+        bool failed;
+        try { pen.applyMoveTargets([Vec3(1,0,0),Vec3(2,0,0),Vec3(3,0,0),Vec3(4,0,0)],stack); }
+        catch (Throwable) { failed=true; }
+        assert(!failed,"missing source mapping must not index incomplete press positions");
+        assert(m.vertices==before && m.faces==faces,
+            "missing source mapping refuses before geometry writes");
+        assert(changeBus.deliveryCount==deliveries && m.mutationVersion==topology,
+            "missing source mapping publishes neither Position nor topology");
+        const after = pen.buildPreparedDeactivate(null);
+        assert(after.expectedMoveGeneration==image.expectedMoveGeneration && !pen.moveDirty_,
+            "missing source mapping retains unevaluated recorder state");
+        return;
+    }
+    SDL_MouseMotionEvent motion;motion.x=600;motion.y=400;
+    bool failed;
+    try { pen.onMouseMotion(motion,stack); } catch(Throwable e) {
+        import std.stdio : writeln;writeln("REVIEW-CAUGHT ",e.toString());failed=true;
+    }
+    assert(!failed,"ordinary polygon movement must not index an absent source side");
+    if (closed) {
+        assert(m.vertices.length==7 && m.faces.length==3,
+            "polygon without border sides remains a free move");
+        import std.math : abs;
+        foreach (i,vi;[3u,4u,5u,6u])
+            assert((m.vertices[vi]-(pen.moveBase_[i]+Vec3(2.5,0,0))).length<1e-5,
+                "polygon without side pair writes the complete free frame");
+        return;
+    }
+    assert(m.vertices.length==5 && m.faces.length==2,
+        "ordinary polygon side weld absorbs exactly two source corners");
+    import std.math : abs;
+    const shift=Vec3(2.5f-extent,0,0);
+    uint translated;
+    foreach(p;m.vertices) if(abs(p.x-(-extent+shift.x))<1e-5 && abs(abs(p.y)-extent)<1e-5) ++translated;
+    assert(translated==2,"ordinary polygon non-side corners retain side mean shift");
+    auto retained=m.vertices.dup;
+    assert(pen.onMouseButtonUp(down,stack),"ordinary polygon release consumed");
+    assert(m.vertices==retained,"ordinary polygon release retains last evaluated frame");
+
+}
+unittest {
+    import tools.edit.topology_pen.defs : PenMode;
+    version (PolygonPointOnly) {} else {
+        ordinaryPolygonMove(PenMode.Move,.3f);
+        ordinaryPolygonMove(PenMode.Move,1f);
+        ordinaryPolygonMove(PenMode.Move,1f,true);
+        ordinaryPolygonMove(PenMode.Move,1f,false,1);
+        ordinaryPolygonMove(PenMode.Move,1f,false,2);
+        ordinaryPolygonMove(PenMode.Move,1f,false,3);
+    }
+}
+unittest {
+    import tools.edit.topology_pen.defs : PenMode;
+    version (PolygonMoveOnly) {} else {
+        ordinaryPolygonMove(PenMode.Point,.3f);
+        ordinaryPolygonMove(PenMode.Point,1f);
+        ordinaryPolygonMove(PenMode.Point,1f,true);
+        ordinaryPolygonMove(PenMode.Point,1f,false,1);
+        ordinaryPolygonMove(PenMode.Point,1f,false,2);
+        ordinaryPolygonMove(PenMode.Point,1f,false,3);
+    }
+}
+
+unittest {
+    import evaluated_move_weld : polygonMoveSides;
+    Mesh m;
+    foreach (v;[Vec3(-2,0,0),Vec3(2,0,0),Vec3(2,.8,0),Vec3(-2,.8,0),
+        Vec3(2.5,-.1,0),Vec3(2.5,.9,0),Vec3(3,.4,0)]) m.addVertex(v);
+    m.addFace([0u,1,2,3]);m.addFace([4u,5,6]);m.rebuildEdges();m.buildLoops();
+    uint[2] corners,ends;
+    assert(polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],1,Vec3(2.5,.4,0),corners,ends),
+        "polygon border-side pair positive");
+    assert(corners==[1u,2] && ends==[4u,5],
+        "polygon side pair minimizes centered endpoint cost with orientation vetoes");
+    m.addFace([0u,1,2,3]);m.rebuildEdges();m.buildLoops();
+    assert(!polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],1,Vec3(2.5,.4,0),corners,ends),
+        "polygon source without border sides has no pair");
+    m.faces=m.faces[0..2];m.addFace([6u,5,4]);m.rebuildEdges();m.buildLoops();
+    assert(!polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],1,Vec3(2.5,.4,0),corners,ends),
+        "polygon target without border sides has no pair");
+    assert(!polygonMoveSides(m,[0u,1],m.vertices[0..2],1,Vec3(2.5,.4,0),corners,ends),
+        "polygon side selection rejects an incomplete source outline");
+    assert(!polygonMoveSides(m,[0u,1,2,3],m.vertices[0..3],1,Vec3(2.5,.4,0),corners,ends),
+        "polygon side selection rejects incomplete press positions");
+    assert(!polygonMoveSides(m,[0u,1,2,3],m.vertices[0..4],3,Vec3(2.5,.4,0),corners,ends),
+        "polygon side selection rejects an absent target polygon");
+}
