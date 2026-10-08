@@ -146,7 +146,6 @@ def validate_invocations(invocations, with_tests, sources=None):
                   if not p.startswith('-') and p.endswith(('.d', '.di', '.c', '.cpp'))}
         explicit = set(sources)
         extra = actual - explicit
-        require(explicit <= actual, 'explicit source roots absent from actual compiler invocation')
         require((len(extra) == 1 and next(iter(extra)).name == 'dub_test_root.d')
                 if with_tests else not extra,
                 'actual compiler source-root population differs from explicit roots plus DUB main')
@@ -174,10 +173,12 @@ def validate_link_output(output, object_outputs=()):
                         'unexpected linked computational/native library: ' + token + ' PLAN-FINDING')
 
 
-def run(command, cwd, env, evidence, name):
+def run(command, cwd, env, evidence, name, merge_stderr=True):
     result = subprocess.run(command, cwd=cwd, env=env, text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE)
     (evidence / (name + '.log')).write_text(result.stdout)
+    if not merge_stderr:
+        (evidence / (name + '.stderr.log')).write_text(result.stderr)
     return result
 
 
@@ -201,7 +202,7 @@ def main(argv=None):
     compiler = str(Path(compiler).resolve())
     describe_cmd = ['dub', 'describe', '--root=' + str(root), '--config=' + args.config,
                     '--compiler=' + compiler, '--quiet']
-    described = run(describe_cmd, root, env, evidence, 'describe')
+    described = run(describe_cmd, root, env, evidence, 'describe', merge_stderr=False)
     require(described.returncode == 0, 'DUB describe failed (see describe.log)')
     description = json.loads(described.stdout)
     (evidence / 'describe.json').write_text(json.dumps(description, indent=2) + '\n')

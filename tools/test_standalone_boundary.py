@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Discriminating controls for the standalone input/edge/population checker."""
 import copy
+import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -145,6 +147,23 @@ class BoundaryControls(unittest.TestCase):
         self.assertEqual(set(modules), {'std.traits', 'shader', 'root', 'mesh', 'static_helper'})
         self.assertEqual(len(files), 5)
         self.assertIn('/project/source/shader.d', files)
+
+    def test_empty_root_describe_warning_is_not_json(self):
+        with tempfile.TemporaryDirectory(prefix='boundary-empty-') as temporary:
+            root = Path(temporary)
+            (root / 'dub.json').write_text(json.dumps({
+                'name': 'vibe3d-core-tests', 'targetType': 'executable',
+                'sourcePaths': [], 'sourceFiles': [], 'configurations': [{'name': 'core'}],
+            }))
+            result = boundary.run(['dub', 'describe', '--root=' + str(root),
+                '--config=core', '--compiler=dmd', '--quiet'], root, os.environ.copy(),
+                root, 'describe', merge_stderr=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('no source files', result.stderr)
+            description = json.loads(result.stdout)
+            with self.assertRaisesRegex(boundary.BoundaryError, 'test-root population'):
+                boundary.validate_settings(description, root)
+            self.assertEqual((root / 'describe.stderr.log').read_text(), result.stderr)
 
     def test_actual_explicit_root_population(self):
         root = Path('/fixture')
