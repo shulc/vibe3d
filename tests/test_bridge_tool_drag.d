@@ -165,3 +165,70 @@ unittest { // a bare horizontal haul bridges the two caps, and the drop records 
         ~ "expected exactly 1 — `commitBridgeEdit` runs from `deactivate()` "
         ~ "and stays silent unless the haul engaged");
 }
+
+unittest { // Every consumed open-row parameter rebuilds the production preview.
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import core.thread : Thread;
+    import core.time : msecs;
+    auto fixture = parseJSON(readText(buildPath(__FILE_FULL_PATH__.dirName,
+        "fixtures/bridge_auto_connection/frozen.json")));
+    auto input = fixture["cases"].array[0]["input"];
+    auto reset = postJson("/api/command", commandBody("scene.reset", `{"empty":true}`));
+    assert(reset["status"].str == "ok", "preview empty reset");
+    auto scene = JSONValue.emptyObject;
+    scene["vertices"] = input["vertices"]; scene["faces"] = input["faces"];
+    auto response = postJson("/api/command", commandBody("scene.loadMesh", scene.toString));
+    assert(response["status"].str == "ok", "preview fixture load");
+    auto model = getJson("/api/model");
+    JSONValue[] indices;
+    foreach (pair; input["selection_packet_order"].array) {
+        bool found;
+        foreach (i, e; model["edges"].array) {
+            auto a = e.array;
+            if ((a[0].integer == pair.array[0].integer && a[1].integer == pair.array[1].integer) ||
+                (a[1].integer == pair.array[0].integer && a[0].integer == pair.array[1].integer)) {
+                indices ~= JSONValue(i); found = true; break;
+            }
+        }
+        assert(found, "preview selected edge exists");
+    }
+    assert(indices.length == 8, "preview selection population");
+    auto select = JSONValue.emptyObject;
+    select["mode"] = JSONValue("edges"); select["indices"] = JSONValue(indices);
+    response = postJson("/api/command", commandBody("mesh.select", select.toString));
+    assert(response["status"].str == "ok", "preview select");
+    cmd("tool.set " ~ TOOL ~ " on");
+    scope(exit) cmd("tool.set " ~ TOOL ~ " off");
+    Thread.sleep(200.msecs);
+    ulong key() {
+        auto v = getJson("/api/viewport/display")["cells"].array[0]["toolPreviewKey"];
+        return v.type == JSONType.uinteger ? v.uinteger : cast(ulong)v.integer;
+    }
+    void change(string name, string value) {
+        auto before = key();
+        cmd("tool.attr " ~ TOOL ~ " " ~ name ~ " " ~ value);
+        foreach (_; 0 .. 60) {
+            Thread.sleep(25.msecs);
+            if (key() != before) return;
+        }
+        assert(false, "consumed bridge preview not rebuilt: " ~ name);
+    }
+    change("connect", "false");
+    change("segments", "3");
+    assert(getJson("/api/tool/state")["effectiveSegments"].integer == 3,
+        "rails preview effective requested segments");
+    change("mode", "smooth");
+    change("tension", "0");
+    change("autoStep", "false");
+    change("connect", "true");
+    assert(getJson("/api/tool/state")["effectiveSegments"].integer == 3,
+        "static autoStep false preview requested segments");
+    change("autoStep", "true");
+    assert(getJson("/api/tool/state")["effectiveSegments"].integer == 5,
+        "connected preview effective side segments");
+    change("twist", "1");
+    auto state = getJson("/api/tool/state");
+    assert(state["twistRefused"].type == JSONType.true_ && state["effectiveSegments"].integer == 0,
+        "open twist preview refusal and effective zero");
+}

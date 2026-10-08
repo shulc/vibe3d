@@ -101,6 +101,12 @@ public:
         result.image_ = target.buildPreparedDeactivateState();
         return result.image_.valid ? result : null;
     }
+    bool setEffectiveSegments(uint value) nothrow @nogc {
+        if (!image_.valid || target_ is null || pending_ || validated_ || consumed_)
+            return false;
+        image_.effectiveSegments = value;
+        return true;
+    }
     @property ref const(PreparedBridgeDeactivateImage) image()
             return scope nothrow @nogc { return image_; }
     bool begin() nothrow @nogc {

@@ -41,6 +41,7 @@ private struct BridgePreparedState {
 struct PreparedBridgeActivationImage {
     bool valid;
     bool selectionValid, polygonMode, openRows;
+    uint effectiveSegments;
     EditMode mode;
     uint[] loopA, loopB, capFaces;
     MeshSnapshot baseline;
@@ -49,6 +50,7 @@ struct PreparedBridgeActivationImage {
     void clear() nothrow @nogc {
         valid = selectionValid = polygonMode = openRows = false;
         loopA = loopB = capFaces = null;
+        effectiveSegments = 0;
         baseline = MeshSnapshot.init; sessionKey = SessionMeshKey.init;
         preview = Mesh.init;
     }
@@ -57,6 +59,7 @@ struct PreparedBridgeActivationImage {
 struct PreparedBridgeDeactivateImage {
     bool valid;
     bool expectedEngaged, expectedValid, expectedPreviewCache, openRows;
+    uint effectiveSegments;
     BridgeParams params;
     SessionMeshKey sessionKey;
     uint[] loopA, loopB, capFaces;
@@ -71,7 +74,16 @@ struct PreparedBridgeDeactivateImage {
 // is inert, polygon/closed cap deletion retains historical behavior (unmeasured
 // here). Tension is raw, unclamped; Curve/Linear patch invariance is measured,
 // Smooth/tension patch invariance is static. Smooth uses our geometry normals.
+// Rails consume mode/tension (1.0 = 100%); patches bypass both. Connect and
+// autoStep consume open rows only; autoStep=false is static-law based. Orient,
+// steps, continuous and UV mapping have no known consumer; connected UVs read
+// as none; its four-choice panel returns Connected to None after the hook.
+// JSON injection/sticky recall bypass the change hook and may store 3;
+// tool.attr refuses profile attrs while JSON ignores unknown keys. All panel
+// rows stay enabled: command enablement and panel greying disagree in evidence.
+// Sessions commit once at drop; reset uses factory defaults, recall last-used.
 enum BridgeMode { linear=0, curve=1, smooth=2 }
+enum BridgeUvs { none=0, u=1, v=2, connected=3 }
 
 struct BridgeParams {
     int   segments = 1;
@@ -82,6 +94,10 @@ struct BridgeParams {
     float tension = 1.0f;
     bool connect = true;
     bool autoStep = true;
+    bool orient = false;
+    BridgeUvs uvs = BridgeUvs.none;
+    int steps = 10;
+    bool continuous = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,12 +254,12 @@ BridgeApplyResult applyBridgeOp(ref Mesh m, const(uint)[] loopA, const(uint)[] l
 /// `previewMesh` fully from `baseSnap` EVERY call, then re-applies the
 /// bridge fresh — so N successive evaluate() calls never accumulate new
 /// rings on top of each other.
-void rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
+BridgeApplyResult rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
                           in uint[] loopA, in uint[] loopB, in uint[] capFaces,
                           in BridgeParams params_, bool openRows = false) {
     baseSnap.restore(previewMesh);
-    if (loopA.length == 0 || loopB.length == 0) return;
-    applyBridgeOp(previewMesh, loopA, loopB, capFaces, params_, openRows);
+    if (loopA.length == 0 || loopB.length == 0) return BridgeApplyResult.init;
+    return applyBridgeOp(previewMesh, loopA, loopB, capFaces, params_, openRows);
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +281,7 @@ void rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
 //
 // Interaction: any LMB click+drag in the viewport (no handle to hit)
 // adjusts Segments, mapping horizontal pixel delta to an integer span
-// count; Twist / Remove Polygons / Flip Loop Pairing are panel-only.
+// count; Other attrs are edited through the ordinary properties panel.
 // ---------------------------------------------------------------------------
 class BridgeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
@@ -306,6 +322,10 @@ private:
     float cachedTwist;
     bool  cachedRemove;
     bool  cachedFlip;
+    BridgeMode cachedMode;
+    float cachedTension;
+    bool cachedConnect, cachedAutoStep;
+    uint lastEffectiveSegments_;
 
     // Commit guard: true once the user has actually interacted (drag or
     // panel/headless attr write) — mirrors Mirror's `engaged`.
@@ -383,6 +403,7 @@ public:
         engaged          = false;
         dragging_        = false;
         havePreviewCache = false;
+        lastEffectiveSegments_ = 0;
         previewGpu_.init();
         if (valid_) evaluate();
     }
@@ -402,8 +423,8 @@ public:
         image.baseline = MeshSnapshot.capture(*source);
         image.sessionKey.stamp(*source);
         if (image.selectionValid)
-            rebuildBridgePreview(image.baseline, image.preview, image.loopA,
-                image.loopB, image.capFaces, params_, image.openRows);
+            image.effectiveSegments = rebuildBridgePreview(image.baseline, image.preview, image.loopA,
+                image.loopB, image.capFaces, params_, image.openRows).effectiveSegments;
         image.valid = true;
         return image;
     }
@@ -426,9 +447,12 @@ public:
         previewMesh_ = image.preview; image.preview = Mesh.init;
         engaged = false; dragging_ = false;
         havePreviewCache = valid_;
+        lastEffectiveSegments_ = image.effectiveSegments;
         if (valid_) {
             cachedSegments = params_.segments; cachedTwist = params_.twist;
             cachedRemove = params_.remove; cachedFlip = params_.flip;
+            cachedMode = params_.mode; cachedTension = params_.tension;
+            cachedConnect = params_.connect; cachedAutoStep = params_.autoStep;
         }
         image.valid = false;
     }
@@ -481,6 +505,7 @@ public:
         image.valid = true; image.expectedEngaged = engaged;
         image.expectedValid = valid_; image.expectedPreviewCache = havePreviewCache;
         image.openRows = openRows_; image.params = params_; image.sessionKey = sessionKey_;
+        image.effectiveSegments = lastEffectiveSegments_;
         image.loopA = loopA_.dup; image.loopB = loopB_.dup;
         image.capFaces = capFaces_.dup; return image;
     }
@@ -495,6 +520,7 @@ public:
     }
     final void installPreparedDeactivateState(
             ref PreparedBridgeDeactivateImage image) nothrow @nogc {
+        lastEffectiveSegments_ = image.effectiveSegments;
         engaged = false; havePreviewCache = false; image.clear();
     }
     final bool ownsPreparedMainUpload(GpuUploadOwner owner) nothrow @nogc {
@@ -506,13 +532,15 @@ public:
     private size_t buildPreparedDeactivateCandidate(
             in PreparedBridgeDeactivateImage image, out Mesh candidate,
             out MeshSnapshot pre, out uint deliveryFlags,
-            out uint deliveryDomains) {
+            out uint deliveryDomains, out uint effectiveSegments) {
+        effectiveSegments = image.effectiveSegments;
         if (!(image.expectedEngaged && image.expectedValid &&
               image.sessionKey.matches(*mesh))) return 0;
         pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
         auto shadow = beginPreparedShadow(candidate);
         auto result = applyBridgeOp(candidate, image.loopA, image.loopB,
             image.capFaces, image.params, image.openRows);
+        effectiveSegments = result.effectiveSegments;
         drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
         shadow.close(); return result.added;
     }
@@ -526,9 +554,10 @@ public:
         bool ok = stateOwner !is null && layer !is null &&
             &layer.meshRef() is mesh && ownsPreparedPreviewDestroy(previewDestroy);
         Mesh candidate; MeshSnapshot pre;
-        size_t inserted; uint deliveryFlags, deliveryDomains;
+        size_t inserted; uint deliveryFlags, deliveryDomains, effectiveSegments;
         if (ok) inserted = buildPreparedDeactivateCandidate(stateOwner.image,
-            candidate, pre, deliveryFlags, deliveryDomains);
+            candidate, pre, deliveryFlags, deliveryDomains, effectiveSegments);
+        if (ok) ok = stateOwner.setEffectiveSegments(effectiveSegments);
         if (ok && inserted > 0)
             ok = ownsPreparedMainUpload(mainUpload) &&
                 context.prepareStampedMeshImage(layer, candidate,
@@ -597,6 +626,7 @@ public:
         size_t inserted = 0;
         if (willCommit) {
             auto res = applyBridgeOp(*mesh, loopA_, loopB_, capFaces_, params_, openRows_);
+            lastEffectiveSegments_ = res.effectiveSegments;
             inserted = res.added;
             if (inserted > 0) gpu.upload(*mesh);
         }
@@ -660,11 +690,18 @@ public:
             Param.bool_("connect", "Auto Connection", &params_.connect, true),
             Param.bool_("remove", "Remove Polygons", &params_.remove, true),
             Param.bool_("flip", "Flip Polygons", &params_.flip, false),
+            Param.bool_("orient", "Orient", &params_.orient, false),
+            Param.intEnum_("uvs", "UVs", cast(int*)&params_.uvs,
+                [IntEnumEntry(0,"none","None"), IntEnumEntry(1,"u","U"),
+                 IntEnumEntry(2,"v","V"), IntEnumEntry(3,"connected","Connected")], 0),
             Param.bool_("autoStep", "Automatic", &params_.autoStep, true),
+            Param.int_("steps", "Steps", &params_.steps, 10).min(1).enforceBounds(),
+            Param.bool_("continuous", "Continuous", &params_.continuous, true),
         ];
     }
 
     override void onParamChanged(string name) {
+        normalizeUvs(name);
         auto prepared = prepareParamState(name);
         BridgePreparedState handle;
         if (validatePreparedState(prepared, handle)) installLegacyPreparedState(handle);
@@ -672,6 +709,7 @@ public:
 
     override bool prepareDoorParamChanged(string name, PreparedRecordContext,
             Layer, ulong, ulong) {
+        normalizeUvs(name);
         auto prepared = prepareParamState(name);
         BridgePreparedState handle;
         if (!validatePreparedState(prepared, handle)) return false;
@@ -680,6 +718,10 @@ public:
     }
 
 private:
+    void normalizeUvs(string name) nothrow @nogc {
+        if (name == "uvs" && params_.uvs == BridgeUvs.connected)
+            params_.uvs = BridgeUvs.none;
+    }
     PreparedToolStateDelta prepareParamState(string) const nothrow @nogc {
         return PreparedToolStateDelta.boolean(preparedToolStateOwner, true);
     }
@@ -723,13 +765,24 @@ public:
         root["twist"]       = JSONValue(params_.twist);
         root["remove"]      = JSONValue(params_.remove);
         root["flip"]        = JSONValue(params_.flip);
+        root["mode"] = JSONValue(cast(int)params_.mode);
+        root["tension"] = JSONValue(params_.tension);
+        root["connect"] = JSONValue(params_.connect);
+        root["orient"] = JSONValue(params_.orient);
+        root["uvs"] = JSONValue(cast(int)(params_.uvs == BridgeUvs.connected
+            ? BridgeUvs.none : params_.uvs));
+        root["autoStep"] = JSONValue(params_.autoStep);
+        root["steps"] = JSONValue(params_.steps);
+        root["continuous"] = JSONValue(params_.continuous);
+        root["effectiveSegments"] = JSONValue(lastEffectiveSegments_);
+        root["twistRefused"] = JSONValue(openRows_ && params_.twist != 0.0f);
         return root;
     }
 
     // ----- Live preview ---------------------------------------------------
 
     private void rebuildPreviewMesh() {
-        rebuildBridgePreview(baseSnap_, previewMesh_, loopA_, loopB_, capFaces_, params_, openRows_);
+        lastEffectiveSegments_ = rebuildBridgePreview(baseSnap_, previewMesh_, loopA_, loopB_, capFaces_, params_, openRows_).effectiveSegments;
     }
 
     override void evaluate() {
@@ -738,7 +791,11 @@ public:
             && cachedSegments == params_.segments
             && cachedTwist    == params_.twist
             && cachedRemove   == params_.remove
-            && cachedFlip     == params_.flip)
+            && cachedFlip     == params_.flip
+            && cachedMode     == params_.mode
+            && cachedTension  == params_.tension
+            && cachedConnect  == params_.connect
+            && cachedAutoStep == params_.autoStep)
             return;
 
         rebuildPreviewMesh();
@@ -748,6 +805,10 @@ public:
         cachedTwist      = params_.twist;
         cachedRemove     = params_.remove;
         cachedFlip       = params_.flip;
+        cachedMode       = params_.mode;
+        cachedTension    = params_.tension;
+        cachedConnect    = params_.connect;
+        cachedAutoStep   = params_.autoStep;
         havePreviewCache = true;
     }
 
