@@ -290,6 +290,8 @@ unittest
             "captured Curve centroid direction");
     assert(noSpace(readText("source/mesh_ops/bridge.d")).indexOf("curveSourceDirections(ed.mesh,groups)") >= 0,
             "production Curve direction wiring census");
+    assert(noSpace(readText("source/mesh_ops/bridge.d")).indexOf("i,chord,adjusted):curveDirections;") >= 0,
+            "production Curve centroid consumer wiring census");
 }
 
 private Mesh sourceCell(string name)
@@ -462,6 +464,15 @@ unittest
     import std.process : environment;
     // OURS robustness only: preserve effective spans and use the existing rails.
     auto filter = environment.get("VIBE3D_CELL", "");
+    version (BridgeDegenerate0Head) filter = "degenerate-0-head";
+    version (BridgeDegenerate0Tail) filter = "degenerate-0-tail";
+    version (BridgeDegenerate1Head) filter = "degenerate-1-head";
+    version (BridgeDegenerate1Tail) filter = "degenerate-1-tail";
+    version (BridgeDegenerate2Head) filter = "degenerate-2-head";
+    version (BridgeDegenerate2Tail) filter = "degenerate-2-tail";
+    version (BridgeDegenerate3Head) filter = "degenerate-3-head";
+    version (BridgeDegenerate3Tail) filter = "degenerate-3-tail";
+
     foreach (arm; 0 .. 4)
         foreach (tail; [false, true])
         {
@@ -512,7 +523,7 @@ unittest
     foreach (p; [Vec3(0,0,0), Vec3(0,0,0), Vec3(0,0,2), Vec3(1,0,2),
             Vec3(0,1,0), Vec3(0,1,2), Vec3(-1,0,1), Vec3(2,0,1)])
         base.addVertex(p);
-    foreach (f; [[0u,1u,4u], [2u,3u,5u], [0u,2u,6u], [1u,3u,7u]]) base.addFace(f);
+    foreach (f; [[0u,6u,2u], [1u,7u,3u], [0u,1u,4u], [2u,3u,5u]]) base.addFace(f);
     base.buildLoops();
     auto inc = bridgeIncidence(base, [[0u,1u], [2u,3u]]);
     auto gs = reseedOpenChains(base, [[0u,1u], [2u,3u]], inc);
@@ -526,5 +537,35 @@ unittest
     auto added = bridgeOpenRows(ed, [0u,1u], [2u,3u], p);
     assert(added == 3 && base.vertices.length == 8,
             "two point repeated endpoint stays on safe borrowed patch");
+    ed.buildLoops(); ed.close();
+}
+
+unittest
+{
+    Mesh m;
+    foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,0,2), Vec3(1,0,2)]) m.addVertex(p);
+    BridgeIncidence inc;
+    inc.neighbors = [[3u,4u,5u], [3u,4u,5u], [3u,4u,5u], [0u,1u,4u], [], []];
+    inc.owners[edgeKey(0,3)] = [0]; inc.owners[edgeKey(1,3)] = [0];
+    BridgeGroup[] gs = [[BridgeNode(0,1,-1)], [BridgeNode(2,3,-1)]];
+    assert(adjustOpenChains(m, gs, inc), "HT-first retention on trace tie");
+    assert(groupNodes(gs[1]) == [3u,2u], "trace tie retains earlier HT direction");
+    inc.neighbors[3] = [0u,2u,4u];
+    inc.owners.remove(edgeKey(1,3)); inc.owners[edgeKey(2,3)] = [0];
+    gs = [[BridgeNode(0,1,-1)], [BridgeNode(2,3,-1)]];
+    assert(adjustOpenChains(m, gs, inc), "strictly shorter HT replaces longer HH");
+    assert(groupNodes(gs[1]) == [3u,2u], "shorter trace direction");
+}
+
+unittest
+{
+    Mesh m;
+    foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0),
+            Vec3(0,0,2), Vec3(1,0,2), Vec3(2,0,2)]) m.addVertex(p);
+    auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
+    BridgeOpenParams p; p.segments = int.max;
+    auto added = bridgeOpenRows(ed, [0u,1u,2u], [3u,4u,5u], p);
+    assert(added == 1024 && m.faces.length == 1024 && m.vertices.length == 1539,
+            "open kernel hard cap exactly 512 spans");
     ed.buildLoops(); ed.close();
 }
