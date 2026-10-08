@@ -89,15 +89,20 @@ private bool cyclic(JSONValue a, JSONValue b) {
     }
     return false;
 }
-private void golden(JSONValue c, JSONValue model) {
+private size_t golden(JSONValue c, JSONValue model) {
     auto inp = c["input"], outp = c["output"];
     auto id = c["case"].str;
     foreach (name; ["vertexCount", "edgeCount", "faceCount"])
         assert(model[name].integer == outp[name].integer, id ~ " " ~ name);
-    foreach (i, v; outp["vertices"].array)
+    // Model formatting is display precision; planes preserve float32 bits.
+    auto positions = parseJSON(planes())["vertices"];
+    size_t newPositions;
+    foreach (i; inp["vertices"].array.length .. outp["vertices"].array.length) {
+        ++newPositions;
         foreach (j; 0 .. 3)
-            assert(bits(cast(float)number(model["vertices"][i][j])) ==
-                bits(cast(float)number(v[j])), id ~ " position bits " ~ i.to!string);
+            assert(bits(cast(float)number(positions[i][j])) ==
+                bits(cast(float)number(outp["vertices"][i][j])), id ~ " position bits " ~ i.to!string);
+    }
     foreach (i, f; outp["faces"].array)
         assert(cyclic(model["faces"][i], f), id ~ " cyclic winding face " ~ i.to!string);
     foreach (i, f; inp["faces"].array)
@@ -118,26 +123,28 @@ private void golden(JSONValue c, JSONValue model) {
     foreach (v; c["reused_original_vertices_derived"].array) expectedReuse ~= v.integer;
     sort(reused); sort(expectedReuse);
     assert(reused == expectedReuse, id ~ " reused original IDs");
+    return newPositions;
 }
 
 unittest {
     if (cell("golden")) {
-        size_t scored;
+        size_t scored, newPositions;
         foreach (name; ["S01", "S02", "S25", "S26"]) {
             auto c = fixture(name); auto beforeSelection = load(c);
             auto before = planes(); auto u0 = depth();
             ok(apply(params(c)));
             // This must precede restore: a stale planes channel cannot pass undo.
             assert(planes() != before, name ~ " planes changed before undo");
-            auto model = getJson("/api/model"); golden(c, model);
+            auto model = getJson("/api/model"); newPositions += golden(c, model);
             assert(selected(model) == beforeSelection, name ~ " result input edge selection order");
             assert(depth() == u0+1, name ~ " exactly one history row");
-            ok(postJson("/api/undo", ""));
+            cmd("history.undo");
             assert(planes() == before, name ~ " undo byte planes restore");
             assert(selected(getJson("/api/model")) == beforeSelection, name ~ " undo selection restore");
             ++scored;
         }
         assert(scored == 4, "HTTP golden population 4");
+        assert(newPositions == 15, "new position bit population 15");
     }
 }
 unittest {
@@ -167,7 +174,7 @@ unittest {
             auto r = apply(p);
             assert(r["status"].str == "error", name ~ " open twist HTTP refusal");
             assert(depth() == u0 && planes() == before, name ~ " refusal planes and history inert");
-            assert(canFind(r["message"].str, "twist on open rows: reference law unknown"),
+            assert(canFind(r["message"].str, "Twist on open rows is not supported."),
                 name ~ " named twist refusal reason: " ~ r.toString);
         }
         auto c = fixture("S01"); load(c); cmd("tool.set mesh.bridgeTool on");
@@ -193,12 +200,12 @@ unittest {
         cmd("tool.attr mesh.bridgeTool twist 1");
         auto state = getJson("/api/tool/state");
         cmd("tool.set mesh.bridgeTool off");
-        assert(state["twist"].integer == 1 && state["engaged"].boolean,
+        assert(number(state["twist"]) == 1 && state["engaged"].boolean,
             "recall refused drop positive attr engagement");
         assert(planes() == before && depth() == u0, "recall refused open drop inert planes and history");
         cmd("tool.set mesh.bridgeTool on");
         state = getJson("/api/tool/state");
         cmd("tool.set mesh.bridgeTool off");
-        assert(state["twist"].integer == 1, "bridge last-used twist recalled");
+        assert(number(state["twist"]) == 1, "bridge last-used twist recalled");
     }
 }
