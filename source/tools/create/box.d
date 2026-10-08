@@ -24,7 +24,8 @@ import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize,
 import viewport_scheme : axisColor, schemeColor, SchemeColor;
 import eventlog : queryMouse;
 import drag;
-import shader : Shader, LitShader, drawLitPreview;
+import shader : Shader, LitShader;
+import model_preview : ModelPreviewView;
 import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -155,6 +156,9 @@ private:
 
     Mesh    previewMesh;
     GpuMesh previewGpu;
+    MeshSnapshot previewSource_;
+    Mesh* previewSourceMesh_;
+    bool previewUploaded_;
 
     BoxState  state;
 
@@ -229,6 +233,7 @@ private:
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
+        bindModelPreview(&queryModelPreview);
         this.meshSrc_ = meshSrc;
         this.gpu       = gpu;
         this.litShader = litShader;
@@ -869,8 +874,6 @@ public:
         cachedVp = vp;
         if (state == BoxState.Idle) return;
 
-        drawLitPreview(litShader, shader, vp, previewGpu, plan);
-
         // Handles + move gizmo (BaseSet and above). Geometry is positioned
         // first; hover/capture is then resolved by the single-source
         // ToolHandles arbiter so highlight always matches what a click grabs.
@@ -1157,6 +1160,7 @@ private:
         params_ = p;
         state = s;
         if (state == BoxState.Idle) {
+            previewUploaded_ = false;
             previewMesh.clear();
             previewGpu.upload(previewMesh);
             return;
@@ -1501,12 +1505,35 @@ private:
             reverseFaceWinding(m, firstFaceIdx);
     }
 
-    void uploadBase() {
-        previewMesh.clear();
-        buildBase(&previewMesh);
-        applyFrameToMesh(&previewMesh);
+    // Source-first construction preserves default surface slots and metadata;
+    // only appended geometry receives the frame/winding correction (20261670,
+    // doc/tasks/evidence/20261670-primitive-model-preview/plan.md).
+    private final bool queryModelPreview(out ModelPreviewView candidate) {
+        candidate = ModelPreviewView.init;
+        if (state == BoxState.Idle || !previewUploaded_ ||
+            previewSourceMesh_ !is mesh || !previewSource_.matches(*mesh))
+            return false;
+        candidate = ModelPreviewView(&previewMesh, &previewGpu);
+        return true;
+    }
+
+    void uploadBase() { rebuildModelPreview(true); }
+
+    private void rebuildModelPreview(bool base) {
+        previewUploaded_ = false;
+        auto source = mesh;
+        auto receipt = MeshSnapshot.capture(*source);
+        receipt.restore(previewMesh);
+        auto firstVertex = previewMesh.vertices.length;
+        auto firstFace = previewMesh.faces.length;
+        if (base) buildBase(&previewMesh);
+        else buildCuboid(&previewMesh);
+        applyFrameToMeshRange(&previewMesh, firstVertex, firstFace);
         previewMesh.buildLoops();
         previewGpu.upload(previewMesh);
+        previewSource_ = receipt;
+        previewSourceMesh_ = source;
+        previewUploaded_ = true;
     }
 
     // Upload whichever preview is appropriate for the current state.
@@ -1545,13 +1572,7 @@ private:
         buildCuboidParametric(m, params_);
     }
 
-    void uploadCuboid() {
-        previewMesh.clear();
-        buildCuboid(&previewMesh);
-        applyFrameToMesh(&previewMesh);
-        previewMesh.buildLoops();
-        previewGpu.upload(previewMesh);
-    }
+    void uploadCuboid() { rebuildModelPreview(false); }
 
     void commitCuboid() {
         size_t firstNewVert = mesh.vertices.length;

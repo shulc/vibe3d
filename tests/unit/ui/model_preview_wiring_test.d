@@ -12,6 +12,8 @@ private bool has(string text, string code) { return text.indexOf(code) >= 0; }
 unittest {
     auto render = readText(buildPath(root, "source/ui/viewport_render.d"));
     auto bridge = blankNonCode(readText(buildPath(root, "source/tools/edit/bridge_tool.d")));
+    auto family = blankNonCode(readText(buildPath(root, "source/tools/create/primitive_create_tool.d")));
+    auto box = blankNonCode(readText(buildPath(root, "source/tools/create/box.d")));
     auto capability = blankNonCode(readText(buildPath(root, "source/model_preview.d")));
     assert(has(capability, "tool !is null && tool.modelPreview(candidate)"),
            "production queries final Tool operation");
@@ -27,15 +29,18 @@ unittest {
         }
         adopters += bindings;
         if (bindings != 0) {
-            assert(entry.name == buildPath(root, "source/tools/edit/bridge_tool.d") && bindings == 1,
-                   "Bridge is sole production preview binder adopter");
+            string expected;
+            if (entry.name == buildPath(root, "source/tools/edit/bridge_tool.d")) expected = "BridgeTool.this";
+            if (entry.name == buildPath(root, "source/tools/create/primitive_create_tool.d")) expected = "PrimitiveCreateTool.this";
+            if (entry.name == buildPath(root, "source/tools/create/box.d")) expected = "BoxTool.this";
+            assert(expected.length != 0 && bindings == 1, "only three production constructor preview binders");
             auto sites = symbolTokenHits(code, entry.name, "bindModelPreview(");
-            assert(sites.length == 1 && sites[0].key == "BridgeTool.this",
-                   "Bridge binds preview query in its constructor");
+            assert(sites.length == 1 && sites[0].key == expected,
+                   "each preview adopter binds once in its constructor");
         }
     }
-    assert(files >= 580 && adopters == 1,
-           "production preview binder census requires one Bridge adopter");
+    assert(files >= 580 && adopters == 3,
+           "production preview binder census requires Bridge, primitive family and Box adopters");
     assert(has(bridge, "bindModelPreview(&queryModelPreview);"),
            "Bridge constructor binds current display query");
     assert(has(render, "resolveModelPreview(tool, ModelPreviewView(scene.mesh, gpu.primary))"),
@@ -51,6 +56,11 @@ unittest {
            "Bridge replacement has no second complete-mesh overlay submission");
     assert(has(bridge, "!valid_ || !havePreviewCache || !sessionMeshIntact()"),
            "Bridge display requires valid uploaded cache and frozen source identity");
+    foreach (code; [family, box]) {
+        assert(has(code, "bindModelPreview(&queryModelPreview);") &&
+               has(code, "private final bool queryModelPreview(") && !has(code, "drawLitPreview"),
+               "primitive complete model uses final binding without mesh overlay submission");
+    }
     foreach (field; ["Vertex", "Edge", "Face"])
         assert(has(render, "chosen.geometryHover(display.hovered" ~ field ~ ")"),
                "production suppresses each source-index hover slot");

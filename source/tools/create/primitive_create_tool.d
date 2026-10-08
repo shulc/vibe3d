@@ -69,7 +69,8 @@ import handler : MoveHandler, BoxHandler, gizmoSize, axisFacesViewer, ToolHandle
 import viewport_scheme : axisColor;
 import eventlog : queryMouse;
 import drag : HandleDrag, DragFrame, DragKind;
-import shader : Shader, LitShader, drawLitPreview;
+import shader : Shader, LitShader;
+import model_preview : ModelPreviewView;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
@@ -129,6 +130,9 @@ protected:
 
     Mesh    previewMesh;
     GpuMesh previewGpu;
+    private MeshSnapshot previewSource_;
+    private Mesh* previewSourceMesh_;
+    private bool previewUploaded_;
     bool    meshChanged;
 
     // Placement writes world-coordinate channel values through the identity
@@ -163,6 +167,7 @@ protected:
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
+        bindModelPreview(&queryModelPreview);
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.litShader = litShader;
@@ -482,8 +487,6 @@ public:
         cachedVp = vp;
         if (isIdle()) return;
 
-        drawLitPreview(litShader, shader, vp, previewGpu, plan);
-
         if (showHandles()) drawToolHandles(shader, vp);
     }
 
@@ -598,17 +601,34 @@ protected:
         return 2;
     }
 
-    // Build the preview mesh from the current params_ (via the buildInto
-    // hook) in LOCAL workplane space, then transform every vertex through
-    // frame.toWorld for on-screen rendering.
+    // Complete detached source + state-aware primitive is the ordinary model
+    // representation (20261670; doc/tasks/evidence/20261670-primitive-model-preview/plan.md).
+    // Publish the exact source receipt only after construction/upload succeeds.
+    private final bool queryModelPreview(out ModelPreviewView candidate) {
+        candidate = ModelPreviewView.init;
+        if (isIdle() || !previewValid() || !previewUploaded_ ||
+            previewSourceMesh_ !is mesh || !previewSource_.matches(*mesh))
+            return false;
+        candidate = ModelPreviewView(&previewMesh, &previewGpu);
+        return true;
+    }
+
     void rebuildPreview() {
-        previewMesh.clear();
+        previewUploaded_ = false;
+        auto source = mesh;
+        auto receipt = MeshSnapshot.capture(*source);
+        receipt.restore(previewMesh);
+        auto firstVertex = previewMesh.vertices.length;
+        auto firstFace = previewMesh.faces.length;
         if (previewValid()) {
             buildInto(&previewMesh);
-            applyFrameToMeshRange(&previewMesh, 0, 0);
+            applyFrameToMeshRange(&previewMesh, firstVertex, firstFace);
             previewMesh.buildLoops();
         }
         previewGpu.upload(previewMesh);
+        previewSource_ = receipt;
+        previewSourceMesh_ = source;
+        previewUploaded_ = true;
     }
 
     void uploadPreview() { rebuildPreview(); }
