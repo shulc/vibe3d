@@ -790,6 +790,21 @@ private void cancellationOwnership(string cell) {
     }
 }
 
+
+unittest { // History clear can leave a pending producer without an activation row.
+    ToolSessionPolicy policy={activationRow:true,sessionSteps:true,historyRecordedSteps:true};
+    auto producer=new PendingOwner(policy); Tool active=producer;
+    auto history=new CommandHistory;
+    auto session=new EditSession(() => active,history,() { active=null; });
+    session.noteArm("empty-pending",694);
+    assert(producer.hasUncommittedEdit() && history.undoEntries().length == 0 &&
+        history.redoEntries().length == 0,"EMPTY_PENDING_CONTROL: pending owner with zero history entries");
+    assert(session.navigate(true) && producer.cancels == 1 && !producer.pending && active is null,
+        "EMPTY_PENDING_CANCEL: cancellation and plain drop succeed without a row");
+    assert(history.undoEntries().length == 0 && history.redoEntries().length == 0,
+        "EMPTY_PENDING_FLOOR: no row is manufactured or consumed");
+}
+
 unittest {
     enum cells=["own","token-mismatch","different-id","zero-token","drop-row","foreign-top",
                 "no-arm","evicted-arm","unreported-before","refused-tail","no-reporting","new-session","replacement","changed-top","still-pending","keepalive"];
@@ -883,6 +898,28 @@ unittest {
         aligned.cancelUncommittedEdit();
         assert(source.vertices == original && !aligned.hasUncommittedEdit(),
             "ALIGN_CANCEL_CONSTRUCTION: actual inherited no-op preserves source");
+        // The real Align instance owns a completed, tagged history row.
+        Tool active=aligned; auto history=new CommandHistory; auto view=new View(0,0,1,1);
+        const id=radial ? "RadialAlign" : "LinearAlign";
+        auto arm=new ToolActivationCommand(&source,view,mode,id,"",true,false,false,693,0,false,false,true);
+        arm.onDeactivate={ active=null; };
+        history.recordToolLifecycle(arm);
+        auto session=new EditSession(() => active,history,() { active=null; });
+        session.noteArm(id,693);
+        int payload;
+        auto completed=new ValueEdit(&payload,0,23,"Actual Align completed row");
+        assert(completed.apply()); history.record(completed);
+        session.recordAppliedToolCommand(completed);
+        assert(history.undoEntries().length == 2 && completed.sessionToken() == 693 &&
+            active is aligned && payload == 23,"ALIGN_COMPLETED_CONTROL: actual instance owns a tagged completed row");
+        assert(session.navigate(true) && payload == 0 && active is aligned &&
+            history.undoEntries().length == 1 && history.undoEntries()[0].cmd is arm &&
+            history.redoEntries().length == 1 && history.redoEntries()[0].cmd is completed,
+            "ALIGN_COMPLETED_UNDO: recorded-row Undo retains actual instance and activation");
+        assert(session.navigate(false) && payload == 23 && active is aligned &&
+            history.undoEntries().length == 2 && history.undoEntries()[0].cmd is arm &&
+            history.undoEntries()[1].cmd is completed && history.redoEntries().length == 0 &&
+            source.vertices == original,"ALIGN_COMPLETED_REDO: recorded-row Redo retains actual instance and activation");
         auto synthetic=new PendingOwner(policy);
         synthetic.duringCancel={ source.vertices[]=original[]; };
         source.vertices[0].x+=1;
