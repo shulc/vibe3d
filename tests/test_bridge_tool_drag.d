@@ -1,36 +1,5 @@
-// Interactive drag coverage for the Bridge tool — the FIRST it has ever had.
-//
-// WHY THIS FILE EXISTS (task 2690). Three files in `tests/` carry the word
-// bridge — `test_bridge.d`, `test_fixture_bridge.d`,
-// `test_fixture_bridge_open_rows.d` — and all three drive the ONE-SHOT COMMAND
-// `mesh.bridge`. `tool.set mesh.bridgeTool` followed by an event replay appears
-// nowhere in the suite. So `BridgeTool` — its mouse handlers, its per-event
-// segment increment, and `commitBridgeEdit` firing out of `deactivate()` — had
-// no interactive witness at all: an override landing on any of them would have
-// sat there with the command tests still green.
-//
-// THE STAND. Two coaxial unit squares (the operand `test_bridge.d` calls
-// `loadCaps`), both selected. The tool draws NO handle — `/api/tool/handles`
-// answers `{"handles":null}` for it — so the gesture is a bare horizontal LMB
-// drag anywhere in the viewport, read at 20 px per segment.
-//
-// WHAT IT ASSERTS, and why not an attribute. The acceptance criterion for an
-// interactive test in this family is that the tool BUILT and that a PLANE
-// ACTUALLY MOVED; an attribute value proves only that a drag began, which is
-// how three shipped drag tests in this tree stayed green over gestures that
-// built nothing. `built` IS NOT AVAILABLE HERE, and that is measured rather
-// than assumed: `/api/tool/state` publishes it for exactly six tools tree-wide
-// (edge_extend, edge_extrude, edge_bevel, poly_bevel, edge_slice, loop_slice —
-// `grep -rn '"built"' source/`), and `mesh.bridgeTool` is not one of them. What
-// stands in for it is the tool's own pair of engagement claims, `valid` and
-// `engaged` — `commitBridgeEdit` runs out of `deactivate()` and stays SILENT
-// when either is false — backed by the plane and the count read after the drop.
-//
-// ONE MEASURED PROPERTY SHAPES THE ORDER OF THE READS: this tool builds NO
-// LIVE PREVIEW. Measured on this stand, a full 60 px drag moves ZERO planes
-// while it is under way; every plane moves at the DROP. So the plane comparison
-// below brackets the gesture AND the drop, never the gesture alone — bracketing
-// the gesture alone would go red on entirely correct code.
+// Registered Bridge gesture witnesses: a click engages its separate preview,
+// later drags edit Segments, and explicit release saves one undoable mesh edit.
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
@@ -76,6 +45,137 @@ void cmd(string line) {
 string planes() { return getRaw("/api/mesh/planes"); }
 long undoLen() { return cast(long) getJson("/api/history")["undo"].array.length; }
 size_t faceCount() { return getJson("/api/model")["faces"].array.length; }
+
+// Task 20261640: use production event replay, never a stand-in Tool callback.
+void armCaps(bool select = true) {
+    cmd(commandBody("scene.reset", `{"empty":true}`));
+    cmd(commandBody("scene.loadMesh", kTwoCaps));
+    cmd(commandBody("mesh.select", select
+        ? `{"mode":"polygons","indices":[0,1]}`
+        : `{"mode":"polygons","indices":[]}`));
+    cmd("history.clear");
+    cmd("tool.set " ~ TOOL ~ " on");
+}
+
+void gesture(int dx = 0, int dy = 0, int steps = 0, uint mod = 0, ubyte btn = 1) {
+    auto cam = fetchCamera(BASE);
+    auto x = cam.vpX + cam.width / 2;
+    auto y = cam.vpY + cam.height / 2;
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+        x, y, x + dx, y + dy, steps, mod, btn), BASE);
+}
+
+JSONValue parameters(JSONValue state) {
+    auto result = JSONValue.emptyObject;
+    enum keys = ["segments", "twist", "mode", "tension", "connect", "remove",
+            "flip", "orient", "uvs", "autoStep", "steps", "continuous"];
+    assert(keys.length == 12, "click parameter population");
+    foreach (key; keys)
+        result[key] = state[key];
+    return result;
+}
+
+ulong previewKey() {
+    auto key = getJson("/api/viewport/display")["cells"].array[0]["toolPreviewKey"];
+    return key.type == JSONType.uinteger ? key.uinteger : cast(ulong) key.integer;
+}
+
+unittest { // Default click is a live Bridge, then explicit release saves it.
+    armCaps();
+    scope(exit) cmd("tool.set " ~ TOOL ~ " off");
+    auto before = planes();
+    auto armed = getJson("/api/tool/state");
+    auto preview = previewKey();
+    auto u0 = undoLen();
+    assert(u0 == 0, "click history headroom: measured arm depth " ~ u0.to!string);
+    assert(armed["valid"].type == JSONType.true_ &&
+        armed["engaged"].type == JSONType.false_, "click starts valid and unengaged");
+    assert(armed["segments"].integer == 1 && preview > 0,
+        "default click has one requested segment and an uploaded preview");
+
+    gesture(); // down/up only: no motion and no property write can engage it.
+    auto clicked = getJson("/api/tool/state");
+    assert(clicked["tool"].str == TOOL, "click keeps Bridge active");
+    assert(parameters(clicked) == parameters(armed), "click preserves every Bridge parameter");
+    assert(clicked["effectiveSegments"] == armed["effectiveSegments"] && previewKey() == preview,
+        "click preserves the positive standing preview");
+    assert(planes() == before && undoLen() == u0, "click leaves source and history unchanged");
+    assert(clicked["engaged"].type == JSONType.true_, "ordinary viewport click engages Bridge");
+
+    cmd("tool.release");
+    auto after = planes();
+    assert(after != before && faceCount() == 4, "default click release saves four bridge faces");
+    assert(undoLen() == u0 + 1, "click release records exactly one mesh edit");
+    cmd("tool.release");
+    assert(planes() == after && undoLen() == u0 + 1, "extra release cannot save click twice");
+    cmd("history.undo");
+    assert(planes() == before, "click release undo restores exact input planes");
+    cmd("history.redo");
+    assert(planes() == after, "click release redo restores exact saved planes");
+}
+
+unittest { // Later drags edit the same engaged operation; cancel discards it.
+    armCaps();
+    scope(exit) cmd("tool.set " ~ TOOL ~ " off");
+    auto before = planes();
+    auto armed = getJson("/api/tool/state");
+    auto u0 = undoLen();
+    auto preview = previewKey();
+    gesture();
+    enum deltas = [[0, 40], [19, 0], [0, 0]];
+    assert(deltas.length == 3, "non-segment gesture population");
+    foreach (delta; deltas) {
+        gesture(delta[0], delta[1], 1);
+        auto state = getJson("/api/tool/state");
+        assert(state["tool"].str == TOOL && state["engaged"].type == JSONType.true_,
+            "vertical/sub-step/zero-delta release keeps Bridge engaged");
+        assert(parameters(state) == parameters(armed), "non-segment motion preserves parameters");
+    }
+    gesture(60, 0, 3);
+    auto dragged = getJson("/api/tool/state");
+    assert(dragged["tool"].str == TOOL && dragged["engaged"].type == JSONType.true_,
+        "later horizontal drag keeps the same live Bridge");
+    assert(dragged["segments"].integer == armed["segments"].integer + 3 &&
+        previewKey() != preview,
+        "later horizontal drag edits preview Segments");
+    assert(planes() == before && undoLen() == u0, "later drag changes preview only");
+    cmd("tool.release");
+    auto after = planes();
+    assert(after != before && faceCount() == 16 && undoLen() == u0 + 1,
+        "click then drag release saves one four-segment Bridge edit");
+    cmd("history.undo");
+    assert(planes() == before, "click then drag undo restores frozen source");
+    cmd("history.redo");
+    assert(planes() == after, "click then drag redo restores saved preview");
+
+    armCaps();
+    before = planes(); u0 = undoLen();
+    gesture();
+    playAndWait(`{"t":0,"type":"SDL_KEYDOWN","sym":122,"scan":0,"mod":64,"repeat":0}`
+        ~ "\n" ~ `{"t":50,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":0,"repeat":0}`
+        ~ "\n", BASE); // UI navigation, unlike script history.undo, cancels live edits.
+    cmd("tool.release");
+    assert(planes() == before && undoLen() == u0, "cancel then release discards clicked preview");
+}
+
+unittest { // Admission exclusions must not acquire the click engagement bit.
+    enum chords = [[0, 3], [512, 1], [1, 1], [64, 1]];
+    assert(chords.length == 4, "excluded click population");
+    foreach (chord; chords) {
+        armCaps();
+        gesture(0, 0, 0, cast(uint)chord[0], cast(ubyte)chord[1]);
+        auto state = getJson("/api/tool/state");
+        cmd("tool.set " ~ TOOL ~ " off"); // Clean up before inspecting exclusions.
+        assert(state["engaged"].type == JSONType.false_,
+            "RMB/Alt/Shift/Ctrl click cannot engage Bridge");
+    }
+    armCaps(false);
+    gesture();
+    auto invalid = getJson("/api/tool/state");
+    cmd("tool.set " ~ TOOL ~ " off");
+    assert(invalid["valid"].type == JSONType.false_ && invalid["engaged"].type == JSONType.false_,
+        "invalid click cannot engage Bridge");
+}
 
 unittest { // a bare horizontal haul bridges the two caps, and the drop records it
     import core.thread : Thread;
@@ -149,7 +249,7 @@ unittest { // a bare horizontal haul bridges the two caps, and the drop records 
         ~ "segment increment never ran");
 
     // A PLANE actually moved, and the drop recorded it. NOTE THE BRACKET: this
-    // tool builds no live preview, so the comparison spans the gesture AND the
+    // document mesh is unchanged during preview, so the comparison spans the gesture AND the
     // drop. A comparison that stopped at the drop's near side would read zero
     // moved planes on a perfectly correct bridge.
     auto moved = planeDiff(planesBefore, planes());

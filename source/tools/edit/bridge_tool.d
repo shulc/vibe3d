@@ -334,7 +334,7 @@ private:
     uint lastEffectiveSegments_;
     BridgeApplyFailure headlessFailure_;
 
-    // Commit guard: true once the user has actually interacted (drag or
+    // Commit guard: true once the user has actually interacted (click/drag or
     // panel/headless attr write) — mirrors Mirror's `engaged`.
     bool engaged;
 
@@ -841,6 +841,9 @@ public:
         SDL_Keymod mods = SDL_GetModState();
         if (mods & (KMOD_ALT | KMOD_SHIFT | KMOD_CTRL)) return false;   // reserved for camera
 
+        // Task 20261640: click engages the standing preview; later drags
+        // edit it until the existing explicit release/cancel closes it.
+        engaged            = true;
         dragging_          = true;
         dragStartX_        = e.x;
         dragStartSegments_ = params_.segments;
