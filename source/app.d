@@ -7944,6 +7944,7 @@ void main(string[] args) {
             // once here before the dirty-gated cell loop. The in-module cache
             // witness removes both background layers and calls only this phase.
             frameRunner.reconcileBackgroundGpu(document);
+            frameRunner.reconcileModelPreview(activeTool);
 
             // Task 0612 — pixel-cache residency, ONCE per frame, BEFORE the
             // cell loop.
@@ -8175,6 +8176,7 @@ void main(string[] args) {
                     SceneInputs _sceneInputs;
                     _sceneInputs.document = sessionOwner.documentPtr();
                     _sceneInputs.mesh = &mesh();
+                    _sceneInputs.subpatchDepth = subpatchDepth;
                     _sceneInputs.pipeContext = g_pipeCtx;
                     version (WithAI) static if (kCopilotEnabled) {
                         _sceneInputs.aiState = aiState;

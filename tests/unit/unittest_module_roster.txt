@@ -401,6 +401,7 @@ tests.unit.mirror_coincident_face_test
 tests.unit.mirror_walker_census_test
 tests.unit.model_command_rearm_census_test
 tests.unit.model_handles_owned_transport_test
+tests.unit.model_preview_test
 tests.unit.module_gate_lock_test
 tests.unit.morph_delta_test
 tests.unit.morph_map_test
@@ -608,6 +609,7 @@ tests.unit.ui.imgui_window_class_layout_test
 tests.unit.ui.item_rename_state_test
 tests.unit.ui.item_rows_test
 tests.unit.ui.layer_list_panel_roles_test
+tests.unit.ui.model_preview_wiring_test
 tests.unit.ui.panels_test
 tests.unit.ui.remesh_modal_state_test
 tests.unit.ui.retained_item_ops_test

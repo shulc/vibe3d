@@ -39,6 +39,9 @@ import perf_probe            : g_fc, g_perf, DrawPass, Cat;
 import gpu_pass_timer        : GpuPassTimer, GpuSeg, resolveGpuTimingArmed,
                                 g_gpuTimerPerfMode;
 import tool                  : Tool, rolloverDraws;
+import model_preview : ModelPreviewView, ModelPreviewResolution, ModelPreviewKey,
+                       resolveModelPreview;
+import subpatch_preview : SubpatchPreview;
 import toolpipe.pipeline     : ToolPipeContext;
 import toolpipe.stage        : TaskCode;
 import toolpipe.packets      : SubjectPacket;
@@ -144,6 +147,7 @@ private void beginItem(const ref DrawPlan plan) {
 struct SceneInputs {
     Document* document;
     Mesh* mesh;
+    int subpatchDepth;
     ToolPipeContext pipeContext;
     version (WithAI) {
         EditorAiState aiState;
@@ -245,6 +249,64 @@ private float[16] planeModel(Vec3 n, Vec3 a1, Vec3 a2, Vec3 c, float step) {
 // Inputs are named above by role; the only mutable render scratch is owned by
 // the ViewportSceneRenderer instance.
 final class ViewportSceneRenderer {
+    // One detached derived display, shared across cells (20261660). Cage marks
+    // and surfaces remain authoritative; GPU origins map the limit surface back.
+    private SubpatchPreview modelPreview_;
+    private GpuMesh modelPreviewGpu_;
+    private ModelPreviewKey modelPreviewKey_;
+    private bool haveModelPreviewKey_;
+    private bool haveModelPreviewGpu_;
+
+    private void retireModelPreview() {
+        if (haveModelPreviewGpu_) modelPreviewGpu_.destroy();
+        modelPreviewGpu_ = GpuMesh();
+        haveModelPreviewGpu_ = false;
+        modelPreview_.deactivate();
+        modelPreview_.dropTopologyCache();
+        modelPreview_ = SubpatchPreview.init;
+        modelPreviewKey_ = ModelPreviewKey.init;
+        haveModelPreviewKey_ = false;
+    }
+
+    /// Runs even when every cell's dirty key skips drawing.
+    void reconcileModelPreview(Tool tool) {
+        auto chosen = resolveModelPreview(tool, ModelPreviewView.init);
+        if (!chosen.replacement) retireModelPreview();
+    }
+
+    void shutdown() { retireModelPreview(); }
+
+    private ModelPreviewResolution primaryRepresentation(SceneInputs scene,
+                                                          SceneGpuInputs gpu,
+                                                          Tool tool) {
+        auto chosen = resolveModelPreview(tool, ModelPreviewView(scene.mesh, gpu.primary));
+        if (!chosen.replacement) {
+            retireModelPreview();
+            return chosen;
+        }
+        if (scene.subpatchDepth <= 0 || !chosen.view.mesh.hasAnySubpatch()) {
+            retireModelPreview();
+            return chosen;
+        }
+        auto key = ModelPreviewKey.from(chosen, scene.subpatchDepth);
+        if (!haveModelPreviewKey_ || modelPreviewKey_ != key) {
+            modelPreview_.rebuild(*chosen.view.mesh, scene.subpatchDepth);
+            if (modelPreview_.active) {
+                if (!haveModelPreviewGpu_) {
+                    modelPreviewGpu_.init();
+                    haveModelPreviewGpu_ = true;
+                }
+                modelPreviewGpu_.upload(modelPreview_.mesh,
+                    modelPreview_.trace.edgeOrigin, modelPreview_.trace.vertOrigin,
+                    modelPreview_.trace.faceOrigin);
+            }
+            modelPreviewKey_ = key;
+            haveModelPreviewKey_ = true;
+        }
+        if (modelPreview_.active) chosen.view.gpu = &modelPreviewGpu_;
+        return chosen;
+    }
+
 public:
     version(unittest)
     void drawToolOverlaysForTest(ToolOverlayInputs inputs, OverlayMode mode,
@@ -572,10 +634,11 @@ public:
     scope (exit) { view.cell.gpuTimer.endFrame(); segTimer_ = null; }
     ++drawSerial_;
     ref Document document = *scene.document;
-    ref Mesh mesh = *scene.mesh;
+    auto chosen = primaryRepresentation(scene, gpuInputs, overlays.activeTool);
+    ref Mesh mesh = *chosen.view.mesh;
     Viewport3D v = view.cell;
     ref Viewport vp = *view.viewport;
-    ref GpuMesh gpu = *gpuInputs.primary;
+    ref GpuMesh gpu = *chosen.view.gpu;
     auto shader = gpuInputs.shader;
     auto litShader = gpuInputs.litShader;
     auto checkerShader = gpuInputs.checkerShader;
@@ -583,9 +646,9 @@ public:
     immutable uint gridVao = gpuInputs.gridVao;
     immutable int gridOnlyVertCount = gpuInputs.gridOnlyVertCount;
     auto activeTool = overlays.activeTool;
-    immutable int hoveredVertex = display.hoveredVertex;
-    immutable int hoveredEdge = display.hoveredEdge;
-    immutable int hoveredFace = display.hoveredFace;
+    immutable int hoveredVertex = chosen.geometryHover(display.hoveredVertex);
+    immutable int hoveredEdge = chosen.geometryHover(display.hoveredEdge);
+    immutable int hoveredFace = chosen.geometryHover(display.hoveredFace);
     immutable bool showVertHover = display.showVertexHover;
     immutable bool showEdgeHover = display.showEdgeHover;
     immutable bool showFaceHover = display.showFaceHover;

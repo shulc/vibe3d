@@ -224,8 +224,13 @@ final class FrameRunner {
         bgGpuCache_.reconcile(document);
     }
 
+    void reconcileModelPreview(Tool tool) {
+        sceneRenderer_.reconcileModelPreview(tool);
+    }
+
     /// Tear down frame-owned GL resources while the context is still live.
     void shutdown() {
+        sceneRenderer_.shutdown();
         bgGpuCache_.shutdown();
     }
 
