@@ -5,6 +5,8 @@ import tool : Tool;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import tools.edit.bridge_tool : BridgeTool;
+import tools.create.cylinder : CylinderParams, buildCylinder;
+import tools.create.primitive_create_tool : SizedRadialCreateTool;
 import editmode : EditMode;
 import math : Vec3;
 import std.json : JSONType;
@@ -209,6 +211,7 @@ unittest {
         drawIdle(tool); baseGesture(tool, false);
         auto before = MeshSnapshot.capture(source);
         assert(tool.modelPreview(view), "nonzero flat DrawingBase supplies complete representation before commit");
+        assert(view.mesh !is &source && view.gpu !is &gpu, "primitive replacement lends both detached model resources");
         assertPrimitivePrefix(source, view);
         auto stableMesh = view.mesh; auto stableGpu = view.gpu;
         auto candidate = MeshSnapshot.capture(*view.mesh);
@@ -254,4 +257,53 @@ unittest {
         assert(!tool.modelPreview(view) && view == ModelPreviewView.init,
                "cancelled primitive refuses retained candidate storage");
     }
+}
+
+private class InterruptedCylinder : SizedRadialCreateTool!CylinderParams {
+    bool interruptBuild;
+    bool displayValid = true;
+    this(Mesh* delegate() source, GpuMesh* gpu) {
+        super(source, gpu, null);
+        import tools.create.create_common : primitivePlacementFrame;
+        frame = primitivePlacementFrame();
+        seedPreparedRadialActivationForTest();
+    }
+    protected override string commitLabel() const { return "interrupted fixture"; }
+    protected override bool previewValid() const { return displayValid; }
+    protected override void buildInto(Mesh* destination) {
+        if (interruptBuild) {
+            destination.addVertex(Vec3(4,5,6));
+            throw new Exception("interrupted primitive builder");
+        }
+        buildCylinder(destination, params_);
+    }
+}
+
+unittest {
+    import bindbc.sdl : loadSDL, sdlSupport, SDL_GetModState, SDL_SetModState, KMOD_NONE;
+    import std.exception : assertThrown;
+    import snapshot : MeshSnapshot;
+    import toolpipe.pipeline : g_pipeCtx;
+    auto oldPipe = g_pipeCtx; scope(exit) g_pipeCtx = oldPipe; g_pipeCtx = null;
+    assert(loadSDL() == sdlSupport, "exceptional primitive gesture loads SDL");
+    auto oldMods = SDL_GetModState(); scope(exit) SDL_SetModState(oldMods); SDL_SetModState(KMOD_NONE);
+    Mesh source = primitiveSource(); GpuMesh gpu; gpu.suppressCageUpload = true;
+    auto primitive = new InterruptedCylinder(() => &source, &gpu);
+    primitive.preparedPreviewGpu().suppressCageUpload = true;
+    primitive.evaluate();
+    ModelPreviewView view;
+    assert(primitive.modelPreview(view), "exception rig first uploads a real complete candidate");
+    auto candidate = MeshSnapshot.capture(*view.mesh);
+    primitive.displayValid = false;
+    assert(!primitive.modelPreview(view) && view == ModelPreviewView.init,
+           "query reads preview eligibility dynamically before lending retained upload");
+    primitive.displayValid = true;
+    assert(primitive.modelPreview(view), "restored eligibility reads existing uploaded receipt");
+    primitive.interruptBuild = true;
+    assertThrown!Exception(primitive.evaluate());
+    assert(!primitive.modelPreview(view) && view == ModelPreviewView.init,
+           "interrupted rebuild cannot lend partially modified retained candidate under old ready receipt");
+    primitive.interruptBuild = false; primitive.evaluate();
+    assert(primitive.modelPreview(view) && candidate.matches(*view.mesh),
+           "successful rebuild publishes receipt only for complete fresh candidate");
 }

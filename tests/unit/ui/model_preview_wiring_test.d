@@ -60,6 +60,19 @@ unittest {
         assert(has(code, "bindModelPreview(&queryModelPreview);") &&
                has(code, "private final bool queryModelPreview(") && !has(code, "drawLitPreview"),
                "primitive complete model uses final binding without mesh overlay submission");
+        auto begin = code.indexOf("void rebuildPreview()");
+        if (begin < 0) begin = code.indexOf("private void rebuildModelPreview(bool base)");
+        assert(begin >= 0, "both adapters have a single candidate rebuild seam");
+        auto body = code[begin .. $];
+        auto invalidate = body.indexOf("previewUploaded_ = false;");
+        auto restore = body.indexOf("receipt.restore(previewMesh);");
+        auto upload = body.indexOf("previewGpu.upload(previewMesh);");
+        auto snapshot = body.indexOf("previewSource_ = receipt;");
+        auto pointer = body.indexOf("previewSourceMesh_ = source;");
+        auto publish = body.indexOf("previewUploaded_ = true;");
+        assert(invalidate >= 0 && restore > invalidate && upload > restore &&
+               snapshot > upload && pointer > snapshot && publish > pointer,
+               "production invalidates before mutation and publishes exact receipt only after successful upload");
     }
     foreach (field; ["Vertex", "Edge", "Face"])
         assert(has(render, "chosen.geometryHover(display.hovered" ~ field ~ ")"),
