@@ -182,7 +182,7 @@ unittest { // Every consumed open-row parameter rebuilds the production preview.
     assert(response["status"].str == "ok", "preview fixture load");
     auto model = getJson("/api/model");
     JSONValue[] indices;
-    foreach (pair; input["selection_packet_order"].array) {
+    foreach (pair; input["selection_packet_order"]["edges"].array) {
         bool found;
         foreach (i, e; model["edges"].array) {
             auto a = e.array;
