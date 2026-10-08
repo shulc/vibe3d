@@ -1530,6 +1530,9 @@ private:
         else buildCuboid(&previewMesh);
         applyFrameToMeshRange(&previewMesh, firstVertex, firstFace);
         previewMesh.buildLoops();
+        // Match the live Geometry delivery: preserve source marks and grow
+        // unselected planes for appended elements before normal model drawing.
+        previewMesh.syncSelection();
         previewGpu.upload(previewMesh);
         previewSource_ = receipt;
         previewSourceMesh_ = source;

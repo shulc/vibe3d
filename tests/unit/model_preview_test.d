@@ -173,6 +173,10 @@ private void assertPrimitivePrefix(ref Mesh source, ModelPreviewView view) {
            view.mesh.polygonSetNames == source.polygonSetNames &&
            view.mesh.faceSetMask[0..6] == source.faceSetMask &&
            view.mesh.edgeSetMask == source.edgeSetMask, "complete candidate retains maps and selection sets");
+    assert(view.mesh.faceMarks.length == view.mesh.faces.length &&
+           view.mesh.vertexMarks.length == view.mesh.vertices.length &&
+           view.mesh.edgeMarks.length == view.mesh.edges.length,
+           "complete model normalizes appended selection planes for ordinary rendering");
     foreach (fi; 6 .. view.mesh.faces.length)
         assert(Mesh.faceAttrOr(view.mesh.faceMaterial, fi) == 0u,
                "generated faces resolve source default surface slot zero");
@@ -234,6 +238,7 @@ unittest {
             auto image = concrete.buildPreparedDeactivateState(committed, flags, domains);
             assert(image.expectedCommitValid, "released base is committable");
             assert(tool.modelPreview(view), "released base remains displayed");
+            committed.syncSelection(); // ordinary live Geometry delivery before drawing
             assert(MeshSnapshot.capture(*view.mesh).matches(committed),
                    "state-aware preview exactly matches prepared committable candidate including metadata");
         }
@@ -256,6 +261,19 @@ unittest {
         tool.cancelUncommittedEdit();
         assert(!tool.modelPreview(view) && view == ModelPreviewView.init,
                "cancelled primitive refuses retained candidate storage");
+        source = Mesh();
+        drawIdle(tool); baseGesture(tool, false);
+        assert(tool.modelPreview(view) && view.mesh.faces.length > 0,
+               "empty source primitive supplies generated flat candidate");
+        assert(view.mesh.faceMarks.length == view.mesh.faces.length &&
+               view.mesh.edgeMarks.length == view.mesh.edges.length &&
+               view.mesh.vertexMarks.length == view.mesh.vertices.length &&
+               view.mesh.countSelectedFaces() == 0 && view.mesh.countSelectedEdges() == 0 &&
+               view.mesh.countSelectedVertices() == 0,
+               "empty source candidate has unselected generated marks for ordinary rendering");
+        assert(source.vertices.length == 0 && source.faceMarks.length == 0,
+               "candidate mark normalization leaves empty source untouched");
+        tool.cancelUncommittedEdit();
     }
 }
 
