@@ -59,6 +59,11 @@ class BoundaryControls(unittest.TestCase):
             changed = copy.deepcopy(description)
             changed['targets'][0]['buildSettings']['dflags'] = ['-i', flag]
             self.reject_settings(changed, 'native archive|dflags link input')
+        for field, values in [('dflags', ['-i', '../../source/camera_stamp.d']),
+                              ('injectSourceFiles', ['../../source/camera_stamp.d'])]:
+            changed = copy.deepcopy(description)
+            changed['targets'][0]['buildSettings'][field] = values
+            self.reject_settings(changed, 'additional.*source roots')
         changed = copy.deepcopy(description)
         changed['targets'][0]['buildSettings']['dflags'] = []
         self.reject_settings(changed, 'import closure')
@@ -120,7 +125,10 @@ class BoundaryControls(unittest.TestCase):
         boundary.validate_invocations([compile_], False)
         boundary.validate_invocations([{'argv': ['-c', '-i', 'root.d', '-ofroot.o']}, link], False)
         boundary.validate_invocations([{'argv': compile_['argv'] + ['-unittest']}, link], True)
-        for rows, with_tests in [([], False), ([compile_, compile_], False),
+        for rows, with_tests in [([compile_, link], True),
+                                  ([{'argv': compile_['argv'] + ['-unittest']}], False),
+                                  ([compile_, {'argv': ['foreign.o']}], False),
+                                  ([], False), ([compile_, compile_], False),
                                   ([compile_], True), ([{'argv': compile_['argv'] + ['-unittest']}], True),
                                   ([compile_, {'argv': ['root.o', '-L-lSDL2']}], False)]:
             with self.assertRaises(boundary.BoundaryError):
@@ -137,6 +145,28 @@ class BoundaryControls(unittest.TestCase):
         self.assertEqual(set(modules), {'std.traits', 'shader', 'root', 'mesh', 'static_helper'})
         self.assertEqual(len(files), 5)
         self.assertIn('/project/source/shader.d', files)
+
+    def test_actual_explicit_root_population(self):
+        root = Path('/fixture')
+        compile_ = {'cwd': str(root), 'argv': ['-c', '-i', 'root.d', '-of=root.o']}
+        sources = [root / 'root.d']
+        boundary.validate_invocations([compile_], False, sources)
+        for argv, with_tests in [(['-c', '-i', 'other.d'], False),
+                                  (compile_['argv'] + ['other.d'], False),
+                                  (compile_['argv'] + ['foreign.c'], False),
+                                  (compile_['argv'] + ['-unittest'], True),
+                                  (compile_['argv'] + ['-unittest', 'dub_test_root.d', 'other.d'], True)]:
+            rows = [{'cwd': str(root), 'argv': argv}, {'argv': ['root.o']}]
+            with self.assertRaisesRegex(boundary.BoundaryError, 'source.root|source roots'):
+                boundary.validate_invocations(rows, with_tests, sources)
+        rows = [{'cwd': str(root), 'argv': compile_['argv'] + ['-unittest', 'dub_test_root.d']},
+                {'argv': ['root.o']}]
+        boundary.validate_invocations(rows, True, sources)
+
+    def test_verbose_only_file_input(self):
+        modules, files = boundary.compiler_inputs('', 'file payload (payload.txt)\n', Path('/fixture'))
+        self.assertEqual(files, {'/fixture/payload.txt'})
+        self.assertEqual(modules, {})
 
     def test_actual_dmd_edge_forms_and_string_import(self):
         compiler = shutil.which('dmd')

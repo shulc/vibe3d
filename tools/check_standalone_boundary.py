@@ -128,15 +128,28 @@ def validate_settings(description, root):
     require(not any(p.startswith(('-L', '-l', '-Xcc', '-Xlinker')) or p.endswith('.o')
                     for p in settings.get('dflags', [])),
             'unexpected core dflags link input: PLAN-FINDING')
+    require(not settings.get('injectSourceFiles'), 'additional injected core source roots')
+    require(all(p.startswith('-') for p in settings.get('dflags', [])),
+            'additional positional core source roots in dflags')
     require('-i' in settings.get('dflags', []), 'independent build must compile import closure with -i')
     return settings, sources
 
 
-def validate_invocations(invocations, with_tests):
+def validate_invocations(invocations, with_tests, sources=None):
     compiled = [row for row in invocations if '-c' in row['argv'] and '-i' in row['argv']]
     require(len(compiled) == 1, 'fresh independent compilation population must equal one')
     require(('-unittest' in compiled[0]['argv']) == with_tests,
             'production/unittest compiler flags disagree with requested closure')
+    if sources is not None:
+        compile_ = compiled[0]
+        actual = {(Path(compile_['cwd']) / p).resolve() for p in compile_['argv']
+                  if not p.startswith('-') and p.endswith(('.d', '.di', '.c', '.cpp'))}
+        explicit = set(sources)
+        extra = actual - explicit
+        require(explicit <= actual, 'explicit source roots absent from actual compiler invocation')
+        require((len(extra) == 1 and next(iter(extra)).name == 'dub_test_root.d')
+                if with_tests else not extra,
+                'actual compiler source-root population differs from explicit roots plus DUB main')
     outputs = {p[3:].removeprefix('=') for row in compiled for p in row['argv'] if p.startswith('-of')}
     for row in invocations:
         for argument in row['argv']:
@@ -187,7 +200,7 @@ def main(argv=None):
     require(compiler is not None, 'compiler not found: ' + args.compiler)
     compiler = str(Path(compiler).resolve())
     describe_cmd = ['dub', 'describe', '--root=' + str(root), '--config=' + args.config,
-                    '--compiler=' + compiler]
+                    '--compiler=' + compiler, '--quiet']
     described = run(describe_cmd, root, env, evidence, 'describe')
     require(described.returncode == 0, 'DUB describe failed (see describe.log)')
     description = json.loads(described.stdout)
@@ -203,10 +216,10 @@ def main(argv=None):
             'args=[]\n'
             'for token in sys.argv[1:]:\n'
             ' args.extend(shlex.split(Path(token[1:]).read_text()) if token.startswith("@") else [token])\n'
-            'with open(' + repr(str(commands)) + ',"a") as out:\n'
-            ' out.write(json.dumps({"cwd":os.getcwd(),"argv":args})+"\\n")\n'
             'if "-c" in args and "-i" in args: args += ["-deps=' + str(deps) + '","-v"]\n'
             'elif any(a.endswith(".o") for a in args): args += ["-v"]\n'
+            'with open(' + repr(str(commands)) + ',"a") as out:\n'
+            ' out.write(json.dumps({"cwd":os.getcwd(),"argv":args})+"\\n")\n'
             'os.execv(' + repr(compiler) + ',[' + repr(compiler) + ']+args)\n')
         wrapper.chmod(0o755)
         if args.unittest:
@@ -222,16 +235,16 @@ def main(argv=None):
             command += settings.get('dflags', []) + list(map(str, sources))
         result = run(command, root, env, evidence, 'build-run')
     invocations = [json.loads(line) for line in commands.read_text().splitlines()]
-    validate_invocations(invocations, args.unittest)
     object_outputs = {p[3:].removeprefix('=') for row in invocations if '-c' in row['argv']
                       for p in row['argv'] if p.startswith('-of')}
-    validate_link_output(result.stdout, object_outputs)
     modules, files = compiler_inputs(deps.read_text() if deps.is_file() else '', result.stdout, root)
     (evidence / 'compiler-inputs.json').write_text(json.dumps(
         {'modules': modules, 'files': sorted(files)}, indent=2) + '\n')
     validate_compiler(modules, files, sources)
     require(deps.is_file(), 'NO-VERDICT: compiler did not emit dependencies')
+    validate_link_output(result.stdout, object_outputs)
     require(result.returncode == 0, 'compiler/build/runtime failed (see build-run.log)')
+    validate_invocations(invocations, args.unittest, sources)
     binary_hash = None
     total = None
     if args.unittest:

@@ -16,13 +16,15 @@ unittest {
     if (onlyProduction || onlyUnittest) {
         string[] command = ["python3", buildPath(repoRoot, "tools", "check_standalone_boundary.py"),
             "--root", buildPath(repoRoot, "tests", "core"), "--config", "core", "--compiler", "dmd"];
-        if (onlyUnittest) {
+        version (BoundaryProductionFirst) enum firstProduction = true;
+        else enum firstProduction = false;
+        if (onlyUnittest && firstProduction) {
             auto production = execute(command);
             assert(production.status == 0,
                 "production closure must stay green before unittest boundary: " ~ production.output);
             writeln(production.output);
-            command ~= "--unittest";
         }
+        if (onlyUnittest) command ~= "--unittest";
         auto result = execute(command);
         assert(result.status == 0, "production independent boundary witness: " ~ result.output);
     }
