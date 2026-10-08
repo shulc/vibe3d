@@ -260,7 +260,6 @@ panels:
         buttons:
           - { label: Extrude, action: { kind: tool,    id: edge.extrude } }
           - { label: Extend,  action: { kind: tool,    id: edge.extend } }
-          - { label: Bridge,  action: { kind: command, id: mesh.bridge } }
           - { label: "Bridge Tool", action: { kind: tool, id: mesh.bridgeTool } }
           - { label: Spin,    action: { kind: command, id: mesh.spinEdge } }
           - { label: Join,    action: { kind: command, id: mesh.edgeJoin } }
@@ -278,7 +277,6 @@ panels:
           - { label: "Stroke Extrude", action: { kind: tool,  id: tool.strokeExtrude } }
       - title: Commands
         buttons:
-          - { label: Bridge,         action: { kind: command, id: mesh.bridge } }
           - { label: "Bridge Tool",  action: { kind: tool,    id: mesh.bridgeTool } }
           - { label: "Make Polygon", action: { kind: command, id: mesh.makePolygon } }
           - { label: Split,          action: { kind: command, id: mesh.splitFace } }
