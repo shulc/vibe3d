@@ -1800,18 +1800,12 @@ bool testFlowN() {
 // --------------------------------------------------------------------------
 
 // --------------------------------------------------------------------------
-// Flow O — a create-tool preview stays LIT under an unlit cell style.
+// Flow O — a complete create-tool candidate follows the ordinary cell style.
 //
-// The plan is a pass GATE for a preview, never its material source (task
-// 5260): `drawLitPreview` seeds the plan uniforms through
-// `LitShader.applyPreviewPlan`, whose subset today is the park alone (task
-// 9040). So the same preview reads the SAME pixels under Shaded and Solid. A
-// restore that leaves the scene pass's shading behind (the primary under Solid
-// just drew with the unlit arm) paints the Solid preview with the flat fill —
-// the floor below proves that outcome is at least 6 levels from the lit one,
-// so this cell can tell them apart. The retopology mode is the second row: its
-// face passes leave a light gain of 5/3 behind unless the park restores 1.
-// Relational, not a shading value: it survives any change of the light rig.
+// Task 20261670 replaces Box's overlay with the complete primary model. The
+// shaded/flat discriminator and fixed covered samples remain, while each live
+// candidate must match its released model under the same style and retopology
+// plan. The ordinary renderer supplies both material and plan state.
 // --------------------------------------------------------------------------
 
 enum int kPreviewFill = 153;  // the Solid fill, Flow L's kFillMeasured
@@ -1842,7 +1836,7 @@ void playPreviewDrag(string log) {
 /// samples on the middle third of the drag diagonal, which lies inside the
 /// projected base quad (a convex quad contains its diagonal) and away from
 /// its edges.
-void previewRig(out string pts, out string log, out int nPts) {
+void previewRig(out string pts, out string log, out string mouseUp, out int nPts) {
     auto cam = parseJSON(httpGet("/api/camera"));
     immutable int x = cast(int)jsonNum(cam, "vpX"), y = cast(int)jsonNum(cam, "vpY");
     immutable int w = cast(int)jsonNum(cam, "width"), h = cast(int)jsonNum(cam, "height");
@@ -1851,9 +1845,12 @@ void previewRig(out string pts, out string log, out int nPts) {
     log = format(
         `{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
         `{"t":10,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n" ~
-        `{"t":20,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n" ~
-        `{"t":30,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
-        x, y, w, h, x0, y0, x1, y1, x1 - x0, y1 - y0, x1, y1);
+        `{"t":20,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":1,"mod":0}` ~ "\n",
+        x, y, w, h, x0, y0, x1, y1, x1 - x0, y1 - y0);
+    mouseUp = format(
+        `{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n" ~
+        `{"t":10,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        x, y, w, h, x1, y1);
     auto g = probe(0, "");
     immutable double sx = cast(double)g.w / w, sy = cast(double)g.h / h;
     enum int kN = 7;
@@ -1868,8 +1865,8 @@ void previewRig(out string pts, out string log, out int nPts) {
 }
 
 /// Preview pixels in `style` (and the retopology display mode when `retopo`):
-/// [0] before the drag (tool armed, nothing drawn), [1] with the live preview.
-Px[][2] previewPixels(string style, bool retopo = false) {
+/// [0] source-only, [1] live candidate, [2] ordinary released model.
+Px[][3] previewPixels(string style, bool retopo = false) {
     httpPost("/api/command", commandBody("scene.reset", `{"empty":true}`));
     probeFence();
     setStyle(style);
@@ -1879,22 +1876,36 @@ Px[][2] previewPixels(string style, bool retopo = false) {
     toolLine("tool.set prim.cube");
     scope(exit) collectException(toolLine("tool.set prim.cube off"));
     probeFence();
-    string pts, log; int n;
-    previewRig(pts, log, n);
-    Px[][2] o;
+    string pts, log, mouseUp; int n;
+    previewRig(pts, log, mouseUp, n);
+    Px[][3] o;
+    enforce(parseJSON(httpGet("/api/model"))["vertices"].array.length == 0,
+        "preview rig requires an empty source mesh");
     o[0] = probe(0, pts).points;
     playPreviewDrag(log);
+    // DrawingBase has the same flat candidate but no centre/edge glyphs;
+    // keep all seven original diagonal points as model-pixel observations.
     o[1] = probe(0, pts).points;
     // Premise of the retopology row: the face passes ran with the mode's gain.
     if (retopo)
         enforce(jsonNum(displayDump()["cells"].array[0], "plan", "active", "lightGain") > 1.5,
             "precondition: the retopology mode must be on (light gain 5/3) while the preview draws");
-    enforce(o[0].length == n && o[1].length == n, "probe returned the wrong point count");
+    enforce(parseJSON(httpGet("/api/model"))["vertices"].array.length == 0,
+        "live preview must leave the empty source unchanged");
+    playPreviewDrag(mouseUp);
+    toolLine("tool.release");
+    probeFence();
+    auto released = parseJSON(httpGet("/api/model"));
+    enforce(released["vertices"].array.length == 4 && released["faces"].array.length == 1,
+        "released flat Box must contain exactly one quad / four vertices");
+    o[2] = probe(0, pts).points;
+    enforce(n == 7 && o[0].length == n && o[1].length == n && o[2].length == n,
+        "probe requires all seven fixed preview/released points");
     return o;
 }
 
 bool testFlowO() {
-    writeln("  [O] A create-tool preview stays lit under the Solid style...");
+    writeln("  [O] A complete create candidate follows its cell style and plan...");
     resetApp();
     scope(exit) { restoreDisplayDefaults(); resetApp(); }
 
@@ -1925,30 +1936,27 @@ bool testFlowO() {
         format("the lit preview sits within %d levels of the unlit fill %d — "
                ~ "this rig cannot tell a lit preview from a flat one", minGap, kPreviewFill));
 
-    // The law: the preview's pixels do not depend on the cell's surface style.
-    foreach (k; 0 .. shaded[1].length) {
-        immutable a = shaded[1][k], b = solid[1][k];
-        enforce(abs(a.r - b.r) <= 2 && abs(a.g - b.g) <= 2 && abs(a.b - b.b) <= 2,
-            format("the box preview at (%d,%d) reads (%d,%d,%d) under Solid but "
-                   ~ "(%d,%d,%d) under Shaded — the preview took the cell's "
-                   ~ "unlit shading (the plan is its pass gate, not its material; "
-                   ~ "task 5260)", b.x, b.y, b.r, b.g, b.b, a.r, a.g, a.b));
-    }
-    writefln("    O1 PASS: %d preview samples equal under Shaded and Solid "
-             ~ "(lit preview >= %d levels from the fill %d)",
-             shaded[1].length, minGap, kPreviewFill);
+    // Solid consumes the ordinary unlit fill, independently of release parity.
+    foreach (p; solid[1])
+        enforce(abs(p.r - kPreviewFill) <= 2 && abs(p.g - kPreviewFill) <= 2
+                && abs(p.b - kPreviewFill) <= 2,
+            format("SOLID_PREVIEW_FILL: (%d,%d) reads (%d,%d,%d), expected fill %d",
+                   p.x, p.y, p.r, p.g, p.b, kPreviewFill));
 
-    // The retopology row: the preview ignores the mode's light gain.
-    foreach (k; 0 .. shaded[1].length) {
-        immutable a = shaded[1][k], b = retopo[1][k];
-        enforce(abs(a.r - b.r) <= 2 && abs(a.g - b.g) <= 2 && abs(a.b - b.b) <= 2,
-            format("the box preview at (%d,%d) reads (%d,%d,%d) under the "
-                   ~ "retopology mode but (%d,%d,%d) without it — the preview "
-                   ~ "took a face pass's plan state (light gain) instead of the park",
-                   b.x, b.y, b.r, b.g, b.b, a.r, a.g, a.b));
+    // Match the ordinary released model for each cell plan, including the
+    // retopology face pass's gain. Every live point was covered above.
+    foreach (samples; [shaded, solid, retopo]) {
+        foreach (k; 0 .. samples[1].length) {
+            immutable a = samples[1][k], b = samples[2][k];
+            enforce(b.valid && abs(a.r - b.r) <= 2 && abs(a.g - b.g) <= 2
+                    && abs(a.b - b.b) <= 2,
+                format("PREVIEW_RELEASE_STYLE_MATCH: (%d,%d) preview (%d,%d,%d), "
+                       ~ "released (%d,%d,%d)", a.x, a.y, a.r, a.g, a.b, b.r, b.g, b.b));
+        }
     }
-    writefln("    O2 PASS: %d preview samples equal with and without the retopology mode",
-             shaded[1].length);
+    writefln("    O1 PASS: all %d live/released samples match in each of three plans; "
+             ~ "Solid uses fill %d, Shaded differs by >= %d levels",
+             shaded[1].length, kPreviewFill, minGap);
     return true;
 }
 
@@ -1989,7 +1997,7 @@ int main(string[] args) {
     run(&testFlowL, "Flow L — Solid: an unshaded fill, uniform across faces");
     run(&testFlowM, "Flow M — Solid ignores the per-face material, Shaded does not");
     run(&testFlowN, "Flow N — Solid runs no backdrop face pass, layers remain");
-    run(&testFlowO, "Flow O — a create-tool preview stays lit under Solid");
+    run(&testFlowO, "Flow O — a complete create candidate follows the ordinary cell plan");
 
     // Belt-and-suspenders: the runner shares one app across a worker's whole
     // slice and its between-tests reset does not cover viewport display state

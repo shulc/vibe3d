@@ -273,14 +273,16 @@ unittest { // live create previews obey the cell's face-pass plan
                   expectedCreateHandleDraws, passCalls(shaded, "handles")));
     assert(shadedModel["vertices"].array.length == 8,
            "shaded cube preview committed into the model before measurement");
-    assert(passCalls(shaded, "faces") == 2 &&
+    // Complete primary replacement uses the ordinary renderer in one batch
+    // (20261670); the source cube and appended flat quad still total 42 verts.
+    assert(passCalls(shaded, "faces") == 1 &&
            passVerts(shaded, "faces") == 42,
            format("shaded live cube preview changed: got %d calls / %d verts, "
-                  ~ "expected scene+preview 2 / 42",
+                  ~ "expected complete candidate 1 / 42",
                   passCalls(shaded, "faces"), passVerts(shaded, "faces")));
-    assert(passCalls(shaded, "edges") == 2 &&
+    assert(passCalls(shaded, "edges") == 1 &&
            passVerts(shaded, "edges") == 32,
-           "shaded live cube preview must retain its wire overlay");
+           "shaded complete cube candidate must submit 1 edge call / 32 verts");
 
     cmd("tool.set prim.cube off");
     resetApp();
@@ -297,9 +299,9 @@ unittest { // live create previews obey the cell's face-pass plan
                   expectedCreateHandleDraws, passCalls(wire, "handles")));
     assert(wireModel["vertices"].array.length == 8,
            "wireframe cube preview committed into the model before measurement");
-    assert(passCalls(wire, "edges") == 2 &&
+    assert(passCalls(wire, "edges") == 1 &&
            passVerts(wire, "edges") == 32,
-           "wireframe live cube preview lost its edge pass");
+           "wireframe complete cube candidate must submit 1 edge call / 32 verts");
     assert(passCalls(wire, "faces") == 0 && passVerts(wire, "faces") == 0,
            format("wireframe live cube preview must not submit faces; got %d "
                   ~ "calls / %d verts",
