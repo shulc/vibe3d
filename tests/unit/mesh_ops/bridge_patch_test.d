@@ -187,6 +187,7 @@ unittest
             .7606529275998649), "static-law ghost three-quarter", 1e-12);
     auto linear = railFit(Vec3d(1, 2, 3), Vec3d(3, 4, 5), Vec3d.init, Vec3d.init, 0, 0);
     close(evalSpline([linear], .5), Vec3d(2, 3, 4), "linear exact lerp");
+    close(evalSpline([linear], .25), Vec3d(1.5, 2.5, 3.5), "linear quarter chord tangent discriminator");
 }
 
 unittest
@@ -290,12 +291,240 @@ unittest
     assert(noSpace(readText("source/mesh_ops/bridge.d")).indexOf("curveSourceDirections(ed.mesh,groups)") >= 0,
             "production Curve direction wiring census");
 }
-unittest {
-    // K1 flip semantics on multiple strips must reverse each baseline quad.
-    Mesh base;foreach(p;[Vec3(0,0,0),Vec3(1,0,0),Vec3(2,0,0),Vec3(0,0,2),Vec3(1,0,2),Vec3(2,0,2)])base.addVertex(p);
-    auto a=[0u,1u,2u],b=[3u,4u,5u];
-    import snapshot:MeshSnapshot;Mesh plain,flipped;auto snap=MeshSnapshot.capture(base);snap.restore(plain);snap.restore(flipped);BridgeParams p;p.segments=3;p.connect=false;
-    auto r0=applyBridgeOp(plain,a,b,[],p,true);p.flip=true;auto r1=applyBridgeOp(flipped,a,b,[],p,true);
-    assert(r0.added==6 && r1.added==6,"open flip population six quads");
-    foreach(i;0..plain.faces.length){auto expected=plain.faces[i].dup;import std.algorithm:reverse;reverse(expected[1..$]);assert(flipped.faces[i]==expected,"open multi-span exact quad reversal");}
+
+private Mesh sourceCell(string name)
+{
+    auto corpus = parseJSON(readText("tests/fixtures/bridge_auto_connection/frozen.json"));
+    JSONValue input;
+    foreach (c; corpus["cases"].array)
+        if (c["case"].str == name) input = c["input"];
+    Mesh m;
+    foreach (v; input["vertices"].array) m.addVertex(vec(v).stored());
+    foreach (f; input["faces"].array) m.addFace(ids(f));
+    m.buildLoops();
+    m.edgeMarks.length = m.edges.length;
+    m.edgeSelectionOrder.length = m.edges.length;
+    foreach (e; input["selection_packet_order"]["edges"].array)
+        foreach (ei, edge; m.edges)
+            if (edgeKey(edge[0], edge[1]) == edgeKey(cast(uint) e[0].integer,
+                    cast(uint) e[1].integer)) m.selectEdge(cast(int) ei);
+    return m;
+}
+
+private void samePositions(const ref Mesh a, const ref Mesh b)
+{
+    assert(a.vertices.length == b.vertices.length, "flip vertex count identity");
+    foreach (i; 0 .. a.vertices.length)
+        foreach (axis; 0 .. 3)
+            assert(bits([a.vertices[i].x, a.vertices[i].y, a.vertices[i].z][axis])
+                    == bits([b.vertices[i].x, b.vertices[i].y, b.vertices[i].z][axis]),
+                    "flip stored position bit identity");
+}
+
+private void flippedSkin(const ref Mesh base, const ref Mesh plain,
+        const ref Mesh flipped, size_t expectedQuads, string message)
+{
+    import std.algorithm : reverse;
+    samePositions(plain, flipped);
+    assert(plain.faces.length == flipped.faces.length, "flip face count identity");
+    foreach (i; 0 .. base.faces.length)
+        assert(plain.faces[i] == base.faces[i] && flipped.faces[i] == base.faces[i],
+                "flip preserves asymmetric original face");
+    size_t quads;
+    foreach (i; base.faces.length .. plain.faces.length)
+    {
+        auto expected = plain.faces[i].dup;
+        if (expected.length == 4 && expectedQuads > 0)
+        {
+            reverse(expected[1 .. $]);
+            ++quads;
+        }
+        assert(flipped.faces[i] == expected, message);
+    }
+    assert(quads == expectedQuads, "flip exact quad population");
+}
+
+unittest
+{
+    import snapshot : MeshSnapshot;
+    Mesh base;
+    foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0),
+            Vec3(0,0,2), Vec3(1,0,2), Vec3(2,0,2),
+            Vec3(20,0,0), Vec3(22,0,0), Vec3(23,1,0), Vec3(20,2,0)])
+        base.addVertex(p);
+    base.addFace([6u, 7u, 8u, 9u]);
+    base.buildLoops();
+    auto a = [0u,1u,2u], b = [3u,4u,5u];
+    Mesh plain, flipped;
+    auto snap = MeshSnapshot.capture(base);
+    snap.restore(plain); snap.restore(flipped);
+    BridgeParams p; p.segments = 3; p.connect = false;
+    auto r0 = applyBridgeOp(plain, a, b, [], p, true);
+    p.flip = true;
+    auto r1 = applyBridgeOp(flipped, a, b, [], p, true);
+    assert(r0.added == 6 && r1.added == 6, "open flip population six quads");
+    flippedSkin(base, plain, flipped, 6, "open multi-span exact quad reversal");
+}
+
+unittest
+{
+    import snapshot : MeshSnapshot;
+    import mesh_edit_delta : MeshEditDelta;
+    foreach (path; 0 .. 6)
+    {
+        Mesh base;
+        foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0),
+                Vec3(0,0,2), Vec3(1,0,2), Vec3(2,0,2),
+                Vec3(20,0,0), Vec3(22,0,0), Vec3(23,1,0), Vec3(20,2,0)])
+            base.addVertex(p);
+        base.addFace([6u, 7u, 8u, 9u]);
+        if (path == 5) base = sourceCell("S02");
+        base.buildLoops();
+        uint[] a = [0u,1u,2u], b = path == 4 ? [3u,4u] : [3u,4u,5u];
+        if (path == 5)
+        {
+            auto sel = resolveBridgeSelection(base, EditMode.Edges);
+            a = sel.loopA; b = sel.loopB;
+        }
+        size_t run(ref MeshEditBatch ed, bool flip)
+        {
+            final switch (path)
+            {
+                case 0: return bridgeStripPaired(ed, a, b, flip);
+                case 1: return bridgeLoopsPaired(ed, a, b, flip);
+                case 2: return bridgeLoops(ed, a, b, flip);
+                case 3: return bridgeLoopsSpans(ed, a, b, 3, 0, flip);
+                case 4: case 5:
+                    BridgeOpenParams p; p.connect = path == 5; p.reverseWinding = flip;
+                    return bridgeOpenRows(ed, a, b, p);
+            }
+        }
+        Mesh plain;
+        auto snap = MeshSnapshot.capture(base);
+        snap.restore(plain);
+        size_t n0;
+        {
+            auto ed = MeshEditBatch.unrecorded(plain, kBridgeEditScope);
+            n0 = run(ed, false); ed.buildLoops(); ed.close();
+        }
+        auto count = [2u,3u,3u,9u,2u,20u][path];
+        assert(n0 == count, "complete bridge path population");
+        foreach (recording; [false, true])
+        {
+            Mesh flipped; snap.restore(flipped);
+            MeshEditDelta delta;
+            size_t n1;
+            {
+                auto ed = recording ? MeshEditBatch(flipped, kBridgeEditScope)
+                    : MeshEditBatch.unrecorded(flipped, kBridgeEditScope);
+                n1 = run(ed, true); ed.buildLoops(); delta = ed.close();
+            }
+            assert(n1 == count, "flipped bridge path population");
+            flippedSkin(base, plain, flipped, path == 4 ? 0 : count,
+                    "complete bridge path exact quad reversal");
+            assert(flipped.edges.length > 0, "normal completion derives connectivity");
+            if (recording)
+            {
+                auto post = MeshSnapshot.capture(flipped);
+                assert(delta.revert(flipped), "flipped recorded delta revert");
+                samePositions(base, flipped);
+                assert(flipped.faces == base.faces, "flipped revert restores baseline rings");
+                assert(delta.apply(flipped), "flipped recorded delta forward replay");
+                Mesh replayExpected; post.restore(replayExpected);
+                samePositions(replayExpected, flipped);
+                assert(flipped.faces == replayExpected.faces, "flipped replay restores final rings");
+                ulong[] actualEdges, expectedEdges;
+                foreach (e; flipped.edges) actualEdges ~= edgeKey(e[0], e[1]);
+                foreach (e; replayExpected.edges) expectedEdges ~= edgeKey(e[0], e[1]);
+                import std.algorithm : sort;
+                sort(actualEdges); sort(expectedEdges);
+                assert(actualEdges == expectedEdges, "flipped replay derives final connectivity");
+            }
+        }
+        if (path == 5)
+        {
+            Mesh plainTool, flippedTool; snap.restore(plainTool); snap.restore(flippedTool);
+            BridgeParams p;
+            assert(applyBridgeOp(plainTool, a, b, [], p, true).added == 20,
+                    "patch tool mapping plain population");
+            p.flip = true;
+            assert(applyBridgeOp(flippedTool, a, b, [], p, true).added == 20,
+                    "patch tool mapping flipped population");
+            flippedSkin(base, plainTool, flippedTool, 20, "patch tool exact quad reversal");
+        }
+    }
+}
+
+unittest
+{
+    import snapshot : MeshSnapshot;
+    import std.math : isFinite;
+    import std.process : environment;
+    // OURS robustness only: preserve effective spans and use the existing rails.
+    auto filter = environment.get("VIBE3D_CELL", "");
+    foreach (arm; 0 .. 4)
+        foreach (tail; [false, true])
+        {
+            auto cell = "degenerate-" ~ arm.to!string ~ (tail ? "-tail" : "-head");
+            if (filter.length && filter != cell) continue;
+            auto base = sourceCell("S02");
+            auto sel = resolveBridgeSelection(base, EditMode.Edges);
+            assert(sel.valid && sel.openRows, "repeated endpoint selection valid");
+            auto inc = bridgeIncidence(base, [sel.loopA, sel.loopB]);
+            auto gs = reseedOpenChains(base, [sel.loopA, sel.loopB], inc);
+            adjustOpenChains(base, gs, inc);
+            auto a = groupNodes(gs[0]), b = groupNodes(gs[1]);
+            auto arms = [a, b, traceSide(a[0], b[0], inc),
+                    traceSide(a[$-1], b[$-1], inc)];
+            assert(arms[arm].length >= 3, "four cardinal arms population");
+            auto ids = arms[arm];
+            // Move the neighboring interior knot, keeping all four corners fixed.
+            if (tail) base.vertices[ids[$-2]] = base.vertices[ids[$-1]];
+            else base.vertices[ids[1]] = base.vertices[ids[0]];
+            Mesh rails, connected;
+            auto snap = MeshSnapshot.capture(base); snap.restore(rails); snap.restore(connected);
+            BridgeParams p; p.connect = true;
+            auto spans = openBridgeSegments(base, sel.loopA, sel.loopB,
+                    BridgeOpenParams(1,1,1,true));
+            assert(spans == 5, "degenerate fallback retains computed spans");
+            p.segments = cast(int) spans; p.connect = false;
+            auto control = applyBridgeOp(rails, sel.loopA, sel.loopB, [], p, true);
+            assert(control.added == 20, "ordinary rail fallback positive population");
+            foreach (v; rails.vertices)
+                assert(isFinite(v.x) && isFinite(v.y) && isFinite(v.z), "ordinary rail fallback finite");
+            p.connect = true;
+            auto result = applyBridgeOp(connected, sel.loopA, sel.loopB, [], p, true);
+            assert(result.added == 20 && result.effectiveSegments == 5,
+                    "connect repeated endpoint fallback population");
+            foreach (v; connected.vertices)
+                assert(isFinite(v.x) && isFinite(v.y) && isFinite(v.z),
+                        cell ~ " connect repeated endpoint must store finite positions");
+            samePositions(rails, connected);
+            assert(rails.faces == connected.faces, "repeated endpoint uses ordinary rails");
+        }
+    auto two = cardinalCoefficients([Vec3d(1,2,3), Vec3d(1,2,3)]);
+    close(evalSpline(two, .25), Vec3d(1,2,3), "two point repeated endpoint remains safe");
+}
+
+unittest
+{
+    Mesh base;
+    foreach (p; [Vec3(0,0,0), Vec3(0,0,0), Vec3(0,0,2), Vec3(1,0,2),
+            Vec3(0,1,0), Vec3(0,1,2), Vec3(-1,0,1), Vec3(2,0,1)])
+        base.addVertex(p);
+    foreach (f; [[0u,1u,4u], [2u,3u,5u], [0u,2u,6u], [1u,3u,7u]]) base.addFace(f);
+    base.buildLoops();
+    auto inc = bridgeIncidence(base, [[0u,1u], [2u,3u]]);
+    auto gs = reseedOpenChains(base, [[0u,1u], [2u,3u]], inc);
+    adjustOpenChains(base, gs, inc);
+    auto a = groupNodes(gs[0]), b = groupNodes(gs[1]);
+    assert(a.length == 2 && b.length == 2, "two point patch source population");
+    auto sides = [traceSide(a[0], b[0], inc), traceSide(a[$-1], b[$-1], inc)];
+    assert(sides[0].length == 2 && sides[1].length == 2, "two point patch side population");
+    BridgeOpenParams p; p.connect = true; p.autoStep = false; p.segments = 3;
+    auto ed = MeshEditBatch.unrecorded(base, kBridgeEditScope);
+    auto added = bridgeOpenRows(ed, [0u,1u], [2u,3u], p);
+    assert(added == 3 && base.vertices.length == 8,
+            "two point repeated endpoint stays on safe borrowed patch");
+    ed.buildLoops(); ed.close();
 }

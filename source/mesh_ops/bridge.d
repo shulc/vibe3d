@@ -10,6 +10,7 @@ import mesh;
 import math;
 import mesh_ops.bridge_patch;
 import std.algorithm : reverse;
+import std.array : uninitializedArray;
 import mesh_edit_delta : MeshEditScope;
 
 /// The change classes one bridge actually commits, for the batch its callers
@@ -74,6 +75,7 @@ enum size_t maxBridgeSpans = 512;
 /// multi-span bridge, which is the intended behavior.
 size_t bridgeLoopsPaired(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[] pairedB, bool reverseWinding = false) {
     if (loopA.length != pairedB.length || loopA.length < 3) return 0;
+    const firstFace = ed.faces.length;
     const N = loopA.length;
     auto edgeFaces = ed.buildEdgeFaces();
     bool edgeAdjSubpatch(uint va, uint vb) {
@@ -97,7 +99,6 @@ size_t bridgeLoopsPaired(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[
         bool sub = edgeAdjSubpatch(a0, a1) || edgeAdjSubpatch(b0, b1);
         uint newFi = cast(uint)ed.faces.length;
         uint[] idx = [a0, a1, b1, b0];
-        if (reverseWinding) reverse(idx[1..$]);
         ed.addFace(idx);
         ed.resizeSubpatch();
         ed.setFaceSubpatch(newFi, sub);
@@ -111,6 +112,7 @@ size_t bridgeLoopsPaired(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[
     // instead of tripping the stated-total mismatch. `bridgeLoops` and
     // `bridgeLoopsSpans` both bottom out here, so this covers them too.
     ed.declareCornerAppend();
+    if (reverseWinding) reverseBridgeQuads(ed, firstFace, ed.faces.length);
     return N;
 }
 
@@ -160,8 +162,7 @@ private uint[] pairBridgeLoop(ref const(Mesh) m, const(uint)[] loopA,
 /// Returns N (faces added) on success, 0 if loops are unequal or too short.
 ///
 /// Pairing rule: anchor B at the vertex nearest A[0]; pick forward vs.
-/// reversed direction by minimum total paired Euclidean distance; `flip`
-/// overrides the auto choice.  Quads wound [A[i], A[(i+1)%N], P[(i+1)%N], P[i]].
+/// reversed direction by minimum total paired Euclidean distance.  Quads wound [A[i], A[(i+1)%N], P[(i+1)%N], P[i]].
 ///
 /// Does NOT call buildLoops() — the caller must do so after all mutations.
 ///
@@ -242,9 +243,11 @@ size_t bridgeLoopsSpans(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[]
         rings[i] = ring;
     }
 
+    const firstFace = ed.faces.length;
     size_t added = 0;
     foreach (s; 0 .. spans)
-        added += bridgeLoopsPaired(ed, rings[s], rings[s + 1], reverseWinding);
+        added += bridgeLoopsPaired(ed, rings[s], rings[s + 1], false);
+    if (reverseWinding) reverseBridgeQuads(ed, firstFace, ed.faces.length);
     return added;
 }
 
@@ -340,6 +343,7 @@ private Vec3 bridgeTwistedVertex(ref const(Mesh) m, const(uint)[] loopA,
 /// mutations.
 size_t bridgeStripPaired(ref MeshEditBatch ed, const(uint)[] a, const(uint)[] b, bool reverseWinding = false) {
     if (a.length != b.length || a.length < 2) return 0;
+    const firstFace = ed.faces.length;
     const N = a.length;
     auto edgeFaces = ed.buildEdgeFaces();  // pre-existing snapshot — subpatch source ONLY, untouched
     auto liveEdgeFaces = edgeFaces.dup;    // grows with THIS strip's own faces — winding source
@@ -354,24 +358,47 @@ size_t bridgeStripPaired(ref MeshEditBatch ed, const(uint)[] a, const(uint)[] b,
         uint b0 = cast(uint)b[i],   b1 = cast(uint)b[i + 1];
         bool sub = edgeAdjSubpatch(a0, a1) || edgeAdjSubpatch(b0, b1);
         uint[] idx = [a0, a1, b1, b0];
-        emitBridgeQuad(ed, idx, liveEdgeFaces, sub, reverseWinding);
+        emitBridgeQuad(ed, idx, liveEdgeFaces, sub);
     }
     // Task 0901: same append-only shape as `bridgeLoopsPaired` above —
     // see that call's comment. Covers `bridgeOpenRows`' equal-length
     // path (both single- and multi-span) too, since it bottoms out here.
     ed.declareCornerAppend();
+    if (reverseWinding) reverseBridgeQuads(ed, firstFace, ed.faces.length);
     return N - 1;
 }
 
 private void emitBridgeQuad(ref MeshEditBatch ed, uint[] idx,
-                            ref int[2][ulong] liveEdgeFaces, bool sub, bool reverseWinding) {
+                            ref int[2][ulong] liveEdgeFaces, bool sub) {
     ed.orientFaceConsistent(idx, liveEdgeFaces);
-    if (reverseWinding) reverse(idx[1..$]);
     uint fi = cast(uint)ed.faces.length;
     ed.addFace(idx);
     ed.registerNewFaceEdges(liveEdgeFaces, fi, idx);
     ed.resizeSubpatch();
     ed.setFaceSubpatch(fi, sub);
+}
+
+// Finalize only this complete appended skin after every consistency vote.
+// Task 20261600: the bulk winding door preserves recorded replay; v5 §2.0.
+private void reverseBridgeQuads(ref MeshEditBatch ed, size_t firstFace, size_t endFace)
+{
+    assert(firstFace <= endFace && endFace <= ed.faces.length,
+            "bridge reversal range must be inside appended faces");
+    size_t count;
+    foreach (fi; firstFace .. endFace)
+        if (ed.faces[fi].length == 4) ++count;
+    auto indices = uninitializedArray!(FaceIdx[])(count);
+    auto windings = new uint[][](count);
+    size_t next;
+    foreach (fi; firstFace .. endFace)
+        if (ed.faces[fi].length == 4)
+        {
+            indices[next] = ed.faceIndexAt(fi);
+            windings[next] = ed.faces[fi].dup;
+            reverse(windings[next][1 .. $]);
+            ++next;
+        }
+    ed.setFaceWindings(indices, windings);
 }
 
 /// Exact integer ceiling-division, ROUND-HALF-DOWN at the .5 boundary:
@@ -514,7 +541,18 @@ size_t bridgeOpenRows(ref MeshEditBatch ed, const(uint)[] chainA,
     auto sides = [traceSide(a[0], b[0], inc), traceSide(a[$ - 1], b[$ - 1], inc)];
     uint spans = effectiveSegments(p.segments, p.connect, p.autoStep, sides,
             cast(uint) maxBridgeSpans);
-    bool patch = p.connect && sides[0].length >= 2 && sides[0].length == sides[1].length;
+    // OURS robustness: cardinal ghosts divide by endpoint chords on 3+ arms.
+    // Repeated endpoint positions use the existing rail fallback, unmeasured.
+    bool cardinalArm(const(uint)[] ids)
+    {
+        if (ids.length < 3) return true;
+        auto leading = Vec3d(ed.vertices[ids[1]]) - Vec3d(ed.vertices[ids[0]]);
+        auto trailing = Vec3d(ed.vertices[ids[$ - 1]]) - Vec3d(ed.vertices[ids[$ - 2]]);
+        return dotD(leading, leading) > 0 && dotD(trailing, trailing) > 0;
+    }
+    bool patch = p.connect && sides[0].length >= 2 && sides[0].length == sides[1].length
+        && cardinalArm(a) && cardinalArm(b) && cardinalArm(sides[0]) && cardinalArm(sides[1]);
+    const firstFace = ed.faces.length;
     Vec3d[] points(const(uint)[] ids)
     {
         Vec3d[] r;
@@ -573,9 +611,10 @@ size_t bridgeOpenRows(ref MeshEditBatch ed, const(uint)[] chainA,
                             if (fi >= 0 && ed.isFaceSubpatch(fi))
                                 sub = true;
                 }
-                emitBridgeQuad(ed, idx, live, sub, p.reverseWinding);
+                emitBridgeQuad(ed, idx, live, sub);
             }
         ed.declareCornerAppend();
+        if (p.reverseWinding) reverseBridgeQuads(ed, firstFace, ed.faces.length);
         return spans * (a.length - 1);
     }
     Cubic[] fits;
@@ -598,7 +637,8 @@ size_t bridgeOpenRows(ref MeshEditBatch ed, const(uint)[] chainA,
     }
     size_t added;
     foreach (k; 0 .. spans)
-        added += bridgeStripPaired(ed, rings[k], rings[k + 1], p.reverseWinding);
+        added += bridgeStripPaired(ed, rings[k], rings[k + 1], false);
+    if (p.reverseWinding) reverseBridgeQuads(ed, firstFace, ed.faces.length);
     return added;
 }
 
@@ -631,7 +671,7 @@ size_t bridgeOpenRows(ref MeshEditBatch ed, const(uint)[] chainA,
 // ---------------------------------------------------------------------------
 static foreach (n; ["bridgeLoopsPaired", "bridgeLoops", "bridgeLoopsSpans",
                     "bridgeStripPaired", "bridgeOpenRows", "facesBoundedByLoop",
-                    "pairBridgeLoop", "bridgeTwistedVertex", "emitBridgeQuad", "openBridgeSegments",
+                    "pairBridgeLoop", "bridgeTwistedVertex", "emitBridgeQuad", "reverseBridgeQuads", "openBridgeSegments",
                     "bridgeFanRows", "ceilDivHalfDown", "maxBridgeSpans"])
     static assert(!__traits(hasMember, Mesh, n),
         "`Mesh." ~ n ~ "` is a MEMBER again. A member BEATS a same-name UFCS free "
