@@ -46,9 +46,11 @@ import http_client : testBaseUrl;
 import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
-import std.regex   : regex, matchFirst;
+import std.regex   : regex, matchFirst, matchAll;
 import std.conv     : to;
 import std.array    : join;
+import std.file : readText;
+import std.algorithm : canFind;
 import std.datetime.stopwatch : StopWatch, AutoStart;
 
 void main() {}
@@ -136,6 +138,11 @@ bool isCountLike(JSONValue p) {
 // per params.d:799-837's opt-in-enforcement rationale). Format:
 // "<registeredId>.<paramName>".
 immutable string[] blockAAllowlist = [
+    "mesh.bridgeTool.steps",
+        // Accepted-stored integer (task 20261600, amendment §1/§2.7):
+        // BridgeParams.steps has a floor; applyBridgeOp consumes segments,
+        // never steps. Only params() storage and toolStateJson read it.
+        // A future work consumer requires a kernel cap in the same change.
     "edge.bevel.miterOffset",
         // Scalar distance: the name heuristic matches "iter" inside "miter".
         // tools/edit/edge_bevel.d passes it to bevelEdgesByMask; its positive
@@ -184,6 +191,28 @@ unittest { // BlockA_BornClampedContract
     auto reg = getRegistryWithParams();
     assert("commandParams" in reg.object, "registry missing commandParams — is ?params=1 wired?");
     assert("toolParams"    in reg.object, "registry missing toolParams — is ?params=1 wired?");
+
+    // Pin the production storage-only seam before admitting its name-based
+    // false positive. A new qualified read must reopen the cap contract.
+    auto bridgeSource = readText("source/tools/edit/bridge_tool.d");
+    assert(bridgeSource.canFind("int steps = 10;") &&
+        bridgeSource.canFind(`Param.int_("steps", "Steps", &params_.steps, 10).min(1).enforceBounds()`),
+        "Block A: Bridge steps storage/schema changed — revisit its exemption");
+    size_t stepsReferences;
+    foreach (_; matchAll(bridgeSource, regex(`\b\w+\.steps\b`))) ++stepsReferences;
+    assert(stepsReferences == 2,
+        "Block A: Bridge steps gained a consumer — require a kernel cap");
+    foreach (section; ["commandParams", "toolParams"]) {
+        auto steps = reg[section]["mesh.bridgeTool"].array;
+        size_t found;
+        foreach (p; steps) if (p["name"].str == "steps") {
+            ++found;
+            assert(p["kind"].str == "Int" && p["min"].integer == 1 &&
+                p["enforceBounds"].type == JSONType.true_ && "max" !in p,
+                "Block A: Bridge steps live storage schema changed — revisit its exemption");
+        }
+        assert(found == 1, "Block A: expected one Bridge steps param per door");
+    }
 
     bool[string] allowSet;
     foreach (a; blockAAllowlist) allowSet[a] = true;
