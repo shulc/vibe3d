@@ -164,6 +164,8 @@ class BoundaryControls(unittest.TestCase):
             with self.assertRaisesRegex(boundary.BoundaryError, 'target population'):
                 boundary.validate_settings(description, root)
             self.assertEqual((root / 'describe.stderr.log').read_text(), result.stderr)
+            with self.assertRaisesRegex(boundary.BoundaryError, 'target population'):
+                boundary.main(['--root', str(root), '--config', 'core', '--compiler', 'dmd'])
 
     def test_actual_explicit_root_population(self):
         root = Path('/fixture')
