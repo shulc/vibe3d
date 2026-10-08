@@ -84,6 +84,7 @@ mesh_planes
 mesh_selsets
 mesh_topo
 mesh_visibility
+model_preview
 morph_target
 operator
 overlay_space

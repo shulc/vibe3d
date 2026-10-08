@@ -252,11 +252,12 @@ unittest {
     // Task 9490: the radial ring start reads `workplane_fit` (+1; registration held it).
     // Task 9525: `tools.edit.drag_weld` deleted (-1 each).
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
-    pinClosure("transform_tool_registration", transform, 253);
-    pinClosure("registration", positive, 518);
-    assert(transform.queue.length == 253 && positive.queue.length == 518,
-        format("6506 import closure census changed: transform=%d/253 "
-            ~ "registration=%d/518", transform.queue.length,
+    // Task 20261660: Tool reaches the detached model_preview view (+1 each).
+    pinClosure("transform_tool_registration", transform, 254);
+    pinClosure("registration", positive, 519);
+    assert(transform.queue.length == 254 && positive.queue.length == 519,
+        format("6506 import closure census changed: transform=%d/254 "
+            ~ "registration=%d/519", transform.queue.length,
             positive.queue.length));
 }
 
