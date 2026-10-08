@@ -302,8 +302,8 @@ unittest { // Only the undo of the tool's OWN activation row makes it latent
     undo();
     dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
     assert(quadAtStart() && tool() == "", "an undo with no tool bound leaves no latent tool");
-    // Shared owned cancellation ends the UI panel activation too (OUR
-    // mechanism, task 20261690); the next press still selects normally.
+    // Shared owned cancellation ends its activation too. The existing UI
+    // alias retains its own latent identity (OUR mechanism, task 20261690).
     rig("vertex");
     ui("tool.set TransformMove on");
     cmd("tool.beginSession");
@@ -313,8 +313,9 @@ unittest { // Only the undo of the tool's OWN activation row makes it latent
     assert(quadAtStart() && tool() == "" && depth() == 0,
         "MOVE_CANCEL_OWNED_ARM: cancellation restores source and ends its activation");
     dragPx(worldPixel(Vec3(0.15f, 0, 0.15f)), 40, 0);
-    assert(quadAtStart() && tool() == "",
-        "MOVE_CANCEL_NO_REARM: the cancelled UI panel edit leaves the next drag ordinary");
+    assert(!quadAtStart() && tool() == "TransformMove",
+        format("MOVE_CANCEL_LATENT: owned arm undo preserves the UI alias; pristine=%s tool='%s'",
+            quadAtStart(), tool()));
     // Another tool's activation row: bare Rotate (E) arms with no row of its
     // own; the undo of Move's older row ends it, and it is not latent.
     rig("vertex");
