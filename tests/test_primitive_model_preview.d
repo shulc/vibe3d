@@ -58,6 +58,7 @@ private PixelInstance launchPixelInstance() {
     symlink(buildPath(repo, "assets"), buildPath(child.root, "assets"));
     auto childEnv = environment.toAA();
     childEnv["VIBE3D_CONFIG_DIR"] = child.root; childEnv["VIBE3D_TEST_DIRTY_KEY"] = "1";
+    childEnv["LIBGL_ALWAYS_SOFTWARE"] = "1";
     childEnv["VIBE3D_TEST_LAYOUT_INI"] = buildPath(child.root, "layout.ini");
     auto log = File(buildPath(child.root, "editor.log"), "wb");
     child.pid = spawnProcess([buildPath(repo, "vibe3d"), "--test", "--viewport", "1024x544", "--http-port", child.port.to!string],
@@ -398,7 +399,7 @@ void observerValidation() {
     }
     auto source = fixture(false), live = fixture(true);
     matches(source, live, live, false, "OBSERVER_VALID_CONTROL");
-    auto malformed = live.color; malformed.keep = null;
+    auto malformed = live.color; malformed.keep = new bool[](kPopulation+1); malformed.keep[] = true;
     rejects(() { unionMask([malformed]); }, "mask needs all 3000 fixed lattice points");
     auto tinyMask = live.color; tinyMask.keep = new bool[](kPopulation); tinyMask.keep[0] = true;
     rejects(() { unionMask([tinyMask]); }, "MASK_FIXED_POPULATION");
