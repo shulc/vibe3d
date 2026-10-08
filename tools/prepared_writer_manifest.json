@@ -1250,6 +1250,13 @@
     },
     {
       "admission": "activationRow",
+      "aggregate": "BridgeTool",
+      "module": "tools.edit.bridge_tool",
+      "signature": "BridgeTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "activationRow",
       "aggregate": "CloneTool",
       "module": "tools.alignment.clone_tool",
       "signature": "CloneTool",
