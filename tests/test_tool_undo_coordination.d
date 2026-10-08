@@ -386,7 +386,10 @@ unittest {
     assert(v6 >= 0, "cube +++ corner not found");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ v6.to!string ~ `]}`));
 
+    const priorRows = getJson("/api/history")["undo"];
+    assert(priorRows.array.length == 1, "MOVE_FORM_CANCEL_FLOOR: one selection row");
     cmd("tool.set move");
+    assert(undoLen() == 2, "MOVE_FORM_ARM_FLOOR: selection plus owned activation");
 
     // Session-start state: attr TX is 0, geometry pristine.
     assert(approxEqual(attrValue("move", "TX"), 0.0), "TX should start at 0");
@@ -399,16 +402,13 @@ unittest {
     assert(vertX(v6) > x0 + 0.19, "live attr write did not move geometry");
     assert(approxEqual(attrValue("move", "TX"), 0.2), "TX should read the edited 0.2");
 
-    size_t undoBefore = undoLen();
-
     // In-session keyboard Ctrl+Z -> navHistory(true) -> hasUncommittedEdit()
     // (true) -> cancelUncommittedEdit(): the FIRST Ctrl+Z cancels the live edit
-    // (no history pop). Geometry AND the attr must both snap back.
+    // and removes its owned activation. Geometry AND the attr snap back.
     playKey(SDLK_z, KMOD_LCTRL);
 
-    assert(undoLen() == undoBefore,
-        "in-session Ctrl+Z must NOT pop history (cancels the live edit instead); "
-        ~ "before=" ~ undoBefore.to!string ~ " after=" ~ undoLen().to!string);
+    assert(getJson("/api/history")["undo"] == priorRows,
+        "MOVE_FORM_CANCEL_OWNED_ARM: source restored, owned activation removed, selection row preserved");
     assert(approxEqual(vertX(v6), x0),
         "in-session Ctrl+Z did not restore the geometry");
     assert(!attrQueryOk("move", "TX"),
@@ -460,7 +460,10 @@ unittest {
     assert(v6 >= 0, "cube +++ corner not found");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ v6.to!string ~ `]}`));
 
+    const priorRows = getJson("/api/history")["undo"];
+    assert(priorRows.array.length == 1, "MOVE_PIN_CANCEL_FLOOR: one selection row");
     cmd("tool.set move");
+    assert(undoLen() == 2, "MOVE_PIN_ARM_FLOOR: selection plus owned activation");
     // Auto mode allows click-away relocate (Select/Element/Local refuse it).
     cmd("tool.pipe.attr actionCenter mode auto");
 
@@ -484,15 +487,12 @@ unittest {
     cmd("tool.attr move TX 0.2");
     assert(vertX(v6) > x0 + 0.19, "live attr write did not move geometry");
 
-    size_t undoBefore = undoLen();
-
     // In-session Ctrl+Z -> cancelUncommittedEdit(): geometry, attr AND the
     // action-center pin must all snap back to their session-start state.
     playKey(SDLK_z, KMOD_LCTRL);
 
-    assert(undoLen() == undoBefore,
-        "in-session Ctrl+Z must NOT pop history; before=" ~ undoBefore.to!string
-        ~ " after=" ~ undoLen().to!string);
+    assert(getJson("/api/history")["undo"] == priorRows,
+        "MOVE_PIN_CANCEL_OWNED_ARM: removes owning activation without moving selection history");
     assert(approxEqual(vertX(v6), x0),
         "in-session Ctrl+Z did not restore the geometry");
     assert(!attrQueryOk("move", "TX"),

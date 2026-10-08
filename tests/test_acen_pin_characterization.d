@@ -571,10 +571,13 @@ unittest {
 // ===========================================================================
 unittest {
     establishCubeBaseline();
+    const priorRows = getJson("/api/history")["undo"];
+    assert(priorRows.array.length == 0, "ACEN_CANCEL_FLOOR: pristine baseline, no preceding rows");
     cmd("tool.set move");
     cmd("tool.pipe.attr actionCenter mode auto");
 
     long before = undoCount();
+    assert(before == 1, "ACEN_ARM_FLOOR: exactly one owning activation");
     auto r = postJson("/api/script?interactive=true", "tool.attr move TX 0.9\n");
     assert(r["status"].str == "ok", "interactive numeric TX edit failed: " ~ r.toString);
     settle();
@@ -589,7 +592,8 @@ unittest {
     // of asserting (see its doc comment).
     playAndWait(ctrlZ(50.0));
     settle();
-    assert(undoCount() == before, "an idle-open cancel adds NO history entry");
+    assert(getJson("/api/history")["undo"] == priorRows,
+        "ACEN_CANCEL_OWNED_ARM: idle cancel ends its activation without a mesh-edit entry");
     record("idleOpenCancel_afterCancel");
 
     auto tAfter = evalTransform().translate;

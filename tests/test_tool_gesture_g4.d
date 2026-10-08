@@ -1083,7 +1083,7 @@ unittest {
         {
             resetEmpty(); loadMesh(kTwoCaps); selectMode("polygons", [0, 1]);
             setCamera(0.6, 0.5, 5.0, 0.5, 0.5, 0.5);
-            cmd("history.clear"); cmd("tool.set mesh.bridgeTool on"); settle(250);
+            cmd("history.clear");
         },
         {
             auto cam = fetchCamera(BASE);
@@ -1097,7 +1097,10 @@ unittest {
                 "bridge: the drag left the tool unengaged or the selection "
               ~ "invalid, so `deactivate` will record nothing: " ~ st.toString);
         },
-        { cmd("tool.set mesh.bridgeTool off"); });
+        { cmd("tool.set mesh.bridgeTool off"); },
+        { cmd("tool.set mesh.bridgeTool on"); settle(250);
+          assert(undoLen() == 1 && historyNames() == ["tool.activate"],
+              "BRIDGE_G4_ARM: exactly one activation before the gesture"); });
 
     freezeOrCompare(cells);
 }

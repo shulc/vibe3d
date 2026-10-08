@@ -153,8 +153,8 @@
     {
       "name": "bridge/segments-drag", "tool": "mesh.bridgeTool",
       "recordSite": "source/tools/edit/bridge_tool.d BridgeTool.commitBridgeEdit (from deactivate)", "mode": "Plain", "payload": "MeshSessionEdit",
-      "liveEntryNames": [],
-      "entryNames": ["mesh.bevel_edit"],
+      "liveEntryNames": ["tool.activate"],
+      "entryNames": ["tool.activate", "mesh.bevel_edit"],
       "undoDelta": 1,
       "undoResidual": [],
       "redoResidual": [],

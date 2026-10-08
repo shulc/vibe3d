@@ -163,16 +163,19 @@ unittest { // Ctrl+Z reaches EditSession and cancels a live preview
     cmd("history.clear");
     selectLateVertex();
     const baseline = positions();
+    const priorRows = getJson("/api/history")["undo"];
+    assert(priorRows.array.length == 1, "JITTER_CANCEL_FLOOR: one preceding selection row");
     cmd("tool.set xfrm.jitter on");
     const armedDepth = undoDepth();
+    assert(armedDepth == 2, "JITTER_ARM_FLOOR: selection plus owned activation");
     configureLiveJitter();
     assert(maxDiff(positions(), baseline) > 0.05,
         "UI-cancel control needs a populated live Jitter preview");
     playCtrlZ();
     assert(maxDiff(positions(), baseline) < 1e-6,
         "EditSession Ctrl+Z did not cancel the live Jitter preview");
-    assert(undoDepth() == armedDepth,
-        "EditSession live cancel changed History beneath the activation row");
+    assert(getJson("/api/history")["undo"] == priorRows,
+        "JITTER_CANCEL_OWNED_ARM: cancel removes its activation and preserves preceding selection");
     assert(getJson("/api/buttons/availability")["activeToolId"].str.length == 0,
         "EditSession cancel must drop the Jitter tool after restoring it");
 }

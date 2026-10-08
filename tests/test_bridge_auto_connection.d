@@ -206,7 +206,11 @@ unittest {
         cmd("tool.set mesh.bridgeTool off");
         assert(number(state["twist"]) == 1 && state["engaged"].boolean,
             "recall refused drop positive attr engagement");
-        assert(planes() == before && depth() == u0, "recall refused open drop inert planes and history");
+        assert(planes() == before && depth() == u0 + 1,
+            "recall refused open drop preserves planes and only the activation row");
+        auto rows = getJson("/api/history")["undo"].array;
+        assert(rows.length == 1 && rows[0]["command"].str == "tool.activate",
+            "recall refusal retains activation, never a Bridge mesh-edit row");
         cmd("tool.set mesh.bridgeTool on");
         state = getJson("/api/tool/state");
         cmd("tool.set mesh.bridgeTool off");
