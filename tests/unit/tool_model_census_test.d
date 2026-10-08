@@ -41,6 +41,7 @@ import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
 
 import std.regex : matchAll, regex;
 import std.exception : assertThrown;
+import core.exception : AssertError;
 import std.algorithm : canFind, endsWith, sort, startsWith;
 import std.array     : appender, array, join, split;
 import std.conv      : to;
@@ -213,6 +214,10 @@ private size_t ownedDiagnosticProjections(string path, string source) {
     if (path != "source/commands/tool/bridge_headless.d") return 0;
     auto code = blankUnittestBodies(blankNonCode(source));
     const symbols = enclosingSymbols(code);
+    string refusalBody;
+    foreach (line, text; code.splitLines)
+        if (symbolAt(symbols, line) == "BridgeHeadlessCommand.refusalReason")
+            refusalBody ~= text ~ "\n";
     size_t admitted;
     foreach (m; matchAll(code, regex(`cast\s*\(\s*const\s+BridgeTool\s*\)\s*ownedToolInstance\s*\(\s*\)`))) {
         const pos = cast(size_t)(m.pre.length);
@@ -221,9 +226,9 @@ private size_t ownedDiagnosticProjections(string path, string source) {
         if (symbolAt(symbols, line) == "BridgeHeadlessCommand.refusalReason") ++admitted;
     }
     assert(admitted == 1, "owned diagnostic projection requires exactly one const owned-instance cast in refusalReason");
-    assert(code.indexOf("auto base = super.refusalReason();") >= 0
-        && code.indexOf("if (base.length) return base;") >= 0
-        && code.indexOf("if (base.length) return base;") < code.indexOf("cast"),
+    assert(refusalBody.indexOf("auto base = super.refusalReason();") >= 0
+        && refusalBody.indexOf("if (base.length) return base;") >= 0
+        && refusalBody.indexOf("if (base.length) return base;") < refusalBody.indexOf("cast"),
         "owned diagnostic projection requires base-reason precedence");
     return admitted;
 }
@@ -1307,7 +1312,9 @@ unittest {
                   sample.replace("refusalReason()", "otherReason()"),
                   sample.replace("cast(const BridgeTool)", ""),
                   sample.replace("return \"\";", "auto duplicate = cast(const BridgeTool) ownedToolInstance(); return \"\";"),
-                  sample.replace("if (base.length) return base;", "")])
+                  sample.replace("if (base.length) return base;", ""),
+                  sample.replace("if (base.length) return base;", "") ~
+                    "class Other { void f() { auto base = super.refusalReason(); if (base.length) return base; } }"] )
         assertThrown!AssertError(ownedDiagnosticProjections(path, bad));
     bool[string] targets; targets["BridgeTool"] = true;
     const extra = sample.replace("return \"\";", "auto extra = cast(BridgeTool) otherInstance(); return \"\";");

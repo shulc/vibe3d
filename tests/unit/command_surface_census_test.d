@@ -18,6 +18,7 @@ import std.array : appender, join;
 import std.file : dirEntries, exists, isFile, readText, SpanMode;
 import std.format : format;
 import std.exception : assertThrown;
+import core.exception : AssertError;
 import std.path : buildPath, dirName;
 import std.regex : ctRegex, matchAll;
 import std.string : count, indexOf, split, splitLines, startsWith, strip;

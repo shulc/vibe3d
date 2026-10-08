@@ -1297,18 +1297,23 @@ for row in converted_rows:
     if not match: fail("P1.0b.1 converted adapter body vanished")
     body = source[match.end():balanced_source(source, match.end())-1]
     statements = [part + ";" for part in body.split(";") if part.strip()]
-    if len(statements) != 3:
-        fail("P1.0b.1 converted adapter is not exact prepare/handle/install shape")
-    dropped = "".join(statements[:2])
-    reordered = statements[1] + statements[0] + statements[2]
-    if semantic_digest(dropped) == row["semantic_sha256"]:
-        fail("P1.0b.1 adapter drop mutation did not RED fingerprint")
-    if semantic_digest(reordered) == row["semantic_sha256"]:
-        fail("P1.0b.1 adapter reorder mutation did not RED fingerprint")
+    normalized = [re.sub(r"\s+", "", statement) for statement in statements]
+    bridge_param = (row["module"], row["aggregate"], row["symbol"]) == (
+        "tools.edit.bridge_tool", "BridgeTool", "onParamChanged")
+    expected_count = 4 if bridge_param else 3
+    if len(statements) != expected_count or (bridge_param and normalized[0] != "normalizeUvs(name);"):
+        fail("P1.0b.1 converted adapter is not exact normalization/prepare/handle/install shape")
+    # Every statement must participate, including the admitted normalization prelude.
+    for index in range(expected_count):
+        dropped = "".join(statements[:index] + statements[index + 1:])
+        if semantic_digest(dropped) == row["semantic_sha256"]:
+            fail("P1.0b.1 adapter drop mutation did not RED fingerprint")
+    for index in range(expected_count - 1):
+        reordered = list(statements)
+        reordered[index], reordered[index + 1] = reordered[index + 1], reordered[index]
+        if semantic_digest("".join(reordered)) == row["semantic_sha256"]:
+            fail("P1.0b.1 adapter reorder mutation did not RED fingerprint")
 
-# Mutation tests operate on copied production source and must be rejected by
-# the same bidirectional gate. They cover duplicates, new exact symbols in each
-# inventory, and a name-preserving newly reachable domain/callee.
 def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=None):
     with tempfile.TemporaryDirectory(prefix="vibe3d-writer-mut-") as td:
         mutant_root = Path(td)
@@ -1514,7 +1519,7 @@ for malformed in (paired_source.replace(bridge_call, "registerHeadlessTool!(Brid
                   paired_source.replace('reg, "mesh.bridgeTool",', 'reg, dynamicId,', 1),
                   paired_source.replace('reg, "mesh.bridgeTool",', 'reg, "prim.cube",', 1),
                   paired_source.replace('new C(', 'new OtherCommand(', 1),
-                  paired_source.replace('id, regPtr.toolFactory(id)));', 'id, regPtr.toolFactory(id)) + extra);', 1)):
+                  paired_source.replace('}, owner, live);', '}, owner, live, extra);', 1)):
     try:
         paired_calls(malformed)
     except ValueError:
