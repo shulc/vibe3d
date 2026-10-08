@@ -9,6 +9,7 @@ import editmode : EditMode;
 import operator : VectorStack;
 import command : Command;
 import mesh : Mesh;
+import model_preview : ModelPreviewView;
 import snapshot : MeshSnapshot;
 import command_history : CommandHistory;
 import commands.mesh.gesture_payload : GesturePayload;
@@ -531,6 +532,17 @@ bool postmodeStartsOnPressFor(in ToolSessionPolicy p) pure nothrow @nogc {
 }
 
 class Tool : ParamProvider {
+    // Bound synchronous display query (20261660); no new polymorphic perimeter.
+    // See doc/tasks/evidence/20261660-bridge-model-preview/amendment.md.
+    private bool delegate(out ModelPreviewView) modelPreviewQuery_;
+    protected final void bindModelPreview(bool delegate(out ModelPreviewView) query) {
+        modelPreviewQuery_ = query;
+    }
+    public final bool modelPreview(out ModelPreviewView view) {
+        view = ModelPreviewView.init;
+        return modelPreviewQuery_ !is null && modelPreviewQuery_(view);
+    }
+
     // Only a scoped read-only borrow lives on Tool; ToolSession owns the source
     // receipt (task 20261110; lifecycle completion amendment).
     private const(Vec3)[] headlessBorrow_;

@@ -18,7 +18,7 @@ import tools.common.session_mesh_key : SessionMeshKey;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import shader : Shader, LitShader;
-import model_preview : ModelPreviewProvider, ModelPreviewView;
+import model_preview : ModelPreviewView;
 import std.json : JSONValue;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
     PreparedSessionActivateEffect, PreparedActivateKind,
@@ -290,7 +290,7 @@ BridgeApplyResult rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh
 // adjusts Segments, mapping horizontal pixel delta to an integer span
 // count; Other attrs are edited through the ordinary properties panel.
 // ---------------------------------------------------------------------------
-class BridgeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient, ModelPreviewProvider {
+class BridgeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
             sessionSteps: true, historyRecordedSteps: true };
@@ -370,6 +370,7 @@ public:
         this.gpu          = gpu;
         this.litShader    = litShader;
         this.editModePtr  = editModePtr;
+        bindModelPreview(&queryModelPreview);
     }
 
     void destroy() {}
@@ -829,7 +830,7 @@ public:
 
     // Detached display replaces the primary pair (20261660); lifecycle remains
     // tool-owned. See doc/tasks/evidence/20261660-bridge-model-preview/plan.md.
-    bool modelPreview(out ModelPreviewView view) {
+    private final bool queryModelPreview(out ModelPreviewView view) {
         view = ModelPreviewView.init;
         if (!valid_ || !havePreviewCache || !sessionMeshIntact()) return false;
         view = ModelPreviewView(&previewMesh_, &previewGpu_);

@@ -1,6 +1,7 @@
 module tests.unit.model_preview_test;
 
 import model_preview;
+import tool : Tool;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import tools.edit.bridge_tool : BridgeTool;
@@ -8,10 +9,17 @@ import editmode : EditMode;
 import math : Vec3;
 import std.json : JSONType;
 
-private class Provider : ModelPreviewProvider {
+private class Provider : Tool {
+    static assert(__traits(isFinalFunction, Tool.modelPreview));
+    static assert(!__traits(isVirtualMethod, Tool.modelPreview));
+    static assert(__traits(isFinalFunction, bindModelPreview));
+    static assert(!__traits(isVirtualMethod, bindModelPreview));
+    this() { bindModelPreview(&queryPreview); }
+
     ModelPreviewView view;
     bool ready = true;
-    bool modelPreview(out ModelPreviewView candidate) {
+    private bool queryPreview(out ModelPreviewView candidate) {
+        assert(candidate == ModelPreviewView.init, "bound query receives cleared view");
         candidate = view;
         return ready;
     }
@@ -23,8 +31,14 @@ unittest {
     auto base = ModelPreviewView(&source, &sourceGpu);
     auto provider = new Provider;
     provider.view = ModelPreviewView(&cage, &cageGpu);
-    auto normal = resolveModelPreview(new Object, base);
-    assert(!normal.replacement && normal.view == base, "non-provider keeps source pair");
+    auto normal = resolveModelPreview(new Tool, base);
+    assert(!normal.replacement && normal.view == base, "unbound Tool keeps source pair");
+    ModelPreviewView dirty = provider.view;
+    auto unbound = new Tool;
+    assert(!unbound.modelPreview(dirty) && dirty == ModelPreviewView.init,
+           "unbound operation clears borrowed output");
+    auto missing = resolveModelPreview(null, base);
+    assert(!missing.replacement && missing.view == base, "null Tool keeps source pair");
     auto chosen = resolveModelPreview(provider, base);
     assert(chosen.replacement && chosen.view == provider.view,
            "provider replaces both mesh and GPU");
@@ -33,6 +47,8 @@ unittest {
     provider.ready = false;
     assert(resolveModelPreview(provider, base).view == base, "absent preview returns source");
     provider.ready = true;
+    assert(resolveModelPreview(provider, base).replacement,
+           "bound query reads readiness on every invocation");
     provider.view.mesh = null;
     assert(!resolveModelPreview(provider, base).replacement, "partial mesh pair refused");
     provider.view = ModelPreviewView(&cage, null);
