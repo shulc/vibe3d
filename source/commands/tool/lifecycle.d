@@ -5,7 +5,8 @@ import mesh;
 import view;
 import editmode;
 import seltype : SelType;
-import tool : DropUndoPolicy, DropRedoPopulation;
+import tool_policy_values : DropUndoPolicy, DropRedoPopulation;
+public import history_lifecycle_contract : ToolArmLifecyclePolicy;
 
 // ---------------------------------------------------------------------------
 // ToolActivationCommand — tool.activate
@@ -19,19 +20,6 @@ import tool : DropUndoPolicy, DropRedoPopulation;
 // The history cursor treats this entry as an ordinary strict-LIFO step.
 // Undo restores the captured predecessor before any earlier UI or Model entry.
 // ---------------------------------------------------------------------------
-interface ToolArmLifecyclePolicy {
-    string armedId() const;
-    string previousId() const;
-    bool carriesRedoAfterUndo() const;
-    bool joinsFirstGroup() const;
-    /// K-RD rule 2: the undo of this row also undoes the rows of
-    /// the session `previousToken` names, below it (a drop row only).
-    bool dropRow() const;
-    DropUndoPolicy dropUndoPolicy() const;
-    void completeDropUndo();
-    ulong previousToken() const;
-}
-
 class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
     private string armedId_;
     private string previousId_;

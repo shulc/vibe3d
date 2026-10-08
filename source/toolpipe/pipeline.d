@@ -7,7 +7,7 @@ import std.conv      : to;
 import math : Viewport;
 import toolpipe.stage   : Stage, TaskCode;
 import editmode : EditMode;
-static import tool;
+static import tool_policy_values;
 import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket,
                           WorkplanePacket, FalloffPacket, SymmetryPacket,
                           SnapPacket, ConstrainPacket;
@@ -136,7 +136,7 @@ public:
     /// the pipe as the flags of a tool's nodes are).
     bool rolloverDraws(EditMode type, bool dragging) const nothrow @nogc {
         foreach (s; stages_)
-            if (tool.rolloverDraws(s.rollovers(), type, dragging))
+            if (tool_policy_values.rolloverDraws(s.rollovers(), type, dragging))
                 return true;
         return false;
     }

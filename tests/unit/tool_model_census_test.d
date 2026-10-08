@@ -143,9 +143,9 @@ private string[] sessionModuleIfaces() {
 // tests/unit/tool_session_policy_test.d (9).
 private string[] pinnedModuleIfaces() {
     import std.meta : AliasSeq;
-    static import command, edit_session, tool, commands.tool.lifecycle;
+    static import command, edit_session, tool, history_lifecycle_contract;
     string[] names;
-    static foreach (M; AliasSeq!(command, edit_session, tool, commands.tool.lifecycle))
+    static foreach (M; AliasSeq!(command, edit_session, tool, history_lifecycle_contract))
         static foreach (m; __traits(allMembers, M))
             static if (__traits(compiles, __traits(getMember, M, m)))
                 static if (is(__traits(getMember, M, m) == interface))

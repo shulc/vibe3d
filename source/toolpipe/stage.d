@@ -1,7 +1,7 @@
 module toolpipe.stage;
 
 import params : Param, ParamProvider, parseInto, stringifyParam;
-import tool : Rollover;
+import tool_policy_values : Rollover;
 
 // ---------------------------------------------------------------------------
 // Tool pipe task codes.

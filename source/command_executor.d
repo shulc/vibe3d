@@ -3,7 +3,7 @@ module command_executor;
 import command;
 import command_history : CommandHistory, RecordMode;
 import tool_activation_ownership : CloseOutcome, CommandDoor, ToolTransition;
-import edit_session : commandMeetsTool;
+import command_tool_policy : commandMeetsTool;
 
 // Project-owned command/history orchestration. Exact `grep -rl -w` checks for
 // both `CommandExecutor` and `command_executor` in the SDK tree returned zero

@@ -6,6 +6,8 @@ import math;
 import shader;
 import params : Param, ParamProvider;
 import editmode : EditMode;
+public import tool_policy_values : Rollover, rolloverDraws, AttrImage, StepOrigin,
+    DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation, DropUndoPolicy;
 import operator : VectorStack;
 import command : Command;
 import mesh : Mesh;
@@ -219,47 +221,6 @@ enum PressKind : ubyte { plain, shift, middle }
 /// session link, or the tool is not the session's reporting tool: its own press behaviour stands.
 enum PressActivation : ubyte { unbound, activates, active }
 
-/// How a topology step of the captured model began (topology-redo S2b, model doc §2.2):
-/// `opens` began the post mode, `restart` opened an operation inside an open
-/// (or navigation-re-begun) post mode, `refire` stayed inside the open
-/// operation. `unclassified` (the `.init`) is every row outside the model.
-enum StepOrigin : ubyte { unclassified, refire, opens, restart }
-
-/// H7 (tool session model, slice M6): whether the viewport draws the element
-/// under the cursor while a tool is armed. It is DATA — the rollover flag of
-/// the tool's policy (`ToolSessionPolicy.rollovers`) and of the pipe stages it
-/// runs with (`Stage.rollovers`), each from the captured flags table and the
-/// C-H7 cells (`toolcards/tool_session_model/`, gap 309/312/380) — read by ONE
-/// viewport path (`ui/viewport_render.d : rolloverShown`). WHICH elements are
-/// hovered is a separate question, the tool's pick need
-/// (`Tool.wantsHoverForType`): a tool that picks no type shows nothing
-/// whatever its flag. No tool armed: the selection type decides, as before.
-enum Rollover : ubyte {
-    /// Nothing is drawn under the armed tool (C-H7: Slice, Edge Extend,
-    /// Polygon Bevel, Move, vertex Bevel — 0 px).
-    none,
-    /// The hovered target outside a drag, live edit or not (Edge Slice keeps
-    /// its target edge through a live chain, C-H7: 286 px). A drag hides it:
-    /// the picker holds its drag-start index while the preview rebuilds the
-    /// edge array under it (the stale-alias rule of the viewport's edge pass).
-    target,
-    /// Only a hovered VERTEX, in every selection mode: the element falloff's
-    /// flag (C-H7-elem: Element Move 36 px on a vertex, 0 on an edge in edge
-    /// and polygon mode). A drag keeps it — the element picked at drag start
-    /// stays lit, as before the slice (not captured; gap 383).
-    vertices,
-}
-
-/// The rule of one flag, as a pure function of the frame's facts.
-bool rolloverDraws(Rollover r, EditMode type, bool dragging)
-        pure nothrow @nogc @safe {
-    final switch (r) {
-        case Rollover.none:      return false;
-        case Rollover.target:    return !dragging;
-        case Rollover.vertices:  return type == EditMode.Vertices;
-    }
-}
-
 /// H8 (slice M6, C-H8-ctl): what the tool's transform handle is posed from.
 /// `acenPlusT`: the action centre plus the run's translation (the transform
 /// family; a press off the handle may place the centre). `opBasePlusAttr`: the
@@ -274,39 +235,6 @@ enum HandleAnchor : ubyte { acenPlusT, opBasePlusAttr }
 struct HandleAnchorPoint {
     Vec3 at;
     bool shown;
-}
-
-/// A tool's ATTRIBUTE IMAGE (slice M3, plan R4.3): the raw bytes of the
-/// attributes its policy declares in `imageAttrs`, in that order. An undo of a
-/// gesture step restores the image the step started from (H2); the tool's
-/// preview is a function of it (`Tool.rebuildPreviewFromAttrs`).
-struct AttrImage {
-    string[] names;
-    immutable(void)[][] raw;
-
-    bool empty() const pure nothrow @nogc { return names.length == 0; }
-
-    /// The image minus `drop`'s names (raw bytes shared, not copied). A pure
-    /// filter: the operation context a tool instance must not inherit is cut
-    /// here, never by a per-tool branch (wave plan 8640 S7a, M-H).
-    AttrImage without(scope const(string)[] drop) const pure nothrow {
-        AttrImage r;
-        outer: foreach (i, n; names) {
-            foreach (d; drop) if (d == n) continue outer;
-            r.names ~= n;
-            r.raw ~= raw[i];
-        }
-        return r;
-    }
-
-    bool opEquals(const AttrImage o) const pure nothrow @nogc {
-        if (names.length != o.names.length) return false;
-        foreach (i; 0 .. names.length)
-            if (names[i] != o.names[i]
-                || cast(const(ubyte)[]) raw[i] != cast(const(ubyte)[]) o.raw[i])
-                return false;
-        return true;
-    }
 }
 
 /// A topology tool's current preview basis and gesture carrier. History owns
@@ -348,15 +276,6 @@ struct ToolSessionLink {
     MeshSnapshot delegate(Tool) stepOpenImage;   // the pending step's open image (shared)
     bool delegate(Tool) previewGated;            // the session holds the tool's preview (topology-redo S2b)
     PressActivation delegate(Tool) pressActivation; // a press of the tool's door (S6r); unbound when not reporting
-}
-
-enum DropUndoExtent { none, newestPressBlock, wholeSession }
-enum DropRedoPopulation { editRows, discard, selectedSuffix }
-enum DropUndoResidualPopulation { removeSuffix, pressMarker }
-struct DropUndoPolicy {
-    DropUndoExtent extent;
-    DropRedoPopulation redo;
-    DropUndoResidualPopulation residual;
 }
 
 enum HeadlessSourcePolicy { current, retainedPositions }

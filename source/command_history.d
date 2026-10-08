@@ -1969,9 +1969,9 @@ final class CommandHistory {
         if (undoStack.length == 0) return false;
         bool generationDone;
         scope(exit) if (!generationDone) ++_generation;
-        import commands.tool.lifecycle : ToolArmLifecyclePolicy;
+        import history_lifecycle_contract : ToolArmLifecyclePolicy;
         import commands.mesh.session_edit : MeshSessionEdit;
-        import tool : DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
+        import tool_policy_values : DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
         auto lifecycle = cast(ToolArmLifecyclePolicy) undoStack[$ - 1].cmd;
         const dropping = lifecycle !is null && lifecycle.dropRow();
         const markerUndo = (undoStack[$ - 1].flags & HistoryFlags.PressMarker) != 0;

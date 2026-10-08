@@ -18,9 +18,11 @@ import subprocess
 import sys
 import tempfile
 
-CORE_ROOTS = ('application_core_mesh_test.d',)
-CORE_CELLS = ('document-primary', 'mesh-cube')
-KNOWN_MODULES = ('mesh', 'document')
+CORE_ROOTS = ('application_core_command_test.d', 'application_core_mesh_test.d')
+CORE_CELLS = ('document-primary', 'mesh-cube', 'model-delivery', 'no-edit-target',
+              'selected-triangle-refusal', 'session-carrier', 'triple-roundtrip')
+KNOWN_MODULES = ('mesh', 'document', 'command', 'command_executor', 'command_history',
+                 'commands.mesh.triple', 'commands.mesh.session_edit')
 # Ownership bans apply equally to project modules, external files and link inputs.
 BANNED_MODULES = {
     'tool', 'editor_app', 'app', 'registry', 'display_sync', 'shader',
@@ -85,7 +87,7 @@ def validate_compiler(modules, files, roots):
     for filename in files:
         check_input(filename)
     require(len(files) >= 20, 'compiler file population below 20')
-    require(set(KNOWN_MODULES) <= set(modules), 'missing production Mesh/Document compiler roots')
+    require(set(KNOWN_MODULES) <= set(modules), 'missing production Mesh/Document/Command compiler roots')
     require(set(map(str, roots)) <= files, 'explicit source roots missing from compiler file-set')
 
 
@@ -271,7 +273,7 @@ def main(argv=None):
                'command': command, 'describeCommand': describe_cmd}
     (evidence / 'witness.json').write_text(json.dumps(witness, indent=2) + '\n')
     print('BOUNDARY mode=' + mode + ' files=' + str(len(files)) + ' sha=' + sha
-          + (' modules=' + str(total) + ' cells=2 binary-sha256=' + binary_hash if args.unittest else ''))
+          + (' modules=' + str(total) + ' cells=' + str(len(CORE_CELLS)) + ' binary-sha256=' + binary_hash if args.unittest else ''))
     print('BOUNDARY-VERDICT=GREEN')
     return 0
 

@@ -24,6 +24,7 @@ command
 command_args
 command_executor
 command_history
+command_tool_policy
 commands.actr
 commands.ai.toggle
 commands.constrain.toggle
@@ -224,6 +225,7 @@ handles.gizmo_metrics
 handles.gl_util
 handles.shapes
 held_gesture_buttons
+history_lifecycle_contract
 history_macro_registration
 hover_state
 http_command_adapter
@@ -403,6 +405,7 @@ tool_attr_bounds
 tool_disarm
 tool_input
 tool_lifecycle_registration
+tool_policy_values
 tool_presets
 toolpipe
 toolpipe.attr_cache

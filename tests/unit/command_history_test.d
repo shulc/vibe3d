@@ -15,6 +15,14 @@ import view     : View;
 import std.stdio : writeln;
 import command_history;
 
+static import tool, tool_policy_values, commands.tool.lifecycle, history_lifecycle_contract;
+static assert(is(tool.AttrImage == tool_policy_values.AttrImage));
+static assert(is(tool.StepOrigin == tool_policy_values.StepOrigin));
+static assert(is(tool.Rollover == tool_policy_values.Rollover));
+static assert(is(tool.DropUndoPolicy == tool_policy_values.DropUndoPolicy));
+static assert(is(commands.tool.lifecycle.ToolArmLifecyclePolicy ==
+    history_lifecycle_contract.ToolArmLifecyclePolicy));
+
 // task 0678 D9-a (REVERTED) — recordToolLifecycle deliberately does NOT feed
 // the macro recorder; see the comment at its emit point for the measurements
 // that overturned the original finding. Pin the silence so a future "fix" has

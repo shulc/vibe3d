@@ -9,7 +9,7 @@ import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import commands.mesh.gesture_payload : GesturePayload;
 import commands.mesh.mesh_edit_payload : MeshEditPayload;
-import tool : AttrImage, StepOrigin;
+import tool_policy_values : AttrImage, StepOrigin;
 
 /// Generic record-flavor command for an interactive mesh-editing session
 /// (see e.g. BevelTool, EdgeExtrudeTool, ArrayTool, LoopSliceTool, ...). The

@@ -8,6 +8,7 @@ bvh_pick
 change_bus
 command
 command_history
+command_tool_policy
 commands.layer.xform_edit
 commands.mesh.edge_slide
 commands.mesh.gesture_payload
@@ -46,6 +47,7 @@ handles.gizmo_metrics
 handles.gl_util
 handles.shapes
 held_gesture_buttons
+history_lifecycle_contract
 hover_state
 image_data
 io.image_decode
@@ -159,6 +161,7 @@ tool
 tool_activation_ownership
 tool_attr_bounds
 tool_input
+tool_policy_values
 toolpipe.attr_cache
 toolpipe.guide
 toolpipe.obbox

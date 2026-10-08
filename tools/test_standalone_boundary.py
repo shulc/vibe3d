@@ -17,7 +17,7 @@ class BoundaryControls(unittest.TestCase):
         description = {
             'rootPackage': 'vibe3d-core-tests',
             'targets': [{'buildSettings': {
-                'sourceFiles': ['/fixture/tests/unit/application_core_mesh_test.d'],
+                'sourceFiles': ['/fixture/tests/unit/' + name for name in boundary.CORE_ROOTS],
                 'dflags': ['-i'], 'importPaths': ['/fixture/source', '/fixture'],
             }}],
             'packages': [{'active': True, 'dependencies': []}],
@@ -31,7 +31,7 @@ class BoundaryControls(unittest.TestCase):
     def test_independent_settings(self):
         root, description = self.settings()
         settings, sources = boundary.validate_settings(description, root)
-        self.assertEqual(len(sources), 1)
+        self.assertEqual(len(sources), 2)
         self.assertEqual(settings['dflags'], ['-i'])
         cases = [
             ('targets', [], 'target population'),
@@ -53,7 +53,7 @@ class BoundaryControls(unittest.TestCase):
             changed['targets'][0]['buildSettings'][field] = ['calculation']
             self.reject_settings(changed, 'computational/native')
         for source, message in [([], 'root population'),
-                                (['/fixture/source/application_core_mesh_test.d'], 'existing tests/unit')]:
+                                (['/fixture/source/' + name for name in boundary.CORE_ROOTS], 'existing tests/unit')]:
             changed = copy.deepcopy(description)
             changed['targets'][0]['buildSettings']['sourceFiles'] = source
             self.reject_settings(changed, message)
@@ -88,7 +88,7 @@ class BoundaryControls(unittest.TestCase):
 
     def compiler_fixture(self):
         files = {str(Path('/fixture/lower' + str(i) + '.d')) for i in range(20)}
-        modules = {'mesh': '/fixture/mesh.d', 'document': '/fixture/document.d'}
+        modules = {name: '/fixture/' + name.replace('.', '/') + '.d' for name in boundary.KNOWN_MODULES}
         files.update(modules.values())
         roots = [Path('/fixture/root.d')]
         files.add(str(roots[0]))
@@ -110,7 +110,7 @@ class BoundaryControls(unittest.TestCase):
                 boundary.validate_compiler(dict(modules, **{module: '/outside/renamed.d'}), files, roots)
 
     def test_runtime_population(self):
-        good = '11 modules passed unittests\nCORE-CELL passed=mesh-cube\nCORE-CELL passed=document-primary\n'
+        good = '11 modules passed unittests\n' + ''.join('CORE-CELL passed=' + name + '\n' for name in boundary.CORE_CELLS)
         self.assertEqual(boundary.validate_runtime(good), 11)
         for output in [good.replace('CORE-CELL passed=mesh-cube\n', ''),
                        good + 'CORE-CELL passed=mesh-cube\n',

@@ -33,6 +33,7 @@ change_bus
 command
 command_args
 command_history
+command_tool_policy
 commands.actr
 commands.ai.toggle
 commands.ai3d.generate
@@ -241,6 +242,7 @@ handles.gizmo_metrics
 handles.gl_util
 handles.shapes
 held_gesture_buttons
+history_lifecycle_contract
 history_macro_registration
 hover_state
 http_json
@@ -406,6 +408,7 @@ tool_attr_bounds
 tool_disarm
 tool_input
 tool_lifecycle_registration
+tool_policy_values
 toolpipe
 toolpipe.attr_cache
 toolpipe.guide
