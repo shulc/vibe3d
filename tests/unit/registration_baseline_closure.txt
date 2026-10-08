@@ -1,3 +1,4 @@
+active_mesh_resolver
 ai.advisor
 ai.analysis
 ai.copilot_gate
@@ -218,6 +219,7 @@ document
 document_selection
 drag
 edit_session
+edit_target_contract
 edit_tool_registration
 editmode
 editor_app
@@ -391,6 +393,7 @@ snap_election
 snap_render
 snapshot
 step_trace
+subpatch_factories
 subpatch_osd
 subpatch_preview
 subpatch_worker

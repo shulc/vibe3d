@@ -17,6 +17,7 @@
 // that needed a private member would have had to stay behind.
 module tests.unit.mesh_ops.edge_bevel_test;
 
+import subpatch_factories : subdivideCube;
 import mesh;
 import mesh_ops.edge_bevel;
 import mesh_ops.bevel_vertex;

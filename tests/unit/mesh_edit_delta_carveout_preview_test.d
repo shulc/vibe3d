@@ -32,6 +32,7 @@
 // ===========================================================================
 module tests.unit.mesh_edit_delta_carveout_preview_test;
 
+import subpatch_preview : SubpatchPreview;
 import std.format : format;
 
 import mesh;

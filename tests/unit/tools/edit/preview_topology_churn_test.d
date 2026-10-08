@@ -38,6 +38,7 @@
 // proves the first.
 module tests.unit.tools.edit.preview_topology_churn_test;
 
+import subpatch_preview : SubpatchPreview;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math : Vec3;

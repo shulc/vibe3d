@@ -871,7 +871,7 @@ unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_
     // its own file here in the same commit that moves the code.
     // `mesh_visibility.d` (step 2) carries zero hits today and is listed so
     // the rule is the list, not the hits.
-    foreach (sat; ["mesh_visibility.d", "mesh_edge_slice.d"]) {
+    foreach (sat; ["mesh_visibility.d", "mesh_edge_slice.d", "subpatch_factories.d"]) {
         immutable satPath = buildPath(repoRoot, "source", sat);
         assert(exists(satPath),
                "the gate cannot find the struct-Mesh satellite " ~ satPath
@@ -880,7 +880,7 @@ unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_
         targets ~= satPath;
     }
 
-    size_t filesScanned = 3;   // mesh.d + the two satellites, counted above
+    size_t filesScanned = 4;   // mesh.d + the three satellites, counted above
     foreach (entry; dirEntries(opsDir, SpanMode.shallow)) {
         if (!entry.isFile || entry.name.length < 2
             || entry.name[$ - 2 .. $] != ".d") continue;

@@ -38,10 +38,11 @@
 // is a fixture that proves nothing.
 module tests.unit.snap_visibility_corpus_test;
 
+import subpatch_factories : subdivideCube;
 import std.math : PI, sin, sqrt;
 import math : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix,
               orthographicMatrix;
-import mesh : Mesh, makeGridPlane, makeCube, subdivideCube, g_visCounters,
+import mesh : Mesh, makeGridPlane, makeCube,  g_visCounters,
               visibilityProbe, visibleVertices;
 
 // ---------------------------------------------------------------------------

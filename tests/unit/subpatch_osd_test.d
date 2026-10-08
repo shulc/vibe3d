@@ -243,7 +243,7 @@ unittest {
 // interactive gizmo path was broken).
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : SubpatchPreview;
+    import subpatch_preview : SubpatchPreview;
     import change_bus : MeshEditScope;
 
     import mesh_dirty : noteMeshChange;
@@ -779,7 +779,7 @@ unittest {
 // a `debug assert`. It holds in every build, release included.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : SubpatchPreview;
+    import subpatch_preview : SubpatchPreview;
     import std.conv : to;
     import std.math : fabs;
 
@@ -877,7 +877,8 @@ unittest {
 // activated, or a `noteMeshChange` nobody wired up.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh       : Mesh, SubpatchPreview, makeCube;
+    import mesh       : Mesh, makeCube;
+    import subpatch_preview : SubpatchPreview;
     import mesh_dirty : noteMeshChange;
     import change_bus : MeshEditScope, changeBus;
     import std.conv   : to;
@@ -1085,7 +1086,7 @@ unittest {
 // inside OpenSubdiv's stencil builder would take the recorded-input lane with
 // it, and the correct degraded answer (the cage) is already available.
 unittest {
-    import mesh      : SubpatchPreview;
+    import subpatch_preview : SubpatchPreview;
     import core.time : MonoTime, dur;
 
     SubpatchPreview sp;

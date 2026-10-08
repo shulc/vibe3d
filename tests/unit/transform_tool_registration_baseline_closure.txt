@@ -1,3 +1,4 @@
+active_mesh_resolver
 ai.advisor
 ai.debug_trace
 ai.interaction
@@ -32,6 +33,7 @@ document
 document_selection
 drag
 edit_session
+edit_target_contract
 editmode
 evaluated_move_weld
 eventlog
@@ -149,10 +151,8 @@ snap
 snap_election
 snap_render
 snapshot
+subpatch_factories
 subpatch_osd
-subpatch_preview
-subpatch_worker
-subpatch_worker_web
 symmetry
 symmetry_pick
 tool

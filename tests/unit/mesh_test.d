@@ -3,6 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.mesh_test;
 
+import subpatch_factories : subdivideCube;
 import std.math : sqrt, abs;
 import std.parallelism : parallel;
 import std.range : iota;

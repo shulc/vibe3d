@@ -764,21 +764,7 @@ class NoEditTargetException : Exception {
     }
 }
 
-/// The one-clause reason every consumer names when it refuses for want of an
-/// edit target (task 0654). Declared ONCE so the command layer, the tool
-/// layer and the HTTP surface cannot drift into three different wordings that
-/// a test would then have to match three ways.
-enum string kNoEditTargetReason =
-    "no mesh item is selected: there is no mesh edit target";
-
-// `command.d` declares the same string (it cannot import this module — see
-// `command.g_editTargetResolver`). Two literals that must stay identical are a
-// latent divergence unless something checks, so this is the check: a test that
-// asserts the HTTP refusal against `document.kNoEditTargetReason` would
-// otherwise pass while a command answered something else entirely.
-static assert(kNoEditTargetReason == imported!"command".kNoEditTargetReason,
-    "document.kNoEditTargetReason and command.kNoEditTargetReason must be "
-    ~ "byte-identical — the refusal is one sentence, not two");
+public import edit_target_contract : kNoEditTargetReason;
 
 private __gshared Mesh g_noEditTargetMesh;
 

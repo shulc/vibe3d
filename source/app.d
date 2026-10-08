@@ -1,5 +1,6 @@
 module app;
 
+import subpatch_preview : SubpatchPreview;
 import bindbc.sdl;
 import bindbc.opengl;
 import std.string : toStringz;

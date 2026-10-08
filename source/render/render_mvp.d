@@ -24,7 +24,8 @@ import bindbc.opengl;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
-import mesh : Mesh, SubpatchPreview, Surface;
+import mesh : Mesh, Surface;
+import subpatch_preview : SubpatchPreview;
 import view : View, ProjKind;
 import math : Vec3, Viewport;
 // Modeling-side bus constants and the watcher masks (boundary-safe: render

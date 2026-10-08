@@ -3,6 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.mesh_ops.decimate_test;
 
+import subpatch_factories : subdivideCube;
 import mesh;
 import math;
 import mesh_ops.decimate;

@@ -13,6 +13,7 @@ module editor_app;
 // these need to be top-level here), plus the version(WithAI) copilot import
 // group mirrored verbatim from app.d's own gating so a modeling-noai build
 // compiles out the same symbols the same way.
+import subpatch_preview : SubpatchPreview;
 import bindbc.sdl;
 import bindbc.opengl;
 import std.string : toStringz;

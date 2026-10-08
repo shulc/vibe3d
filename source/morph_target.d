@@ -92,7 +92,7 @@ void registerMorphTargetLifecycle(Session* session) {
 /// snapped to and picked MORPHED by the primary's binding. The user bound a
 /// target on one layer and three others silently deformed.
 ///
-/// The authority is `display_sync.activeMeshResolver`, which `app.d` installs
+/// The authority is `active_mesh_resolver.activeMeshResolver`, which `app.d` installs
 /// once as `() => document.activeMesh()` — i.e. the primary's mesh. Reused
 /// rather than duplicated so there is one answer to "which mesh is the edit
 /// target" and one place to wire it.
@@ -103,7 +103,7 @@ void registerMorphTargetLifecycle(Session* session) {
 /// what keeps the existing morph unittests byte-identical.
 private bool isMorphPreviewMesh(const Mesh* m) {
     if (m is null) return false;
-    import display_sync : activeMeshResolver;
+    import active_mesh_resolver : activeMeshResolver;
     if (activeMeshResolver is null) return true;
     const(Mesh)* primary = activeMeshResolver();
     return primary is m;

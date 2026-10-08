@@ -143,6 +143,8 @@ tests.unit.ai3d.worker_manager_test
 tests.unit.answered_bridge_census_test
 tests.unit.app_teardown_order_test
 tests.unit.app_with_app_scan_test
+tests.unit.application_boundary_checker_test
+tests.unit.application_core_mesh_test
 tests.unit.argstring_test
 tests.unit.array_hidden_operand_test
 tests.unit.assimp_wire_test

@@ -1,0 +1,26 @@
+{
+  "name": "vibe3d-core-tests",
+  "description": "Isolated production core model unittests",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": [],
+  "sourceFiles": [
+    "../unit/application_core_mesh_test.d"
+  ],
+  "importPaths": [
+    "../../source",
+    "../.."
+  ],
+  "dflags": [
+    "-i"
+  ],
+  "dependencies": {},
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0"
+  },
+  "configurations": [
+    {
+      "name": "core"
+    }
+  ]
+}

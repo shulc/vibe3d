@@ -1,5 +1,7 @@
 module commands.scene.reset;
 
+import subpatch_factories : subdivideCube;
+
 import command;
 import mesh;
 import view;

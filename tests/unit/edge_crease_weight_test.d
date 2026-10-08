@@ -10,6 +10,8 @@
 // guard, and the two cache-invalidation sites.
 module tests.unit.edge_crease_weight_test;
 
+import subpatch_preview : SubpatchPreview;
+
 import std.json;
 import std.file      : readText;
 import std.math      : abs, round, isNaN;

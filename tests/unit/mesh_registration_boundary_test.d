@@ -256,8 +256,8 @@ unittest {
     // Task 9492: the attribute doors read `tool_attr_bounds` (+1).
     // Task 9490: the radial ring start reads `workplane_fit`'s frame (+1).
     // Task 20261660: Tool reaches the detached model_preview view (+1).
-    assert(meshClosure.queue.length == 188,
-        format("6509 import scanner closure=%d/188",
+    assert(meshClosure.queue.length == 187,
+        format("6509 import scanner closure=%d/187",
             meshClosure.queue.length));
     assert("editor_app" in positive.reached,
         "6509 positive control: registration does not reach editor_app");

@@ -26,9 +26,7 @@ import perf_probe : g_perf, Cat;
 // currently rendered, so the gate is the single authority on "is this
 // target the mesh on screen?".
 
-/// Installed once by app.d at init. Returns the mesh currently displayed
-/// (the active layer's mesh). Stage 0a: resolves to the one global mesh.
-__gshared Mesh* delegate() activeMeshResolver;
+public import active_mesh_resolver : activeMeshResolver;
 
 /// Gated display refresh — shared by the interactive tool paths (drag fills
 /// / previews that own the display mid-gesture) and app.d's mid-batch pull

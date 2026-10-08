@@ -66,6 +66,7 @@ module tests.unit.mesh_bevel_census_test;
 //   - MIXED SELECTIONS: chains, ring+trailing-chain, disjoint clusters,
 //     and the specific corner-hub-plus-free-end shape that crashed.
 
+import subpatch_factories : subdivideCube;
 import mesh;
 import mesh_ops.edge_bevel;
 import math : Vec3;

@@ -1,5 +1,6 @@
 module tests.unit.selection_projection_test;
 
+import subpatch_factories : subdivideCube;
 import tests.unit.http_test_client : receiveUntilClosed;
 
 import core.atomic : atomicLoad, atomicOp, atomicStore;
@@ -9,7 +10,7 @@ import core.time : MonoTime, msecs, seconds;
 import document : Document, Layer, beginPreparedLayerRead;
 import editmode : EditMode;
 import http_server : HttpServer, InProcessHttpTransport;
-import mesh : makeCube, subdivideCube;
+import mesh : makeCube;
 import selection_projection : SelectionProjectionInput,
     SelectionProjectionReadModel, encodeSelectionProjection;
 import seltype : SelMode, SelType, SelTypeOrder;
