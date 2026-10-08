@@ -244,6 +244,9 @@ unittest {
     assert(j["mode"].integer == 2, "state mode stored");
     assert(j["tension"].floating == 0.25, "state tension stored");
     assert(j["steps"].integer == 1, "state steps stored");
+    *ps[1].fptr = 1;
+    assert(t.toolStateJson()["twistRefused"].type == JSONType.false_,
+        "inactive closed twist not refused");
 }
 
 unittest {
@@ -256,7 +259,9 @@ unittest {
         "cachedConnect  == params_.connect", "cachedAutoStep == params_.autoStep",
         "cachedMode       = params_.mode", "cachedTension    = params_.tension",
         "cachedConnect    = params_.connect", "cachedAutoStep   = params_.autoStep",
-        "lastEffectiveSegments_ = rebuildBridgePreview(", "lastEffectiveSegments_ = res.effectiveSegments"])
+        "lastEffectiveSegments_ = rebuildBridgePreview(", "lastEffectiveSegments_ = res.effectiveSegments",
+        "cachedMode = params_.mode;", "cachedTension = params_.tension;",
+        "cachedConnect = params_.connect;", "cachedAutoStep = params_.autoStep;"])
         assert(source.indexOf(term) >= 0, "production bridge preview wiring " ~ term);
 }
 
@@ -283,6 +288,7 @@ unittest {
     auto j = t.toolStateJson();
     assert(j["effectiveSegments"].uinteger == 3 && j["openRows"].type == JSONType.true_,
         "prepared activation installs effective segments");
+    assert(j["twistRefused"].type == JSONType.false_, "open zero twist not refused");
     *ps[1].fptr = 1;
     assert(t.toolStateJson()["twistRefused"].type == JSONType.true_, "open twist state refusal");
     auto refused = t.buildPreparedActivation(source);
