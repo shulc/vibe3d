@@ -30,7 +30,7 @@
     "captured_utc": "2026-10-02T20:49:48Z",
     "harness": "tests/test_tool_gesture_g4.d, driven over /api/play-events against vibe3d's own running instance -- no reference editor involved (recipe: stand -> gesture (/api/play-events) -> drop -> undo -> redo)",
     "task": "1905",
-    "notes": "emitted by this producer at capture time (task 3370), from its own `kWrittenBy`/`kRecipe`; `captured_utc` is the wall clock of the capture run itself. Before 3370 the block was a hand insert (task 3140) that any re-capture would have dropped, and `captured_utc` was the commit date of the `producedBy` SHA."
+    "notes": "emitted by this producer at capture time (task 3370), from its own `kWrittenBy`/`kRecipe`; `captured_utc` is the wall clock of the capture run itself. Before 3370 the block was a hand insert (task 3140) that any re-capture would have dropped, and `captured_utc` was the commit date of the `producedBy` SHA. Bridge history-name fields amended by task 20261690 from the pooled self-drive at 2026-10-08T23:31:40Z on b6d1409fea25; original geometry and every other cell are retained."
   },
   "cells": [
     {
