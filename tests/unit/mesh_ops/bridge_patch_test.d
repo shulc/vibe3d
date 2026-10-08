@@ -246,6 +246,7 @@ unittest
     foreach (e; [[0u, 1u], [1u, 2u], [2u, 0u]])
         cycle.owners[edgeKey(e[0], e[1])] = [0];
     assert(traceSide(0, 4, cycle).length == 0, "trace repeated vertex refuses");
+    inc.selected.remove(edgeKey(0, 3));
     assert(traceSide(3, 0, inc).length == 0, "trace initial low degree refuses");
     // Distance fallback genuine tie retains direction; parity toggles reversal.
     Mesh m;
@@ -522,6 +523,8 @@ unittest
                 assert(isFinite(v.x) && isFinite(v.y) && isFinite(v.z),
                         cell ~ (tiny ? " connect float-length-zero endpoint must store finite positions"
                             : " connect repeated endpoint must store finite positions"));
+            assert(connected.vertices.length == rails.vertices.length,
+                    "repeated endpoint uses ordinary rail vertex population");
             samePositions(rails, connected);
             assert(rails.faces == connected.faces, "repeated endpoint uses ordinary rails");
         }
