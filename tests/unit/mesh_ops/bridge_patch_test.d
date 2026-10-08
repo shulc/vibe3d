@@ -475,6 +475,7 @@ unittest
 
     foreach (arm; 0 .. 4)
         foreach (tail; [false, true])
+        foreach (tiny; [false, true])
         {
             auto cell = "degenerate-" ~ arm.to!string ~ (tail ? "-tail" : "-head");
             if (filter.length && filter != cell) continue;
@@ -492,6 +493,16 @@ unittest
             // Move the neighboring interior knot, keeping all four corners fixed.
             if (tail) base.vertices[ids[$-2]] = base.vertices[ids[$-1]];
             else base.vertices[ids[1]] = base.vertices[ids[0]];
+            if (tiny)
+            {
+                auto endpoint = tail ? ids[$-1] : ids[0];
+                auto neighbor = tail ? ids[$-2] : ids[1];
+                base.vertices[endpoint] = Vec3(0,0,0);
+                base.vertices[neighbor] = Vec3(1e-24f,0,0);
+                auto d = Vec3d(base.vertices[neighbor]) - Vec3d(base.vertices[endpoint]);
+                assert(dotD(d,d) > 0 && (base.vertices[neighbor] - base.vertices[endpoint]).length == 0,
+                        "noncoincident endpoint float length underflow discriminator");
+            }
             Mesh rails, connected;
             auto snap = MeshSnapshot.capture(base); snap.restore(rails); snap.restore(connected);
             BridgeParams p; p.connect = true;
@@ -509,7 +520,8 @@ unittest
                     "connect repeated endpoint fallback population");
             foreach (v; connected.vertices)
                 assert(isFinite(v.x) && isFinite(v.y) && isFinite(v.z),
-                        cell ~ " connect repeated endpoint must store finite positions");
+                        cell ~ (tiny ? " connect float-length-zero endpoint must store finite positions"
+                            : " connect repeated endpoint must store finite positions"));
             samePositions(rails, connected);
             assert(rails.faces == connected.faces, "repeated endpoint uses ordinary rails");
         }

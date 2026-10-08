@@ -542,13 +542,13 @@ size_t bridgeOpenRows(ref MeshEditBatch ed, const(uint)[] chainA,
     uint spans = effectiveSegments(p.segments, p.connect, p.autoStep, sides,
             cast(uint) maxBridgeSpans);
     // OURS robustness: cardinal ghosts divide by endpoint chords on 3+ arms.
-    // Repeated endpoint positions use the existing rail fallback, unmeasured.
+    // Float-length-zero endpoint chords use the existing rail fallback, unmeasured.
     bool cardinalArm(const(uint)[] ids)
     {
         if (ids.length < 3) return true;
-        auto leading = Vec3d(ed.vertices[ids[1]]) - Vec3d(ed.vertices[ids[0]]);
-        auto trailing = Vec3d(ed.vertices[ids[$ - 1]]) - Vec3d(ed.vertices[ids[$ - 2]]);
-        return dotD(leading, leading) > 0 && dotD(trailing, trailing) > 0;
+        auto leading = ed.vertices[ids[1]] - ed.vertices[ids[0]];
+        auto trailing = ed.vertices[ids[$ - 1]] - ed.vertices[ids[$ - 2]];
+        return leading.length > 0 && trailing.length > 0;
     }
     bool patch = p.connect && sides[0].length >= 2 && sides[0].length == sides[1].length
         && cardinalArm(a) && cardinalArm(b) && cardinalArm(sides[0]) && cardinalArm(sides[1]);
