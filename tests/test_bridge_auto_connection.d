@@ -150,10 +150,14 @@ unittest {
 unittest {
     if (cell("flip")) {
         auto c = fixture("S02"); load(c); auto p = params(c); ok(apply(p));
-        auto a = getJson("/api/model"); load(c); p["flip"] = JSONValue(true); ok(apply(p));
+        auto a = getJson("/api/model");
+        auto positions = parseJSON(planes())["vertices"];
+        load(c); p["flip"] = JSONValue(true); ok(apply(p));
         auto b = getJson("/api/model");
+        auto flippedPositions = parseJSON(planes())["vertices"];
         assert(a["vertices"] == b["vertices"] && a["faceCount"] == b["faceCount"] &&
             a["edgeCount"] == b["edgeCount"], "flip counts and positions equal");
+        assert(positions == flippedPositions, "flip lossless positions equal");
         size_t quads;
         foreach (i; c["input"]["faceCount"].integer .. a["faceCount"].integer) {
             auto ring = a["faces"][i].array.dup;
