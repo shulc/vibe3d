@@ -85,7 +85,7 @@ private immutable Row[] kTable = [
     Row("edge.extrude", "EdgeExtrudeTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.inferred),
     Row("edge.slide", "EdgeSlideTool", false, Prov.notPorted, CommandClose.uiDoor, CloseProv.inferred),
     Row("mesh.arrayTool", "ArrayTool", true, Prov.inferred, CommandClose.uiDoor, CloseProv.inferred),
-    Row("mesh.bridgeTool", "BridgeTool", false, Prov.notPorted, CommandClose.none, CloseProv.notCaptured),
+    Row("mesh.bridgeTool", "BridgeTool", true, Prov.captured, CommandClose.none, CloseProv.notCaptured),
     Row("mesh.clone", "CloneTool", true, Prov.captured, CommandClose.uiDoor, CloseProv.inferred),
     // A topology-pen preset since task 9525: the pen's policy, carried.
     Row("mesh.dragWeld", "TopologyPenTool", true, Prov.carried, CommandClose.uiDoor, CloseProv.inferred),
@@ -166,6 +166,7 @@ private immutable string[] kActivationRowClasses = [
     "tools.deform.magnet.MagnetTool",
     "tools.deform.push.PushTool",
     "tools.deform.smooth_shift_tool.SmoothShiftTool",
+    "tools.edit.bridge_tool.BridgeTool",
     "tools.edit.edge_bevel.EdgeBevelTool",
     "tools.edit.edge_extend.EdgeExtendTool",
     "tools.edit.edge_extrude.EdgeExtrudeTool",
@@ -314,8 +315,8 @@ unittest { // (1) id -> policy, over every registered id
 /// not ported (the rest have no counterpart or an unsure one), and ids whose
 /// session does not own their gesture steps (H2 not ported). Measured on the
 /// M7 tree; each only falls.
-private enum size_t kActivationRowFalseCeiling = 17;
-private enum size_t kNotPortedCeiling = 13;
+private enum size_t kActivationRowFalseCeiling = 16;
+private enum size_t kNotPortedCeiling = 12;
 private enum size_t kSessionStepsFalseCeiling = 0;
 
 /// Task 8250: these existing command producers now use the same completed
@@ -843,7 +844,7 @@ unittest { // (4b)
     // four arm-opening ones carry their begin row and are armed by it, not by the
     // activation), plus Edge Extend's declared carry / the declared on-press
     // transform id. Polarity: false before S5b (the four answered no), true after.
-    string[] withExtend = ["edge.extend"] ~ kModelIds.dup, withRotate = kModelIds ~ ["rotate"];
+    string[] withExtend = ["edge.extend"] ~ kModelIds.dup, withRotate = kModelIds ~ ["mesh.bridgeTool", "rotate"];
     sort(withExtend); sort(withRotate);
     assert(carries == withExtend,
            format("S5b structural: firstStepCarriesActivation answers for %s", carries));

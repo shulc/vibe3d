@@ -1346,8 +1346,13 @@ private struct ToolSession {
         // session still owns a pending topology image.
         const completedTopologyIsHistoryOwned = reporting_(t) &&
             t.sessionPolicy().historyTopologySteps && !topologyPending_;
+        bool cancelledOwnedActivation;
         if (t !is null && t.hasUncommittedEdit() &&
             !completedTopologyIsHistoryOwned) {
+            import commands.tool.lifecycle : ToolActivationCommand;
+            auto cancelArm = cast(const ToolActivationCommand)undoTop_();
+            const cancelToken = reporting_(t) ? currentToken() : 0;
+            const cancelOwner = armedId_;
             t.cancelUncommittedEdit();
             // NO postcondition assert here — deliberately. The one-shot
             // "cancel ⇒ !hasUncommittedEdit" reading of the base-class
@@ -1367,9 +1372,17 @@ private struct ToolSession {
             auto t2 = tool_();
             if (t2 !is null && !t2.hasUncommittedEdit()
                 && !t2.sessionPolicy().keepAliveOnCancel) {
-                dropTool_();
+                // Completed cancellation consumes only this unchanged session's
+                // immediate owning activation (20261690,
+                // doc/tasks/evidence/20261690-bridge-live-lifecycle/native-delta.md).
+                cancelledOwnedActivation = t2 is t && reporting_(t2) &&
+                    cancelToken != 0 && currentToken() == cancelToken &&
+                    cancelArm !is null && undoTop_() is cancelArm &&
+                    cancelArm.sessionToken() == cancelToken &&
+                    cancelArm.armedId().length != 0 && cancelArm.armedId() == cancelOwner;
+                if (!cancelledOwnedActivation) dropTool_();
             }
-            return true;
+            if (!cancelledOwnedActivation) return true;
         }
         const tail = history_.undoEntries();
         if (tail.length && (tail[$ - 1].flags & HistoryFlags.PressMarker)) {
@@ -1436,7 +1449,7 @@ private struct ToolSession {
             if (completedDropUndo_ == dropCompletionBefore)
                 restorePredecessor_(last, topologyRestore);
         }
-        return ok;
+        return ok || cancelledOwnedActivation;
     }
 
     private bool redoClosedRecordedStep_() {

@@ -281,9 +281,9 @@ unittest { // Bridge: a reset TO A PRIMITIVE under an armed haul
     // control that `/api/history` is answering at all, so a dead channel
     // cannot satisfy this the way an absence check would.
     auto labels = undoLabels();
-    assert(labels == ["Reset to cube"],
+    assert(labels == ["Activate Tool", "Reset to cube"],
         "history after the document change is " ~ labels.to!string
-        ~ ", expected exactly [\"Reset to cube\"] — a gesture armed over a "
+        ~ ", expected exactly [\"Activate Tool\", \"Reset to cube\"] — a gesture armed over a "
         ~ "document that has since been replaced must not reach "
         ~ "`commitBridgeEdit`");
 }
@@ -375,7 +375,7 @@ unittest { // Bridge: the reported repro — reset TO EMPTY under an armed haul
         ~ nv.to!string ~ " vertices / " ~ nf.to!string ~ " faces behind");
 
     auto labels = undoLabels();
-    assert(labels == ["Reset to empty"],
+    assert(labels == ["Activate Tool", "Reset to empty"],
         "history after the document change is " ~ labels.to!string
         ~ ", expected exactly [\"Reset to empty\"]");
 }

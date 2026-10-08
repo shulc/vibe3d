@@ -238,7 +238,7 @@ void capsCell() {
             aperture ~= format("%d,%d;", dim.w / 2 + x * 5, dim.h / 2 + y * 5);
         auto original = probe(aperture);
         auto before = planes(); auto history = undoCount();
-        arm(removeCaps);
+        arm(removeCaps); history = undoCount();
         auto live = probe(aperture);
         auto liveLattice = probe(lattice);
         release(before, history, removeCaps ? 4 : 6);
@@ -267,7 +267,7 @@ void materialCell() {
     auto dim = probe(); auto pts = fillLattice(dim.w, dim.h);
     auto original = probe(pts);
     auto before = planes(); auto history = undoCount();
-    arm();
+    arm(); history = undoCount();
     auto live = surface(pts);
     size_t red, blue, bridge;
     foreach (i; live.interior) {
@@ -298,7 +298,7 @@ void transformCell() {
     scope(exit) cleanup();
     auto dim = probe(); auto pts = fillLattice(dim.w, dim.h);
     auto before = planes(); auto history = undoCount();
-    arm();
+    arm(); history = undoCount();
     auto identity = surface(pts);
     cmd("layer.attr 0 pos.x 0.75");
     cmd("layer.attr 0 pos.y 0.3");
@@ -322,7 +322,7 @@ void subpatchCell() {
     scope(exit) cleanup();
     auto dim = probe(); auto pts = fillLattice(dim.w, dim.h);
     auto before = planes(); auto history = undoCount();
-    arm();
+    arm(); history = undoCount();
     cmd("tool.attr " ~ kTool ~ " twist 1");
     cmd("tool.attr " ~ kTool ~ " segments 3"); fence();
     release(before, history, 22);
@@ -331,7 +331,7 @@ void subpatchCell() {
     foreach (changeSegments; [false, true]) {
         setup(false, false, true);
         before = planes(); history = undoCount();
-        arm();
+        arm(); history = undoCount();
         // With one span there is no interior ring to twist. Three spans add
         // twisted rings, so this edit cannot be visually equivalent geometry.
         cmd("tool.attr " ~ kTool ~ " twist 1"); fence();
@@ -389,7 +389,7 @@ void multiCell() {
         original[cell] = probe(pts[cell], cell);
     }
     auto before = planes(); auto history = undoCount();
-    arm();
+    arm(); history = undoCount();
     foreach (cell; 0 .. 2) {
         live[cell] = probe(pts[cell], cell);
         enforce(live[cell].pixels.length == 768,

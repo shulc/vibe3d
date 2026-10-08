@@ -293,7 +293,8 @@ BridgeApplyResult rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh
 class BridgeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
         static immutable ToolSessionPolicy policy = {
-            sessionSteps: true, historyRecordedSteps: true };
+            activationRow: true, sessionSteps: true, historyRecordedSteps: true,
+            postmodeStartsOnPress: true };
         return policy;
     }
 private:

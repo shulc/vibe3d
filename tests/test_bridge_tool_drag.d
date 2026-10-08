@@ -87,7 +87,7 @@ unittest { // Default click is a live Bridge, then explicit release saves it.
     auto armed = getJson("/api/tool/state");
     auto preview = previewKey();
     auto u0 = undoLen();
-    assert(u0 == 0, "click history headroom: measured arm depth " ~ u0.to!string);
+    assert(u0 == 1, "click history headroom: measured arm depth " ~ u0.to!string);
     assert(armed["valid"].type == JSONType.true_ &&
         armed["engaged"].type == JSONType.false_, "click starts valid and unengaged");
     assert(armed["segments"].integer == 1 && preview > 0,
@@ -155,7 +155,7 @@ unittest { // Later drags edit the same engaged operation; cancel discards it.
         ~ "\n" ~ `{"t":50,"type":"SDL_KEYUP","sym":122,"scan":0,"mod":0,"repeat":0}`
         ~ "\n", BASE); // UI navigation, unlike script history.undo, cancels live edits.
     cmd("tool.release");
-    assert(planes() == before && undoLen() == u0, "cancel then release discards clicked preview");
+    assert(planes() == before && undoLen() == u0 - 1, "cancel then release discards clicked preview");
 }
 
 unittest { // Admission exclusions must not acquire the click engagement bit.

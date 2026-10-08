@@ -8,7 +8,7 @@ import drag_helpers : fetchCamera, buildDragLog, buildDragDownLog, buildDragMoti
 import viewport_lattice_helpers : fillLattice, kFillNX, kFillNY;
 import std.exception : enforce, collectException;
 import std.format : format;
-import std.json : JSONValue, JSONType;
+import std.json : JSONValue, JSONType, parseJSON;
 import std.math : abs;
 import std.stdio : writeln, writefln, File, stdin;
 import std.conv : to;
@@ -221,57 +221,110 @@ void priorUndo(Seed seed) {
     undo(); enforce(planes() == seed.one && rows()["undo"] == seed.oneRows["undo"], "PRIOR_UNDO: next key must move exactly last selection row");
     redo(); enforce(planes() == seed.both && rows() == seed.bothRows, "PRIOR_REDO: key restores seeded selection and rows");
 }
+JSONValue ownedArmRows(Seed seed) {
+    auto history = rows(); auto undoRows = history["undo"].array;
+    enforce(undoRows.length == 3 && undoRows[0..2] == seed.bothRows["undo"].array &&
+        history["redo"] == seed.bothRows["redo"],"A_ARM_ROWS: one lifecycle row follows both exact selection rows");
+    auto activation = undoRows[2];
+    enforce(activation["command"].str == "tool.activate" &&
+        (number(activation["flags"]) & (1 << 10)) != 0 &&
+        number(activation["session"]) > 0 &&
+        number(activation["session"]) == number(state()["session"]["token"]),
+        "A_OWNED_ROW: activation class and positive current session token");
+    enforce(!state()["session"]["armed"].boolean,"A_POSTMODE_IDLE: arm waits for first press");
+    return history;
+}
+void blankSelection(string id) {
+    auto model = documentModel(), before = getJson("/api/selection"), history = rows();
+    auto selected=before["selectedFaces"].array.length;
+    enforce(selected == 0 || selected == 2,"BLANK_SELECTION_CONTROL: committed clear or both source caps");
+    gesture();
+    enforce(!activeBridge() && documentModel() == model,"BLANK_SELECTION_MODEL: blank click cannot rebuild Bridge");
+    auto after = getJson("/api/selection");
+    enforce(after["selectedFaces"].array.length == 0 && (selected ? after != before : after == before),
+        id ~ ": blank click follows ordinary deselection");
+    enforce(rows()["undo"].array.length == history["undo"].array.length + (selected ? 1 : 0),
+        "BLANK_SELECTION_ROW: ordinary deselection owns exactly one row");
+}
 void armedCell() {
     foreach (ui; [false,true]) {
         auto seed = setup(); auto original = probe(); arm(ui);
-        auto armedRows = rows();
-        enforce(planes() == seed.both && armedRows == seed.bothRows, "A_ARM_ROWS: measured script/UI arm records no activation row");
+        auto armedRows = ownedArmRows(seed);
+        enforce(planes() == seed.both, "A_ARM_SOURCE: exact source and selection");
         matches(original,probe(),"A_ARM_SOURCE_DISPLAY");
         writefln("  A arm origin=%s undo=%d redo=%d",ui ? "ui":"script",armedRows["undo"].array.length,armedRows["redo"].array.length);
         space(); intact(seed,armedRows,"A_SPACE");
         enforce(!activeBridge(),"A_SPACE_DROP: real Space drops unengaged Bridge");
         matches(original,probe(),"A_SPACE_SOURCE_DISPLAY");
+        blankSelection("A_SPACE_BLANK_SELECTION");
     }
-    auto seed = setup(); auto original = probe(); arm(); undo();
-    enforce(planes() == seed.one && rows()["undo"] == seed.oneRows["undo"],"A_UNDO: unengaged key navigates prior selection");
-    redo(); enforce(planes() == seed.both && rows() == seed.bothRows,"A_REDO: restore prior selection");
-    matches(original,probe(),"A_REDO_SOURCE_DISPLAY");
+    auto seed = setup(); auto original = probe(); arm(); ownedArmRows(seed); undo();
+    intact(seed,seed.bothRows,"A_UNDO_OWNED_ARM");
+    enforce(!activeBridge(),"A_UNDO_DROP: bare key ends activation before prior selection");
+    matches(original,probe(),"A_UNDO_SOURCE_DISPLAY");
+    writefln("  A_REDO_FINDING redo=%d",rows()["redo"].array.length);
+    priorUndo(seed);
 }
-void engage(string kind) {
+void engage(string kind, in Image original, bool occupiedPreview=false) {
     if (kind == "attr") { cmd("tool.attr " ~ kTool ~ " segments 3"); fence(); }
-    else gesture(kind == "drag" ? 60 : 0);
+    else if (kind == "drag") gesture(60);
+    else {
+        auto camera=fetchCamera(); auto x=camera.vpX+24, y=camera.vpY+camera.height-24;
+        auto before=state();
+        play(buildDragDownLog(camera.vpX,camera.vpY,camera.width,camera.height,x,y));
+        enforce(activeBridge() && state()["engaged"].boolean && state()["session"]["armed"].boolean,
+            "CLICK_DOWN_PUBLISH: first down engages and starts postmode");
+        auto down=probe();
+        if (occupiedPreview) {
+            size_t sourceCount, geometrySamples, coloredSamples;
+            foreach (i; 0..kPopulation) {
+                if (original.geometry[i].id != 0) ++sourceCount;
+                if (original.geometry[i] != down.geometry[i]) ++geometrySamples;
+                if (!same(original.color[i],down.color[i])) ++coloredSamples;
+            }
+            enforce(sourceCount >= 80 && geometrySamples >= 20 && coloredSamples >= 20,
+                format("S02_DOWN_PREVIEW: source=%d changedGeometry=%d changedColor=%d",sourceCount,geometrySamples,coloredSamples));
+        } else connector(original,down,"CLICK_DOWN_CONNECTOR");
+        foreach (name; ["segments","twist","mode","tension","connect","remove","flip","orient","uvs","autoStep","steps","continuous"])
+            enforce(state()[name] == before[name],"CLICK_DOWN_PARAMETERS: no-motion down changes no attributes");
+        auto downState=state();
+        play(buildDragUpLog(camera.vpX,camera.vpY,camera.width,camera.height,x,y));
+        enforce(activeBridge() && state() == downState,"CLICK_UP_LIVE: up retains exact active state");
+        matches(down,probe(),"CLICK_UP_SAME_RESULT");
+    }
     enforce(state()["tool"].str == kTool && state()["engaged"].boolean, "ENGAGEMENT: accepted production door keeps Bridge live");
     enforce(state()["segments"].integer == (kind == "drag" ? 4 : kind == "attr" ? 3 : 1),"SEGMENTS: existing 20px haul and attribute values");
 }
 void committedCell(string kind) {
-    auto seed = setup(); auto original = probe(); arm(); auto before = state(); engage(kind);
+    auto seed = setup(); auto original = probe(); arm(); auto armedRows=ownedArmRows(seed); auto before = state(); engage(kind,original);
     auto live = probe(); connector(original,live,"C_" ~ kind ~ "_PREVIEW");
-    intact(seed,seed.bothRows,"C_LIVE");
+    intact(seed,armedRows,"C_LIVE");
     if (kind == "click") {
         foreach (name; ["segments","twist","mode","tension","connect","remove","flip","orient","uvs","autoStep","steps","continuous"])
             enforce(state()[name] == before[name],"CLICK_PARAMETERS: no-motion click changes no attributes");
     }
     space(); auto saved = planes(); auto savedRows = rows();
-    enforce(!activeBridge() && saved != seed.both && savedRows["undo"].array.length == 3 &&
-        savedRows["undo"].array[0..2] == seed.bothRows["undo"].array,
-        "C_SPACE_ONE_EDIT: Space commits one Bridge edit after both selection rows");
+    enforce(!activeBridge() && saved != seed.both && savedRows["undo"].array.length == 4 &&
+        savedRows["undo"].array[0..3] == armedRows["undo"].array,
+        "C_SPACE_ONE_EDIT: Space commits one Bridge edit after activation and both selection rows");
     auto expectedFaces = kind == "drag" ? 26 : kind == "attr" ? 22 : 14;
     enforce(getJson("/api/model")["faces"].array.length == expectedFaces,"C_COMMITTED_TOPOLOGY: exact Bridge result");
     matches(live,probe(),"C_DISPLAY_MATCH");
     cmd("tool.release"); intactAfterRelease(saved,savedRows);
     undo();
-    enforce(planes() == seed.both && rows()["undo"] == seed.bothRows["undo"] && rows()["redo"].array.length == 1,
+    enforce(planes() == seed.both && rows()["undo"] == armedRows["undo"] && rows()["redo"].array.length == 1,
         "C_KEY_UNDO: exact source/selection and both prior rows retained");
     park(); matches(original,probe(),"C_UNDO_SOURCE_DISPLAY");
     redo(); enforce(planes() == saved && rows() == savedRows,"C_KEY_REDO: exact committed result and rows");
     matches(live,probe(),"C_REDO_DISPLAY");
+    if (kind == "click") blankSelection("C_SPACE_BLANK_SELECTION");
 }
 void intactAfterRelease(string saved, JSONValue history) {
     enforce(planes() == saved && rows() == history,"DOUBLE_RELEASE: repeated release cannot commit twice");
 }
 void cancelCell(string kind) {
-    auto seed = setup(); auto original = probe(); auto cameraBefore=getJson("/api/camera"); arm(); engage(kind);
-    connector(original,probe(),"U_" ~ kind ~ "_PREVIEW"); intact(seed,seed.bothRows,"U_BEFORE");
+    auto seed = setup(); auto original = probe(); auto cameraBefore=getJson("/api/camera"); arm(); auto armedRows=ownedArmRows(seed); engage(kind,original);
+    connector(original,probe(),"U_" ~ kind ~ "_PREVIEW"); intact(seed,armedRows,"U_BEFORE");
     undo(); intact(seed,seed.bothRows,"U_CANCEL_PRIORITY");
     enforce(!activeBridge(),"U_CANCEL_DROP: current Bridge cancel lifetime drops tool");
     park(); enforce(getJson("/api/camera") == cameraBefore,"U_CAMERA_STABLE");
@@ -282,16 +335,16 @@ void cancelCell(string kind) {
 }
 void heldCell() {
     foreach (button; [1,3]) {
-        auto seed = setup(); arm(); gesture(); intact(seed,seed.bothRows,"H_BEFORE");
+        auto seed = setup(); arm(); auto armedRows=ownedArmRows(seed); gesture(); intact(seed,armedRows,"H_BEFORE");
         auto c = fetchCamera(); auto x=c.vpX+24, y=c.vpY+c.height-24;
         play(buildDragDownLog(c.vpX,c.vpY,c.width,c.height,x,y,0,cast(ubyte)button));
         scope(exit) collectException(play(buildDragUpLog(c.vpX,c.vpY,c.width,c.height,x,y,0,cast(ubyte)button)));
         if (button == 1) play(buildDragMotionLog(c.vpX,c.vpY,c.width,c.height,x,y,x+20,y,1));
         auto held = state(); undo(); space();
-        intact(seed,seed.bothRows,"H_HELD_KEYS");
+        intact(seed,armedRows,"H_HELD_KEYS");
         enforce(state() == held && state()["engaged"].boolean,"H_KEY_REFUSAL: held Undo/Space preserve live state");
         play(buildDragUpLog(c.vpX,c.vpY,c.width,c.height,x+20,y,0,cast(ubyte)button));
-        intact(seed,seed.bothRows,"H_RELEASE_NO_REPLAY");
+        intact(seed,armedRows,"H_RELEASE_NO_REPLAY");
         enforce(state()["tool"].str == kTool && state()["engaged"].boolean,"H_RELEASE_LIVE: discarded keys stay discarded");
         undo(); intact(seed,seed.bothRows,"H_UNHELD_CANCEL");
         enforce(!activeBridge(),"H_UNHELD_DROP"); priorUndo(seed);
@@ -320,12 +373,12 @@ void dirtyCell(bool publicationOnly = false) {
     auto camera0=getJson("/api/camera?viewport=0"), camera1=getJson("/api/camera?viewport=1");
     Image[2] original,live;
     foreach (cell; 0..2) original[cell]=probe(cell);
-    arm(); foreach (cell; 0..2) matches(original[cell],probe(cell),"DIRTY_ARM_SOURCE");
+    arm(); auto armedRows=ownedArmRows(seed); foreach (cell; 0..2) matches(original[cell],probe(cell),"DIRTY_ARM_SOURCE");
     dirtyWitness("DIRTY_ARM_SKIP"); auto armed=state(); gesture();
     enforce(state()["segments"] == armed["segments"] && state()["engaged"].boolean,"DIRTY_ZERO_MOTION: click must publish without an upload");
     foreach (cell; 0..2) { live[cell]=probe(cell); connector(original[cell],live[cell],format("DIRTY_CLICK_CELL_%d",cell)); }
     enforce(number(getJson("/api/viewport/display")["activeId"]) == 0 && getJson("/api/camera?viewport=0") == camera0 && getJson("/api/camera?viewport=1") == camera1,"DIRTY_INACTIVE_OWNER: cell1 remains inactive under unchanged camera");
-    dirtyWitness("DIRTY_LIVE_SKIP"); intact(seed,seed.bothRows,"DIRTY_LIVE_SOURCE");
+    dirtyWitness("DIRTY_LIVE_SKIP"); intact(seed,armedRows,"DIRTY_LIVE_SOURCE");
     if (publicationOnly) return;
     undo(); intact(seed,seed.bothRows,"DIRTY_CANCEL_PRIORITY");
     foreach (cell; 0..2) matches(original[cell],probe(cell),"DIRTY_CANCEL_SOURCE");
@@ -335,6 +388,43 @@ void dirtyCell(bool publicationOnly = false) {
     arm(); gesture(); space();
     foreach (cell; 0..2) matches(live[cell],probe(cell),"DIRTY_COMMITTED_MATCH");
     enforce(number(getJson("/api/viewport/display")["activeId"]) == 0,"DIRTY_FINAL_OWNER");
+}
+void openEdgeCell() {
+    setup();
+    auto frozen=parseJSON(import("fixtures/bridge_auto_connection/frozen.json"));
+    enforce(frozen["cases"].array.length == 14,"S02_FIXTURE_POPULATION: unchanged frozen cases");
+    JSONValue input;
+    foreach (entry; frozen["cases"].array) if (entry["case"].str == "S02") input=entry["input"];
+    enforce(input.type == JSONType.object && input["vertices"].array.length == 90 && input["faces"].array.length == 73,
+        "S02_SOURCE_POPULATION: committed complete open-edge input");
+    command("scene.reset",`{"empty":true}`);
+    auto scene=JSONValue.emptyObject; scene["vertices"]=input["vertices"]; scene["faces"]=input["faces"];
+    command("scene.loadMesh",scene.toString);
+    command("viewport.displayStyle",`{"value":"shaded"}`);
+    command("viewport.wireOverlay",`{"value":"none"}`);
+    command("viewport.cavityParams",`{"screenRidge":0,"screenValley":0}`);
+    command("viewport.cavity",`{"value":"screen"}`);
+    command("viewport.smooth",`{"value":"off"}`);
+    auto model=documentModel(); JSONValue[] indices;
+    foreach (pair; input["selection_packet_order"]["edges"].array) {
+        bool found;
+        foreach (i,e; model["edges"].array) {
+            if (e[0] == pair[0] && e[1] == pair[1] || e[0] == pair[1] && e[1] == pair[0]) {
+                indices ~= JSONValue(cast(long)i); found=true; break;
+            }
+        }
+        enforce(found,"S02_SELECTED_EDGE: every committed input pair exists");
+    }
+    enforce(indices.length == 8,"S02_EDGE_POPULATION: committed selected open spans");
+    cmd("history.clear"); command("mesh.select",`{"mode":"edges","indices":` ~ JSONValue(indices).toString ~ `}`);
+    enforce(postJson("/api/camera",`{"azimuth":0.85,"elevation":-0.7,"distance":1.2,"focus":{"x":0,"y":0.1,"z":0}}`)["status"].str == "ok","S02_CAMERA");
+    park(); fence(); auto source=planes(), selection=getJson("/api/selection"), history=rows();
+    auto original=probe(); arm(); engage("click",original,true);
+    enforce(planes() == source && getJson("/api/selection") == selection,"S02_LIVE_COMPLEMENT: exact source and selected packet");
+    undo();
+    enforce(!activeBridge() && planes() == source && getJson("/api/selection") == selection && rows() == history,
+        "S02_CANCEL_COMPLEMENT: first key drops tool and restores exact source selection rows");
+    matches(original,probe(),"S02_CANCEL_SOURCE_DISPLAY");
 }
 JSONValue documentModel() {
     auto model = getJson("/api/model"); model.object.remove("timestamp"); return model;
@@ -424,9 +514,9 @@ int main() {
         run("commit-" ~ kind,{committedCell(kind);});
         run("cancel-" ~ kind,{cancelCell(kind);});
     }
-    run("held",{heldCell();}); run("dirty",{dirtyCell();}); run("move",{moveCell();});
+    run("held",{heldCell();}); run("dirty",{dirtyCell();}); run("move",{moveCell();}); run("open-edge",{openEdgeCell();});
     if (filter == "dirty-publish") run("dirty-publish",{dirtyCell(true);});
-    enforce(passed+failed == (filter.length ? 1 : 10),"SCENARIO_POPULATION: ten independent cells or one selected cell");
+    enforce(passed+failed == (filter.length ? 1 : 11),"SCENARIO_POPULATION: eleven independent cells or one selected cell");
     cleanup(); stopPixelInstance(child);
     writefln("  CHILD_TERMINAL: PID stopped; assigned port %d bindable",child.port);
     if (errors.length) { import std.array : join; writeln("FAILURES: ",errors.join(" | ")); }

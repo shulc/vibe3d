@@ -14,6 +14,8 @@ import tool_presets : loadToolPresets;
 import tool_activation_ownership : ToolTransition;
 import tool_activation_ownership : postmodeArmedOnArm;
 import view : View;
+import mesh : Mesh;
+import math : Vec3;
 import std.file : readText;
 import std.format : format;
 import std.string : indexOf;
@@ -691,4 +693,264 @@ unittest { // Generic alias declarations carry both navigation policy fields.
         try { loadToolPresets(path); } catch (Exception) { refused = true; }
         assert(refused, "8560 invalid policy declaration accepted: " ~ field);
     }
+}
+
+
+private class PendingOwner : Tool {
+    ToolSessionPolicy policy;
+    bool pending=true, remainPending;
+    int cancels;
+    void delegate() duringCancel;
+    this(ToolSessionPolicy policy) { this.policy=policy; }
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc { return policy; }
+    override bool hasUncommittedEdit() const { return pending; }
+    override void cancelUncommittedEdit() {
+        ++cancels; pending=remainPending;
+        if (duringCancel !is null) duringCancel();
+    }
+}
+
+private void cancellationOwnership(string cell) {
+    ToolSessionPolicy policy={activationRow:true,sessionSteps:true,historyRecordedSteps:true};
+    if (cell == "keepalive") policy.keepAliveOnCancel=true;
+    if (cell == "unreported-before") policy.sessionSteps=false;
+    auto producer=new PendingOwner(policy);
+    if (cell == "still-pending") producer.remainPending=true;
+    Tool active=producer; auto history=new CommandHistory; auto view=new View(0,0,1,1);
+    int prior=9; auto selection=new ValueEdit(&prior,0,9,"Prior selection");
+    assert(selection.apply()); history.record(selection);
+    string id="owned-cancel", armId=id;
+    ulong token=690, armToken=token;
+    if (cell == "token-mismatch") armToken=689;
+    if (cell == "different-id") armId="foreign-owner";
+    if (cell == "zero-token") token=armToken=0;
+    if (cell == "drop-row") id=armId="";
+    auto arm=new ToolActivationCommand(null,view,EditMode.Vertices,
+        armId,"",true,false,false,armToken,0,false,false,true,cell == "drop-row");
+    int deactivations;
+    arm.onDeactivate={
+        assert(producer.cancels == 1 && !producer.pending,"OWNED_CANCEL_ORDER: cancel must complete before lifecycle replay");
+        ++deactivations; active=null;
+    };
+    if (cell != "no-arm" && cell != "evicted-arm") history.recordToolLifecycle(arm);
+    auto session=new EditSession(() => active,history,() { active=null; });
+    session.noteArm(id,token);
+    if (cell == "foreign-top") {
+        auto foreign=new ValueEdit(&prior,9,9,"Foreign completed row");
+        assert(foreign.apply()); history.record(foreign);
+    }
+    if (cell == "unreported-before") producer.duringCancel={ producer.policy.sessionSteps=true; };
+    if (cell == "refused-tail") producer.duringCancel={ history.setLockout(true); };
+    if (cell == "no-reporting") producer.duringCancel={ producer.policy.sessionSteps=false; };
+    if (cell == "new-session") producer.duringCancel={ session.noteArm(id,token+1); };
+    if (cell == "replacement") producer.duringCancel={
+        auto replacement=new PendingOwner(policy); replacement.pending=false;
+        active=replacement; session.noteArm(id,token);
+    };
+    if (cell == "changed-top") producer.duringCancel={
+        auto newer=new ToolActivationCommand(null,view,EditMode.Vertices,id,"",true,false,false,token,0,false,false,true);
+        newer.onDeactivate={ active=null; }; history.recordToolLifecycle(newer);
+    };
+    if (cell == "evicted-arm") {
+        history.recordToolLifecycle(arm);
+        foreach (i; 0..50) {
+            auto capacity=new ValueEdit(&prior,9,9,"Capacity row");
+            assert(capacity.apply()); history.record(capacity);
+        }
+        assert(history.undoEntries().length == 50 && history.undoEntries()[0].cmd !is arm,
+            "OWNED_EVICTION_CONTROL: activation was actually evicted");
+    }
+    const(Command)[] before;
+    foreach (row; history.undoEntries()) before ~= row.cmd;
+    assert(active is producer && producer.hasUncommittedEdit() && history.undoEntries().length > 0,
+        "OWNED_PENDING_CONTROL: real session has a pending producer and populated history");
+    assert(session.navigate(true) && producer.cancels == 1 && !producer.pending == !producer.remainPending,
+        "OWNED_CANCEL_REACHED: named cell must execute cancellation exactly once: " ~ cell);
+    if (cell == "own") {
+        assert(active is null && deactivations == 1 && history.undoEntries().length == 1 &&
+            history.undoEntries()[0].cmd is selection && prior == 9,
+            "OWNED_CANCEL_CONSUMED: own immediate activation ends with cancel and preserves prior selection");
+        assert(session.navigate(true) && prior == 0 && history.undoEntries().length == 0,
+            "OWNED_NEXT_UNDO: next navigation reaches preceding selection exactly once");
+    } else if (cell == "refused-tail") {
+        assert(active is producer && !producer.pending && deactivations == 0 && history.undoEntries().length == before.length,
+            "OWNED_REFUSED_TAIL: completed cancel counts as navigation without another row pop");
+        history.setLockout(false);
+        assert(session.navigate(true) && deactivations == 1 && history.undoEntries().length == before.length-1,
+            "OWNED_REFUSED_RECOVERY: later unlocked navigation consumes only original activation");
+    } else {
+        size_t added=cell == "changed-top" ? 1 : 0;
+        assert(history.undoEntries().length == before.length+added && deactivations == 0 && prior == 9,
+            "OWNED_CANCEL_NO_POP: unrelated activation/row must survive: " ~ cell);
+        foreach (i,row; before) assert(history.undoEntries()[i].cmd is row,
+            "OWNED_CANCEL_ROW_IDENTITY: exact history prefix survives: " ~ cell);
+        if (cell == "keepalive" || cell == "still-pending")
+            assert(active is producer,"OWNED_KEEP_ACTIVE: pending/keepalive producer stays armed: " ~ cell);
+        else assert(active is null,"OWNED_PLAIN_DROP: nonowned fully cancelled session uses legacy drop: " ~ cell);
+    }
+}
+
+unittest {
+    enum cells=["own","token-mismatch","different-id","zero-token","drop-row","foreign-top",
+                "no-arm","evicted-arm","unreported-before","refused-tail","no-reporting","new-session","replacement","changed-top","still-pending","keepalive"];
+    assert(cells.length == 16,"OWNERSHIP_CELL_POPULATION: sixteen independent ownership cases");
+    foreach (cell; cells) cancellationOwnership(cell);
+}
+
+
+private void pendingFamily(Tool producer, string id, CommandHistory history,
+                           Mesh* source, const(Vec3)[] original, bool foreign) {
+    Tool active=producer; auto view=new View(0,0,1,1);
+    auto arm=new ToolActivationCommand(source,view,EditMode.Vertices,id,"",true,false,false,691,0,false,false,true);
+    size_t dropped;
+    arm.onDeactivate={
+        assert(!producer.hasUncommittedEdit(),"REAL_CANCEL_ORDER: actual producer clears before lifecycle replay: " ~ id);
+        ++dropped; active=null;
+    };
+    history.recordToolLifecycle(arm);
+    int unrelated;
+    if (foreign) {
+        auto row=new ValueEdit(&unrelated,0,1,"Foreign completed row");
+        assert(row.apply()); history.record(row);
+    }
+    auto depth=history.undoEntries().length;
+    auto session=new EditSession(() => active,history,() { active=null; });
+    session.noteArm(id,691);
+    assert(producer.hasUncommittedEdit() && source.vertices != original &&
+           producer.sessionPolicy().historyRecordedSteps && depth == (foreign ? 2 : 1),
+           "REAL_PENDING_CONTROL: actual pending producer, changed geometry and populated rows: " ~ id);
+    assert(session.navigate(true) && !producer.hasUncommittedEdit() && source.vertices == original && active is null,
+           "REAL_PENDING_CANCEL: actual cancel restores source before drop: " ~ id);
+    assert(history.undoEntries().length == (foreign ? depth : depth-1) && dropped == (foreign ? 0 : 1),
+           "REAL_PENDING_OWNERSHIP: actual family ends only its immediate owned activation: " ~ id);
+}
+
+unittest {
+    import mesh : Mesh, makeCube;
+    import mesh_gpu : GpuMesh;
+    import math : Vec3;
+    import commands.mesh.vertex_edit : MeshVertexEdit;
+    import tools.transform.xfrm_transform : XfrmTransformTool;
+    import tools.deform.magnet : MagnetTool;
+    import tools.common.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
+    foreach (foreign; [false,true]) {
+        foreach (family; 0..5) {
+            auto source=makeCube(); auto original=source.vertices.dup;
+            GpuMesh gpu; gpu.suppressCageUpload=true;
+            EditMode mode=EditMode.Vertices; source.vertexMarks.length=source.vertices.length;
+            source.vertexSelectionOrder.length=source.vertices.length; source.selectVertex(0);
+            auto history=new CommandHistory; auto view=new View(0,0,640,480);
+            Tool producer; string id;
+            if (family == 0) {
+                auto xfrm=new XfrmTransformTool(() => &source,&gpu,&mode);
+                xfrm.setUndoBindings(history,() => new MeshVertexEdit(&source,view,mode));
+                xfrm.activate(); xfrm.openLiveSessionForTest(); producer=xfrm; id="TransformMove";
+            } else if (family == 1) {
+                auto magnet=new MagnetTool(() => &source,&gpu,&mode);
+                magnet.seedPreparedParamForTest(source); producer=magnet; id="MagnetTool";
+            } else {
+                // Existing producer seam sets the real dirty commit predicate;
+                // retain its seeded baseline exactly, then make a real edit.
+                source=Mesh.init; source.addVertex(Vec3(91,92,93));
+                original=source.vertices.dup;
+                import tools.common.command_wrapper : CommandWrapperTool;
+                CommandWrapperTool wrapper;
+                if (family == 2) { wrapper=new XfrmSmoothTool(&source,view,mode,&gpu); id="xfrm.smooth"; }
+                else if (family == 3) { wrapper=new XfrmJitterTool(&source,view,mode,&gpu); id="xfrm.jitter"; }
+                else { wrapper=new XfrmQuantizeTool(&source,view,mode,&gpu); id="xfrm.quantize"; }
+                wrapper.seedPreparedActivationForTest(); producer=wrapper;
+            }
+            source.vertices[0].x += 1;
+            pendingFamily(producer,id,history,&source,original,foreign);
+        }
+    }
+}
+
+
+unittest {
+    import tools.alignment.linear_align_tool : LinearAlignTool;
+    import tools.alignment.radial_align_tool : RadialAlignTool;
+    import mesh : makeCube;
+    import mesh_gpu : GpuMesh;
+    foreach (radial; [false,true]) foreach (foreign; [false,true]) {
+        auto source=makeCube(); auto original=source.vertices.dup;
+        GpuMesh gpu; gpu.suppressCageUpload=true; EditMode mode=EditMode.Vertices;
+        Tool aligned=radial ? cast(Tool)new RadialAlignTool(() => &source,&gpu,&mode)
+                        : cast(Tool)new LinearAlignTool(() => &source,&gpu,&mode);
+        auto policy=aligned.sessionPolicy();
+        assert(policy.activationRow && policy.sessionSteps && policy.historyRecordedSteps && !aligned.hasUncommittedEdit(),
+            "ALIGN_NON_PENDING_CONSTRUCTION: actual Align inherits no pending hook");
+        aligned.cancelUncommittedEdit();
+        assert(source.vertices == original && !aligned.hasUncommittedEdit(),
+            "ALIGN_CANCEL_CONSTRUCTION: actual inherited no-op preserves source");
+        auto synthetic=new PendingOwner(policy);
+        synthetic.duringCancel={ source.vertices[]=original[]; };
+        source.vertices[0].x+=1;
+        pendingFamily(synthetic,radial ? "RadialAlign synthetic policy" : "LinearAlign synthetic policy",
+            new CommandHistory,&source,original,foreign);
+    }
+}
+
+unittest {
+    import create_tool_registration, edit_tool_registration, transform_tool_registration;
+    import core.memory : GC;
+    import std.algorithm : sort;
+    import std.stdio : writeln;
+    string[] reached;
+    foreach (moduleInfo; ModuleInfo) {
+        if (moduleInfo is null || moduleInfo.name.length < 6 || moduleInfo.name[0..6] != "tools.") continue;
+        foreach (cls; moduleInfo.localClasses) {
+            bool toolClass;
+            for (auto parent=cls; parent !is null; parent=parent.base)
+                if (parent is typeid(Tool)) toolClass=true;
+            if (!toolClass || (cls.m_flags & TypeInfo_Class.ClassFlags.isAbstract)) continue;
+            auto init=cls.initializer; auto storage=GC.malloc(init.length)[0..init.length]; storage[]=init[];
+            auto prototype=cast(Tool)cast(Object)storage.ptr;
+            auto policy=prototype.sessionPolicy();
+            if (!policy.historyRecordedSteps) continue;
+            reached~=cls.name;
+            foreach (foreign; [false,true]) {
+                auto producer=new PendingOwner(policy); Tool active=producer;
+                auto history=new CommandHistory; auto view=new View(0,0,1,1);
+                int prior; auto selection=new ValueEdit(&prior,0,7,"Prior selection");
+                assert(selection.apply()); history.record(selection);
+                auto arm=new ToolActivationCommand(null,view,EditMode.Vertices,cls.name,"",true,false,false,692,0,false,false,true);
+                size_t deactivations;
+                arm.onDeactivate={ assert(!producer.pending,"POLICY_CANCEL_ORDER"); ++deactivations; active=null; };
+                if (policy.activationRow) history.recordToolLifecycle(arm);
+                if (foreign) {
+                    auto outside=new ValueEdit(&prior,7,7,"Foreign completed row");
+                    assert(outside.apply()); history.record(outside);
+                }
+                auto depth=history.undoEntries().length;
+                auto session=new EditSession(() => active,history,() { active=null; });
+                session.noteArm(cls.name,692);
+                assert(producer.hasUncommittedEdit() && depth >= 1,"POLICY_PENDING_CONTROL: " ~ cls.name);
+                assert(session.navigate(true) && producer.cancels == 1 && prior == 7,"POLICY_CANCEL_REACHED: " ~ cls.name);
+                const owns=policy.activationRow && !foreign && !policy.keepAliveOnCancel;
+                assert(history.undoEntries().length == depth-(owns ? 1 : 0) && deactivations == (owns ? 1 : 0),
+                    "POLICY_CANCEL_ROWS: synthetic pending branch uses actual policy: " ~ cls.name);
+                assert(policy.keepAliveOnCancel ? active is producer : active is null,"POLICY_CANCEL_LIFETIME: " ~ cls.name);
+            }
+        }
+    }
+    reached.sort;
+    assert(reached.length == 28,"POLICY_REACHED_POPULATION: measured28 actual recorded-family classes");
+    writeln("20261690_RECORDED_POLICY_CENSUS: ",reached);
+}
+
+unittest {
+    import tests.unit.census_symbols : blankNonCode, balancedSpan, countOccurrences;
+    const code=blankNonCode(readText("source/edit_session.d"));
+    enum header="private bool undoImpl_(out bool markerConsumed)";
+    assert(countOccurrences(code,header) == 1,"OWNED_WIRING_POPULATION: one shared undo implementation");
+    auto at=code.indexOf(header); auto open=code[cast(size_t)at..$].indexOf('{');
+    auto body=balancedSpan(code,cast(size_t)at+cast(size_t)open,'{','}');
+    auto cancel=body.indexOf("t.cancelUncommittedEdit();"), completion=body.indexOf("cancelledOwnedActivation ="), tail=body.indexOf("bool ok = history_.undo();");
+    assert(cancel >= 0 && completion > cancel && tail > completion,
+        "OWNED_WIRING_ORDER: shared cancel completes before owned-arm decision and existing navigation tail");
+    assert(countOccurrences(body[cast(size_t)cancel..cast(size_t)tail],"history_.undo()") == 1,
+        "OWNED_WIRING_TAIL: only existing press-marker navigation precedes the common tail");
+    assert(countOccurrences(body,"return ok || cancelledOwnedActivation;") == 1,
+        "OWNED_WIRING_SUCCESS: refused stack move cannot erase completed cancellation");
 }
