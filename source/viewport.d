@@ -621,6 +621,7 @@ final class Viewport3D {
     ViewportFbo fbo;
     bool        dirty    = true;   // starts dirty → first frame always renders
     DirtyKey    lastKey;
+    bool        lastKeyValid = false;
     /// How many times the renderer recomputed a base-dot cull list for this
     /// cell: the witness that the base-dot cull is cached, and keyed, per
     /// cell. Reported by `/api/viewport/display`; a monotone counter.
@@ -720,6 +721,17 @@ final class Viewport3D {
         import std.conv : to;
         camera   = new View(x, y, w, h);   // already sets x/y/width/height
         windowId = "Viewport##" ~ to!string(cellIdx);
+    }
+
+    // A retained image is certified only by a keyed draw; bypass draws revoke
+    // that certificate (20261690, doc/tasks/evidence/20261690-bridge-live-lifecycle/amendment.md).
+    bool updateRenderKey(const ref DirtyKey current) {
+        if (!lastKeyValid || current != lastKey) {
+            lastKey = current;
+            lastKeyValid = true;
+            return true;
+        }
+        return false;
     }
 
     /// Return the current camera snapshot, computed directly from the

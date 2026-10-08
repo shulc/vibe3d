@@ -117,6 +117,8 @@ unittest {
     assert(!tool.modelPreview(view) && view == ModelPreviewView.init && tool.previewUploadVersion() == 0,
            "BRIDGE_CANCEL_REFUSAL: cancelled retained candidate stays unpublished");
     tool.onParamChanged("segments");
+    assert(tool.toolStateJson()["engaged"].boolean && tool.modelPreview(view),
+           "BRIDGE_STALE_ENGAGED: intact source is published before identity changes");
     source = Mesh.init;
     assert(!tool.modelPreview(view) && view == ModelPreviewView.init,
            "BRIDGE_STALE_REFUSAL: engaged stale source refuses borrowed pointers");

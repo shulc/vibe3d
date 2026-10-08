@@ -275,12 +275,8 @@ void cancelCell(string kind) {
     undo(); intact(seed,seed.bothRows,"U_CANCEL_PRIORITY");
     enforce(!activeBridge(),"U_CANCEL_DROP: current Bridge cancel lifetime drops tool");
     park(); enforce(getJson("/api/camera") == cameraBefore,"U_CAMERA_STABLE");
-    auto cancelled = probe();
-    auto distance = cameraBefore["distance"].floating;
-    enforce(postJson("/api/camera",format(`{"distance":%s}`,distance+.03125))["status"].str == "ok","FINDING camera move"); fence();
-    enforce(postJson("/api/camera",format(`{"distance":%s}`,distance))["status"].str == "ok","FINDING camera restore"); fence();
-    matches(original,probe(),"FINDING_FORCED_SOURCE_MATCH");
-    matches(original,cancelled,"U_CANCEL_SOURCE_DISPLAY");
+    matches(original,probe(),"U_CANCEL_SOURCE_DISPLAY");
+    dirtyWitness("U_CANCEL_SETTLED_SKIP");
     cmd("tool.release"); intact(seed,seed.bothRows,"U_RELEASE_NO_COMMIT");
     priorUndo(seed);
 }
@@ -333,11 +329,78 @@ void dirtyCell(bool publicationOnly = false) {
     if (publicationOnly) return;
     undo(); intact(seed,seed.bothRows,"DIRTY_CANCEL_PRIORITY");
     foreach (cell; 0..2) matches(original[cell],probe(cell),"DIRTY_CANCEL_SOURCE");
+    dirtyWitness("DIRTY_CANCEL_SETTLED_SKIP");
     // Restore and engage again, then compare each inactive readback to its
     // ordinary committed model without any camera/style invalidation.
     arm(); gesture(); space();
     foreach (cell; 0..2) matches(live[cell],probe(cell),"DIRTY_COMMITTED_MATCH");
     enforce(number(getJson("/api/viewport/display")["activeId"]) == 0,"DIRTY_FINAL_OWNER");
+}
+JSONValue documentModel() {
+    auto model = getJson("/api/model"); model.object.remove("timestamp"); return model;
+}
+JSONValue moveHandles() {
+    auto handles = getJson("/api/tool/handles")["handles"];
+    size_t visible;
+    foreach (part; handles["parts"].array)
+        if (part["visible"].boolean && part["screen"].type == JSONType.array) ++visible;
+    enforce(visible >= 4,"MOVE_HANDLE_POPULATION: four visible anchored handles");
+    return handles;
+}
+string handlePoints(JSONValue handles) {
+    string points; size_t samples; auto camera = fetchCamera();
+    foreach (part; handles["parts"].array) {
+        if (!part["visible"].boolean || part["screen"].type != JSONType.array) continue;
+        auto screen = part["screen"].array;
+        auto x = cast(int)screen[0].floating - camera.vpX, y = cast(int)screen[1].floating - camera.vpY;
+        foreach (dy; -6 .. 7) foreach (dx; -6 .. 7) {
+            ++samples; points ~= format("%d,%d;",x+dx,y+dy);
+        }
+    }
+    enforce(samples >= 676,"MOVE_SAMPLE_POPULATION: 169 samples around each visible anchor");
+    return points;
+}
+Pixel[] colorsAt(string points) {
+    auto reply = getJson("/api/viewport/probe?cell=0&points=" ~ points);
+    enforce("error" !in reply,"MOVE_COLOR_PROBE: allocated source buffer");
+    Pixel[] result;
+    foreach (p; reply["points"].array) {
+        enforce("error" !in p,"MOVE_COLOR_SAMPLE: sample inside cell");
+        result ~= Pixel(cast(int)number(p["r"]),cast(int)number(p["g"]),cast(int)number(p["b"]));
+    }
+    enforce(result.length >= 676,"MOVE_COLOR_POPULATION: all anchor samples read");
+    return result;
+}
+void moveCell() {
+    // Calibrate only the readback locations, then rebuild the identical source
+    // before freezing the scored source. No projected handle model is duplicated.
+    setup(); cmd("tool.set move on"); fence(); auto anchors = moveHandles();
+    auto points = handlePoints(anchors); cmd("tool.release"); fence();
+    auto seed = setup(); auto original = probe(); auto sourceColors = colorsAt(points);
+    auto model = documentModel(), selection = getJson("/api/selection");
+    auto camera = getJson("/api/camera"), beforeDisplay = getJson("/api/viewport/display");
+    enforce(number(beforeDisplay["cells"].array[0]["toolPreviewKey"]) == 0,"MOVE_SOURCE_STAMP_ZERO");
+    cmd("tool.set move on"); fence(); auto liveHandles = moveHandles();
+    enforce(handlePoints(liveHandles) == points,"MOVE_ANCHORS_STABLE: scored arm has calibrated handles");
+    auto liveColors = colorsAt(points); size_t changed;
+    enforce(liveColors.length == sourceColors.length,"MOVE_SAMPLES_EQUAL: complete paired anchor populations");
+    foreach (i; 0 .. liveColors.length) if (!same(liveColors[i],sourceColors[i])) ++changed;
+    enforce(changed >= 20,format("MOVE_VISIBLE_IMAGE: colored handle floor20, measured%d",changed));
+    auto armedRows=rows(); auto armedDisplay=getJson("/api/viewport/display");
+    enforce(planes() == seed.both,"MOVE_ARM_PLANES");
+    enforce(documentModel() == model,"MOVE_ARM_MODEL");
+    enforce(getJson("/api/selection") == selection,"MOVE_ARM_SELECTION");
+    enforce(getJson("/api/camera") == camera,"MOVE_ARM_CAMERA");
+    cmd("tool.release"); fence();
+    auto dropped=state(); enforce("tool" !in dropped || dropped["tool"].str == "none" || dropped["tool"].str == "","MOVE_RELEASE_DROP: tool absent");
+    enforce(planes() == seed.both && documentModel() == model && getJson("/api/selection") == selection && getJson("/api/camera") == camera,"MOVE_RELEASE_SOURCE: frozen document and camera restored");
+    auto droppedDisplay=getJson("/api/viewport/display");
+    enforce(number(droppedDisplay["cells"].array[0]["toolPreviewKey"]) == 0,"MOVE_RELEASE_STAMP_ZERO");
+    matches(original,probe(),"MOVE_RELEASE_SOURCE_DISPLAY");
+    auto restored=colorsAt(points);
+    foreach (i; 0 .. restored.length) enforce(same(restored[i],sourceColors[i]),"MOVE_RELEASE_HANDLE_PIXELS: source colors restored at handle anchors");
+    dirtyWitness("MOVE_RELEASE_SETTLED_SKIP");
+    writefln("  MOVE_CONTROL colored=%d armRows=%s releaseRows=%s sourceDisplay=%s armedDisplay=%s releaseDisplay=%s",changed,armedRows,rows(),beforeDisplay,armedDisplay,droppedDisplay);
 }
 int main() {
     import liveness_gate : scenario;
@@ -361,9 +424,9 @@ int main() {
         run("commit-" ~ kind,{committedCell(kind);});
         run("cancel-" ~ kind,{cancelCell(kind);});
     }
-    run("held",{heldCell();}); run("dirty",{dirtyCell();});
+    run("held",{heldCell();}); run("dirty",{dirtyCell();}); run("move",{moveCell();});
     if (filter == "dirty-publish") run("dirty-publish",{dirtyCell(true);});
-    enforce(passed+failed == (filter.length ? 1 : 9),"SCENARIO_POPULATION: nine independent cells or one selected cell");
+    enforce(passed+failed == (filter.length ? 1 : 10),"SCENARIO_POPULATION: ten independent cells or one selected cell");
     cleanup(); stopPixelInstance(child);
     writefln("  CHILD_TERMINAL: PID stopped; assigned port %d bindable",child.port);
     if (errors.length) { import std.array : join; writeln("FAILURES: ",errors.join(" | ")); }

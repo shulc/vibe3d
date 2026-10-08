@@ -8034,11 +8034,13 @@ void main(string[] args) {
                 // the wider one by switching layout itself.
                 bool needRender;
                 if (testMode && !testDirtyKeyGate) {
+                    _cv.lastKeyValid = false;
                     needRender = testRendersCell(k, vpm.activeId, vpm.cellCount);
                 } else {
                     // Interactive: dirty-key compare (skip if nothing changed).
                     bool _hovK = (k == vpm.hoveredId);
                     if (forceActive && k == overlayOwner) {
+                        _cv.lastKeyValid = false;
                         needRender = true;
                     } else {
                         DirtyKey _newKey;
@@ -8155,10 +8157,7 @@ void main(string[] args) {
                             import weightmap_view : currentWeightMapKey;
                             _newKey.weightMapKey = currentWeightMapKey();
                         }
-                        if (_newKey != _cv.lastKey) {
-                            needRender      = true;
-                            _cv.lastKey     = _newKey;
-                        }
+                        needRender = _cv.updateRenderKey(_newKey);
                     }
                 }
 
