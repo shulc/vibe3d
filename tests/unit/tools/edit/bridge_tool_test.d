@@ -205,6 +205,8 @@ unittest {
     foreach (i; [6,7]) assert(!ps[i].default_.b && !*ps[i].bptr, "false factory default");
     assert(ps[8].default_.i == 0 && *ps[8].iePtr == 0, "UV factory default");
     assert(ps[10].default_.i == 10 && *ps[10].iptr == 10, "steps factory default");
+    assert(cast(int)BridgeUvs.none == 0 && cast(int)BridgeUvs.u == 1 &&
+        cast(int)BridgeUvs.v == 2 && cast(int)BridgeUvs.connected == 3, "UV typed wire domain");
     assert(ps[2].intEnumValues.length == 3 && ps[8].intEnumValues.length == 4,
         "bridge enum choice populations");
     foreach (i, e; ps[8].intEnumValues) {
@@ -289,6 +291,17 @@ unittest {
     assert(j["effectiveSegments"].uinteger == 3 && j["openRows"].type == JSONType.true_,
         "prepared activation installs effective segments");
     assert(j["twistRefused"].type == JSONType.false_, "open zero twist not refused");
+    assert(image.effectiveSegments == 3, "activation clear has populated metadata");
+    image.clear();
+    assert(image.effectiveSegments == 0 && !image.valid, "activation clear resets effective metadata");
+    Mesh emptyPreview;
+    auto emptyBaseline = MeshSnapshot.capture(m);
+    auto emptyResult = rebuildBridgePreview(emptyBaseline, emptyPreview,
+        cast(uint[])null, [3u,4u,5u], cast(uint[])null, BridgeParams.init, true);
+    assert(emptyPreview.faces.length == 2 && emptyPreview.vertices.length == 6,
+        "empty preview restores populated baseline");
+    assert(emptyResult.effectiveSegments == 0 && emptyResult.added == 0 && !emptyResult.removed,
+        "empty bridge preview returns zero result");
     *ps[1].fptr = 1;
     assert(t.toolStateJson()["twistRefused"].type == JSONType.true_, "open twist state refusal");
     auto refused = t.buildPreparedActivation(source);
