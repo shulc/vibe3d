@@ -1,5 +1,5 @@
 // Detached Bridge display uses the ordinary primary-item passes. Production
-// pixels compare a standing preview with its released model at one camera.
+// pixels compare a engaged preview with its released model at one camera.
 module test_bridge_model_preview;
 
 import http_client : getJson, postJson, frameFence, quiesce;
@@ -130,16 +130,22 @@ void arm(bool removeCaps = true) {
     fence();
     auto s = getJson("/api/tool/state");
     enforce(s["valid"].boolean && !s["engaged"].boolean,
-        "standing preview must be valid before any gesture: " ~ s.toString);
+        "engaged preview must be valid before any gesture: " ~ s.toString);
     if (!removeCaps) {
         cmd("tool.attr " ~ kTool ~ " remove false");
         fence();
     }
+    auto c = fetchCamera();
+    immutable x = c.vpX + 8, y = c.vpY + 8;
+    playAndWait(buildDragLog(c.vpX, c.vpY, c.width, c.height, x, y, x, y, 0));
+    fence();
+    enforce(getJson("/api/tool/state")["engaged"].boolean,
+        "zero-motion production click engages before preview scoring");
 }
 
 void release(string before, size_t historyBefore, size_t expectedFaces) {
     enforce(planes() == before && undoCount() == historyBefore,
-        "standing preview changed authoritative source planes or mesh history");
+        "engaged preview changed authoritative source planes or mesh history");
     auto c = fetchCamera();
     immutable x = c.vpX + 8, y = c.vpY + 8;
     playAndWait(buildDragLog(c.vpX, c.vpY, c.width, c.height, x, y, x, y, 0));
@@ -244,7 +250,7 @@ void capsCell() {
             "CAP_APERTURE_MATCH: preview retains a cap or changes when released");
         if (removeCaps)
             enforce(differences(original, live) >= 35,
-                "CAP_REMOVAL_WITNESS: standing preview must expose the opening before engagement");
+                "CAP_REMOVAL_WITNESS: engaged preview must expose the opening after engagement");
         else
             enforce(differences(original, live) == 0,
                 "CAP_KEEP_WITNESS: remove=false must keep the visible cap");
@@ -281,10 +287,10 @@ void materialCell() {
     matches(live, saved, "MATERIAL_WIRE_OFF_MATCH");
     auto savedNone = probe(pts);
     enforce(differences(liveNone, savedNone) == 0,
-        "WIRE_OFF_MATCH: standing preview forces wire absent from released model");
+        "WIRE_OFF_MATCH: engaged preview forces wire absent from released model");
     wire("uniform"); auto savedWire = probe(pts);
     enforce(differences(liveWire, savedWire) == 0,
-        "WIRE_ON_MATCH: standing preview bypasses ordinary overlay policy");
+        "WIRE_ON_MATCH: engaged preview bypasses ordinary overlay policy");
 }
 
 void transformCell() {
@@ -409,8 +415,8 @@ int main() {
         catch (Exception e) { ++failed; writeln("  FAIL: ", name, " — ", e.msg); }
     }
     run(&capsCell, "caps", "removed and retained caps replace primary display");
-    run(&materialCell, "material", "surface slots and wire overlay reach standing preview");
-    run(&transformCell, "transform", "primary layer transform reaches standing preview");
+    run(&materialCell, "material", "surface slots and wire overlay reach engaged preview");
+    run(&transformCell, "transform", "primary layer transform reaches engaged preview");
     run(&subpatchCell, "subpatch", "detached limit surface refreshes after segments edit");
     run(&multiCell, "multi", "two live cells apply independent preview plans");
     cleanup();

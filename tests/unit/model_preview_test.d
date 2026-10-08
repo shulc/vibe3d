@@ -101,18 +101,33 @@ unittest {
     assert(image.selectionValid && image.preview.faces.length == 4,
            "fixture resolves two caps into four bridge walls");
     tool.installPreparedActivation(image);
-    assert(tool.toolStateJson()["engaged"].type == JSONType.false_ && tool.modelPreview(view), "standing unengaged Bridge supplies replacement");
+    tool.preparedPreviewGpu().uploadVersion = 7;
+    assert(!tool.toolStateJson()["engaged"].boolean && !tool.modelPreview(view) &&
+           view == ModelPreviewView.init, "BRIDGE_ARM_REFUSAL: prepared candidate stays unpublished");
+    assert(tool.previewUploadVersion() == 0, "BRIDGE_ARM_FRESHNESS: unpublished candidate has zero freshness");
+    auto base = ModelPreviewView(&source, &gpu);
+    assert(!resolveModelPreview(tool, base).replacement, "armed resolver keeps source pair");
+    tool.onParamChanged("segments");
+    assert(tool.modelPreview(view) && resolveModelPreview(tool, base).replacement,
+           "BRIDGE_ENGAGED_PRESENT: accepted parameter engages real binder and resolver");
     assert(view.mesh !is &source && view.gpu !is &gpu && view.mesh.faces.length == 4,
            "Bridge lends its detached complete result");
+    assert(tool.previewUploadVersion() == 7, "BRIDGE_ENGAGED_FRESHNESS: publishes retained upload generation");
+    tool.cancelUncommittedEdit();
+    assert(!tool.modelPreview(view) && view == ModelPreviewView.init && tool.previewUploadVersion() == 0,
+           "BRIDGE_CANCEL_REFUSAL: cancelled retained candidate stays unpublished");
+    tool.onParamChanged("segments");
     source = Mesh.init;
     assert(!tool.modelPreview(view) && view == ModelPreviewView.init,
-           "Bridge stale source identity refuses display without publishing borrowed pointers");
+           "BRIDGE_STALE_REFUSAL: engaged stale source refuses borrowed pointers");
 
     auto invalid = new BridgeTool(() nothrow @nogc => &source, &gpu, null, &mode);
     auto invalidImage = invalid.buildPreparedActivation(selected);
     assert(!invalidImage.selectionValid, "empty selection is invalid");
     invalid.installPreparedActivation(invalidImage);
-    assert(!invalid.modelPreview(view), "invalid Bridge selection keeps normal display");
+    invalid.onParamChanged("segments");
+    assert(invalid.toolStateJson()["engaged"].boolean && !invalid.modelPreview(view),
+           "BRIDGE_INVALID_REFUSAL: engaged invalid selection keeps normal display");
 }
 
 private Mesh primitiveSource() {

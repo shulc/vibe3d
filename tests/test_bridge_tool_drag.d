@@ -91,14 +91,14 @@ unittest { // Default click is a live Bridge, then explicit release saves it.
     assert(armed["valid"].type == JSONType.true_ &&
         armed["engaged"].type == JSONType.false_, "click starts valid and unengaged");
     assert(armed["segments"].integer == 1 && preview > 0,
-        "default click has one requested segment and an uploaded preview");
+        "default click has one requested segment and a tool identity stamp");
 
     gesture(); // down/up only: no motion and no property write can engage it.
     auto clicked = getJson("/api/tool/state");
     assert(clicked["tool"].str == TOOL, "click keeps Bridge active");
     assert(parameters(clicked) == parameters(armed), "click preserves every Bridge parameter");
-    assert(clicked["effectiveSegments"] == armed["effectiveSegments"] && previewKey() == preview,
-        "click preserves the positive standing preview");
+    assert(clicked["effectiveSegments"] == armed["effectiveSegments"] && previewKey() > 0 && previewKey() != preview,
+        "click changes freshness without changing effective Segments");
     assert(planes() == before && undoLen() == u0, "click leaves source and history unchanged");
     assert(clicked["engaged"].type == JSONType.true_, "ordinary viewport click engages Bridge");
 
@@ -120,8 +120,8 @@ unittest { // Later drags edit the same engaged operation; cancel discards it.
     auto before = planes();
     auto armed = getJson("/api/tool/state");
     auto u0 = undoLen();
-    auto preview = previewKey();
     gesture();
+    auto preview = previewKey();
     enum deltas = [[0, 40], [19, 0], [0, 0]];
     assert(deltas.length == 3, "non-segment gesture population");
     foreach (delta; deltas) {
@@ -129,7 +129,7 @@ unittest { // Later drags edit the same engaged operation; cancel discards it.
         auto state = getJson("/api/tool/state");
         assert(state["tool"].str == TOOL && state["engaged"].type == JSONType.true_,
             "vertical/sub-step/zero-delta release keeps Bridge engaged");
-        assert(parameters(state) == parameters(armed), "non-segment motion preserves parameters");
+        assert(parameters(state) == parameters(armed) && previewKey() == preview, "non-segment motion preserves parameters and upload freshness");
     }
     gesture(60, 0, 3);
     auto dragged = getJson("/api/tool/state");

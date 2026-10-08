@@ -378,7 +378,7 @@ public:
     override string name() const { return "Bridge"; }
 
     override ulong previewUploadVersion() const nothrow @nogc {
-        return previewGpu_.uploadVersion;
+        return engaged ? previewGpu_.uploadVersion : 0;
     }
 
     override EditMode[] supportedModes() const {
@@ -828,11 +828,11 @@ public:
         havePreviewCache = true;
     }
 
-    // Detached display replaces the primary pair (20261660); lifecycle remains
-    // tool-owned. See doc/tasks/evidence/20261660-bridge-model-preview/plan.md.
+    // Preparation retains the detached candidate; only engagement publishes it
+    // (20261690; doc/tasks/evidence/20261690-bridge-live-lifecycle/model.md).
     private final bool queryModelPreview(out ModelPreviewView view) {
         view = ModelPreviewView.init;
-        if (!valid_ || !havePreviewCache || !sessionMeshIntact()) return false;
+        if (!engaged || !valid_ || !havePreviewCache || !sessionMeshIntact()) return false;
         view = ModelPreviewView(&previewMesh_, &previewGpu_);
         return true;
     }
