@@ -49,7 +49,7 @@ import std.file      : dirEntries, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.stdio     : writeln;
-import std.string    : indexOf, strip, replace;
+import std.string    : indexOf, strip, replace, splitLines;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum ledgerPath = "tests/unit/tool_model_census_ledger.txt";
