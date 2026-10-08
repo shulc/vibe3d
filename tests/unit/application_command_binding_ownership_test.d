@@ -423,3 +423,53 @@ unittest { // command adapter owns reset policy without an EditorApp capture
     assert(clearViewDisplayCalls == viewDisplayBeforeNonTest,
         "non-test scene.reset cleared the view display atoms");
 }
+
+unittest { // K3 Bridge refusal through ordinary UI and repeated dispatch.
+    import application_command_binding : CommandInvocationContext;
+    import command : CommandOrigin;
+    import commands.tool.bridge_headless : BridgeHeadlessCommand;
+    import math : Vec3;
+    import mesh_gpu : GpuMesh;
+    import tests.unit.fixtures : findEdge;
+    import tools.edit.bridge_tool : BridgeTool;
+    Mesh m;
+    foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0),
+                 Vec3(0,0,1), Vec3(1,0,1), Vec3(1,1,1)]) m.addVertex(p);
+    m.addFace([0u,1u,2u]); m.addFace([3u,4u,5u]); m.buildLoops();
+    m.resizeEdgeSelection();
+    foreach (pair; [[0u,1u], [1u,2u], [3u,4u], [4u,5u]])
+        m.selectEdge(findEdge(m, pair[0], pair[1]));
+    EditMode mode = EditMode.Edges;
+    GpuMesh gpu; gpu.suppressCageUpload = true;
+    auto t = new BridgeTool(() nothrow @nogc => &m, &gpu, null, &mode);
+    auto v = new View(0,0,640,480);
+    auto cmd = new BridgeHeadlessCommand(&m, v, mode, "mesh.bridgeTool", () => t);
+    foreach (ref p; cmd.params()) if (p.name == "twist") *p.fptr = 1;
+    auto history = new CommandHistory;
+    Tool activeTool;
+    auto executor = new CommandExecutor(history, () => false, (transition) {});
+    auto session = new EditSession(() => activeTool, history, () {});
+    size_t notices;
+    auto guard = new GuardedActionController(GuardedActionPorts(
+        (Command c, RecordMode rm) => executor.applyOrRefire(c, rm, null),
+        () => false, () => true, (Command c) { ++notices; },
+        GuardObservationPorts((record) {}, (answer, performed) {}, (pending) {})));
+    Registry registry;
+    registry.registerCommand("mesh.bridgeTool", () => cmd);
+    auto binding = new ApplicationCommandBinding(registry, executor, session,
+        history, guard, (Command c) {}, (string message) {});
+    foreach (i; 0 .. 2) {
+        auto r = binding.invokeLine("mesh.bridgeTool", "",
+            CommandInvocationContext(CommandOrigin.ui, true));
+        assert(r.outcome == CommandInvocationOutcome.refused && m.faces.length == 2
+            && history.undoEntriesVisible().length == 0, "K3 UI repeated Bridge refusal inert");
+        assert(r.command.refusalReason() == "Twist on open rows is not supported.",
+            "K3 UI repeated refusal named reason");
+    }
+    assert(notices == 2, "K3 UI repeated refusal delivered ordinary notices");
+    auto script = binding.invokeLine("mesh.bridgeTool", "",
+        CommandInvocationContext(CommandOrigin.script, false));
+    assert(script.outcome == CommandInvocationOutcome.refused && m.faces.length == 2
+        && history.undoEntriesVisible().length == 0 && notices == 2,
+        "K3 ordinary script refusal does not add UI notice or history");
+}

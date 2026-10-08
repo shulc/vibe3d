@@ -174,7 +174,7 @@ unittest {
             auto r = apply(p);
             assert(r["status"].str == "error", name ~ " open twist HTTP refusal");
             assert(depth() == u0 && planes() == before, name ~ " refusal planes and history inert");
-            assert(canFind(r["message"].str, "Twist on open rows is not supported."),
+            assert(r["message"].str == "command 'mesh.bridgeTool' did not apply: Twist on open rows is not supported.",
                 name ~ " named twist refusal reason: " ~ r.toString);
         }
         auto c = fixture("S01"); load(c); cmd("tool.set mesh.bridgeTool on");

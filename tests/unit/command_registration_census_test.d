@@ -46,10 +46,10 @@ import std.file      : dirEntries, exists, isFile, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.regex     : ctRegex, regex, Regex, matchAll;
-import std.string    : splitLines, strip;
+import std.string    : splitLines, strip, indexOf, stripLeft;
 
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
-    enclosingSymbols, symbolAt, LedgerRow, LedgerHit, reconcile;
+    enclosingSymbols, symbolAt, LedgerRow, LedgerHit, reconcile, balancedSpan;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum registrarEntryRe = ctRegex!(
@@ -210,7 +210,27 @@ bool instantiates(string code, Regex!char compiled) {
 }
 
 bool instantiates(string code, string name) {
-    return instantiates(code, instantiationRegex(name));
+    if (instantiates(code, instantiationRegex(name))) return true;
+    auto helpers = matchAll(code, regex(
+        `private\s+void\s+registerHeadlessTool\s*\(\s*T\s*:\s*Tool\s*,\s*C\s*:\s*ToolHeadlessCommand\s*=\s*ToolHeadlessCommand\s*\)\s*\(`));
+    if (helpers.empty) return false;
+    auto helper = helpers.front;
+    const begin = helper.pre.length + helper.hit.length - 1;
+    const parameters = balancedSpan(code, begin, '(', ')');
+    if (parameters.length == 0) return false;
+    const tail = code[begin + parameters.length .. $].stripLeft();
+    if (tail.length == 0 || tail[0] != '{') return false;
+    const body = balancedSpan(tail, 0, '{', '}');
+    helpers.popFront();
+    if (!helpers.empty || body.count("reg.registerCommand(") != 1
+        || body.count("new C(") != 1
+        || matchAll(body, regex(`reg\.registerCommand\s*\(\s*id\s*,\s*\(\s*\)\s*=>\s*cast\(Command\)\s*new\s+C\s*\(`)).empty)
+        return false;
+    if (name == "ToolHeadlessCommand")
+        return !matchAll(code, regex(`registerHeadlessTool!\w+\s*\(`)).empty;
+    foreach (m; matchAll(code, regex(`registerHeadlessTool!\(\s*\w+\s*,\s*(\w+)\s*\)\s*\(`)))
+        if (m[1] == name) return true;
+    return false;
 }
 
 private ClassScan scanCommandsTree(string root) {
@@ -579,4 +599,29 @@ unittest {
              ~ "a tool, like LayerXformEdit — add a `kBuiltElsewhere` row naming "
              ~ "the builder (task 4066, row 10).",
                unregistered.length, unregistered));
+}
+
+unittest { // K3 typed construction counts only the production helper channel.
+    enum helper = "private void registerHeadlessTool(T : Tool, C : ToolHeadlessCommand = ToolHeadlessCommand)(ref Registry reg, string id) { reg.registerCommand(id, () => cast(Command) new C(mesh, view, mode, id, factory)); }";
+    enum typed = "registerHeadlessTool!(BridgeTool, BridgeHeadlessCommand)(reg);";
+    enum defaults = "registerHeadlessTool!BoxTool(reg);";
+    assert(instantiates(blankNonCode(helper ~ typed), "BridgeHeadlessCommand"),
+        "K3 census typed command construction recognized");
+    assert(instantiates(blankNonCode(helper ~ defaults), "ToolHeadlessCommand"),
+        "K3 census default command construction recognized");
+    assert(!instantiates(blankNonCode(helper ~ defaults), "BridgeHeadlessCommand"),
+        "K3 census defaults do not manufacture Bridge subclass");
+    assert(!instantiates(blankNonCode(helper ~ "other!(BridgeTool, BridgeHeadlessCommand)(reg);"), "BridgeHeadlessCommand"),
+        "K3 census unrelated type arguments excluded");
+    assert(!instantiates(blankNonCode(helper ~ "// " ~ typed), "BridgeHeadlessCommand"),
+        "K3 census comments excluded");
+    assert(!instantiates(blankNonCode(typed), "BridgeHeadlessCommand"),
+        "K3 census missing helper excluded");
+    import std.array : replace;
+    assert(!instantiates(blankNonCode(helper.replace("new C(", "construct(") ~ typed), "BridgeHeadlessCommand"),
+        "K3 census missing helper construction excluded");
+    assert(!instantiates(blankNonCode(helper.replace("C : ToolHeadlessCommand = ToolHeadlessCommand", "C") ~ typed), "BridgeHeadlessCommand"),
+        "K3 census missing default constraint excluded");
+    assert(!instantiates(blankNonCode(helper.replace("reg.registerCommand", "reg.registerTool") ~ typed), "BridgeHeadlessCommand"),
+        "K3 census constructor outside command write excluded");
 }

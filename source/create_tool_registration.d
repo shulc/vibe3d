@@ -5,6 +5,7 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.vertex_new : MeshVertexNew;
 import commands.tool.headless : ToolHeadlessCommand;
+import commands.tool.bridge_headless : BridgeHeadlessCommand;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import mesh_gpu : GpuMesh;
 import registry : Registry, typedToolFactory;
@@ -73,12 +74,13 @@ public:
 /// preserving replacement of a tool factory after registration. This helper
 /// stays in this module because the prepared-writer census copies its body.
 /// Task 6353; evidence: tests/unit/headless_tool_pairing_test.d.
-private void registerHeadlessTool(T : Tool)(ref Registry reg, string id,
+private void registerHeadlessTool(T : Tool,
+        C : ToolHeadlessCommand = ToolHeadlessCommand)(ref Registry reg, string id,
         T delegate() factory, LiveSessionRole owner, LiveViewModeRole live) {
     auto regPtr = &reg;
     reg.registerTool(id, typedToolFactory!T(factory));
     reg.registerCommand(id, () => cast(Command)
-        new ToolHeadlessCommand(&owner.activeMesh(), live.view(), live.mode(),
+        new C(&owner.activeMesh(), live.view(), live.mode(),
                                 id, regPtr.toolFactory(id)));
 }
 
@@ -135,7 +137,7 @@ private void registerGeneratorTools(ref Registry reg, LiveSessionRole owner,
         return t;
     }));
 
-    registerHeadlessTool!BridgeTool(reg, "mesh.bridgeTool", () {
+    registerHeadlessTool!(BridgeTool, BridgeHeadlessCommand)(reg, "mesh.bridgeTool", () {
         auto t = new BridgeTool(() => &owner.activeMesh(), deps.gpu(),
             deps.litShader(), live.modeCell());
         t.setGestureBindings(deps.history(), deps.bevelEditFactory());

@@ -83,6 +83,8 @@ public:
     // rest: they dispatch this command id through a `kind: script` line.
     override bool needsEditTarget() const { return true; }
 
+    protected const(Tool) ownedToolInstance() const { return toolInstance; }
+
     protected override bool applyImpl() {
         if (refusedForNoEditTarget()) return false;
         if (payload.present()) { payload.forward(*mesh); return true; }

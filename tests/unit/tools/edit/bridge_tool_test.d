@@ -414,3 +414,48 @@ unittest { // Prepared result metadata publishes only with its owning commit.
     assert(!pendingOwner.setEffectiveSegments(9), "metadata setter refuses pending before validate");
     pendingOwner.abort();
 }
+
+unittest { // K3 typed guard, cached reason reset and inherited target precedence.
+    import command : g_editTargetResolver, kNoEditTargetReason;
+    import commands.tool.bridge_headless : BridgeHeadlessCommand;
+    import mesh_gpu : GpuMesh;
+    import view : View;
+    Mesh m;
+    foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0),
+                 Vec3(0,0,1), Vec3(1,0,1), Vec3(1,1,1)]) m.addVertex(p);
+    m.addFace([0u,1u,2u]); m.addFace([3u,4u,5u]); m.buildLoops();
+    m.resizeEdgeSelection();
+    foreach (pair; [[0u,1u], [1u,2u], [3u,4u], [4u,5u]])
+        m.selectEdge(findEdge(m, pair[0], pair[1]));
+    auto baseline = MeshSnapshot.capture(m);
+    auto sel = resolveBridgeSelection(m, EditMode.Edges);
+    assert(sel.valid && sel.openRows && m.faces.length == 2, "K3 open diagnostic fixture floor");
+    BridgeParams p; p.twist = 1;
+    auto result = applyBridgeOp(m, sel.loopA, sel.loopB, sel.capFaces, p, true);
+    assert(result.added == 0 && m.faces.length == 2, "K3 typed guard inert");
+    assert(result.failure == BridgeApplyFailure.openRowsTwistUnsupported, "K3 typed guard failure");
+    EditMode mode = EditMode.Edges;
+    GpuMesh gpu; gpu.suppressCageUpload = true;
+    auto t = new BridgeTool(() nothrow @nogc => &m, &gpu, null, &mode);
+    auto v = new View(0,0,640,480);
+    auto cmd = new BridgeHeadlessCommand(&m, v, mode, "mesh.bridgeTool", () => t);
+    auto ps = cmd.params();
+    foreach (ref param; ps) if (param.name == "twist") *param.fptr = 1;
+    auto old = g_editTargetResolver;
+    scope(exit) g_editTargetResolver = old;
+    g_editTargetResolver = () => true;
+    assert(!cmd.apply() && m.faces.length == 2, "K3 command twist refuses inertly");
+    assert(cmd.refusalReason() == "Twist on open rows is not supported.", "K3 cached headless reason delivery");
+    m.clearEdgeSelection();
+    assert(!cmd.apply(), "K3 invalid selection refuses");
+    assert(cmd.refusalReason().length == 0, "K3 invalid selection resets cached reason");
+    baseline.restore(m);
+    assert(!cmd.apply(), "K3 same command twist refuses again");
+    g_editTargetResolver = () => false;
+    assert(!cmd.apply(), "K3 missing target refuses");
+    assert(cmd.refusalReason() == kNoEditTargetReason, "K3 base no target reason precedence");
+    g_editTargetResolver = () => true;
+    foreach (ref param; ps) if (param.name == "twist") *param.fptr = 0;
+    assert(cmd.apply() && m.faces.length > 2, "K3 same command twist zero succeeds");
+    assert(cmd.refusalReason().length == 0, "K3 success resets cached reason");
+}

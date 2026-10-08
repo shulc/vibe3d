@@ -143,7 +143,7 @@ private struct ProductRow {
 // construction can fail first.
 unittest {
     immutable self = blankNonCode(readText(__FILE_FULL_PATH__));
-    assert(countOccurrences(self, "registerTools(") == 4
+    assert(countOccurrences(self, "registerTools(") == 5
         && countOccurrences(self, "new ToolHeadlessCommand(") == 0
         && countOccurrences(self, "registerHeadlessTool!") == 0
         && countOccurrences(self, "reg.registerCommand(") == 0,
@@ -190,7 +190,7 @@ unittest {
         "6353 source population: expected 13 paired helper calls");
     assert(countOccurrences(create, "private void registerHeadlessTool(") == 1,
         "6353 helper population: expected one private registerHeadlessTool");
-    assert(countOccurrences(create, "new ToolHeadlessCommand(") == 1,
+    assert(countOccurrences(create, "new C(") == 1,
         "6353 wrapper population: expected one create-family wrapper recipe");
 
     string spanAt(string marker, string label) {
@@ -207,6 +207,12 @@ unittest {
     }
 
     const helper = spanAt("private void registerHeadlessTool(", "helper");
+    assert(countOccurrences(create, "registerHeadlessTool!(BridgeTool, BridgeHeadlessCommand)") == 1,
+        "K3 Bridge production command specialization");
+    assert(countOccurrences(create, "registerHeadlessTool!") - 1 == 12,
+        "K3 twelve default command pairs");
+    assert(countOccurrences(create, "C : ToolHeadlessCommand = ToolHeadlessCommand") == 1,
+        "K3 constrained default wrapper type");
     const generator = spanAt("private void registerGeneratorTools(", "generator");
     const primitive = spanAt("private void registerPrimitiveTools(", "primitive");
     assert(countOccurrences(helper,
@@ -214,7 +220,7 @@ unittest {
         "6353 helper: typed tool write must occur exactly once");
     assert(countOccurrences(helper, "reg.registerCommand(id, ") == 1,
         "6353 helper: command write must occur exactly once");
-    assert(countOccurrences(helper, "new ToolHeadlessCommand(") == 1,
+    assert(countOccurrences(helper, "new C(") == 1,
         "6353 helper: wrapper construction must occur exactly once");
     assert(countOccurrences(generator, "registerHeadlessTool!") == 4,
         "6353 generator population: expected four paired calls");
@@ -331,6 +337,7 @@ unittest {
         assert(schema.length == 1 && schema[0].name == "pairMarker"
             && schema[0].iptr !is null && *schema[0].iptr == marker,
             "6353 late lookup use: " ~ id ~ " did not invoke the held probe factory");
+        assert(cmd.refusalReason().length == 0, "K3 replacement Marker has empty reason: " ~ id);
     }
 }
 
@@ -377,4 +384,27 @@ unittest {
     assert(!sphere.preparedSphereClearMethod,
         "6353 product: prim.sphere built a SphereTool with ellipsoidMode=true "
       ~ "(the ctor flag, not the class, is what separates this pair)");
+}
+
+unittest { // K3 a second production family retains the default wrapper contract.
+    import command : g_editTargetResolver, kNoEditTargetReason;
+    import command_executor : CommandExecutor;
+    import command_history : RecordMode;
+    auto old = g_editTargetResolver;
+    scope(exit) g_editTargetResolver = old;
+    auto r = makeRig();
+    registerTools(r.app);
+    r.gpu.suppressCageUpload = true;
+    auto cmd = r.registry.makeCommand("prim.cube");
+    assert(typeid(cmd) == typeid(ToolHeadlessCommand), "K3 cube uses default command type");
+    auto executor = new CommandExecutor(r.app.history, () => false, (transition) {});
+    g_editTargetResolver = () => true;
+    assert(executor.applyOrRefire(cmd, RecordMode.Coalescing, null), "K3 cube default wrapper applies");
+    assert(cmd.refusalReason().length == 0 && r.app.history.undoEntriesVisible().length == 1,
+        "K3 cube success empty reason and one row");
+    auto refused = r.registry.makeCommand("prim.cube");
+    g_editTargetResolver = () => false;
+    assert(!executor.applyOrRefire(refused, RecordMode.Coalescing, null), "K3 cube no target false");
+    assert(refused.refusalReason() == kNoEditTargetReason && r.app.history.undoEntriesVisible().length == 1,
+        "K3 cube no target reason and no row");
 }

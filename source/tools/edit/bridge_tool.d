@@ -180,7 +180,10 @@ uint[] facesMatchingLoop(const ref Mesh m, const(uint)[] loop) {
 /// Result of one bridge application — faces added by the kernel (0 = the
 /// kernel rejected the loops) and whether a cap/bounded-face deletion ran
 /// (deleteFacesByMask already rebuilds loops internally when it does).
+enum BridgeApplyFailure { none, openRowsTwistUnsupported }
+
 struct BridgeApplyResult {
+    BridgeApplyFailure failure;
     size_t added;
     bool   removed;
     uint effectiveSegments;
@@ -222,7 +225,10 @@ BridgeApplyResult applyBridgeOp(ref Mesh m, const(uint)[] loopA, const(uint)[] l
                                 const(uint)[] capFaces, in BridgeParams p,
                                 bool openRows = false) {
     BridgeApplyResult r;
-    if (openRows && p.twist != 0.0f) return r;
+    if (openRows && p.twist != 0.0f) {
+        r.failure = BridgeApplyFailure.openRowsTwistUnsupported;
+        return r;
+    }
     auto op = BridgeOpenParams(p.segments,cast(int)p.mode,p.tension,p.connect,p.autoStep,p.flip);
     if (openRows) r.effectiveSegments = openBridgeSegments(m,loopA,loopB,op);
     uint spans = (p.segments < 1) ? 1u : cast(uint)p.segments;
@@ -326,6 +332,7 @@ private:
     float cachedTension;
     bool cachedConnect, cachedAutoStep;
     uint lastEffectiveSegments_;
+    BridgeApplyFailure headlessFailure_;
 
     // Commit guard: true once the user has actually interacted (drag or
     // panel/headless attr write) — mirrors Mirror's `engaged`.
@@ -742,11 +749,18 @@ public:
     // ----- Headless one-shot (fold #1: builds its OWN selection from the
     // live mesh — ToolHeadlessCommand never calls activate()). -----------
 
+    string headlessRefusalReason() const {
+        return headlessFailure_ == BridgeApplyFailure.openRowsTwistUnsupported
+            ? "Twist on open rows is not supported." : "";
+    }
+
     override bool applyHeadless() {
+        headlessFailure_ = BridgeApplyFailure.none;
         auto resolved = resolveBridgeSelection(*mesh, editModeVal());
         if (!resolved.valid) return false;
         auto res = applyBridgeOp(*mesh, resolved.loopA, resolved.loopB,
                                  resolved.capFaces, params_, resolved.openRows);
+        headlessFailure_ = res.failure;
         if (res.added == 0) return false;
         gpu.upload(*mesh);
         return true;
