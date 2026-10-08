@@ -54,7 +54,8 @@ unittest
     assert(corpus["cases"].array.length == 14
             && corpus["additional_source_cells"].array.length == 2, "frozen population 14+2");
     assert(overlay["cases"].array.length == 6
-            && overlay["provenance"].str == "ours-geometry-normal", "OURS population/provenance");
+            && overlay["provenance"]["source"].str == "analytic"
+            && overlay["provenance"]["basis"].str == "ours-geometry-normal", "OURS population/provenance");
     size_t smooth, nativeCases;
     foreach (c; corpus["cases"].array)
     {

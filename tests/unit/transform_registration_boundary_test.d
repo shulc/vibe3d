@@ -154,7 +154,7 @@ private void pinClosure(string seed, const ref Closure closure, size_t baselineC
     string[] added, removed;
     foreach (name; actual) if (!baseline.canFind(name)) added ~= name;
     foreach (name; baseline) if (!actual.canFind(name)) removed ~= name;
-    assert(added == ["evaluated_move_weld"] && removed.length == 0,
+    assert(added.length == 0 && removed.length == 0,
         format("%s exact closure delta: added=%s removed=%s", seed, added, removed));
 }
 
@@ -252,11 +252,11 @@ unittest {
     // Task 9490: the radial ring start reads `workplane_fit` (+1; registration held it).
     // Task 9525: `tools.edit.drag_weld` deleted (-1 each).
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
-    pinClosure("transform_tool_registration", transform, 251);
-    pinClosure("registration", positive, 515);
-    assert(transform.queue.length == 252 && positive.queue.length == 516,
-        format("6506 import closure census changed: transform=%d/252 "
-            ~ "registration=%d/516", transform.queue.length,
+    pinClosure("transform_tool_registration", transform, 253);
+    pinClosure("registration", positive, 518);
+    assert(transform.queue.length == 253 && positive.queue.length == 518,
+        format("6506 import closure census changed: transform=%d/253 "
+            ~ "registration=%d/518", transform.queue.length,
             positive.queue.length));
 }
 

@@ -1,8 +1,10 @@
 {
   "provenance": {
     "schema": 1,
-    "source": "captured behavior 2026-10-06, task 20261600",
-    "reference": "ref-editor@11.2v3"
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "from-trace",
+    "captured_utc": "unknown"
   },
   "records": [
     {

@@ -17,18 +17,19 @@ import std.algorithm : canFind, sort;
 import std.array : appender, join;
 import std.file : dirEntries, exists, isFile, readText, SpanMode;
 import std.format : format;
+import std.exception : assertThrown;
 import std.path : buildPath, dirName;
 import std.regex : ctRegex, matchAll;
 import std.string : count, indexOf, split, splitLines, startsWith, strip;
 
 import buttonset : ActionKind, allButtons, loadButtons;
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, balancedSpan;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum registeredIdRe = ctRegex!(`reg\.registerCommand\(\s*"([^"]+)"\s*,`);
 private enum aliasIdRe = ctRegex!(`reg\.aliasCommand\(\s*"[^"]+"\s*,\s*"([^"]+)"`);
 private enum pairedRegisteredIdRe = ctRegex!(
-    `registerHeadlessTool!\w+\s*\(\s*reg\s*,\s*"([^"]+)"`);
+    `registerHeadlessTool\s*!\s*(?:[A-Za-z_]\w*|\(\s*[A-Za-z_]\w*\s*(?:,\s*[A-Za-z_]\w*\s*)?\))\s*\(\s*reg\s*,\s*"([^"]+)"\s*,\s*\(\s*\)\s*\{`);
 private enum configTokenRe = ctRegex!(`[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+`);
 private enum quotedValueRe = ctRegex!(`"([^"]+)"`);
 private enum actrPresetRe = ctRegex!(`Preset\("([^"]+)"`);
@@ -168,6 +169,32 @@ private string registrationText()
     return result;
 }
 
+private string[] pairedRegisteredIds(string source)
+{
+    // Keep literal ids while using the same-length lexical projection for structure.
+    const code = blankNonCode(source);
+    const literals = blankNonCode(source, true);
+    auto visible = source.dup;
+    foreach (i; 0 .. visible.length)
+        if (code[i] != literals[i] && visible[i] != '\n') visible[i] = ' ';
+    string[] ids;
+    foreach (m; matchAll(visible, pairedRegisteredIdRe)) {
+        const open = m.pre.length + m[0].length - 1;
+        const body = balancedSpan(code, open, '{', '}');
+        assert(body.length, "paired command census unbalanced body");
+        const tail = visible[open + body.length .. $];
+        assert(tail.matchAll(ctRegex!(`^\s*,\s*[A-Za-z_]\w*\s*,\s*[A-Za-z_]\w*\s*\)\s*;`)).empty == false,
+            "paired command census trailing syntax");
+        assert(!ids.canFind(m[1]), "paired command census duplicate id");
+        ids ~= m[1].idup;
+    }
+    size_t calls;
+    foreach (_; matchAll(visible, ctRegex!(`\bregisterHeadlessTool\s*!`))) ++calls;
+    assert(calls == ids.length,
+        "paired command census unparsed helper call");
+    return ids;
+}
+
 private string[] registeredCommandIds()
 {
     const registration = registrationText();
@@ -176,14 +203,9 @@ private string[] registeredCommandIds()
         seen[m[1].idup] = true;
     foreach (m; matchAll(registration, aliasIdRe))
         seen[m[1].idup] = true;
-    size_t pairedIds;
-    foreach (m; matchAll(registration, pairedRegisteredIdRe)) {
-        seen[m[1].idup] = true;
-        ++pairedIds;
-    }
-    assert(registration.count("registerHeadlessTool!") == pairedIds,
-        format("paired command census parsed %d literal ids from %d helper calls",
-               pairedIds, registration.count("registerHeadlessTool!")));
+    const paired = pairedRegisteredIds(registration);
+    assert(paired.length == 13, "paired command census exact population 13");
+    foreach (id; paired) seen[id] = true;
     foreach (expression; dynamicRegistrationExpressions)
         assert(registration.count(expression) == 1,
             "dynamic command registration expression changed; update its named "
@@ -350,4 +372,19 @@ unittest
                vertexButtonCount));
     assert(foundSetPosition,
         "Vertex panel has no Set Position command button for mesh.setPosition");
+}
+
+unittest {
+    const suffix = `(reg, "mesh.example", () { return new ExampleTool(); }, owner, live);`;
+    foreach (form; ["registerHeadlessTool!ExampleTool", "registerHeadlessTool!(ExampleTool)",
+            "registerHeadlessTool!(ExampleTool, ExampleCommand)"])
+        assert(pairedRegisteredIds(form ~ suffix) == ["mesh.example"], "paired literal parser positive");
+    foreach (bad; ["registerHeadlessTool!(ExampleTool, C, Third)" ~ suffix,
+                  "registerHeadlessTool!(ExampleTool[], C)" ~ suffix,
+                  "registerHeadlessTool!ExampleTool(reg, dynamicId, () { }, owner, live);",
+                  "registerHeadlessTool!ExampleTool(reg, \"mesh.example\", () { }, owner, live, extra);",
+                  "registerHeadlessTool!ExampleTool" ~ suffix ~ "registerHeadlessTool!ExampleTool" ~ suffix])
+        assertThrown!AssertError(pairedRegisteredIds(bad));
+    assert(pairedRegisteredIds("// registerHeadlessTool!ExampleTool" ~ suffix).length == 0,
+        "paired comments do not contribute ids");
 }

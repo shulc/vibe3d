@@ -116,6 +116,10 @@ private immutable LedgerRow[] kRoster = [
       ~ "loop `continue`s on `!isEdgeSelected` one line above the read, so "
       ~ "only selected edges are ranked (mesh.makePolygon's edge chain, task "
       ~ "7132; an accessor twin in `Mesh` would bump the struct-member ratchet)."),
+    LedgerRow("reseedOpenChains", 2,
+        "selected-first complete-edge packets: isEdgeSelected filters the full "
+      ~ "index list before ascending stamps; inc.selected restricts chain keys. "
+      ~ "The two-element last-selected accessor cannot represent this sequence."),
     LedgerRow("extractAlignChain.fallbackOrder", 2,
         "a genuine RANK read, and legal: `fallbackOrder` sorts an index list "
       ~ "that `operandVertexMask` already filtered to the selection, so the "
@@ -323,8 +327,8 @@ unittest {
     // `static foreach`, which put that read out of a text scanner's reach —
     // see the "ALSO NOT ROSTERED" note above for why the row went away rather
     // than becoming a zero. 9 again since task 7132's `edgeChainWalk` row.
-    assert(hits.length == 9,
-        format("selection-order value-read population changed: expected 9, found %d",
+    assert(hits.length == 11,
+        format("selection-order value-read population changed: expected 11, found %d",
                hits.length));
 }
 

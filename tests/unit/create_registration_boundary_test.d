@@ -198,7 +198,7 @@ private void pinClosure(string seed, const ref Closure closure, size_t baselineC
     string[] added, removed;
     foreach (name; actual) if (!baseline.canFind(name)) added ~= name;
     foreach (name; baseline) if (!actual.canFind(name)) removed ~= name;
-    assert(added == ["evaluated_move_weld"] && removed.length == 0,
+    assert(added.length == 0 && removed.length == 0,
         format("%s exact closure delta: added=%s removed=%s", seed, added, removed));
 }
 
@@ -267,9 +267,9 @@ unittest {
         if (forbidden in create.reached)
             assert(false, "6507 create_tool_registration reaches " ~ forbidden
                 ~ ": " ~ reachChain("create_tool_registration", forbidden, create));
-    pinClosure("create_tool_registration", create, 253);
-    pinClosure("registration", positive, 515);
-    assert(create.queue.length == 254 && positive.queue.length == 516,
+    pinClosure("create_tool_registration", create, 256);
+    pinClosure("registration", positive, 518);
+    assert(create.queue.length == 256 && positive.queue.length == 518,
         "6507 reviewed narrow and broad closure populations");
 }
 

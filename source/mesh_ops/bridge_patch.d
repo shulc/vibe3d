@@ -33,7 +33,10 @@ struct Vec3d
     {
         Vec3d r;
         foreach (i; 0 .. 3)
-            mixin("r.v[i] = v[i] " ~ op ~ " b.v[i];");
+        {
+            static if (op == "+") r.v[i] = v[i] + b.v[i];
+            else r.v[i] = v[i] - b.v[i];
+        }
         return r;
     }
 
@@ -41,7 +44,10 @@ struct Vec3d
     {
         Vec3d r;
         foreach (i; 0 .. 3)
-            mixin("r.v[i] = v[i] " ~ op ~ " b;");
+        {
+            static if (op == "*") r.v[i] = v[i] * b;
+            else r.v[i] = v[i] / b;
+        }
         return r;
     }
 }

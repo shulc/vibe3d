@@ -176,6 +176,7 @@ commands.symmetry.toggle
 commands.test_undo_flags
 commands.tool.attr
 commands.tool.begin_session
+commands.tool.bridge_headless
 commands.tool.do_apply
 commands.tool.headless
 commands.tool.host
@@ -220,6 +221,7 @@ edit_session
 edit_tool_registration
 editmode
 editor_app
+evaluated_move_weld
 eventlog
 falloff
 falloff_handles
@@ -286,6 +288,7 @@ mesh_ops.bevel_fin
 mesh_ops.bevel_vertex
 mesh_ops.box_geom
 mesh_ops.bridge
+mesh_ops.bridge_patch
 mesh_ops.cleanup
 mesh_ops.connected_mask
 mesh_ops.cut

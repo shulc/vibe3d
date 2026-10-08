@@ -136,16 +136,16 @@ SH";
     write(buildPath(tempDir(), stem ~ ".modules"), selectedModules.join("\n") ~ "\n");
     const baseline = readText(buildPath(repoRoot, "tests", "unit",
         "web_width32_baseline_modules.txt")).strip.splitLines;
-    assert(baseline.length == 536, "web compiler baseline manifest population");
+    assert(baseline.length == 539, "web compiler baseline manifest population");
     string[] added, removed;
     foreach (name; selectedModules) if (!baseline.canFind(name)) added ~= name;
     foreach (name; baseline) if (!selectedModules.canFind(name)) removed ~= name;
-    assert(added == ["evaluated_move_weld"] && removed.length == 0,
+    assert(added.length == 0 && removed.length == 0,
         format("web compiler selected-set delta: added=%s removed=%s", added, removed));
     // Measured on the current W16 LD+B12 stack at
     // b777bc26e50e45da10f70889fed2d1ada5891237. This is the population floor:
     // successful dmd over fewer (or zero) files must not masquerade as a clean width pass.
-    enum expectedWebModules = 537; // +1 task 9504 evaluated_move_weld; +1 task 9449 tools.edit.haul_axis_latch; -1 task 9525 tools.edit.drag_weld; +1 task 9492 tool_attr_bounds; -5 wave-2 PRM2: five more param-update owner modules folded; +1 task 9429 tools.topology_step; -10 wave-2 PRM1: eleven param-update owner modules became one; +1 pen S1 tools.create.pen_geometry; +4: remesh job, stitch, command and modal state; +1 M5 toolpipe.attr_cache; +1 viewport_probe_sampling; +3 retopology S4 light_rig, retopology_line_shade, retopology_dot_cull; +1 retopology S5 retopology_order; +1 viewport shading S1a vertex_normals; +1 viewport shading SP gpu_pass_timer; +1 viewport shading S2b viewport_composite; +1 viewport shading S1e commands.mesh.surface_attr; +1 viewport shading S4b viewport_env
+    enum expectedWebModules = 539; // +1 task 9504 evaluated_move_weld; +1 task 9449 tools.edit.haul_axis_latch; -1 task 9525 tools.edit.drag_weld; +1 task 9492 tool_attr_bounds; -5 wave-2 PRM2: five more param-update owner modules folded; +1 task 9429 tools.topology_step; -10 wave-2 PRM1: eleven param-update owner modules became one; +1 pen S1 tools.create.pen_geometry; +4: remesh job, stitch, command and modal state; +1 M5 toolpipe.attr_cache; +1 viewport_probe_sampling; +3 retopology S4 light_rig, retopology_line_shade, retopology_dot_cull; +1 retopology S5 retopology_order; +1 viewport shading S1a vertex_normals; +1 viewport shading SP gpu_pass_timer; +1 viewport shading S2b viewport_composite; +1 viewport shading S1e commands.mesh.surface_attr; +1 viewport shading S4b viewport_env
     assert(closurePaths.length == expectedWebModules,
         format("W16-W web closure population changed: expected %d source modules to reach "
              ~ "the 32-bit compiler, got %d", expectedWebModules, closurePaths.length));

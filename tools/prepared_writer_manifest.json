@@ -43,7 +43,7 @@
       "product_types": [
         "MirrorTool"
       ],
-      "semantic_sha256": "9efcc24e1d6c16b8c39ff665f72ac5557cb442525719b9689174637738e26660",
+      "semantic_sha256": "9c43e4383ff8a51dcc8ec200eabe3356f55e0f24633c554e97deb3f81b8098e7",
       "symbol": "registerTool(\"mesh.mirrorTool\")"
     },
     {
@@ -52,7 +52,7 @@
       "product_types": [
         "RadialSweepTool"
       ],
-      "semantic_sha256": "440161380f99043a1b4cff9d8ebf603e5626a6034a5e72247bd0d0e4674b7a4d",
+      "semantic_sha256": "847d49ccfbfa1816bf94c057bab8b978994634c70b346cbb82108bb68e4b7758",
       "symbol": "registerTool(\"mesh.radialSweepTool\")"
     },
     {
@@ -61,7 +61,7 @@
       "product_types": [
         "TackTool"
       ],
-      "semantic_sha256": "11fdc0983dd8f0587e41bb4ba702789170ffbe09e38e394c4e66f945fc3d4514",
+      "semantic_sha256": "dd8e52f526dd6b0f036a0b3dc671407cff3b060b1a8d11b2d48b83eae272b06a",
       "symbol": "registerTool(\"mesh.tack\")"
     },
     {
@@ -70,7 +70,7 @@
       "product_types": [
         "BridgeTool"
       ],
-      "semantic_sha256": "9b78c2c661c2900f9638c879386e393b66eab975d3ff263441a561165051b05f",
+      "semantic_sha256": "c9a671a9cdf57958370d8934e3e8ba271b101bb78e74d4332471285b6df000e8",
       "symbol": "registerTool(\"mesh.bridgeTool\")"
     },
     {
@@ -79,7 +79,7 @@
       "product_types": [
         "BoxTool"
       ],
-      "semantic_sha256": "7f9ec88f46ba1fdf0f7a58a6cf519d445cf28974c4476931663000f68a9f0d06",
+      "semantic_sha256": "ee26296a1f940075b0ae1c7f454c936fd49c2ab607385f60ed9c5d5495265056",
       "symbol": "registerTool(\"prim.cube\")"
     },
     {
@@ -88,7 +88,7 @@
       "product_types": [
         "SphereTool"
       ],
-      "semantic_sha256": "0df685406ee9480a3ff0c7775c1a68310ec9dcc8c179ceff6bb0a1d5eef54de6",
+      "semantic_sha256": "7f97d0cefd97b36231262bbaf0d2748c1901699435f1b0989c14ca1a18c64949",
       "symbol": "registerTool(\"prim.sphere\")"
     },
     {
@@ -97,7 +97,7 @@
       "product_types": [
         "SphereTool"
       ],
-      "semantic_sha256": "57c9f6e62dac4e66a3b57dc23a7ac1284f92115b7dfc57de6f250917227bdaf5",
+      "semantic_sha256": "47a8fdb5bad60b1606bf86568c5fe911982a8c6233ae810018d02bdb45a83d42",
       "symbol": "registerTool(\"prim.ellipsoid\")"
     },
     {
@@ -106,7 +106,7 @@
       "product_types": [
         "CylinderTool"
       ],
-      "semantic_sha256": "d1baaa9a8a8252546e09b95b547cbd5db9fd25b1aaeaff04243d864891b5a3b6",
+      "semantic_sha256": "872270bc8d1d78094d6765c400316f64ff10bf31632213dab4f583eee76c9ccf",
       "symbol": "registerTool(\"prim.cylinder\")"
     },
     {
@@ -115,7 +115,7 @@
       "product_types": [
         "TubeTool"
       ],
-      "semantic_sha256": "f860641d25ba33bfe00f40a54fbb184405597813b3c6bad74e870d2ca0ff7fa0",
+      "semantic_sha256": "686bcf9618afb32a63bd589daf2213969ca18bdf46ae86d09862369e78a09584",
       "symbol": "registerTool(\"prim.tube\")"
     },
     {
@@ -124,7 +124,7 @@
       "product_types": [
         "ConeTool"
       ],
-      "semantic_sha256": "9a75b2469684e81b4783efb2e1a5f2dfa5f17b8eb41f06e601af0c946f82c6d6",
+      "semantic_sha256": "f0e2dff4cc8c30f9f645f71e3f3562bc8e7f476f0e177ad2f5cb769dcbe657d6",
       "symbol": "registerTool(\"prim.cone\")"
     },
     {
@@ -133,7 +133,7 @@
       "product_types": [
         "CapsuleTool"
       ],
-      "semantic_sha256": "9b926ea5c042f2fcfb324a3661329c296b4c806ba7cccf3cb596ee944b85d6d1",
+      "semantic_sha256": "b7f95b89e04718e4c49997cd0b0d8a2a051a0504d213dd232fb07d6902a9c6e1",
       "symbol": "registerTool(\"prim.capsule\")"
     },
     {
@@ -142,7 +142,7 @@
       "product_types": [
         "TorusTool"
       ],
-      "semantic_sha256": "e28e2f4426b1164fbb9f53a20f361ebeb84cbe17e335d6619f5edebe4d7e000a",
+      "semantic_sha256": "2084e7a31801673144952a16fd0a96e8242bf1d1efa2d4503a7b97e4083cf995",
       "symbol": "registerTool(\"prim.torus\")"
     },
     {
@@ -151,7 +151,7 @@
       "product_types": [
         "ArcTool"
       ],
-      "semantic_sha256": "2c7e8c2eaec3d069992c89eadeea0986562c73c3a96d598dd41cb1e4fb338016",
+      "semantic_sha256": "1973712e8e226b4ad022a079608adef761a319415002af16ffb60d9ccab96cfe",
       "symbol": "registerTool(\"prim.arc\")"
     },
     {
@@ -788,21 +788,21 @@
     {
       "aggregate": "BridgeTool",
       "module": "tools.edit.bridge_tool",
-      "semantic_sha256": "25881e5994ee4dd85216bec98f85c6ef685118b969dc7900ca281e0bc09c6875",
+      "semantic_sha256": "22aa4e26bcfc17b2ed7276a9fb7e543b584823fdbf902dd7897a0365fa9122b6",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "BridgeTool",
       "module": "tools.edit.bridge_tool",
-      "semantic_sha256": "eda1f5e3ff46f3d06b925d4b22481b3b633cc0fbdb5c5c0aa84c5f8fb5a80adc",
+      "semantic_sha256": "ee1977580d18f3ad26330f74ae30178b864bb52b2de268f5132cfd173346f6c7",
       "signature": "void()",
       "symbol": "deactivate"
     },
     {
       "aggregate": "BridgeTool",
       "module": "tools.edit.bridge_tool",
-      "semantic_sha256": "158c0e626477e299c067d9f0459551bbd3a0b891f2278cb5a9c5f4734eaa7459",
+      "semantic_sha256": "bb14ebd2ce03f154c988e901aeaa058eff715b84d0538c97fb9cb689cb658d84",
       "signature": "void(string name)",
       "symbol": "onParamChanged"
     },
@@ -1596,7 +1596,7 @@
     {
       "aggregate": "BridgeTool",
       "module": "tools.edit.bridge_tool",
-      "semantic_sha256": "ec6a460377907665c1928c0b7c5baea849add954f82544928f04263bac42114c",
+      "semantic_sha256": "c86e792712ee2a8863e04534e18c49012f2ed809f031fab06db58c92bcac7e38",
       "signature": "Param[]()",
       "symbol": "params"
     },

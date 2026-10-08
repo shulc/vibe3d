@@ -14,7 +14,7 @@ from prepared_writer_census import (scan as scan_writer_graph,
     canonical as canonical_writer_graph, _balanced as balanced_source,
     _semantic_digest as semantic_digest, module_path,
     persisted_manifest as persisted_writer_manifest,
-    REGISTRATION_SOURCE_NAMES as writer_registration_source_names)
+    REGISTRATION_SOURCE_NAMES as writer_registration_source_names, paired_calls)
 import dspans_client  # made importable by prepared_writer_census (tools/dspans)
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1475,7 +1475,7 @@ def capture_paired_factory_early(root):
         fail("P1.0b.0 paired early-capture mutation anchor vanished")
     text = text.replace(assign, assign
         + "    auto captured = regPtr.toolFactory(id);\n", 1)
-    text = text.replace(lookup, "                                id, captured);\n", 1)
+    text = text.replace(lookup, "                                id, captured));\n", 1)
     p.write_text(text)
 if not mutation_rejected(capture_paired_factory_early,
                          "direct-body/product census changed"):
@@ -1498,6 +1498,56 @@ def swap_paired_factory_row(root):
 if not mutation_rejected(swap_paired_factory_row,
                          "direct-body/product census changed"):
     fail("P1.0b.0 paired factory-row swap did not RED fingerprint")
+
+# Exercise the actual paired-call adapter, including its resolved construction type.
+paired_source = (ROOT / "source/create_tool_registration.d").read_text()
+bridge_call = "registerHeadlessTool!(BridgeTool, BridgeHeadlessCommand)"
+for form, command in (("registerHeadlessTool!BridgeTool", "ToolHeadlessCommand"),
+                      ("registerHeadlessTool!(BridgeTool)", "ToolHeadlessCommand"),
+                      ("registerHeadlessTool ! ( BridgeTool , BridgeHeadlessCommand )", "BridgeHeadlessCommand"),
+                      ("registerHeadlessTool!(BridgeTool, OtherCommand)", "OtherCommand")):
+    rows = paired_calls(paired_source.replace(bridge_call, form, 1))
+    if len(rows) != 13 or [row[2] for row in rows if row[3] == "mesh.bridgeTool"] != [command]:
+        fail("P1.0b.0 paired resolved command parser control failed: " + form)
+for malformed in (paired_source.replace(bridge_call, "registerHeadlessTool!(BridgeTool, OtherCommand, Third)", 1),
+                  paired_source.replace(bridge_call, "registerHeadlessTool!(BridgeTool[], OtherCommand)", 1),
+                  paired_source.replace('reg, "mesh.bridgeTool",', 'reg, dynamicId,', 1),
+                  paired_source.replace('reg, "mesh.bridgeTool",', 'reg, "prim.cube",', 1),
+                  paired_source.replace('new C(', 'new OtherCommand(', 1),
+                  paired_source.replace('id, regPtr.toolFactory(id)));', 'id, regPtr.toolFactory(id)) + extra);', 1)):
+    try:
+        paired_calls(malformed)
+    except ValueError:
+        pass
+    else:
+        fail("P1.0b.0 malformed paired-call parser control was accepted")
+# Commented-out calls cannot manufacture construction rows.
+if len(paired_calls(paired_source + '\n// registerHeadlessTool!(Fake, FakeC)(reg, "fake", () { }, owner, live);\n')) != 13:
+    fail("P1.0b.0 paired comment parser control failed")
+
+def change_paired_command(root, replacement):
+    p = root / "source/create_tool_registration.d"
+    text = p.read_text()
+    needle = "registerHeadlessTool!(BridgeTool, BridgeHeadlessCommand)"
+    if text.count(needle) != 1:
+        fail("P1.0b.0 explicit paired command mutation anchor vanished")
+    p.write_text(text.replace(needle, replacement, 1))
+for replacement in ("registerHeadlessTool!BridgeTool",
+                    "registerHeadlessTool!(BridgeTool, ToolHeadlessCommand)"):
+    if not mutation_rejected(lambda root: change_paired_command(root, replacement),
+                             "direct-body/product census changed"):
+        fail("P1.0b.0 resolved paired command did not RED fingerprint")
+
+def change_paired_default(root):
+    p = root / "source/create_tool_registration.d"
+    text = p.read_text()
+    needle = "C : ToolHeadlessCommand = ToolHeadlessCommand"
+    if text.count(needle) != 1:
+        fail("P1.0b.0 paired default mutation anchor vanished")
+    p.write_text(text.replace(needle,
+        "C : ToolHeadlessCommand = BridgeHeadlessCommand", 1))
+if not mutation_rejected(change_paired_default, "direct-body/product census changed"):
+    fail("P1.0b.0 paired helper default did not RED fingerprint")
 
 def add_domain_without_renaming(root):
     p = root / "source/tools/transform/transform.d"

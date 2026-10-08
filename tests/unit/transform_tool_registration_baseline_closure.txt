@@ -33,6 +33,7 @@ document_selection
 drag
 edit_session
 editmode
+evaluated_move_weld
 eventlog
 falloff
 falloff_handles
@@ -66,6 +67,7 @@ mesh_ops.bevel_fin
 mesh_ops.bevel_vertex
 mesh_ops.box_geom
 mesh_ops.bridge
+mesh_ops.bridge_patch
 mesh_ops.connected_mask
 mesh_ops.cut
 mesh_ops.decimate

@@ -189,6 +189,35 @@ def _methods(path, names):
                      "semantic_sha256": _semantic_digest(body)})
     return rows
 
+def paired_calls(source):
+    """Closed paired-call syntax; command defaults are semantic construction data."""
+    code = _mask_comments(source)
+    head = re.compile(r'\bregisterHeadlessTool\s*!\s*(?:([A-Za-z_]\w*)|\(\s*([A-Za-z_]\w*)\s*(?:,\s*([A-Za-z_]\w*)\s*)?\))\s*\(\s*reg\s*,\s*"([^"]+)"\s*,\s*\(\s*\)\s*\{')
+    matches = list(head.finditer(code))
+    calls = len(re.findall(r'\bregisterHeadlessTool\s*!', code))
+    if len(matches) != calls:
+        raise ValueError('a registerHeadlessTool! call did not parse as a row')
+    if not matches:
+        return []
+    defaults = re.findall(r'private\s+void\s+registerHeadlessTool\s*\(\s*T\s*:\s*Tool\s*,\s*C\s*:\s*ToolHeadlessCommand\s*=\s*([A-Za-z_]\w*)\s*\)', code)
+    if len(defaults) != 1:
+        raise ValueError('expected one constrained paired helper default')
+    helper = _private_function_body(source, 'registerHeadlessTool')
+    if len(re.findall(r'reg\.registerCommand\s*\(\s*id\s*,', helper)) != 1 or len(re.findall(r'\bnew\s+C\s*\(', helper)) != 1:
+        raise ValueError('paired helper must construct one command with new C')
+    rows = []
+    seen = set()
+    for m in matches:
+        ident = m.group(4)
+        if ident in seen:
+            raise ValueError('duplicate paired id: ' + ident)
+        seen.add(ident)
+        end = _balanced(source, m.end())
+        if not re.match(r'\s*,\s*[A-Za-z_]\w*\s*,\s*[A-Za-z_]\w*\s*\)\s*;', code[end:]):
+            raise ValueError('paired factory has trailing call syntax')
+        rows.append((m, m.group(1) or m.group(2), m.group(3) or defaults[0], ident))
+    return rows
+
 def scan(root):
     # RESOLVE, don't just wrap. Every classification below keys on path
     # EQUALITY against `root / "source/..."`, and `rglob` yields paths
@@ -213,8 +242,6 @@ def scan(root):
     # Paired tool+headless-command registration keeps the per-product body at
     # the call site and the shared recipe in one private helper. Fingerprint
     # both labelled token streams so either half remains review-visible.
-    paired_head = re.compile(
-        r'registerHeadlessTool!(\w+)\s*\(\s*reg\s*,\s*"([^"]+)"\s*,\s*\(\)\s*\{')
     assignment_count = 0
     for registration_source in registration_sources:
         try:
@@ -257,22 +284,23 @@ def scan(root):
                               "semantic_sha256": _semantic_digest(body)})
 
         paired_rows = 0
-        for m in paired_head.finditer(reg):
+        for m, product, command, ident in paired_calls(reg):
             body_open = m.end() - 1
             end = _balanced(reg, body_open + 1)
             lambda_body = reg[body_open + 1:end - 1]
             if not re.match(r"\s*,\s*[A-Za-z_]\w*\s*,\s*[A-Za-z_]\w*\s*\)\s*;", reg[end:]):
                 raise ValueError(
-                    f'paired factory {m.group(2)} has trailing call syntax')
+                    f'paired factory {ident} has trailing call syntax')
             helper_body = _private_function_body(reg, "registerHeadlessTool")
             body = ("pairedFactoryBody { " + lambda_body
-                    + " } privateHelperBody { " + helper_body + " }")
+                    + " } privateHelperBody { " + helper_body
+                    + " } resolvedCommandType { " + command + " }")
             paired_rows += 1
-            factories.append({"id": m.group(2), "aggregate": _aggregate(reg, m.start()),
-                              "symbol": "registerTool(\"%s\")" % m.group(2),
-                              "product_types": [m.group(1)],
+            factories.append({"id": ident, "aggregate": _aggregate(reg, m.start()),
+                              "symbol": "registerTool(\"%s\")" % ident,
+                              "product_types": [product],
                               "semantic_sha256": _semantic_digest(body)})
-        if len(re.findall(r"\bregisterHeadlessTool!", reg)) != paired_rows:
+        if len(re.findall(r"\bregisterHeadlessTool\s*!", _mask_comments(reg))) != paired_rows:
             raise ValueError(
                 f"a registerHeadlessTool! call did not parse as a row: {registration_source}")
 

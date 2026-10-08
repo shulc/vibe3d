@@ -1,6 +1,13 @@
 {
   "schema": 1,
-  "provenance": "ours-geometry-normal",
+  "provenance": {
+    "schema": 1,
+    "source": "analytic",
+    "reference": "analytic",
+    "method": "closed-form",
+    "captured_utc": "unknown",
+    "basis": "ours-geometry-normal"
+  },
   "source_revision": "f74a91cea",
   "source_body_sha256": "69e417ee96fe9ba1a05d087e306eed827aa0268a4655aa1d395dfe9318998b3f",
   "input_sha256": "6394cd619a5ce2e4ed2a3aa7dc84198f8470197608c1676381102e8c4c9e3a68",

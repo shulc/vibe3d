@@ -37,8 +37,10 @@ import edit_tool_registration;
 import command_history : CommandHistory;
 import tool            : Tool;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
-                                   isIdentChar;
+                                   isIdentChar, enclosingSymbols, symbolAt;
 
+import std.regex : matchAll, regex;
+import std.exception : assertThrown;
 import std.algorithm : canFind, endsWith, sort, startsWith;
 import std.array     : appender, array, join, split;
 import std.conv      : to;
@@ -46,7 +48,7 @@ import std.file      : dirEntries, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.stdio     : writeln;
-import std.string    : indexOf, strip;
+import std.string    : indexOf, strip, replace;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum ledgerPath = "tests/unit/tool_model_census_ledger.txt";
@@ -206,6 +208,26 @@ package size_t[string] castTargets(string code, const bool[string] targets) {
     }
     return counts;
 }
+// Exact owned read-only diagnostic projection, separate from general session debt.
+private size_t ownedDiagnosticProjections(string path, string source) {
+    if (path != "source/commands/tool/bridge_headless.d") return 0;
+    auto code = blankUnittestBodies(blankNonCode(source));
+    const symbols = enclosingSymbols(code);
+    size_t admitted;
+    foreach (m; matchAll(code, regex(`cast\s*\(\s*const\s+BridgeTool\s*\)\s*ownedToolInstance\s*\(\s*\)`))) {
+        const pos = cast(size_t)(m.pre.length);
+        size_t line;
+        foreach (c; code[0 .. pos]) if (c == '\n') ++line;
+        if (symbolAt(symbols, line) == "BridgeHeadlessCommand.refusalReason") ++admitted;
+    }
+    assert(admitted == 1, "owned diagnostic projection requires exactly one const owned-instance cast in refusalReason");
+    assert(code.indexOf("auto base = super.refusalReason();") >= 0
+        && code.indexOf("if (base.length) return base;") >= 0
+        && code.indexOf("if (base.length) return base;") < code.indexOf("cast"),
+        "owned diagnostic projection requires base-reason precedence");
+    return admitted;
+}
+
 private size_t[string] castTargetsOf(string src, const bool[string] targets) {
     return castTargets(blankUnittestBodies(blankNonCode(src)), targets);
 }
@@ -1012,18 +1034,22 @@ unittest {
     bool[string] toolClasses;
     foreach (n; scanned.keys ~ templateTools.keys) toolClasses[n.split(".")[$ - 1]] = true;
     size_t[string][string] branchSites, toolCastSites;   // file -> target -> n
-    size_t branchTotal, toolCastTotal;
+    size_t branchTotal, toolCastTotal, ownedDiagnosticTotal;
     foreach (f; files) {
         foreach (t, n; castTargetsOf(f.src, sessionIfaces)) {
             branchSites[f.path][t] = n;
             branchTotal += n;
         }
         if (f.path.startsWith("source/tools/")) continue;
-        foreach (t, n; castTargetsOf(f.src, toolClasses)) {
+        const admitted = ownedDiagnosticProjections(f.path, f.src);
+        ownedDiagnosticTotal += admitted;
+        foreach (t, raw; castTargetsOf(f.src, toolClasses)) {
+            const n = raw - (t == "BridgeTool" ? admitted : 0);
             toolCastSites[f.path][t] = n;
             toolCastTotal += n;
         }
     }
+    assert(ownedDiagnosticTotal == 1, "owned diagnostic production admission cardinality");
     measured.sessionCaps = sessionIfaces.length;
     measured.sessionBranches = branchTotal;
     measured.toolCasts = toolCastTotal;
@@ -1262,4 +1288,29 @@ EOS", ["EdgeExtendTool": true, "SessionProbe": true]);
            && w.get("h.redo", 0) == 1
            && w.length == 6 && w.get("recordGestureEdit", 0) == 1,
            format("tool census scanner cell: write spellings %s", w));
+}
+
+unittest {
+    const path = "source/commands/tool/bridge_headless.d";
+    const sample = `class BridgeHeadlessCommand {
+      string refusalReason() const {
+        auto base = super.refusalReason();
+        if (base.length) return base;
+        auto bridge = cast(const BridgeTool) ownedToolInstance();
+        return "";
+      }
+    }`;
+    assert(ownedDiagnosticProjections(path, sample) == 1, "owned diagnostic positive");
+    assert(ownedDiagnosticProjections("source/other.d", sample) == 0, "no file-wide admission");
+    foreach (bad; [sample.replace("const BridgeTool", "BridgeTool"),
+                  sample.replace("ownedToolInstance()", "otherInstance()"),
+                  sample.replace("refusalReason()", "otherReason()"),
+                  sample.replace("cast(const BridgeTool)", ""),
+                  sample.replace("return \"\";", "auto duplicate = cast(const BridgeTool) ownedToolInstance(); return \"\";"),
+                  sample.replace("if (base.length) return base;", "")])
+        assertThrown!AssertError(ownedDiagnosticProjections(path, bad));
+    bool[string] targets; targets["BridgeTool"] = true;
+    const extra = sample.replace("return \"\";", "auto extra = cast(BridgeTool) otherInstance(); return \"\";");
+    assert(castTargetsOf(extra, targets)["BridgeTool"] - ownedDiagnosticProjections(path, extra) == 1,
+        "additional cast in admitted file remains ordinary debt");
 }

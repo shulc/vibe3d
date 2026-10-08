@@ -584,3 +584,30 @@ unittest
             "open kernel hard cap exactly 512 spans");
     ed.buildLoops(); ed.close();
 }
+
+// Component-distinct arithmetic and complete selected packet order, task 20261600.
+unittest
+{
+    auto a = Vec3d(2, -6, 10), b = Vec3d(-3, 4, 7);
+    close(a + b, Vec3d(-1, -2, 17), "Vec3d addition");
+    close(a - b, Vec3d(5, -10, 3), "Vec3d subtraction");
+    close(a * 2, Vec3d(4, -12, 20), "Vec3d multiplication");
+    close(a / 2, Vec3d(1, -3, 5), "Vec3d division");
+}
+
+unittest
+{
+    Mesh m;
+    foreach (i; 0 .. 6) m.addVertex(Vec3(i, 0, 0));
+    m.edges = [[0u, 1u], [1u, 2u], [3u, 4u], [4u, 5u], [0u, 5u]];
+    m.edgeMarks = [Marks.Select, Marks.Select, Marks.Select, Marks.Select, 0u];
+    m.edgeSelectionOrder = [4u, 3u, 2u, 1u, 99u];
+    uint[][] chains = [[0u, 1u, 2u], [3u, 4u, 5u], [0u, 5u]];
+    auto inc = bridgeIncidence(m, chains);
+    auto groups = reseedOpenChains(m, chains, inc);
+    assert(groups.length == 2, "selected packet population excludes stale edge");
+    assert(groupNodes(groups[0]) == [3u, 4u, 5u]
+        && groupNodes(groups[1]) == [0u, 1u, 2u], "selected packet stamp order");
+    assert(groups[0].length + groups[1].length == 4,
+        "complete selected-edge packet population");
+}
