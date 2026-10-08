@@ -1,78 +1,15 @@
 module mesh_ops.bridge;
 // mesh-ops-import: explicit
 
-// ---------------------------------------------------------------------------
-// The Bridge kernel family: five entry points (`bridgeLoopsPaired`,
-// `bridgeLoops`, `bridgeLoopsSpans`, `bridgeStripPaired`, `bridgeOpenRows`),
-// one public read-only lookup (`facesBoundedByLoop`), the span cap
-// (`maxBridgeSpans`) and the private pairing / twist / fan helpers they alone
-// use (`pairBridgeLoop`, `bridgeTwistedVertex`, `orientOpenChainB`,
-// `bridgeFanRows`, `ceilDivHalfDown`). Split out of mesh.d as
-// `mixin template MeshBridgeOps` by the mesh.d decomposition campaign
-// (0407 §B.V2, task 0417 — continuation of the task-0412 plane-cut pilot).
-//
-// Converted to module-level FREE FUNCTIONS by task 1903 Stage D3
-// (`doc/mesh_edit_seam_plan.md` §4, §5.2 row D3). Function BODIES are
-// unchanged — every edit is an `ed.` / `m.` prefix — and the three decisions
-// Stage D2 recorded for the first mutating family hold here verbatim: the
-// receiver is the batch, the mixin left `struct Mesh` in the SAME change, and
-// the callers open an UNRECORDED batch at their own boundary. What D3 adds to
-// that memo is below.
-//
-// TWO RECEIVERS IN ONE FAMILY, AND THE SPLIT IS THE `const` THE MEMBERS ALREADY
-// CARRIED. §4.1's first two cells, side by side for the first time:
-//
-//   * `ref MeshEditBatch ed` — `bridgeLoopsPaired`, `bridgeLoops`,
-//     `bridgeLoopsSpans`, `bridgeStripPaired`, `bridgeOpenRows` and the private
-//     `bridgeFanRows`. Every one of them appends faces (and, on a multi-span
-//     path, vertices) and stamps subpatch words.
-//   * `ref const(Mesh) m` — `facesBoundedByLoop` and the three private helpers
-//     that only READ positions to decide a pairing (`pairBridgeLoop`,
-//     `bridgeTwistedVertex`, `orientOpenChainB`). All four were `const`
-//     members; the const receiver is the same statement in the new shape, and
-//     it is now ENFORCED at the seam rather than by a keyword the mixin could
-//     have dropped at any time.
-//
-// The mutating kernels reach the read-only helpers by spelling `ed.mesh`
-// explicitly at the call site (`pairBridgeLoop(ed.mesh, …)`), not by leaning on
-// `alias mesh this`. Both compile; the explicit one is the one that SAYS the
-// pairing step reads and does not write, which is the whole content of the two
-// receivers being different inside one family.
-//
-// THE WIDENINGS D3 OWES (plan §2.6, §4.3 — "each widening lands in the stage
-// converting its caller, with a census row naming that caller"). Three names in
-// `source/mesh.d` were `private` and resolved here only because a mixin body is
-// instantiated in the host's scope:
-//
-//   * `Mesh.orientFaceConsistent` and `Mesh.registerNewFaceEdges` — the
-//     winding-consistency pair `bridgeStripPaired` / `bridgeFanRows` use (task
-//     0395). This file is their ONLY caller outside mesh.d.
-//   * `mesh.smoothstep01` — NOT a `Mesh` member at all but a module-private
-//     free function of `mesh`, which is why §2.6 singled it out as "the one
-//     that will not compile after conversion". `bridgeTwistedVertex` is its
-//     only caller anywhere. It stays a free function of `mesh` (the
-//     alternative §2.6 offers is a move to `math`; that would be a second
-//     edit hiding inside a move, and `math` has no other ease-curve to sit
-//     beside).
-//
-// `tests/unit/commit_seam_census_test.d` carries one row per name: the
-// `private` spelling is gone from mesh.d AND this file still calls it. The
-// second half is what keeps the widening honest — Stage A shipped ten of these
-// with no caller and the review reverted them all (plan §2.6, review S3).
-//
-// The import-boundary migration moved `thickenSurface` to
-// `mesh_ops.thicken`, removing the last base-module caller. Both it and
-// `revolveProfileEx` now receive their caller's
-// `MeshEditBatch` and import this family directly.
-//
-// WHAT `maxBridgeSpans` BECAME. §2.7 lists it among the non-function members a
-// mixin injects into `Mesh`; §11 decides it: "keep it an `enum` in the ops
-// module after conversion". It is module scope here, so `Mesh.maxBridgeSpans`
-// no longer resolves and the three sites that spelled it that way moved with
-// this commit. Its DoS note is below.
-// ---------------------------------------------------------------------------
+// Bridge batch emitters, task 20261600, captured behavior 2026-10-06/08.
+// Open rows use incidence adjustment and the shared patch/rail arithmetic.
+// Closed pairing remains the historical distance mechanism; connect is inert.
+// Flip reverses new quads after consistency orientation; fans are unchanged.
+// Open twist is refused by the tool because its ring law remains unknown.
 import mesh;
 import math;
+import mesh_ops.bridge_patch;
+import std.algorithm : reverse;
 import mesh_edit_delta : MeshEditScope;
 
 /// The change classes one bridge actually commits, for the batch its callers
@@ -135,7 +72,7 @@ enum size_t maxBridgeSpans = 512;
 /// edges can see an earlier span's just-added bridge quads as adjacent and
 /// inherit transitively — a subdiv boundary therefore yields an all-subdiv
 /// multi-span bridge, which is the intended behavior.
-size_t bridgeLoopsPaired(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[] pairedB) {
+size_t bridgeLoopsPaired(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[] pairedB, bool reverseWinding = false) {
     if (loopA.length != pairedB.length || loopA.length < 3) return 0;
     const N = loopA.length;
     auto edgeFaces = ed.buildEdgeFaces();
@@ -159,7 +96,9 @@ size_t bridgeLoopsPaired(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[
         uint b0 = cast(uint)pairedB[i],  b1 = cast(uint)pairedB[(i + 1) % N];
         bool sub = edgeAdjSubpatch(a0, a1) || edgeAdjSubpatch(b0, b1);
         uint newFi = cast(uint)ed.faces.length;
-        ed.addFace([a0, a1, b1, b0]);
+        uint[] idx = [a0, a1, b1, b0];
+        if (reverseWinding) reverse(idx[1..$]);
+        ed.addFace(idx);
         ed.resizeSubpatch();
         ed.setFaceSubpatch(newFi, sub);
     }
@@ -178,14 +117,14 @@ size_t bridgeLoopsPaired(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[
 /// Shared pairing step (factored out of `bridgeLoops`, task 0357 — also
 /// used by `bridgeLoopsSpans`): anchor B at the vertex nearest A[0];
 /// pick forward vs. reversed direction by minimum total paired
-/// Euclidean distance; `flip` overrides the auto choice. Returns the
+/// Euclidean distance; the minimum-distance direction wins. Returns the
 /// pairing array P (P[i] is the loopB vertex paired with loopA[i]).
 ///
 /// `ref const(Mesh) m`, and the mutating kernels pass `ed.mesh`: this step
 /// reads positions and decides an ORDER, it writes nothing (task 1903
 /// Stage D3, plan §4.1 second cell).
 private uint[] pairBridgeLoop(ref const(Mesh) m, const(uint)[] loopA,
-                              const(uint)[] loopB, bool flip) {
+                              const(uint)[] loopB) {
     const size_t N = loopA.length;
 
     // Step 1 — anchor: B-vertex nearest A[0].
@@ -207,7 +146,7 @@ private uint[] pairBridgeLoop(ref const(Mesh) m, const(uint)[] loopA,
         fwdSum += (bFwd - ai).length;
         revSum += (bRev - ai).length;
     }
-    immutable bool useForward = (fwdSum <= revSum) != flip;
+    immutable bool useForward = fwdSum <= revSum;
 
     // Step 3 — build pairing array P[0..N).
     uint[] P = new uint[](N);
@@ -229,10 +168,10 @@ private uint[] pairBridgeLoop(ref const(Mesh) m, const(uint)[] loopA,
 /// No empty-selection fallback: bridge requires exactly two loops.
 /// Do NOT add a whole-mesh fallback here.
 size_t bridgeLoops(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[] loopB,
-                   bool flip = false) {
+                   bool reverseWinding = false) {
     if (loopA.length != loopB.length || loopA.length < 3) return 0;
-    uint[] P = pairBridgeLoop(ed.mesh, loopA, loopB, flip);
-    return bridgeLoopsPaired(ed, loopA, P);
+    uint[] P = pairBridgeLoop(ed.mesh, loopA, loopB);
+    return bridgeLoopsPaired(ed, loopA, P, reverseWinding);
 }
 
 /// Face indices whose vertex ring is a cyclic rotation (either winding
@@ -283,13 +222,13 @@ uint[] facesBoundedByLoop(ref const(Mesh) m, const(uint)[] loop) {
 /// lengths or too-short loops, same guard as `bridgeLoops`). Does NOT
 /// call buildLoops() — the caller must do so after all mutations.
 size_t bridgeLoopsSpans(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[] loopB,
-                        bool flip, uint spans, float twist) {
+                        uint spans, float twist, bool reverseWinding = false) {
     if (loopA.length != loopB.length || loopA.length < 3) return 0;
     if (spans < 1) spans = 1;
     if (spans > maxBridgeSpans) spans = cast(uint)maxBridgeSpans;   // kernel-side DoS cap
 
-    uint[] P = pairBridgeLoop(ed.mesh, loopA, loopB, flip);
-    if (spans == 1) return bridgeLoopsPaired(ed, loopA, P);
+    uint[] P = pairBridgeLoop(ed.mesh, loopA, loopB);
+    if (spans == 1) return bridgeLoopsPaired(ed, loopA, P, reverseWinding);
 
     const size_t N = loopA.length;
     uint[][] rings = new uint[][](spans + 1);
@@ -305,7 +244,7 @@ size_t bridgeLoopsSpans(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[]
 
     size_t added = 0;
     foreach (s; 0 .. spans)
-        added += bridgeLoopsPaired(ed, rings[s], rings[s + 1]);
+        added += bridgeLoopsPaired(ed, rings[s], rings[s + 1], reverseWinding);
     return added;
 }
 
@@ -377,34 +316,6 @@ private Vec3 bridgeTwistedVertex(ref const(Mesh) m, const(uint)[] loopA,
 // to test, not N candidate rotations).
 // ------------------------------------------------------------------
 
-/// Open-row analog of `pairBridgeLoop`'s auto-orient step: decide
-/// whether chain `b` should be walked forward or reversed to align
-/// with chain `a`, by comparing the summed endpoint-to-endpoint
-/// distance of the two possible alignments — `straight` (a's start
-/// near b's start, a's end near b's end) vs. `crossed` (a's start near
-/// b's end, a's end near b's start). `flip` inverts the auto choice
-/// (mirrors bridgeLoops' own `flip` semantics). `a` is never
-/// reordered — only `b` is potentially reversed, matching
-/// pairBridgeLoop's convention of treating loop/chain A as the anchor.
-///
-/// Task 0395 decisive capture (`pairing_proximity_not_selection_order`
-/// fixture case): pairing is by geometric proximity of the chain
-/// ENDPOINTS, not by which order the two chains were built/selected in
-/// — this is the auto-detection that makes that guarantee hold, since
-/// it only ever looks at `a`/`b`'s actual endpoint positions.
-private uint[] orientOpenChainB(ref const(Mesh) m, const(uint)[] a,
-                                const(uint)[] b, bool flip) {
-    Vec3 a0 = m.vertices[a[0]], a1 = m.vertices[a[$ - 1]];
-    Vec3 b0 = m.vertices[b[0]], b1 = m.vertices[b[$ - 1]];
-    float straight = (b0 - a0).length + (b1 - a1).length;
-    float crossed  = (b1 - a0).length + (b0 - a1).length;
-    immutable bool reverse = (crossed < straight) != flip;
-    if (!reverse) return b.dup;
-    uint[] r = new uint[](b.length);
-    foreach (i; 0 .. b.length) r[i] = b[$ - 1 - i];
-    return r;
-}
-
 /// Open-row twin of `bridgeLoopsPaired`: emit `a.length-1` quads
 /// [a[i], a[i+1], b[i+1], b[i]] for a chain PRE-PAIRED 1:1 with `b`
 /// (NO wraparound — unlike a closed loop, an open row has no edge
@@ -427,7 +338,7 @@ private uint[] orientOpenChainB(ref const(Mesh) m, const(uint)[] a,
 ///
 /// Does NOT call buildLoops() — the caller must do so after all
 /// mutations.
-size_t bridgeStripPaired(ref MeshEditBatch ed, const(uint)[] a, const(uint)[] b) {
+size_t bridgeStripPaired(ref MeshEditBatch ed, const(uint)[] a, const(uint)[] b, bool reverseWinding = false) {
     if (a.length != b.length || a.length < 2) return 0;
     const N = a.length;
     auto edgeFaces = ed.buildEdgeFaces();  // pre-existing snapshot — subpatch source ONLY, untouched
@@ -443,18 +354,24 @@ size_t bridgeStripPaired(ref MeshEditBatch ed, const(uint)[] a, const(uint)[] b)
         uint b0 = cast(uint)b[i],   b1 = cast(uint)b[i + 1];
         bool sub = edgeAdjSubpatch(a0, a1) || edgeAdjSubpatch(b0, b1);
         uint[] idx = [a0, a1, b1, b0];
-        ed.orientFaceConsistent(idx, liveEdgeFaces);
-        uint newFi = cast(uint)ed.faces.length;
-        ed.addFace(idx);
-        ed.registerNewFaceEdges(liveEdgeFaces, newFi, idx);
-        ed.resizeSubpatch();
-        ed.setFaceSubpatch(newFi, sub);
+        emitBridgeQuad(ed, idx, liveEdgeFaces, sub, reverseWinding);
     }
     // Task 0901: same append-only shape as `bridgeLoopsPaired` above —
     // see that call's comment. Covers `bridgeOpenRows`' equal-length
     // path (both single- and multi-span) too, since it bottoms out here.
     ed.declareCornerAppend();
     return N - 1;
+}
+
+private void emitBridgeQuad(ref MeshEditBatch ed, uint[] idx,
+                            ref int[2][ulong] liveEdgeFaces, bool sub, bool reverseWinding) {
+    ed.orientFaceConsistent(idx, liveEdgeFaces);
+    if (reverseWinding) reverse(idx[1..$]);
+    uint fi = cast(uint)ed.faces.length;
+    ed.addFace(idx);
+    ed.registerNewFaceEdges(liveEdgeFaces, fi, idx);
+    ed.resizeSubpatch();
+    ed.setFaceSubpatch(fi, sub);
 }
 
 /// Exact integer ceiling-division, ROUND-HALF-DOWN at the .5 boundary:
@@ -489,7 +406,7 @@ in (q > 0)
 ///
 /// `longC`/`shortC` must already be oriented so `longC[0]`↔`shortC[0]`
 /// and `longC[$-1]`↔`shortC[$-1]` are the correct endpoint pairing
-/// (`orientOpenChainB`'s job, done by the caller) — this function does
+/// (incidence adjustment, done by the caller) — this function does
 /// not re-derive direction.
 ///
 /// Winding: each new face is auto-oriented via `orientFaceConsistent`
@@ -554,61 +471,134 @@ private size_t bridgeFanRows(ref MeshEditBatch ed, const(uint)[] longC,
     return added;
 }
 
-/// Multi-span open-row Bridge (task 0395) — the edge-mode-open-row
-/// analog of `bridgeLoopsSpans`. Equal-length chains: `spans-1`
-/// interior rings, linearly interpolated at t=i/spans (i=1..spans-1),
-/// same Segments law as the closed-loop kernel — verified bit-exact by
-/// the `two_open_rows_segments2` / `pairing_proximity_not_selection_order`
-/// fixture cases. Unequal-length chains: dispatches to `bridgeFanRows`
-/// (task 0395 phase 2); `spans`/`twist` are IGNORED in that case — a
-/// fan has no single interior-ring interpolation law across a triangle,
-/// and the captured reference shows Segments has no effect on unequal
-/// rows in the verified 3:1 case.
-///
-/// Pairing is by nearest-ENDPOINT proximity (`orientOpenChainB`), NOT
-/// chain-walk/selection order.
-///
-/// Interior rings on EQUAL-length rows do NOT wrap (open chains have no
-/// closing edge) — `twist` is accepted for signature symmetry with
-/// `bridgeLoopsSpans` but IGNORED for open rows in this version
-/// (documented v1 limitation, task 0395 plan: "twist on open rows").
-///
-/// `spans<1` clamps to 1; `spans>maxBridgeSpans` clamps to the cap
-/// (same kernel-side DoS guard as `bridgeLoopsSpans`) — only meaningful
-/// on the equal-length path.
-///
-/// Returns faces added (0 on rejection: either chain has <2 verts).
-/// Does NOT call buildLoops() — caller's responsibility.
-size_t bridgeOpenRows(ref MeshEditBatch ed, const(uint)[] chainA, const(uint)[] chainB,
-                      bool flip, uint spans, float twist) {
-    if (chainA.length < 2 || chainB.length < 2) return 0;
+struct BridgeOpenParams
+{
+    int segments = 1;
+    int mode = 1;
+    float tension = 1.0f;
+    bool connect = false;
+    bool autoStep = true;
+    bool reverseWinding = false;
+}
 
-    uint[] B = orientOpenChainB(ed.mesh, chainA, chainB, flip);
+/// Pure preparation also supplies the effective-count witness to tool callers.
+uint openBridgeSegments(const ref Mesh m, const(uint)[] chainA,
+        const(uint)[] chainB, in BridgeOpenParams p)
+{
+    auto inc = bridgeIncidence(m, [chainA, chainB]);
+    auto groups = reseedOpenChains(m, [chainA, chainB], inc);
+    if (groups.length != 2)
+        return 0;
+    adjustOpenChains(m, groups, inc);
+    auto a = groupNodes(groups[0]), b = groupNodes(groups[1]);
+    if (a.length != b.length)
+        return 1;
+    auto sides = [traceSide(a[0], b[0], inc), traceSide(a[$ - 1], b[$ - 1], inc)];
+    return effectiveSegments(p.segments, p.connect, p.autoStep, sides, cast(uint) maxBridgeSpans);
+}
 
-    if (chainA.length != B.length) {
-        immutable bool aLonger = chainA.length > B.length;
-        return bridgeFanRows(ed, aLonger ? chainA : B, aLonger ? B : chainA);
+size_t bridgeOpenRows(ref MeshEditBatch ed, const(uint)[] chainA,
+        const(uint)[] chainB, in BridgeOpenParams p)
+{
+    if (chainA.length < 2 || chainB.length < 2)
+        return 0;
+    auto inc = bridgeIncidence(ed.mesh, [chainA, chainB]);
+    auto groups = reseedOpenChains(ed.mesh, [chainA, chainB], inc);
+    if (groups.length != 2)
+        return 0;
+    auto adjusted = adjustedGroupDirections(ed.mesh, groups);
+    adjustOpenChains(ed.mesh, groups, inc);
+    auto a = groupNodes(groups[0]), b = groupNodes(groups[1]);
+    if (a.length != b.length)
+        return bridgeFanRows(ed, a.length > b.length ? a : b, a.length > b.length ? b : a);
+    auto sides = [traceSide(a[0], b[0], inc), traceSide(a[$ - 1], b[$ - 1], inc)];
+    uint spans = effectiveSegments(p.segments, p.connect, p.autoStep, sides,
+            cast(uint) maxBridgeSpans);
+    bool patch = p.connect && sides[0].length >= 2 && sides[0].length == sides[1].length;
+    Vec3d[] points(const(uint)[] ids)
+    {
+        Vec3d[] r;
+        foreach (id; ids)
+            r ~= Vec3d(ed.vertices[id]);
+        return r;
     }
 
-    if (spans < 1) spans = 1;
-    if (spans > maxBridgeSpans) spans = cast(uint)maxBridgeSpans;
-    if (spans == 1) return bridgeStripPaired(ed, chainA, B);
-
-    const size_t N = chainA.length;
     uint[][] rings = new uint[][](spans + 1);
-    rings[0]     = chainA.dup;
-    rings[spans] = B.dup;
-    foreach (i; 1 .. spans) {
-        float t = cast(float)i / cast(float)spans;
-        uint[] ring = new uint[](N);
-        foreach (k; 0 .. N)
-            ring[k] = ed.addVertex(vec3Lerp(ed.vertices[chainA[k]], ed.vertices[B[k]], t));
-        rings[i] = ring;
+    rings[0] = a;
+    rings[spans] = b;
+    if (patch)
+    {
+        auto sources = [
+            cardinalCoefficients(points(a)), cardinalCoefficients(points(b))
+        ];
+        auto sideFits = [
+            cardinalCoefficients(points(sides[0])),
+            cardinalCoefficients(points(sides[1]))
+        ];
+        foreach (k; 1 .. spans)
+        {
+            double t = cast(double) k / spans;
+            rings[k].length = a.length;
+            foreach (i; 0 .. a.length)
+            {
+                double s = cast(double) i / (a.length - 1);
+                if (i == 0 || i == a.length - 1)
+                    rings[k][i] = borrowedId(sides[i == 0 ? 0 : 1], t);
+                else
+                    rings[k][i] = ed.addVertex(patchPosition(sources, sideFits, s, t).stored());
+            }
+        }
+        // All four boundary arms use the same borrowed-ID rule.
+        foreach (i; 0 .. a.length)
+        {
+            double s = cast(double) i / (a.length - 1);
+            rings[0][i] = borrowedId(a, s);
+            rings[spans][i] = borrowedId(b, s);
+        }
+        auto live = ed.buildEdgeFaces();
+        foreach (k; 0 .. spans)
+            foreach (i; 0 .. a.length - 1)
+            {
+                uint[] idx = [
+                    rings[k][i], rings[k + 1][i], rings[k + 1][i + 1],
+                    rings[k][i + 1]
+                ];
+                bool sub;
+                foreach (j; 0 .. 4)
+                {
+                    auto e = edgeKey(idx[j], idx[(j + 1) % 4]);
+                    auto f = e in live;
+                    if (f)
+                        foreach (fi; *f)
+                            if (fi >= 0 && ed.isFaceSubpatch(fi))
+                                sub = true;
+                }
+                emitBridgeQuad(ed, idx, live, sub, p.reverseWinding);
+            }
+        ed.declareCornerAppend();
+        return spans * (a.length - 1);
     }
-
-    size_t added = 0;
-    foreach (s; 0 .. spans)
-        added += bridgeStripPaired(ed, rings[s], rings[s + 1]);
+    Cubic[] fits;
+    auto curveDirections = curveSourceDirections(ed.mesh, groups);
+    foreach (i; 0 .. a.length)
+    {
+        auto pa = Vec3d(ed.vertices[a[i]]), pb = Vec3d(ed.vertices[b[i]]);
+        auto chord = unitD(pb - pa);
+        if (!(dotD(pb - pa, pb - pa) > 0))
+            chord = adjusted[0];
+        auto directions = p.mode == 2 ? smoothSourceDirections(ed.mesh, groups,
+                i, chord, adjusted) : curveDirections;
+        fits ~= railFit(pa, pb, directions[0], directions[1], p.tension, p.mode);
+    }
+    foreach (k; 1 .. spans)
+    {
+        double t = cast(double) k / spans;
+        foreach (i; 0 .. a.length)
+            rings[k] ~= ed.addVertex(evalSpline(fits[i .. i + 1], t).stored());
+    }
+    size_t added;
+    foreach (k; 0 .. spans)
+        added += bridgeStripPaired(ed, rings[k], rings[k + 1], p.reverseWinding);
     return added;
 }
 
@@ -641,7 +631,7 @@ size_t bridgeOpenRows(ref MeshEditBatch ed, const(uint)[] chainA, const(uint)[] 
 // ---------------------------------------------------------------------------
 static foreach (n; ["bridgeLoopsPaired", "bridgeLoops", "bridgeLoopsSpans",
                     "bridgeStripPaired", "bridgeOpenRows", "facesBoundedByLoop",
-                    "pairBridgeLoop", "bridgeTwistedVertex", "orientOpenChainB",
+                    "pairBridgeLoop", "bridgeTwistedVertex", "emitBridgeQuad", "openBridgeSegments",
                     "bridgeFanRows", "ceilDivHalfDown", "maxBridgeSpans"])
     static assert(!__traits(hasMember, Mesh, n),
         "`Mesh." ~ n ~ "` is a MEMBER again. A member BEATS a same-name UFCS free "

@@ -7,11 +7,11 @@ import operator : VectorStack;
 import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
-import mesh_ops.bridge : bridgeLoopsSpans, bridgeOpenRows, facesBoundedByLoop,
+import mesh_ops.bridge : BridgeOpenParams, openBridgeSegments, bridgeLoopsSpans, bridgeOpenRows, facesBoundedByLoop,
                          kBridgeEditScope;
 import math;
 import editmode : EditMode;
-import params : Param;
+import params : IntEnumEntry, Param;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import tools.common.session_mesh_key : SessionMeshKey;
@@ -66,30 +66,22 @@ struct PreparedBridgeDeactivateImage {
 }
 
 // ---------------------------------------------------------------------------
-// BridgeParams — single source of truth for the Bridge tool (task 0357),
-// mirrors MirrorParams / TackParams. Every drag / panel edit / headless
-// attr write goes into this struct; the preview + commit derive from it.
-//
-// `segments` is vibe3d's own span-count convention (spans = max(1, value);
-// spans-1 interior rings, linearly interpolated at t=i/spans) — the
-// reference tool's wire default of 0 (meaning "1 span, no interior rings")
-// collapses to the same geometry through the same formula, so vibe3d's
-// Param just defaults straight to 1 and clamps its floor there (task 0357
-// finding: UI-convention translation belongs at the tool layer, not a
-// special-cased kernel default — see project memory
-// project_radial_sweep_tool.md).
-//
-// `flip` is vibe3d's PRE-EXISTING loop-pairing override (mesh.bridgeLoops'
-// own `flip` param — picks the reversed nearest-vertex pairing direction).
-// This is a DIFFERENT concept from the reference tool's "Flip Polygons"
-// (a true per-face normal flip, not ported here) — labelled "Flip Loop
-// Pairing" in the panel to keep the two concepts visually distinct (task
-// 0357 naming caution).
+// Task 20261600: factory defaults and shared consumed Bridge attrs. Flip reverses
+// new quads; open twist refuses because its ring law is unknown. Open-row remove
+// is inert, polygon/closed cap deletion retains historical behavior (unmeasured
+// here). Tension is raw, unclamped; Curve/Linear patch invariance is measured,
+// Smooth/tension patch invariance is static. Smooth uses our geometry normals.
+enum BridgeMode { linear=0, curve=1, smooth=2 }
+
 struct BridgeParams {
     int   segments = 1;
     float twist    = 0.0f;
     bool  remove   = true;
     bool  flip     = false;
+    BridgeMode mode = BridgeMode.curve;
+    float tension = 1.0f;
+    bool connect = true;
+    bool autoStep = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +167,7 @@ uint[] facesMatchingLoop(const ref Mesh m, const(uint)[] loop) {
 struct BridgeApplyResult {
     size_t added;
     bool   removed;
+    uint effectiveSegments;
 }
 
 /// Apply one bridge (multi-span + twist kernel, then optional Remove
@@ -213,19 +206,22 @@ BridgeApplyResult applyBridgeOp(ref Mesh m, const(uint)[] loopA, const(uint)[] l
                                 const(uint)[] capFaces, in BridgeParams p,
                                 bool openRows = false) {
     BridgeApplyResult r;
+    if (openRows && p.twist != 0.0f) return r;
+    auto op = BridgeOpenParams(p.segments,cast(int)p.mode,p.tension,p.connect,p.autoStep,p.flip);
+    if (openRows) r.effectiveSegments = openBridgeSegments(m,loopA,loopB,op);
     uint spans = (p.segments < 1) ? 1u : cast(uint)p.segments;
     {
         // No `scope(failure)`: `MeshEditBatch.~this` pops the frame during
         // unwinding without asserting and ticks `changeBus.batchLeaks` (§2.2c).
         auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
         r.added = openRows
-            ? ed.bridgeOpenRows(loopA, loopB, p.flip, spans, p.twist)
-            : ed.bridgeLoopsSpans(loopA, loopB, p.flip, spans, p.twist);
+            ? ed.bridgeOpenRows(loopA, loopB, op)
+            : ed.bridgeLoopsSpans(loopA, loopB, spans, p.twist, p.flip);
         ed.close();
     }
     if (r.added == 0) return r;
 
-    if (p.remove && capFaces.length > 0) {
+    if (p.remove && !openRows && capFaces.length > 0) {
         auto mask = new bool[](m.faces.length);
         bool any = false;
         foreach (fi; capFaces)
@@ -659,8 +655,12 @@ public:
                 .min(1).max(64).enforceBounds(),
             Param.float_("twist", "Twist", &params_.twist, 0.0f)
                 .min(-16.0f).max(16.0f).enforceBounds(),
+            Param.intEnum_("mode", "Mode", cast(int*)&params_.mode, [IntEnumEntry(0,"linear","Linear"),IntEnumEntry(1,"curve","Curve"),IntEnumEntry(2,"smooth","Smooth")], 1),
+            Param.float_("tension", "Tension", &params_.tension, 1.0f),
+            Param.bool_("connect", "Auto Connection", &params_.connect, true),
             Param.bool_("remove", "Remove Polygons", &params_.remove, true),
-            Param.bool_("flip", "Flip Loop Pairing", &params_.flip, false),
+            Param.bool_("flip", "Flip Polygons", &params_.flip, false),
+            Param.bool_("autoStep", "Automatic", &params_.autoStep, true),
         ];
     }
 

@@ -219,8 +219,8 @@ D");
         format("expected exactly one D module named `mesh`; found %d at %s",
                pathsByModule.get("mesh", []).length,
                pathsByModule.get("mesh", [])));
-    assert(operationModules.length == 16,
-        format("expected 16 D modules declared under source/mesh_ops/*.d; "
+    assert(operationModules.length == 17,
+        format("expected 17 D modules declared under source/mesh_ops/*.d; "
              ~ "discovered %d", operationModules.length));
     size_t explicitCount;
     foreach (ref op; operationModules) {
@@ -232,8 +232,8 @@ D");
                    op.moduleName, pathsByModule.get(op.moduleName, [])));
         if (op.explicitImport) ++explicitCount;
     }
-    assert(explicitCount == 14,
-        format("R5 has fourteen explicit operation modules after tasks 4600-4602; "
+    assert(explicitCount == 15,
+        format("R5 has fifteen explicit operation modules after the Bridge patch addition; "
              ~ "the tree-derived marker set contains %d", explicitCount));
 
     const meshImports = importsOf(codeByModule["mesh"]);

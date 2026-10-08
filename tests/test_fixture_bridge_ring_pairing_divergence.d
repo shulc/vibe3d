@@ -6,11 +6,7 @@
 //     compares rings up to rotation only and never up to reflection: a
 //     winding-blind comparison calls this cell parity outright.
 //
-// (b) two_faces_flipped -- the flip flag means two different things. The
-//     reference's flip reverses the WINDING of the same four quads; ours
-//     re-pairs the two rings one step round, producing a different set of
-//     quads (ours joins (0,0,0)-(1,0,0) to (0,0,3)-(0,0,2); the reference
-//     joins it to (1,0,2)-(0,0,2)).
+// Task 20261600 closed (b): flip now reverses new quad winding.
 //
 // (c) three_segments -- a CAPABILITY GAP. The reference lays 12 quads on two
 //     intermediate rings at 1/3 and 2/3 of the span; our bridge has no

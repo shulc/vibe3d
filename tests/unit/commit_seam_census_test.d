@@ -870,7 +870,6 @@ unittest // Stage D3 — the bridge family, both receivers in one file
     // verbatim.
     static immutable string[] kConstHelpers = [
         "facesBoundedByLoop", "pairBridgeLoop", "bridgeTwistedVertex",
-        "orientOpenChainB",
     ];
     foreach (name; kConstHelpers) {
         assert(countOccurrences(br, name ~ "(ref const(Mesh) m,") == 1,
@@ -3019,7 +3018,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/bridge.d",
                  "ed.orientFaceConsistent(",
                  "orientFaceConsistent(",
-                 [LedgerRow("bridgeStripPaired", 1, "paired strip"),
+                 [LedgerRow("emitBridgeQuad", 1, "shared strip/patch quad emitter"),
                   LedgerRow("bridgeFanRows", 1, "fan rows")],
                  "the task-0394 winding-consistency vote, shared by "
                ~ "`makePolygonFromVerts` (in mesh.d) and bridge.d's "
@@ -3030,7 +3029,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "source/mesh_ops/bridge.d",
                  "ed.registerNewFaceEdges(",
                  "registerNewFaceEdges(",
-                 [LedgerRow("bridgeStripPaired", 1, "paired strip"),
+                 [LedgerRow("emitBridgeQuad", 1, "shared strip/patch quad emitter"),
                   LedgerRow("bridgeFanRows", 1, "fan rows")],
                  "the incremental edgeFaces update that lets a LATER face in the "
                ~ "same strip/fan see its already-placed siblings; bridge.d is its "

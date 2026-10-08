@@ -125,7 +125,7 @@
       "expected_before": { "verts": 8, "faces": 4 },
       "op": [
         { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
-          "params": { "segments": 1, "twist": 0, "flip": false } } }
+          "params": { "connect": false, "segments": 1, "twist": 0, "flip": false } } }
       ],
       "expected_after": { "verts": 8, "faces": 6 },
       "expected_vertices": [
@@ -159,7 +159,7 @@
       "expected_before": { "verts": 12, "faces": 4 },
       "op": [
         { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
-          "params": { "segments": 1, "twist": 0, "flip": false } } }
+          "params": { "connect": false, "segments": 1, "twist": 0, "flip": false } } }
       ],
       "expected_after": { "verts": 12, "faces": 6 },
       "expected_vertices": [
@@ -193,7 +193,7 @@
       "expected_before": { "verts": 12, "faces": 4 },
       "op": [
         { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
-          "params": { "segments": 2, "twist": 0, "flip": false } } }
+          "params": { "connect": false, "segments": 2, "twist": 0, "flip": false } } }
       ],
       "expected_after": { "verts": 15, "faces": 8 },
       "expected_vertices": [
@@ -228,7 +228,7 @@
       "expected_before": { "verts": 12, "faces": 4 },
       "op": [
         { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
-          "params": { "segments": 2, "twist": 0, "flip": false } } }
+          "params": { "connect": false, "segments": 2, "twist": 0, "flip": false } } }
       ],
       "expected_after": { "verts": 15, "faces": 8 },
       "expected_vertices": [
@@ -263,7 +263,7 @@
       "expected_before": { "verts": 12, "faces": 4 },
       "op": [
         { "endpoint": "command", "body": { "id": "mesh.bridgeTool",
-          "params": { "segments": 1, "twist": 0, "flip": false } } }
+          "params": { "connect": false, "segments": 1, "twist": 0, "flip": false } } }
       ],
       "expected_after": { "verts": 12, "faces": 7 },
       "expected_vertices": [
@@ -292,7 +292,7 @@
       "expected_before": { "verts": 6, "faces": 2 },
       "op": [
         { "endpoint": "command", "allowError": true, "body": { "id": "mesh.bridgeTool",
-          "params": { "segments": 1, "twist": 0, "flip": false } } }
+          "params": { "connect": false, "segments": 1, "twist": 0, "flip": false } } }
       ],
       "expected_after": { "verts": 6, "faces": 2 },
       "expected_vertices": [

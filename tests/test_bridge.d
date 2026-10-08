@@ -213,7 +213,7 @@ unittest { // polygon-mode bridge: caps gone, 4 quads remain
 // ---------------------------------------------------------------------------
 
 unittest { // flip=true accepted and still bridges (caps removed → 4 faces).
-           // flip only reverses the bridge pairing direction; the two rim
+           // flip reverses the new bridge quad winding; the two rim
            // loops still each bound a cap, so both caps are removed (task 0467).
     loadCaps();
     setSelection("edges", []);
@@ -336,8 +336,7 @@ unittest { // single open chain, nothing else selected -> mesh.bridge command is
 // bottom-cap normal −z).  This exercises the min-paired-distance heuristic and
 // confirms that flip=false (the default) is the correct choice: the heuristic
 // picks the reverse-direction pairing, which gives geometrically consistent
-// outward-facing quads.  flip=true would force the forward (mismatched)
-// direction and produce twisted quads — it is NOT needed for this case.
+// outward-facing quads. Flip true reverses that winding.
 
 unittest { // opposite-handed polygon bridge: auto-heuristic produces consistent outward normals
     // loopA [0,1,2,3] at z=0: CCW from +z → normal = +z.

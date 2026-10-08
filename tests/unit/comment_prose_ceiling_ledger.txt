@@ -8,11 +8,11 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 577
-task-citation-lines 5214
+source-files 578
+task-citation-lines 5206
 citing-files 457
-long-comment-runs 261
-files-with-long-runs 141
+long-comment-runs 260
+files-with-long-runs 140
 
 # Exact per-file task-citation allowances, sorted by path.
 allow source/ai/analysis.d 2
@@ -280,7 +280,7 @@ allow source/mesh_ops/bevel_curves.d 7
 allow source/mesh_ops/bevel_fin.d 7
 allow source/mesh_ops/bevel_vertex.d 11
 allow source/mesh_ops/box_geom.d 4
-allow source/mesh_ops/bridge.d 29
+allow source/mesh_ops/bridge.d 23
 allow source/mesh_ops/cleanup.d 22
 allow source/mesh_ops/connected_mask.d 4
 allow source/mesh_ops/cut.d 26
@@ -393,7 +393,7 @@ allow source/tools/deform/magnet.d 7
 allow source/tools/deform/push.d 3
 allow source/tools/deform/smooth_shift_tool.d 10
 allow source/tools/deform/stroke_extrude_tool.d 6
-allow source/tools/edit/bridge_tool.d 19
+allow source/tools/edit/bridge_tool.d 17
 allow source/tools/edit/edge_bevel.d 7
 allow source/tools/edit/edge_extend.d 29
 allow source/tools/edit/edge_extrude.d 9
@@ -551,7 +551,6 @@ allow-runs source/mesh_gpu.d 2
 allow-runs source/mesh_ops/bevel_fin.d 2
 allow-runs source/mesh_ops/bevel_vertex.d 2
 allow-runs source/mesh_ops/box_geom.d 2
-allow-runs source/mesh_ops/bridge.d 1
 allow-runs source/mesh_ops/cleanup.d 2
 allow-runs source/mesh_ops/connected_mask.d 1
 allow-runs source/mesh_ops/cut.d 1

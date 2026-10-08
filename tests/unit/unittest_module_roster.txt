@@ -361,6 +361,8 @@ tests.unit.mesh_map_kind_test
 tests.unit.mesh_ops.bevel_fin_test
 tests.unit.mesh_ops.bevel_vertex_test
 tests.unit.mesh_ops.box_geom_corner_provenance_test
+tests.unit.mesh_ops.bridge_frozen_kernel_test
+tests.unit.mesh_ops.bridge_patch_test
 tests.unit.mesh_ops.bridge_test
 tests.unit.mesh_ops.cleanup_test
 tests.unit.mesh_ops.connected_mask_test

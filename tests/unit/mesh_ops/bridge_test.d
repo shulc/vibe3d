@@ -74,7 +74,7 @@ unittest { // bridgeLoopsSpans: spans=1 degenerates EXACTLY to bridgeLoops
     m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
     m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
 
-    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u], false, 1, 0.0f);
+    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u], 1, 0.0f);
     assert(added == 4, "spans=1: expected 4 quads");
     assert(m.faces.length == 4, "spans=1: face count");
     assert(m.vertices.length == 8, "spans=1: no new verts");
@@ -96,7 +96,7 @@ unittest { // bridgeLoopsSpans: segments law (twist=0) — closed-form, exact
     m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
     m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
 
-    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u], false, 3, 0.0f);
+    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u], 3, 0.0f);
     assert(added == 12, format("spans=3: expected 12 quads (3 spans * 4), got %d", added));
     assert(m.faces.length == 12, "spans=3: face count");
     assert(m.vertices.length == 16, "spans=3: 8 orig + 8 new (2 rings * 4)");
@@ -135,7 +135,7 @@ unittest { // bridgeLoopsSpans: twist law, |twist|=1 — VERIFIED EXACT regime
     m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
     m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
 
-    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u], false, 3, 1.0f);
+    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u], 3, 1.0f);
     assert(added == 12, "twist=1: expected 12 quads");
     assert(m.vertices.length == 16, "twist=1: 8 orig + 8 new");
 
@@ -165,7 +165,7 @@ unittest { // bridgeLoopsSpans: DoS defense — huge spans clamps to maxBridgeSp
     m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
     m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
 
-    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u], false,
+    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u],
                                       100_000_000u, 0.0f);
     assert(added == maxBridgeSpans * 4,
         format("huge spans must clamp to maxBridgeSpans, got %d (expected %d)",
@@ -185,7 +185,7 @@ unittest { // bridgeOpenRows: equal-length spans=1 strip, spans=2 midpoint
         m.addVertex(Vec3(0,1,0)); m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(2,1,0));
         size_t vertsBefore = m.vertices.length;
 
-        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u], [3u,4u,5u], false, 1u, 0.0f);
+        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u], [3u,4u,5u], BridgeOpenParams(1,0));
         assert(added == 2, "spans=1: expected 2 quads (N-1), got " ~ added.to!string);
         assert(m.faces.length == 2, "spans=1: expected 2 faces total");
         assert(m.vertices.length == vertsBefore, "spans=1: no new verts on existing-vert strip");
@@ -198,7 +198,7 @@ unittest { // bridgeOpenRows: equal-length spans=1 strip, spans=2 midpoint
         m.addVertex(Vec3(0,1,0)); m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(2,1,0));
         size_t vertsBefore = m.vertices.length;
 
-        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u], [3u,4u,5u], false, 2u, 0.0f);
+        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u], [3u,4u,5u], BridgeOpenParams(2,0));
         assert(added == 4, "spans=2: expected 4 quads (2 spans * (N-1)), got " ~ added.to!string);
         assert(m.vertices.length == vertsBefore + 3,
             "spans=2: expected exactly 3 new interior-ring verts, got "
@@ -222,7 +222,7 @@ unittest { // bridgeOpenRows: equal-length spans=1 strip, spans=2 midpoint
         m.addVertex(Vec3(2,1,0)); m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
         size_t vertsBefore = m.vertices.length;
 
-        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u], [3u,4u,5u], false, 2u, 0.0f);
+        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u], [3u,4u,5u], BridgeOpenParams(2,0));
         assert(added == 4, "proximity case: expected 4 quads, got " ~ added.to!string);
         assert(m.vertices.length == vertsBefore + 3, "proximity case: expected 3 new interior verts");
 
@@ -242,7 +242,7 @@ unittest { // bridgeOpenRows: equal-length spans=1 strip, spans=2 midpoint
     {
         Mesh m;
         m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
-        assert(bridgeOnce!bridgeOpenRows(m, [0u], [1u], false, 1u, 0.0f) == 0,
+        assert(bridgeOnce!bridgeOpenRows(m, [0u], [1u], BridgeOpenParams(1,0)) == 0,
             "single-vertex chain must be rejected");
     }
 }
@@ -277,7 +277,7 @@ unittest { // bridgeOpenRows: unequal-length fan/triangulate — captured 3:1
     {
         Mesh m = makeFanMesh();
         size_t vertsBefore = m.vertices.length;
-        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u,3u], [4u,5u], false, 1u, 0.0f);
+        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u,3u], [4u,5u], BridgeOpenParams(1,0));
         assertCapturedFan(m, vertsBefore, added);
     }
 
@@ -287,7 +287,7 @@ unittest { // bridgeOpenRows: unequal-length fan/triangulate — captured 3:1
     {
         Mesh m = makeFanMesh();
         size_t vertsBefore = m.vertices.length;
-        size_t added = bridgeOnce!bridgeOpenRows(m, [4u,5u], [0u,1u,2u,3u], false, 1u, 0.0f);
+        size_t added = bridgeOnce!bridgeOpenRows(m, [4u,5u], [0u,1u,2u,3u], BridgeOpenParams(1,0));
         assertCapturedFan(m, vertsBefore, added);
     }
 }
@@ -310,7 +310,7 @@ unittest { // bridgeOpenRows: unequal-length fan — DDA formula (task 0395
     m.addVertex(Vec3(0,1,0)); m.addVertex(Vec3(2.5,1,0)); m.addVertex(Vec3(5,1,0));
 
     size_t vertsBefore = m.vertices.length;
-    size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u,3u,4u,5u], [6u,7u,8u], false, 1u, 0.0f);
+    size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u,3u,4u,5u], [6u,7u,8u], BridgeOpenParams(1,0));
 
     assert(added == 5, "5:2 fan: expected 5 faces (N), got " ~ added.to!string);
     assert(m.faces.length == 5, "5:2 fan: expected exactly 5 faces total");
@@ -353,7 +353,7 @@ unittest { // bridgeStripPaired / bridgeOpenRows: INTRA-STRIP mixed-pinning
     m.buildLoops();
 
     size_t facesBefore = m.faces.length;   // 1 (F0 only)
-    size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,4u], [5u,6u,7u], false, 1u, 0.0f);
+    size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,4u], [5u,6u,7u], BridgeOpenParams(1,0));
     assert(added == 2, "mixed-pinning strip: expected 2 bridge quads, got " ~ added.to!string);
     assert(m.faces.length == facesBefore + 2, "mixed-pinning strip: expected 3 faces total");
 
@@ -484,7 +484,7 @@ unittest { // bridgeStripPaired / bridgeOpenRows: same guarantee on the open-row
     foreach (p; [Vec3(2,0,0), Vec3(3,0,0), Vec3(4,0,0),
                  Vec3(2,1,0), Vec3(3,1,0), Vec3(4,1,0)])
         m.addVertex(p);
-    size_t added = bridgeOnce!bridgeOpenRows(m, [4u,5u,6u], [7u,8u,9u], false, 1u, 0.0f);
+    size_t added = bridgeOnce!bridgeOpenRows(m, [4u,5u,6u], [7u,8u,9u], BridgeOpenParams(1,0));
     assert(added == 2, "expected 2 bridge quads on the open-row path");
     m.buildLoops();
 
@@ -505,7 +505,7 @@ unittest { // bridgeFanRows (unequal-length open rows): same guarantee
     foreach (p; [Vec3(2,0,0), Vec3(3,0,0), Vec3(4,0,0), Vec3(5,0,0),
                  Vec3(2,1,0), Vec3(5,1,0)])
         m.addVertex(p);
-    size_t added = bridgeOnce!bridgeOpenRows(m, [4u,5u,6u,7u], [8u,9u], false, 1u, 0.0f);
+    size_t added = bridgeOnce!bridgeOpenRows(m, [4u,5u,6u,7u], [8u,9u], BridgeOpenParams(1,0));
     assert(added == 3, "expected 3 faces (2 tri + 1 quad) on the fan path");
     m.buildLoops();
 
@@ -587,7 +587,7 @@ unittest // a recording bridge declares kBridgeEditScope, logs AddVerts/AddFaces
         {
             auto ed = MeshEditBatch(m, kBridgeEditScope);   // RECORDING
             n = ed.bridgeLoopsSpans([0u, 1u, 2u, 3u], [4u, 5u, 6u, 7u],
-                                    false, spans, 0.0f);
+                                    spans, 0.0f);
             d = ed.close();
         }
 

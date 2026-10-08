@@ -3,7 +3,7 @@ module commands.mesh.bridge;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
-import mesh_ops.bridge : bridgeLoops, bridgeOpenRows, facesBoundedByLoop,
+import mesh_ops.bridge : BridgeOpenParams, bridgeLoops, bridgeOpenRows, facesBoundedByLoop,
                          kBridgeEditScope;
 import view;
 import editmode;
@@ -185,7 +185,7 @@ class MeshBridge : Command, Operator {
             {
                 auto ed = openBatch();
                 n = bothOpen
-                    ? ed.bridgeOpenRows(chains[0].verts, chains[1].verts, flip_, 1u, 0.0f)
+                    ? ed.bridgeOpenRows(chains[0].verts, chains[1].verts, BridgeOpenParams(1,1,1.0f,false,true,flip_))
                     : ed.bridgeLoops(chains[0].verts, chains[1].verts, flip_);
                 if (n != 0) {
                     // deleteFacesByMask compacts orphans + rebuilds loops
