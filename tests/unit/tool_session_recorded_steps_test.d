@@ -799,6 +799,12 @@ unittest { // History clear can leave a pending producer without an activation r
     session.noteArm("empty-pending",694);
     assert(producer.hasUncommittedEdit() && history.undoEntries().length == 0 &&
         history.redoEntries().length == 0,"EMPTY_PENDING_CONTROL: pending owner with zero history entries");
+    import held_gesture_buttons : g_heldGestureButtons;
+    g_heldGestureButtons.press(1);
+    scope(exit) g_heldGestureButtons.clear();
+    assert(!session.navigate(true) && producer.cancels == 0 && producer.pending && active is producer,
+        "HELD_PENDING_UNDO: session refuses direct navigation during a held gesture");
+    g_heldGestureButtons.clear();
     assert(session.navigate(true) && producer.cancels == 1 && !producer.pending && active is null,
         "EMPTY_PENDING_CANCEL: cancellation and plain drop succeed without a row");
     assert(history.undoEntries().length == 0 && history.redoEntries().length == 0,
