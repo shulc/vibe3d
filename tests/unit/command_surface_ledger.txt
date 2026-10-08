@@ -42,6 +42,7 @@ mesh.align | no-ui-yet: user-facing polygon alignment operation has no action
 mesh.array | api-only: headless counterpart of the configured mesh.arrayTool
 mesh.bevel | unclassified: generic bevel command coexists with specialized bevel tools
 mesh.bevel_edit | api-only: replay carrier for an interactive tool session, not a fresh action
+mesh.bridge | api-only: legacy one-shot bridge retained for scripts; panel exposes mesh.bridgeTool (task 20261650)
 mesh.clone | no-ui-yet: clone tool and one-shot command are both absent from configured UI
 mesh.edgeCrease.clear | no-ui-yet: crease assignment is surfaced but clearing it is not
 mesh.edgeSlice | api-only: headless counterpart of the configured mesh.edgeSliceTool
