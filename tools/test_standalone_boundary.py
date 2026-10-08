@@ -161,7 +161,7 @@ class BoundaryControls(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('no source files', result.stderr)
             description = json.loads(result.stdout)
-            with self.assertRaisesRegex(boundary.BoundaryError, 'test-root population'):
+            with self.assertRaisesRegex(boundary.BoundaryError, 'target population'):
                 boundary.validate_settings(description, root)
             self.assertEqual((root / 'describe.stderr.log').read_text(), result.stderr)
 
