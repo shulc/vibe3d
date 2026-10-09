@@ -161,13 +161,13 @@ private void noOrphan(string root) {
 }
 
 private void loadDesktop(string input) {
-    postJson("/api/reset", `{}`);
+    command("scene.reset");
     command("file.load", JSONValue(["path": JSONValue(input)]).toString);
     command("history.clear");
     quiesce();
 }
 private JSONValue fixture(string root) {
-    postJson("/api/reset", `{}`);
+    command("scene.reset");
     auto seed = buildPath(root, "seed.v3d");
     command("file.save", JSONValue(["path": JSONValue(seed)]).toString);
     auto doc = parseJSON(readText(seed));
@@ -201,7 +201,7 @@ private Run differential(string root, JSONValue doc, string[] scriptRows, bool s
     loadDesktop(input);
     auto previousDesktop = desktopState(), previousCli = result.states[0]["state"];
     parity(previousCli, previousDesktop, JSONValue.init, JSONValue.init);
-    size_t step;
+    size_t step, stdoutStep;
     foreach (offset, row; scriptRows) {
         if (!row.strip.length) continue;
         auto actual = result.states[step + 1];
@@ -219,6 +219,11 @@ private Run differential(string root, JSONValue doc, string[] scriptRows, bool s
             assert(valid && actual["phase"].str == "command"
                 && actual["id"] == commandRow["id"] && actual["outcome"].str == expected,
                 "CLI state: exact command roster/outcome/timing");
+            assert(stdoutStep < result.outcomes.length, "CLI stdout: command outcome row present");
+            auto printed = result.outcomes[stdoutStep++];
+            assert(printed.object.length == 3 && printed["line"] == actual["line"]
+                && printed["id"] == actual["id"] && printed["outcome"] == actual["outcome"],
+                "CLI stdout: exact physical line/id/outcome schema");
             auto response = parseJSON(postRawAllowingErrorStatus("/api/command", row));
             assert(response["status"].str == (expected == "refused" ? "error" : "ok"),
                 "CLI differential: actual HTTP refusal/status contract");
@@ -230,8 +235,10 @@ private Run differential(string root, JSONValue doc, string[] scriptRows, bool s
         ++step;
         if (expected == "refused" || expected == "error") break;
     }
+    assert(stdoutStep == result.outcomes.length, "CLI stdout: no extra or error outcome rows");
     assert(step == outcomes.length, "CLI state: all expected physical rows observed");
     if (success) {
+        assert(result.error.strip.length == 0, "CLI stderr: successful run has no error");
         auto last = result.states[$ - 1];
         assert(last["phase"].str == "pre-save" && last["line"].type == JSONType.null_
             && last["id"].type == JSONType.null_ && last["outcome"].type == JSONType.null_
@@ -242,7 +249,17 @@ private Run differential(string root, JSONValue doc, string[] scriptRows, bool s
             "CLI reopen: complete authored geometry/maps/layers match desktop production save");
         loadDesktop(output);
         assert(getJson("/api/model")["faces"].array.length > 0, "CLI reopen: nonempty native output loaded");
-    } else assert(readText(output) == "sentinel", "CLI transaction: failed run preserves existing output sentinel");
+    } else {
+        auto errors = jsonRows(result.error);
+        assert(errors.length == 1 && errors[0].object.length == 4
+            && errors[0]["error"].type == JSONType.string && errors[0]["error"].str.length > 0
+            && errors[0]["line"] == result.states[$ - 1]["line"]
+            && errors[0]["id"] == result.states[$ - 1]["id"], "CLI stderr: exact JSON error schema/physical line/id");
+        assert(errors[0]["stage"].str == (outcomes[$ - 1] == "refused" ? "refused" :
+            (result.states[$ - 1]["id"].type == JSONType.null_ ? "script" : "command")),
+            "CLI stderr: parser/command/refused distinct diagnostic stage");
+        assert(readText(output) == "sentinel", "CLI transaction: failed run preserves existing output sentinel");
+    }
     noOrphan(root);
     return result;
 }
@@ -275,6 +292,14 @@ unittest {
         && cleanPlanes(quad.states[6]["state"]["planes"]) == after,
         "CLI undo/redo: exact whole-plane roundtrip");
     auto saved = parseJSON(readText(buildPath(root, "output.v3d")));
+    auto parent = doc["layers"][0]["mesh"]["faces"][0].array;
+    assert(parent.length == 4, "CLI winding oracle: source face is populated quad");
+    auto childA = JSONValue([parent[0], parent[1], parent[2]]);
+    auto childB = JSONValue([parent[0], parent[2], parent[3]]);
+    size_t children;
+    foreach (face; saved["layers"][0]["mesh"]["faces"].array)
+        if (face == childA || face == childB) ++children;
+    assert(children == 2, "CLI reopen: exact oriented triangle children preserve source quad winding");
     assert(saved["layers"].array.length == 2 && saved["layers"][0]["mesh"]["faces"].array.length == 7,
         "CLI selected quad: reopened authored layers and geometry population");
     differential(root, doc, [`{"id":"mesh.select","params":{"mode":"polygons","indices":[]}}`,
@@ -334,7 +359,27 @@ unittest {
                 "CLI diagnostics alias: lexical/symlink/hardlink preserves protected file");
         }
     }
+    // Symlink/.. is resolved by the filesystem before lexical normalization.
+    auto actualDir = buildPath(root, "actual"), branchDir = buildPath(root, "branch");
+    mkdirRecurse(buildPath(actualDir, "leaf")); mkdirRecurse(branchDir);
+    symlink(buildPath(actualDir, "leaf"), buildPath(branchDir, "link"));
+    write(buildPath(actualDir, "input.v3d"), doc.toString);
+    write(buildPath(branchDir, "input.v3d"), "different lexical document");
+    auto requestedInput = buildPath(branchDir, "link", "..", "input.v3d");
+    auto requestedOutput = buildPath(branchDir, "link", "..", "out.v3d");
+    auto pathRun = runCli(root, requestedInput, script, requestedOutput, buildPath(root, "state.jsonl"));
+    assert(pathRun.status == 0 && exists(buildPath(actualDir, "out.v3d"))
+        && !exists(buildPath(branchDir, "out.v3d"))
+        && parseJSON(readText(buildPath(actualDir, "out.v3d"))) == doc,
+        "CLI filesystem path: symlink parent/.. preserves requested document/output directory");
+    auto protectedBytes = read(requestedInput);
+    auto pathAlias = runCli(root, requestedInput, script, output, requestedInput);
+    assert(pathAlias.status == 1 && read(requestedInput) == protectedBytes,
+        "CLI diagnostics alias: symlink parent/.. preserves requested input");
     auto missing = runCli(root, buildPath(root, "missing.v3d"), script, output, buildPath(root, "empty-state.jsonl"));
+    auto loadError = jsonRows(missing.error);
+    assert(loadError.length == 1 && loadError[0]["stage"].str == "load"
+        && loadError[0]["line"].type == JSONType.null_, "CLI stderr: native load diagnostic path");
     assert(missing.status == 1 && missing.states.length == 0, "CLI load error: no loaded state rows");
     auto sentinel = read(output);
     write(input, "bad native");
@@ -344,6 +389,9 @@ unittest {
     auto unwritable = runCli(root, input, script, buildPath(root, "missing-dir/out.v3d"), buildPath(root, "state.jsonl"));
     assert(unwritable.status == 1 && unwritable.states.length == 2
         && unwritable.states[$ - 1]["phase"].str == "pre-save", "CLI save error: pre-save retained before production failure");
+    auto saveError = jsonRows(unwritable.error);
+    assert(saveError.length == 1 && saveError[0]["stage"].str == "save"
+        && saveError[0]["line"].type == JSONType.null_, "CLI stderr: native save diagnostic path");
     noOrphan(root);
     writeln("CLI-WITNESS source=", sourcePin, " binary-sha256=", binaryHash, " roster=4 cases=quad,whole,triangle,no-target,errors,unicode,aliases,atomic");
 }

@@ -2,6 +2,7 @@ module main;
 
 import command_invocation : CommandInvocationOutcome;
 import document : Document;
+import log : g_stderrMinLevel, LogLevel;
 import io.native : readV3d, writeV3d, lastV3dRejectReason;
 import standalone_application : StandaloneApplication;
 import std.conv : to;
@@ -86,6 +87,7 @@ private void save(StandaloneApplication host, string output) {
 }
 
 int main(string[] args) {
+    g_stderrMinLevel = LogLevel.Error;
     string stage = "arguments";
     JSONValue line, id;
     StandaloneApplication host;
