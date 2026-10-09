@@ -81,7 +81,7 @@ unittest {
         "standalone-current-context: supported commands establish nonzero gauge");
     const currentDeliveries = changeBus.deliveryCount;
     host.document.layers = null; host.document.noteLayerListChanged();
-    assert(!host.document.hasEditTarget() && host.document.primary is null
+    assert(!host.document.hasEditTarget() && host.document.primary is null && !g_editTargetResolver()
         && changeBus.deliveryCount == currentDeliveries,
         "standalone-current-context: target removal has no mesh delivery");
     auto currentContext = host.state();
@@ -119,7 +119,7 @@ unittest {
     auto host = new StandaloneApplication(doc);
     scope(exit) host.close();
     auto before = host.state();
-    assert(!before["hasEditTarget"].boolean && host.document.primary is null
+    assert(!before["hasEditTarget"].boolean && host.document.primary is null && !g_editTargetResolver()
         && before["history"]["undo"].array.length == 0
         && before["history"]["redo"].array.length == 0
         && before["history"]["modelDepth"].uinteger == 0

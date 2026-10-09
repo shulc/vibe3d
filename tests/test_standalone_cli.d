@@ -533,7 +533,9 @@ unittest {
         "CLI diagnostics: actual write failure preserves native files before commands/save");
     errorSchema(diagnosticWrite, "diagnostics");
     foreach (flags; [cast(string[])[], ["run"], ["bad"], ["run", "--other", "file"],
-        ["run", "--input"], ["run", "--input", ""], ["run", "--input", input, "--input", input, "--commands", script, "--output", output]]) {
+        ["run", "--input"], ["run", "--input", ""],
+        ["run", "--input", input, "--commands", script, "--output", output, "--state-output", ""],
+        ["run", "--input", input, "--input", input, "--commands", script, "--output", output]]) {
         auto badArguments = execute([buildPath(repo, "tools/cli/vibe3d-cli")] ~ flags);
         Run bad; bad.status = badArguments.status; bad.error = badArguments.output;
         errorSchema(bad, "arguments");
