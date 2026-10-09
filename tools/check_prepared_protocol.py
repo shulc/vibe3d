@@ -986,8 +986,8 @@ coalescing_doors = {
     "source/input_router.d": ("app.history.recordCoalescing(cmd);",),
     "source/command_executor.d": (
         "case RecordMode.Coalescing: history.recordCoalescing(cmd); break;",),
-    "source/application_command_binding.d": (
-        "dispatchResult = uiResult(command, RecordMode.Coalescing, id);",
+    "source/command_invocation.d": (
+        "dispatchResult = result(invokeUi(command, RecordMode.Coalescing, id), command);",
         "executor.applyOrRefire(command, RecordMode.Coalescing, null)",),
 }
 for relative, fingerprints in coalescing_doors.items():

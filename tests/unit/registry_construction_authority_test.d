@@ -220,7 +220,7 @@ static assert(__traits(compiles, {
 // The complete member pin catches a new writable capability even when it has
 // an unrelated name. Keep this after the targeted existence/visibility fence.
 static assert([__traits(allMembers, Registry)] == [
-    "toolFactories_", "commandRegistry_", "registerCommand", "registerTool",
+    "toolFactories_", "commandRegistry_", "commandRegistry", "registerCommand", "registerTool",
     "replaceCommand", "replaceTool", "aliasCommand", "hasCommand",
     "hasTool", "commandIds", "toolIds", "toolFactory", "makeCommand",
     "bindSelTypeAuthority", "preActivate", "preparedPipeAttrs",
@@ -407,6 +407,11 @@ unittest {
 unittest {
     const lower = blankNonCode(readText(buildPath(repoRoot, "source", "command_registry.d")));
     const desktop = blankNonCode(readText(buildPath(repoRoot, "source", "registry.d")));
+    const exposed = symbolTokenHits(desktop, "source/registry.d",
+        "return commandRegistry_");
+    assert(desktop.count("ref CommandRegistry commandRegistry()") == 1
+        && exposed.length == 1 && exposed[0].key == "Registry.commandRegistry",
+        "1D Registry getter must return the embedded lower owner by ref");
     const attached = symbolTokenHits(lower, "source/command_registry.d",
         "command.setSelTypeProvider(selTypeAuthority_)");
     assert(attached.length == 1 && attached[0].key == "CommandRegistry.makeCommand",
@@ -423,4 +428,17 @@ unittest {
         "commandRegistry_.cacheSupportedModes()");
     assert(cached.length == 1 && cached[0].key == "Registry.cacheSupportedModes",
         "1C desktop metadata must walk its embedded command owner once");
+
+    Registry reg;
+    auto lower = &reg.commandRegistry();
+    assert(lower is &reg.commandRegistry(),
+        "1D Registry getter must retain the same lower owner address");
+    auto original = new OriginalProbeCommand("k.getter");
+    lower.registerCommand("k.getter", () => cast(Command) original);
+    assert(reg.makeCommand("k.getter") is original,
+        "1D lower getter registration must reach desktop construction");
+    auto replacement = new ReplacementProbeCommand("k.getter");
+    reg.replaceCommand("k.getter", () => cast(Command) replacement);
+    assert(lower.makeCommand("k.getter") is replacement,
+        "1D desktop replacement must reach the same lower getter owner");
 }
