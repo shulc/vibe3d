@@ -152,7 +152,7 @@ unittest {
 // applySetAttr is a hand-written string-switch parser that can't be derived
 // the same way — so this unittest pins the remaining half of the invariant:
 // every name listAttrs() reports must be a name applySetAttr actually
-// accepts, round-tripping the CURRENT value back through a dry-run setAttr.
+// accepts, round-tripping the CURRENT value through the public setAttr path.
 // A name present in listAttrs() but rejected by applySetAttr (or vice versa,
 // caught indirectly since knownAttrs() == listAttrs() names by construction)
 // would fail here instead of silently drifting.
@@ -166,7 +166,7 @@ unittest {
     foreach (pair; fs.listAttrs()) {
         string name  = pair[0];
         string value = pair[1];
-        assert(fs.applySetAttr(name, value),
+        assert(fs.setAttr(name, value),
                "listAttrs() name '" ~ name ~ "' (value '" ~ value
                ~ "') was rejected by applySetAttr — knownAttrs()/listAttrs()/"
                ~ "applySetAttr have drifted apart");
