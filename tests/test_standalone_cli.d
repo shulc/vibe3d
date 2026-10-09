@@ -314,7 +314,7 @@ unittest {
         if (face.array.length != 3) continue;
         foreach (corner; face.array) assert(sourcePositions.canFind(vertices[corner.integer]), "CLI winding oracle: child belongs to selected source quad");
         auto childNormal = normal(vertices[face[0].integer], vertices[face[1].integer], vertices[face[2].integer]);
-        double alignment; foreach (i; 0 .. 3) alignment += sourceNormal[i] * childNormal[i];
+        double alignment = 0; foreach (i; 0 .. 3) alignment += sourceNormal[i] * childNormal[i];
         assert(alignment > 0, "CLI reopen: triangle winding agrees with source quad orientation alignment=" ~ alignment.to!string);
         ++children;
     }
