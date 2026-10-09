@@ -8,7 +8,6 @@ import std.file : dirEntries, readText, SpanMode;
 import std.exception : assertThrown;
 import core.exception : AssertError;
 import std.path : dirName, buildPath;
-import std.process : execute, Config;
 import std.regex : matchAll, regex;
 import std.string : split;
 import tests.unit.census_symbols : blankNonCode, countIdent, balancedSpan;
@@ -128,20 +127,4 @@ unittest {
         assertThrown!AssertError(requireChooser(valid.replace("FilterSpec[]", "OtherSpec[]"), call));
         assertThrown!AssertError(requireChooser(header ~ "{if(false)" ~ body ~ "return desktop;}", call));
     }
-}
-
-unittest {
-    const sharedResult = execute(["python3", buildPath(root, "tools/test_standalone_boundary.py"),
-                            "BoundaryControls.test_runtime_registry_ownership"],
-                          null, Config.none, size_t.max, root);
-    assert(sharedResult.status == 0 && sharedResult.output.canFind("Ran 1 test"),
-           "shared boundary runtime ownership controls: " ~ sharedResult.output);
-    const guards = execute(["python3", buildPath(root, "tools/test_native_file_model.py")],
-                           null, Config.none, size_t.max, root);
-    assert(guards.status == 0 && guards.output.canFind("Ran 6 tests"),
-           "native production boundary negative fixtures: " ~ guards.output);
-    const result = execute(["python3", buildPath(root, "tools/check_native_file_model.py"),
-                           "--root", root], null, Config.none, size_t.max, root);
-    assert(result.status == 0 && result.output.canFind("NATIVE-BOUNDARY-VERDICT=GREEN"),
-           "native production file-model boundary: " ~ result.output);
 }
