@@ -256,8 +256,8 @@ unittest {
     pinClosure("transform_tool_registration", transform, 257);
     pinClosure("registration", positive, 525);
     assert(transform.queue.length == 257 && positive.queue.length == 525,
-        format("6506 import closure census changed: transform=%d/254 "
-            ~ "registration=%d/522", transform.queue.length,
+        format("6506 import closure census changed: transform=%d/257 "
+            ~ "registration=%d/525", transform.queue.length,
             positive.queue.length));
 }
 

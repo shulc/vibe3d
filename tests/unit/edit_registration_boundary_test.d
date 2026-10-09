@@ -292,8 +292,8 @@ unittest {
     pinClosure("edit_tool_registration", edit, 257);
     pinClosure("registration", positive, 525);
     assert(edit.queue.length == 257 && positive.queue.length == 525,
-        format("6670 import closure census changed: edit=%d/254 "
-            ~ "registration=%d/522", edit.queue.length,
+        format("6670 import closure census changed: edit=%d/257 "
+            ~ "registration=%d/525", edit.queue.length,
             positive.queue.length));
 }
 
