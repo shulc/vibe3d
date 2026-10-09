@@ -262,6 +262,7 @@ unittest { // production wiring, scope fences, and the single panel owner
     const registration = readText(buildPath(repoRoot, "source", "registration.d"));
     const registrar = readText(buildPath(repoRoot, "source",
         "history_macro_registration.d"));
+    const pilot = readText(buildPath(repoRoot, "source", "pilot_command_registration.d"));
     const lifecycle = readText(buildPath(repoRoot, "source",
         "scene_file_lifecycle_registration.d"));
     const app = readText(buildPath(repoRoot, "source", "app.d"));
@@ -271,14 +272,16 @@ unittest { // production wiring, scope fences, and the single panel owner
     assert(registrar.count("EditorApp") == 0
         && registrar.count("editor_app") == 0,
         "5810 narrow-role witness: registrar imports or names EditorApp");
-    assert(registrar.count(
-            "new HistoryUndo(&session.activeMesh(), live.view(), live.mode, history)") == 1
-        && registrar.count(
-            "new HistoryRedo(&session.activeMesh(), live.view(), live.mode, history)") == 1
+    assert(pilot.count(
+            "new HistoryUndo(&deps.activeMesh(), deps.view(), *deps.mode, history)") == 1
+        && pilot.count(
+            "new HistoryRedo(&deps.activeMesh(), deps.view(), *deps.mode, history)") == 1
+        && registrar.count("registerHistoryNavigationCommands(reg.commandRegistry(),") == 1
         && registrar.count("EditSession") == 0
         && registrar.count(".navigate(") == 0,
         "5810 raw-door fence: history.undo/redo stopped stepping CommandHistory directly");
-    assert(registrar.count("reg.registerCommand(") == 11,
+    assert(registrar.count("reg.registerCommand(") == 9
+        && pilot.count("registry.registerCommand(\"history.") == 2,
         "5810 registrar id population changed from 11");
     assert(registrar.count("scene.reset") == 0
         && registrar.count("scene.loadMesh") == 0
