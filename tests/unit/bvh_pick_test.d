@@ -574,7 +574,9 @@ unittest {
     Vec3 eye = Vec3(0,5,0);
     Viewport vp = Viewport(lookAt(eye,Vec3(0,0,0),Vec3(0,0,-1)),
         perspectiveMatrix(PI/4,1,0.01f,100),200,200,0,0,eye);
-    assert(pick.pickSurface(100,100,vp,src,ModelSpace.world(),hit,&gpu));
+    // A fresh picker prevents the mapped ray's cached face map from answering for this facade.
+    auto screenPick = new BvhPick;
+    assert(screenPick.pickSurface(100,100,vp,src,ModelSpace.world(),hit,&gpu));
     assert(hit.face == 7 && fabs(hit.point.y) < 1e-4f, "screen facade forwards GPU mapping and viewport");
     ModelSpace moved;
     moved.m = translationMatrix(Vec3(0,2,0));
