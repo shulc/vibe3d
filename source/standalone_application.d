@@ -58,8 +58,10 @@ public:
         });
         registry_.bindSelTypeAuthority(() => session_.selTypeOrder.current());
         PilotCommandDeps deps;
-        deps.activeMesh = () ref => session_.editMesh();
-        deps.view = () ref => view_;
+        ref Mesh liveMesh() { return session_.editMesh(); }
+        ref View liveView() { return view_; }
+        deps.activeMesh = &liveMesh;
+        deps.view = &liveView;
         deps.mode = session_.editModePtr();
         deps.resolvedViewport = () => view_.viewport();
         deps.promoteGeometryType = (mode) { session_.promoteGeometryType(mode); };
