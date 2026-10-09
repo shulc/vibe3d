@@ -259,6 +259,25 @@ def validate_cli_settings(description, root):
     return settings, sources, native
 
 
+def produced_image_archive(invocations, description):
+    package = next(p for p in description['packages'] if p['name'] == 'd-stb-image')
+    image = Path(package['path']).resolve()
+    library = [row for row in invocations if '-lib' in row['argv']]
+    require(len(library) == 1, 'fresh pinned image archive compilation population must equal one')
+    row = library[0]
+    roots = {(Path(row['cwd']) / p).resolve() for p in row['argv']
+             if not p.startswith('-') and p.endswith(('.d', '.di', '.c', '.cpp'))}
+    require(roots == {image / 'source/stb_image/c.d'}, 'image archive has unexpected compiler roots')
+    outputs = [p[3:].removeprefix('=') for p in row['argv'] if p.startswith('-of')]
+    require(len(outputs) == 1, 'pinned image archive output population changed')
+    output = Path(outputs[0]).resolve()
+    cache = image.parents[3] / 'cache/d-stb-image/~master/build'
+    require(output.is_relative_to(cache) and output.name == 'libd-stb-image.a',
+            'image archive output is outside its actual DUB cache owner')
+    require(output.is_file(), 'fresh pinned image archive output missing')
+    return str(output)
+
+
 def source_census(files, project, with_tests):
     # Reuse the existing libdparse span service for literal/comment/unittest
     # boundaries. Compiler inputs remain the authority for active versions.
@@ -360,6 +379,8 @@ def main(argv=None):
             command += settings.get('dflags', []) + list(map(str, sources))
         result = run(command, root, env, evidence, 'build-run')
     invocations = [json.loads(line) for line in commands.read_text().splitlines()]
+    if cli:
+        native_inputs.add(produced_image_archive(invocations, description))
     object_outputs = {p[3:].removeprefix('=') for row in invocations if '-c' in row['argv']
                       for p in row['argv'] if p.startswith('-of')}
     modules, files = compiler_inputs(deps.read_text() if deps.is_file() else '', result.stdout, root)
