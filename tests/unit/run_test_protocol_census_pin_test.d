@@ -56,10 +56,10 @@
 module tests.unit.run_test_protocol_census_pin_test;
 
 import std.exception : enforce;
-import std.file      : exists, readText;
+import std.file      : exists, readText, tempDir, mkdirRecurse, rmdirRecurse;
 import std.format    : format;
 import std.path      : buildPath, dirName;
-import std.process   : execute;
+import std.process   : execute, environment, thisProcessID;
 import std.string    : indexOf;
 
 import tests.unit.census_symbols : sharedBlankNonCode = blankNonCode;
@@ -126,7 +126,13 @@ for owner, floor in owners.items():
         if got != [want]:
             raise SystemExit(f"prepared-protocol omission guard {owner}: got {got!r}, want {[want]!r}")
 PY";
-    const result = execute(["python3", "-c", probe, repoRoot]);
+    const scratch = buildPath(tempDir(), format("protocol-census-%d", thisProcessID));
+    mkdirRecurse(scratch);
+    scope(exit) rmdirRecurse(scratch);
+    auto env = environment.toAA;
+    env["VIBE3D_HARNESS_LOG"] = "off";
+    env["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = buildPath(scratch, "run.lock");
+    const result = execute(["python3", "-c", probe, repoRoot], env);
     assert(result.status == 0, result.output);
 }
 
