@@ -93,7 +93,8 @@ private DependencyGraph readDependencyGraph(string path)
         const importer = importerField[0 .. cast(size_t) importerEnd];
         const target = targetField[0 .. targetEnd];
         result.edges[importer] ~= target;
-        if (importerField.indexOf(" (source/") >= 0)
+        if (importerField.indexOf(" (source/") >= 0
+                || importerField.indexOf(" (packages/common/source/") >= 0)
             result.ours[importer] = true;
         ++result.edgeCount;
     }

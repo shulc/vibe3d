@@ -17,7 +17,7 @@ import std.algorithm : sort, endsWith;
 import std.array     : array, replace;
 import std.file      : dirEntries, readText, SpanMode;
 import std.format    : format;
-import std.path      : buildPath, dirName;
+import std.path      : buildPath, dirName, relativePath;
 import std.regex     : ctRegex, matchAll, matchFirst;
 import std.string    : indexOf, strip;
 
@@ -126,7 +126,7 @@ unittest { // the layout census: four files, one stride constant, no other spell
     foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = relativePath(de.name, buildPath(root, "source")).replace("\\", "/");
-        if (bindsFaceVbo(codeOf(rel))) files ~= rel;
+        if (bindsFaceVbo(blankUnittestBodies(blankNonCode(readText(de.name))))) files ~= rel;
     }
     files.sort();
     // Floor first [E4]: the rule's population (names printed).

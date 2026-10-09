@@ -73,6 +73,9 @@ case " $flags " in *" -version=web "*) ;; *)
 esac
 mapfile -t files < <(dub describe --config=web --data=source-files --data-list \
     2>>"$2" | sed '/^$/d' | grep '\.d$')
+mapfile -t common_files < <(dub describe --root=packages/common --config=web \
+    --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
+files+=("${common_files[@]}")
 # Every file is explicit. This is required by the nine command modules whose declared
 # names end in `_` while their paths do not; import lookup alone cannot resolve them.
 python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c "${files[@]}"

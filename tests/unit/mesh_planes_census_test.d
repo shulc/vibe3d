@@ -871,8 +871,9 @@ unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_
     // its own file here in the same commit that moves the code.
     // `mesh_visibility.d` (step 2) carries zero hits today and is listed so
     // the rule is the list, not the hits.
-    foreach (sat; ["mesh_visibility.d", "mesh_edge_slice.d", "subpatch_factories.d"]) {
-        immutable satPath = buildPath(repoRoot, "source", sat);
+    foreach (sat; ["packages/common/source/mesh_visibility.d",
+            "packages/common/source/mesh_edge_slice.d", "source/subpatch_factories.d"]) {
+        immutable satPath = buildPath(repoRoot, sat);
         assert(exists(satPath),
                "the gate cannot find the struct-Mesh satellite " ~ satPath
              ~ " — if plan 2910's step that created it was reverted, remove "

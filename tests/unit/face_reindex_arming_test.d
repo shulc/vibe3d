@@ -1210,7 +1210,7 @@ private string[] productionTargets()
     // so that the rule — every satellite is scanned — is what the list says,
     // not an accident of where the arms happen to be today.
     foreach (sat; ["mesh_visibility.d", "mesh_edge_slice.d"]) {
-        immutable satPath = buildPath(repoRoot, "source", sat);
+        immutable satPath = buildPath(repoRoot, "packages/common/source", sat);
         assert(exists(satPath),
                "the census cannot find the struct-Mesh satellite " ~ satPath);
         targets ~= satPath;

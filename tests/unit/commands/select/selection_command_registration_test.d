@@ -436,11 +436,12 @@ unittest { // S9: production call, ordering and old-path census
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
     foreach (de; dirEntries(scanSourceRoot,
                             "*_registration.d", SpanMode.shallow))
-        regFiles ~= baseName(de.name);
+        regFiles ~= de.name;
     regFiles.sort;
     size_t modeRowsSeen, editModePtrRowsSeen;
-    foreach (file; regFiles) {
-        const code = blankNonCode(readText(buildPath(repoRoot, "source", file)));
+    foreach (path; regFiles) {
+        const file = baseName(path);
+        const code = blankNonCode(readText(path));
         size_t expectedModeCells;
         bool modeRecorded;
         foreach (row; kModeCellReach) {
