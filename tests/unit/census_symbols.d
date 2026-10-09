@@ -190,13 +190,7 @@ package(tests.unit) string registrationFamilyText(string repoRoot) {
             pilotRegistrationIds(source);
             foreach (i, name; names) {
                 const caller = blankNonCode(readText(buildPath(sourceDir, callers[i])));
-                assert(countOccurrences(caller, name ~ "(") == 1,
-                    "1D common registrar exact desktop caller: " ~ name);
-                size_t supportedCalls;
-                foreach (_; matchAll(caller, regex("\\b" ~ name ~ "\\s*\\(\\s*reg\\s*,")))
-                    ++supportedCalls;
-                assert(supportedCalls == 1,
-                    "1D common registrar supported desktop reg receiver: " ~ name);
+                requirePilotDesktopCaller(caller, name);
             }
         } else if (path != parentPath) {
             string[] entries;
@@ -210,6 +204,16 @@ package(tests.unit) string registrationFamilyText(string repoRoot) {
         result ~= source;
     }
     return result;
+}
+
+package(tests.unit) void requirePilotDesktopCaller(string caller, string name) {
+    assert(countOccurrences(caller, name ~ "(") == 1,
+        "1D common registrar exact desktop caller: " ~ name);
+    size_t supportedCalls;
+    foreach (_; matchAll(caller, regex("\\b" ~ name ~ "\\s*\\(\\s*reg\\s*,")))
+        ++supportedCalls;
+    assert(supportedCalls == 1,
+        "1D common registrar supported desktop reg receiver: " ~ name);
 }
 
 /// Only the frozen pilot bodies admit the `registry` receiver. The returned
@@ -1476,8 +1480,10 @@ unittest {
         == ["mesh.triple", "mesh.select", "history.undo", "history.redo"],
         "1D bounded pilot scanner excludes comments");
     void rejected(string bad, string reason) {
-        assert(assertThrown!AssertError(pilotRegistrationIds(bad)).msg.canFind(reason),
-            "1D bounded pilot scanner named refusal: " ~ reason);
+        string actual;
+        try { pilotRegistrationIds(bad); }
+        catch (AssertError error) { actual = error.msg; }
+        assert(actual.canFind(reason), "1D bounded pilot scanner named refusal: " ~ reason);
     }
     rejected(probe.replace(`"mesh.triple"`, `"mesh.select"`), "exact pilot IDs and receiver");
     rejected(probe.replace(`registry.registerCommand("history.undo", factory);`, ``), "exact pilot IDs and receiver");
@@ -1490,4 +1496,11 @@ unittest {
     rejected(probe[0 .. $ - 1], "balanced pilot body");
     rejected(probe.replace("registerTripleCommand", "registerOtherCommand"), "exact three entry identities");
     rejected(probe.replace("ref Registrar registry", "Registrar registry"), "supported template signature");
+}
+
+unittest {
+    enum name = "registerHistoryNavigationCommands";
+    requirePilotDesktopCaller("registerHistoryNavigationCommands(reg, deps, history);", name);
+    assertThrown!AssertError(requirePilotDesktopCaller("registerHistoryNavigationCommands(other, deps, history);", name));
+    assertThrown!AssertError(requirePilotDesktopCaller("registerHistoryNavigationCommands(reg, deps, history); registerHistoryNavigationCommands(other, deps, history);", name));
 }
