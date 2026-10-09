@@ -461,6 +461,47 @@ unittest {
 }
 
 
+// Task 20262040: the edited-mesh finder must carry the same S4 guide election.
+// Evidence: doc/application_layers_wave5_query_acceptance_2026-10-09/README.md.
+unittest {
+    import math : lookAt, perspectiveMatrix;
+    import std.math : PI;
+
+    invalidateSnapGrids();
+    Viewport vp;
+    vp.eye = Vec3(0, 0, 5);
+    vp.view = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width = vp.height = 800;
+    Mesh m;
+    m.vertices = [Vec3(0.00f, 0, 0), Vec3(0.15f, 0, 0), Vec3(0.30f, 0, 0)];
+
+    float px0, py0, z0, px2, py2, z2;
+    assert(projectToWindowFull(m.vertices[0], vp, px0, py0, z0)
+        && projectToWindowFull(m.vertices[2], vp, px2, py2, z2),
+        "edited guide fixture: both endpoint vertices must project");
+    immutable int sx = cast(int)round(px0);
+    immutable int sy = cast(int)round(py0);
+    auto inverted = new MirrorGuide(vp, sx, sy);
+    inverted.invert = true;
+    inverted.invertBase = sqrt((px2 - sx) * (px2 - sx) + (py2 - sy) * (py2 - sy)) + 1.0f;
+    SnapPacket cfg;
+
+    assert(editedVertexAt(sx, sy, vp, m, ModelSpace.world(), cfg, 30, null) == 0,
+        "edited guide baseline: null guides keep the nearest vertex 0");
+    assert(editedVertexAt(sx, sy, vp, m, ModelSpace.world(), cfg, 30, [inverted]) == 2,
+        "edited guide forwarding: the inverted guide must elect vertex 2");
+    assert(inverted.seenCount == 3,
+        "edited guide population: exactly three edited vertices reach the guide");
+    assert(inverted.seen[0 .. inverted.seenCount] == [
+        MirrorGuide.key(SnapType.Vertex, 0, 0),
+        MirrorGuide.key(SnapType.Vertex, 1, 0),
+        MirrorGuide.key(SnapType.Vertex, 2, 0)],
+        "edited guide identity: vertices 0, 1, 2 are offered once in edited slot 0");
+    invalidateSnapGrids();
+}
+
+
 
 
 
