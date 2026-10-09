@@ -221,7 +221,7 @@ private bool[string] configuredSurfaceTokens()
     // needs to treat those generated command ids as surfaced.
     if (hasCombinedActionCenterProvider)
         foreach (id; dynamicRegisteredCommandIds(
-                registrationText()))
+                registrationFamilyText(repoRoot)))
             if (id.startsWith("actr."))
                 result[id] = true;
     return result;
