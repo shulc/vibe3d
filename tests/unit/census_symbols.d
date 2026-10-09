@@ -208,16 +208,44 @@ package(tests.unit) string registrationFamilyText(string repoRoot) {
 }
 
 /// Structural heads use only the byte-aligned code projection; the returned
-/// offsets point just past an admitted call's opening parenthesis.
+/// offsets point just past an immediate body statement's opening parenthesis.
+/// Inputs are balanced body spans, so the opening brace supplies the first head.
 private size_t[] statementCallOffsets(string code, string head) {
     size_t[] offsets;
-    foreach (m; matchAll(code, regex("(?:^|[;{])\\s*" ~ head ~ "\\s*\\(")))
-        offsets ~= m.pre.length + m[0].length;
+    size_t scanned;
+    int depth;
+    foreach (m; matchAll(code, regex("[;{}]\\s*" ~ head ~ "\\s*\\("))) {
+        const offset = m.pre.length + m[0].length;
+        foreach (c; code[scanned .. offset]) {
+            if (c == '{') ++depth;
+            else if (c == '}') --depth;
+        }
+        scanned = offset;
+        if (depth == 1) offsets ~= offset;
+    }
     return offsets;
 }
 
+// Both pilot and desktop entries are top-level declarations. Parameter
+// groups own their nested delimiters; only the next code token owns the body.
 private string registrationBody(string code, size_t declaration, string name) {
-    const open = declaration + cast(size_t) code[declaration .. $].indexOf('{');
+    int depth;
+    foreach (c; code[0 .. declaration]) {
+        if (c == '{') ++depth;
+        else if (c == '}') --depth;
+    }
+    assert(depth == 0, "1D common registrar top-level production entry: " ~ name);
+    const head = matchAll(code[declaration .. $], regex("^void\\s+" ~ name ~ "\\s*\\("));
+    assert(!head.empty, "1D common registrar declaration head: " ~ name);
+    size_t open = declaration + head.front[0].length - 1;
+    do {
+        const parameters = balancedSpan(code, open, '(', ')');
+        assert(parameters.length != 0, "1D common registrar balanced parameter group: " ~ name);
+        open += parameters.length;
+        skipSpace(code, open, code.length);
+    } while (open < code.length && code[open] == '(');
+    assert(open < code.length && code[open] == '{',
+        "1D common registrar immediate production body: " ~ name);
     const body = balancedSpan(code, open, '{', '}');
     assert(body.length != 0, "1D common registrar balanced production body: " ~ name);
     return body;
@@ -257,17 +285,16 @@ package(tests.unit) string[] pilotRegistrationIds(string source) {
     foreach (m; matchAll(code, ctRegex!(`\bvoid\s+(register[A-Za-z0-9_]*)\s*\(`)))
         entries ~= m[1].idup;
     assert(entries == names, "1D common registrar exact three entry identities");
-    const normalized = code.split.join(" ");
     string[] result;
     foreach (i, name; names) {
         const tail = i == 2 ? ", CommandHistory history) {" : ") {";
         const header = "void " ~ name
             ~ "(Registrar)(ref Registrar registry, PilotCommandDeps deps" ~ tail;
-        assert(countOccurrences(normalized, header) == 1,
-            "1D common registrar supported template signature: " ~ name);
         const declaration = matchAll(code, regex("\\bvoid\\s+" ~ name ~ "\\s*\\(")).front.pre.length;
         const body = registrationBody(code, declaration, name);
         const open = body.ptr - code.ptr;
+        assert(code[declaration .. open + 1].split.join(" ") == header,
+            "1D common registrar supported template signature: " ~ name);
         string[] ids;
         foreach (offset; statementCallOffsets(body, `registry\s*\.\s*registerCommand`)) {
             foreach (m; matchAll(visible[open + offset .. open + body.length],
@@ -1537,6 +1564,15 @@ unittest {
     rejected(probe[0 .. $ - 1], "balanced production body");
     rejected(probe.replace("registerTripleCommand", "registerOtherCommand"), "exact three entry identities");
     rejected(probe.replace("ref Registrar registry", "Registrar registry"), "supported template signature");
+    foreach (outside; [`unittest`, `void unrelated()`])
+        rejected(outside ~ " { " ~ probe ~ " }", "top-level production entry");
+    foreach (inside; [`void delayed()`, `auto delayed = ()`])
+        rejected(probe.replace(`registry.registerCommand("mesh.triple", factory);`,
+            inside ~ ` { registry.registerCommand("mesh.triple", factory); };`),
+            "exact pilot IDs and receiver");
+    rejected(probe.replace(`PilotCommandDeps deps) {`, `PilotCommandDeps deps); unittest {`),
+        "immediate production body");
+
 
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.process : thisProcessID;
@@ -1579,6 +1615,28 @@ unittest {
         return "void registerHistoryCommands(ref Registry reg) { " ~ call ~ " }";
     }
     requirePilotDesktopCaller(caller("registerHistoryNavigationCommands(reg, deps, history);"), name, entry);
+    requirePilotDesktopCaller(caller("ref View pilotView() { return view; } "
+        ~ "registerHistoryNavigationCommands(reg, deps, history);"), name, entry);
+    void refused(string source, string reason) {
+        string actual;
+        try { requirePilotDesktopCaller(blankNonCode(source), name, entry); }
+        catch (AssertError error) { actual = error.msg; }
+        assert(actual.canFind(reason), "1D desktop declaration named refusal: " ~ reason);
+    }
+    foreach (outside; [`unittest`, `void unrelated()`])
+        refused(outside ~ " { " ~ caller("registerHistoryNavigationCommands(reg, deps, history);") ~ " }",
+            "top-level production entry");
+    foreach (inside; [`void delayed()`, `auto delayed = ()`])
+        refused(caller(inside ~ " { registerHistoryNavigationCommands(reg, deps, history); };"),
+            "supported desktop reg receiver");
+    refused("void registerHistoryCommands(ref Registry reg); unittest { "
+        ~ "registerHistoryNavigationCommands(reg, deps, history); }", "immediate production body");
+    refused("void registerHistoryCommands(ref Registry reg, void delegate() callback = () { "
+        ~ "registerHistoryNavigationCommands(reg, deps, history); }) {}", "supported desktop reg receiver");
+    refused("void registerHistoryCommands(ref Registry reg, void delegate() callback = () { "
+        ~ "registerHistoryNavigationCommands(reg, deps, history); }", "balanced parameter group");
+    refused("void registerHistoryCommands(ref Registry reg)", "immediate production body");
+
     foreach (head; ["otherregisterHistoryNavigationCommands", "other.registerHistoryNavigationCommands",
             "other . registerHistoryNavigationCommands", "other /* owner */ . /* callee */ registerHistoryNavigationCommands"]) {
         string prefixedMessage;
