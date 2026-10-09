@@ -50,17 +50,18 @@
 //   make `lock_wait_s` default to 0 instead of -1       -> A: sentinel
 
 import std.process : Config, environment, execute, thisProcessID;
-import std.file    : dirEntries, exists, getcwd, mkdirRecurse, readText, remove, rmdir,
+import std.file    : dirEntries, exists, getcwd, mkdirRecurse, readText, remove, rmdirRecurse,
                      SpanMode, tempDir;
 import std.json    : JSONValue, parseJSON;
-import std.path    : baseName, buildPath;
+import std.path    : absolutePath, baseName, buildPath, isAbsolute;
 import std.string  : indexOf, strip, startsWith, splitLines;
 import std.conv    : octal, to;
 import std.format  : format;
 import std.stdio   : writeln;
 import liveness_gate : scenario;
 import core.sys.posix.fcntl : open, O_CREAT, O_RDWR;
-import core.sys.posix.unistd : close;
+import core.sys.posix.unistd : access, close, X_OK;
+import core.sys.posix.sys.stat : chmod;
 
 string g_logPath;
 
@@ -251,69 +252,104 @@ void main() {
     // Unlike cells A/B, execute() here receives this test's verified private
     // lease while its fd stays owned by this process. The host lock remains
     // excluded for the entire nested run.
-    auto mountPoint = buildPath(tempDir(),
+    // Task 20262050: ordinary compiler failure must reach the existing refusal.
+    // Match only the exact project-library argv, then require a fresh witness;
+    // custody and controls: doc/tasks/20262050-evidence/receipt.md.
+    const childTmp = buildPath(tempDir(),
         format("vibe3d-harness-incomplete-%d", thisProcessID));
-    mkdirRecurse(mountPoint);
-    scope(exit) if (exists(mountPoint)) rmdir(mountPoint);
+    assert(!exists(childTmp), "C: child temporary directory must be fresh");
+    mkdirRecurse(buildPath(childTmp, "bin"));
+    scope(exit) if (exists(childTmp)) rmdirRecurse(childTmp);
 
-    auto namespaceProbe = execute(["unshare", "--mount", "--map-root-user", "true"]);
-    if (namespaceProbe.status != 0) {
-        writeln("C: SKIPPED constrained-filesystem witness — "
-              ~ "unshare --mount --map-root-user is unavailable");
-    } else {
-        // The mount begins above the mandatory 256 MiB floor. The filler waits
-        // for the scratch tree, which is created only after the preflight, then
-        // consumes enough space to make the source-backed project library
-        // fail. That is now the earliest legal stop: the high-RAM per-test -i
-        // fallback is forbidden. A deadline makes a runner that never creates
-        // scratch fail this fixture rather than leaving a polling process behind.
-        const childPort = 20_000 + cast(int)(thisProcessID % 20_000);
-        const script =
-            "mount -t tmpfs -o size=512m tmpfs \"$1\" || exit 99\n"
-          ~ "scratch=$(TMPDIR=\"$1\" VIBE3D_HARNESS_LOG=off rdmd \"$3/run_test.d\" --print-scratch) || exit 98\n"
-          ~ "( deadline=$((SECONDS + 30)); while [ ! -d \"$scratch\" ]; do "
-          ~ "    [ $SECONDS -lt $deadline ] || exit 97; done; "
-          ~ "  fallocate -l 480M \"$1/fill-after-preflight\" ) &\n"
-          ~ "filler=$!\n"
-          ~ "TMPDIR=\"$1\" VIBE3D_HARNESS_LOG=\"$2\" env -u DISPLAY "
-          ~ "  rdmd \"$3/run_test.d\" --no-build --stale-ok -p \"$4\" -j 1 test_ai3d_controller\n"
-          ~ "runner_rc=$?\n"
-          ~ "wait $filler || exit 96\n"
-          ~ "echo CHILD_RUNNER_EXIT=$runner_rc\n"
-          ~ "exit 0\n";
-        auto c = execute(["unshare", "--mount", "--map-root-user", "bash", "-c",
-                          script, "_", mountPoint, g_logPath, getcwd(),
-                          childPort.to!string], inheritedEnv, Config.inheritFDs);
-        assert(c.status == 0, format(
-            "C: constrained child failed outside the expected runner refusal (%d):\n%s",
-            c.status, c.output));
-        assert(c.output.indexOf(
-                "project test-lib build failed; refusing per-test -i fallback") >= 0,
-            format("C: the synchronized filler did not force the intended "
-              ~ "project-library hard failure:\n%s",
-            c.output));
-        assert(c.output.indexOf(
-                "project test-lib build failed; falling back to per-test -i compile") < 0,
-            "C: the forbidden per-test fallback reappeared:\n" ~ c.output);
-        assert(c.output.indexOf("CHILD_RUNNER_EXIT=1") >= 0,
-            "C: failed preparation should exit 1:\n" ~ c.output);
-        assert(c.output.indexOf("Total:") < 0,
-            "C: the failed preparation unexpectedly produced a verdict:\n" ~ c.output);
+    auto compilerQuery = execute(["sh", "-c", "command -v dmd"], inheritedEnv);
+    assert(compilerQuery.status == 0 && compilerQuery.output.strip.length > 0,
+        "C: could not resolve the original compiler:\n" ~ compilerQuery.output);
+    const realDmd = absolutePath(compilerQuery.output.strip);
+    assert(isAbsolute(realDmd) && access(realDmd.toStringz, X_OK) == 0,
+        "C: resolved compiler must be an absolute executable path");
 
-        auto recsC = records();
-        assert(recsC.length == 3, format(
-            "C: expected exactly one new record, got %d total", recsC.length));
-        auto rC = recsC[2];
-        assert(rC["stage"].str == "run_incomplete", format(
-            "C: selected work whose worker died before Total must be run_incomplete, is %s",
-            rC["stage"].str));
-        assert(rC["tests_selected"].integer == 1,
-            "C: the witness must select exactly one test");
-        assert(rC["total"].integer == 0,
-            "C: no TestResult reached the summary, so total must stay zero");
-        assert(rC["rc"].integer == 1,
-            "C: an incomplete run must retain the pessimistic rc=1");
-    }
+    auto queryEnv = inheritedEnv.dup;
+    queryEnv["TMPDIR"] = childTmp;
+    auto scratchQuery = execute(["./run_test.d", "--print-scratch"], queryEnv);
+    const scratch = scratchQuery.output.strip;
+    assert(scratchQuery.status == 0 && scratch.length > 0 && isAbsolute(scratch),
+        "C: runner must report an absolute child scratch path:\n" ~ scratchQuery.output);
+    const expectedLib = buildPath(scratch, "libvibe3d_test.a");
+    const witnessPath = buildPath(childTmp, "project-library-failure.witness");
+    const witness = "PROJECT_LIB_FAILURE_WITNESS status=73 output=" ~ expectedLib;
+    const shim = buildPath(childTmp, "bin", "dmd");
+    std.file.write(shim,
+        "#!/bin/sh\n"
+      ~ "lib=0; unittest=0; output=0\n"
+      ~ "for arg do\n"
+      ~ "  [ \"$arg\" = '-lib' ] && lib=1\n"
+      ~ "  [ \"$arg\" = '-unittest' ] && unittest=1\n"
+      ~ "  [ \"$arg\" = \"-of=$VIBE3D_FAILURE_LIBRARY\" ] && output=1\n"
+      ~ "done\n"
+      ~ "if [ \"$lib\" = 1 ] && [ \"$unittest\" = 1 ] && [ \"$output\" = 1 ]; then\n"
+      ~ "  printf '%s\\n' \"$VIBE3D_FAILURE_WITNESS_TEXT\" >> \"$VIBE3D_FAILURE_WITNESS_PATH\"\n"
+      ~ "  printf '%s\\n' \"$VIBE3D_FAILURE_WITNESS_TEXT\" >&2\n"
+      ~ "  exit 73\n"
+      ~ "fi\n"
+      ~ "exec \"$VIBE3D_REAL_DMD\" \"$@\"\n");
+    assert(chmod(shim.toStringz, octal!"755") == 0,
+        "C: compiler wrapper must be executable");
+    auto childEnv = inheritedEnv.dup;
+    childEnv["TMPDIR"] = childTmp;
+    childEnv["PATH"] = buildPath(childTmp, "bin") ~ ":" ~ environment["PATH"];
+    childEnv["VIBE3D_REAL_DMD"] = realDmd;
+    childEnv["VIBE3D_FAILURE_LIBRARY"] = expectedLib;
+    childEnv["VIBE3D_FAILURE_WITNESS_PATH"] = witnessPath;
+    childEnv["VIBE3D_FAILURE_WITNESS_TEXT"] = witness;
+    childEnv["VIBE3D_HARNESS_LOG"] = g_logPath;
+
+    auto statusProbe = execute([shim, "-lib", "-unittest", "-of=" ~ expectedLib], childEnv);
+    assert(statusProbe.status == 73,
+        format("C: wrapper must exit normally with configured compiler status 73, got %d\n%s",
+            statusProbe.status, statusProbe.output));
+    assert(exists(witnessPath) && readText(witnessPath) == witness ~ "\n",
+        "C: project-library compiler failure witness missing or mismatched (probe)");
+    remove(witnessPath);
+
+    const childPort = 20_000 + cast(int)(thisProcessID % 20_000);
+    const script =
+        "env -u DISPLAY rdmd \"$1/run_test.d\" --no-build --stale-ok -p \"$2\" -j 1 test_ai3d_controller\n"
+      ~ "runner_rc=$?\n"
+      ~ "echo CHILD_RUNNER_EXIT=$runner_rc\n"
+      ~ "exit 0\n";
+    auto c = execute(["sh", "-c", script, "_", getcwd(), childPort.to!string],
+        childEnv, Config.inheritFDs);
+    assert(exists(witnessPath) && readText(witnessPath) == witness ~ "\n"
+        && c.output.indexOf(witness) >= 0,
+        "C: project-library compiler failure witness missing or mismatched:\n" ~ c.output);
+    assert(c.status == 0, format(
+        "C: constrained child failed outside the expected runner refusal (%d):\n%s",
+        c.status, c.output));
+    assert(c.output.indexOf(
+            "project test-lib build failed; refusing per-test -i fallback") >= 0,
+        format("C: witnessed project-library failure did not reach the intended refusal:\n%s",
+        c.output));
+    assert(c.output.indexOf(
+            "project test-lib build failed; falling back to per-test -i compile") < 0,
+        "C: the forbidden per-test fallback reappeared:\n" ~ c.output);
+    assert(c.output.indexOf("CHILD_RUNNER_EXIT=1") >= 0,
+        "C: failed preparation should exit 1:\n" ~ c.output);
+    assert(c.output.indexOf("Total:") < 0,
+        "C: the failed preparation unexpectedly produced a verdict:\n" ~ c.output);
+
+    auto recsC = records();
+    assert(recsC.length == 3, format(
+        "C: expected exactly one new record, got %d total", recsC.length));
+    auto rC = recsC[2];
+    assert(rC["stage"].str == "run_incomplete", format(
+        "C: selected work whose worker died before Total must be run_incomplete, is %s",
+        rC["stage"].str));
+    assert(rC["tests_selected"].integer == 1,
+        "C: the witness must select exactly one test");
+    assert(rC["total"].integer == 0,
+        "C: no TestResult reached the summary, so total must stay zero");
+    assert(rC["rc"].integer == 1,
+        "C: an incomplete run must retain the pessimistic rc=1");
 
     writeln("harness load log: refusal, lock give-up, and incomplete worker "
           ~ "preparation each leave one precisely labelled record");
