@@ -190,7 +190,8 @@ package(tests.unit) string registrationFamilyText(string repoRoot) {
             pilotRegistrationIds(source);
             foreach (i, name; names) {
                 const caller = blankNonCode(readText(buildPath(sourceDir, callers[i])));
-                requirePilotDesktopCaller(caller, name);
+                const entry = i == 2 ? "registerHistoryCommands" : "registerMeshCommands";
+                requirePilotDesktopCaller(caller, name, entry);
             }
         } else if (path != parentPath) {
             string[] entries;
@@ -206,18 +207,43 @@ package(tests.unit) string registrationFamilyText(string repoRoot) {
     return result;
 }
 
-package(tests.unit) void requirePilotDesktopCaller(string caller, string name) {
+/// Structural heads use only the byte-aligned code projection; the returned
+/// offsets point just past an admitted call's opening parenthesis.
+private size_t[] statementCallOffsets(string code, string head) {
+    size_t[] offsets;
+    foreach (m; matchAll(code, regex("(?:^|[;{])\\s*" ~ head ~ "\\s*\\(")))
+        offsets ~= m.pre.length + m[0].length;
+    return offsets;
+}
+
+private string registrationBody(string code, size_t declaration, string name) {
+    const open = declaration + cast(size_t) code[declaration .. $].indexOf('{');
+    const body = balancedSpan(code, open, '{', '}');
+    assert(body.length != 0, "1D common registrar balanced production body: " ~ name);
+    return body;
+}
+
+package(tests.unit) void requirePilotDesktopCaller(string caller, string name, string entry) {
     assert(countOccurrences(caller, name ~ "(") == 1,
         "1D common registrar exact desktop caller: " ~ name);
+    size_t[] declarations;
+    foreach (m; matchAll(caller, regex("\\bvoid\\s+" ~ entry
+            ~ "\\s*\\(\\s*ref\\s+Registry\\s+reg\\b")))
+        declarations ~= m.pre.length;
+    assert(declarations.length == 1,
+        "1D common registrar exact desktop entry: " ~ entry);
+    const body = registrationBody(caller, declarations[0], entry);
     size_t supportedCalls;
-    foreach (_; matchAll(caller, regex("\\b" ~ name ~ "\\s*\\(\\s*reg\\s*,")))
-        ++supportedCalls;
+    foreach (offset; statementCallOffsets(body, name)) {
+        if (!matchAll(body[offset .. $], ctRegex!(`^\s*reg\s*,`)).empty)
+            ++supportedCalls;
+    }
     assert(supportedCalls == 1,
         "1D common registrar supported desktop reg receiver: " ~ name);
 }
 
 /// Only the frozen pilot bodies admit the `registry` receiver. The returned
-/// IDs are read from those bodies, with comments excluded from the projection.
+/// IDs are data read only after a structural head was admitted as actual code.
 package(tests.unit) string[] pilotRegistrationIds(string source) {
     enum names = ["registerTripleCommand", "registerMeshSelectionCommand",
         "registerHistoryNavigationCommands"];
@@ -240,13 +266,14 @@ package(tests.unit) string[] pilotRegistrationIds(string source) {
         assert(countOccurrences(normalized, header) == 1,
             "1D common registrar supported template signature: " ~ name);
         const declaration = matchAll(code, regex("\\bvoid\\s+" ~ name ~ "\\s*\\(")).front.pre.length;
-        const open = cast(size_t) declaration + cast(size_t) code[declaration .. $].indexOf('{');
-        const body = balancedSpan(code, open, '{', '}');
-        assert(body.length != 0, "1D common registrar balanced pilot body: " ~ name);
+        const body = registrationBody(code, declaration, name);
+        const open = body.ptr - code.ptr;
         string[] ids;
-        foreach (m; matchAll(visible[open .. open + body.length],
-                ctRegex!(`[;{]\s*registry\s*\.\s*registerCommand\s*\(\s*"([^"]+)"\s*,`)))
-            ids ~= m[1].idup;
+        foreach (offset; statementCallOffsets(body, `registry\s*\.\s*registerCommand`)) {
+            foreach (m; matchAll(visible[open + offset .. open + body.length],
+                    ctRegex!(`^\s*"([^"]+)"\s*,`)))
+                ids ~= m[1].idup;
+        }
         assert(ids == expected[i], "1D common registrar exact pilot IDs and receiver: " ~ name);
         result ~= ids;
     }
@@ -1497,11 +1524,17 @@ unittest {
         "exact pilot IDs and receiver");
     rejected(probe.replace(`registry.registerCommand("history.redo"`, `myregistry.registerCommand("history.redo"`),
         "exact pilot IDs and receiver");
+    foreach (literal; ["` ; registry.registerCommand(\"history.redo\", `",
+            `q{ ; registry.registerCommand("history.redo", }`,
+            `q"[ ; registry.registerCommand("history.redo", ]"`])
+        rejected(probe.replace(`registry.registerCommand("history.redo", factory);`,
+            `other.registry.registerCommand("history.redo", factory); auto text = ` ~ literal ~ `;`),
+            "exact pilot IDs and receiver");
     rejected(probe.replace(`registry.registerCommand("mesh.triple", factory);`,
         `registry.registerCommand("mesh.triple", factory); registry.registerCommand("mesh.triple", factory);`),
         "exact pilot IDs and receiver");
     rejected(probe ~ ` registry.registerCommand("outside.example", factory);`, "exact four supported registration sites");
-    rejected(probe[0 .. $ - 1], "balanced pilot body");
+    rejected(probe[0 .. $ - 1], "balanced production body");
     rejected(probe.replace("registerTripleCommand", "registerOtherCommand"), "exact three entry identities");
     rejected(probe.replace("ref Registrar registry", "Registrar registry"), "supported template signature");
 
@@ -1528,16 +1561,32 @@ unittest {
     write(pilotPath, probe);
     write(historyPath, historySource.replace("registerHistoryNavigationCommands(reg,", "registerHistoryNavigationCommands(other,"));
     assertThrown!AssertError(registrationFamilyText(root));
+    foreach (outside; [`unittest`, `void unrelated()`]) {
+        write(historyPath, historySource.replace(`registerHistoryNavigationCommands(reg, deps, history);`, ``)
+            ~ outside ~ ` { registerHistoryNavigationCommands(reg, deps, history); }`);
+        string movedMessage;
+        try { registrationFamilyText(root); }
+        catch (AssertError error) { movedMessage = error.msg; }
+        assert(movedMessage.canFind("supported desktop reg receiver"),
+            "1D desktop caller remains inside production entry");
+    }
 }
 
 unittest {
     enum name = "registerHistoryNavigationCommands";
-    requirePilotDesktopCaller("registerHistoryNavigationCommands(reg, deps, history);", name);
-    string prefixedMessage;
-    try { requirePilotDesktopCaller("otherregisterHistoryNavigationCommands(reg, deps, history);", name); }
-    catch (AssertError error) { prefixedMessage = error.msg; }
-    assert(prefixedMessage.canFind("supported desktop reg receiver"),
-        "1D supported desktop caller rejects prefixed helper name");
-    assertThrown!AssertError(requirePilotDesktopCaller("registerHistoryNavigationCommands(other, deps, history);", name));
-    assertThrown!AssertError(requirePilotDesktopCaller("registerHistoryNavigationCommands(reg, deps, history); registerHistoryNavigationCommands(other, deps, history);", name));
+    enum entry = "registerHistoryCommands";
+    string caller(string call) {
+        return "void registerHistoryCommands(ref Registry reg) { " ~ call ~ " }";
+    }
+    requirePilotDesktopCaller(caller("registerHistoryNavigationCommands(reg, deps, history);"), name, entry);
+    foreach (head; ["otherregisterHistoryNavigationCommands", "other.registerHistoryNavigationCommands",
+            "other . registerHistoryNavigationCommands", "other /* owner */ . /* callee */ registerHistoryNavigationCommands"]) {
+        string prefixedMessage;
+        try { requirePilotDesktopCaller(caller(head ~ "(reg, deps, history);"), name, entry); }
+        catch (AssertError error) { prefixedMessage = error.msg; }
+        assert(prefixedMessage.canFind("supported desktop reg receiver"),
+            "1D supported desktop caller rejects qualified or prefixed helper name");
+    }
+    assertThrown!AssertError(requirePilotDesktopCaller(caller("registerHistoryNavigationCommands(other, deps, history);"), name, entry));
+    assertThrown!AssertError(requirePilotDesktopCaller(caller("registerHistoryNavigationCommands(reg, deps, history); registerHistoryNavigationCommands(other, deps, history);"), name, entry));
 }
