@@ -37,7 +37,7 @@ private void compare(string id, JSONValue vertices, JSONValue faces) {
     }
 }
 unittest {
-    auto fx = parseJSON(import("fixtures/pen_rebuild_merge.json"));
+    auto fx = parseJSON(import("../packages/creation-ops/tests/fixtures/pen_rebuild_merge.json"));
     const only = environment.get("VIBE3D_CELL", ""); size_t ran;
     foreach (c; fx["rows"].array) foreach (enter; [false,true]) {
         const id = c["id"].str ~ (enter ? "-return" : ""); if (only.length && only != id) continue;

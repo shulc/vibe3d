@@ -593,6 +593,9 @@ unittest {
     import std.math : PI;
     import toolpipe.packets : FalloffPacket, FalloffType;
     import tools.transform.transform : TransformTool;
+    static import tools.transform.cluster_values;
+    static assert(is(TransformTool.ClusterPivots == tools.transform.cluster_values.ClusterPivots));
+    static assert(is(TransformTool.ClusterAxes == tools.transform.cluster_values.ClusterAxes));
     import tools.transform.xform_kernels : applyXformMatrix, BlendMode;
     Viewport vp;
     vp.view = lookAt(Vec3(0, 0, 5), Vec3(0, 0, 0), Vec3(0, 1, 0));

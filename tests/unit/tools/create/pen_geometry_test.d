@@ -10,18 +10,14 @@ import std.format : format;
 import math : Vec3, Viewport, cross, dot, eyeVectorAt;
 import mesh : Mesh;
 import seltype : SelType;
-import prepared_tool_effect : PreparedPenParamKind;
 import toolpipe.packets : SymmetryPacket;
 import tools.create.pen_geometry;
 
-// Composition pins: a field added to the stroke or a kind added to the
-// prepared param enum must be added here, with its cases.
+// Public geometry composition pins: new fields and kinds need cases.
 static assert([__traits(allMembers, PenStroke)] ==
     ["points", "links", "order", "sources", "toWorld", "flip", "quads", "mirror", "type", "close",
      "selectNew", "selMode", "wall", "offset", "wallNormal", "of"]);
 static assert([__traits(allMembers, PenBuildPurpose)] == ["Preview", "Commit"]);
-static assert([__traits(allMembers, PreparedPenParamKind)] ==
-    ["None", "Noop", "CurrentPoint", "Position", "Preview"]);
 static assert([__traits(allMembers, PenParams)] ==
     ["type", "currentPoint", "posX", "posY", "posZ", "wall", "offset", "flip",
      "makeQuads", "merge", "close", "selectNew", "raycast"]);
@@ -50,7 +46,7 @@ unittest // exact rebuilt geometry and connectivity, including repeated corners
         return Vec3(cast(float)num(v[0]), cast(float)num(v[1]), cast(float)num(v[2]));
     }
     import std.file : readText;
-    const fx = parseJSON(readText("tests/fixtures/pen_rebuild_merge.json"));
+    const fx = parseJSON(readText("packages/creation-ops/tests/fixtures/pen_rebuild_merge.json"));
     assert(fx["rows"].array.length == 7, "rebuild mesh table lost a row");
     foreach (c; fx["rows"].array) {
         Vec3[] pts, want;

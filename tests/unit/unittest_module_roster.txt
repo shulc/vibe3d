@@ -313,6 +313,7 @@ tests.unit.io.image_path_test
 tests.unit.io.lwo_export_ptag_census_test
 tests.unit.io.lwo_export_test
 tests.unit.io.lwo_import_test
+tests.unit.io.native_refusal_chain_test
 tests.unit.io.native_test
 tests.unit.io.v3d_wire_order_test
 tests.unit.io.v3d_wire_roundtrip_test
@@ -414,6 +415,7 @@ tests.unit.model_preview_test
 tests.unit.module_gate_lock_test
 tests.unit.morph_delta_test
 tests.unit.morph_map_test
+tests.unit.morph_route_census_test
 tests.unit.morph_route_test
 tests.unit.morph_routing_law_test
 tests.unit.morph_target_lifecycle_test
@@ -430,6 +432,7 @@ tests.unit.param_int_enum_width_test
 tests.unit.params_test
 tests.unit.parity_capture_key_census_test
 tests.unit.path_test
+tests.unit.pen_param_kind_composition_test
 tests.unit.pen_single_builder_census_test
 tests.unit.perf_baseline_debt_test
 tests.unit.perf_lane_health_test
@@ -730,7 +733,6 @@ tools.harness.runslots
 tools.slice.slice_tool
 tools.transform.arcball
 tools.transform.item_xform_kernels
-tools.transform.morph_route
 tools.transform.relocate_plane_test
 tools.transform.rotate
 tools.transform.transform

@@ -8,11 +8,11 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 595
-task-citation-lines 5183
+source-files 596
+task-citation-lines 5181
 citing-files 459
-long-comment-runs 260
-files-with-long-runs 140
+long-comment-runs 259
+files-with-long-runs 139
 
 # Exact per-file task-citation allowances, sorted by path.
 allow packages/common/source/app_version.d 1
@@ -424,7 +424,7 @@ allow source/tools/slice/loop_slice_tool.d 86
 allow source/tools/slice/slice_tool.d 91
 allow source/tools/topology_step.d 1
 allow source/tools/transform/item_xform_kernels.d 3
-allow source/tools/transform/morph_route.d 3
+allow source/tools/transform/morph_route.d 1
 allow source/tools/transform/move.d 7
 allow source/tools/transform/relocate_plane.d 2
 allow source/tools/transform/rotate.d 2
@@ -601,7 +601,6 @@ allow-runs source/tools/edit/topology_pen/snap_guide.d 2
 allow-runs source/tools/edit/topology_pen/tool.d 16
 allow-runs source/tools/slice/loop_slice_tool.d 1
 allow-runs source/tools/slice/slice_tool.d 1
-allow-runs source/tools/transform/morph_route.d 1
 allow-runs source/tools/transform/scale.d 1
 allow-runs source/tools/transform/transform.d 2
 allow-runs source/tools/transform/xform_kernels.d 1

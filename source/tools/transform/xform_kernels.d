@@ -29,7 +29,7 @@ import tools.transform.morph_route : MorphRoute, storeRouted;
 import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror, authored, frameSource;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
-import tools.transform.transform : TransformTool;
+import tools.transform.cluster_values : ClusterPivots, ClusterAxes;
 import perf_probe : g_perf, Cat;
 
 // Coarse perf instrumentation for the kernels (doc/perf_harness_plan.md).
@@ -135,7 +135,7 @@ private Vec3 rotateVecLerp(Vec3 v, Vec3 pivot, Vec3 axis, float angle, float w) 
 }
 
 private Vec3 pivotFor(size_t vi,
-                      TransformTool.ClusterPivots cp,
+                      ClusterPivots cp,
                       Vec3 fallback)
 {
     if (!cp.active) return fallback;
@@ -146,8 +146,8 @@ private Vec3 pivotFor(size_t vi,
 }
 
 private Vec3 axisFor(size_t vi, int axisIdx,
-                     TransformTool.ClusterAxes ap,
-                     TransformTool.ClusterPivots cp,
+                     ClusterAxes ap,
+                     ClusterPivots cp,
                      Vec3 fallback)
 {
     if (!ap.active) return fallback;
@@ -197,8 +197,8 @@ void runScaleAxes(bool settled, Vec3 fR, Vec3 fU, Vec3 fA,
 }
 
 private void axesFor(size_t vi,
-                     TransformTool.ClusterAxes ap,
-                     TransformTool.ClusterPivots cp,
+                     ClusterAxes ap,
+                     ClusterPivots cp,
                      ref Vec3 ax, ref Vec3 ay, ref Vec3 az)
 {
     if (!ap.active) return;
@@ -234,8 +234,8 @@ void applyRotateIncremental(
                                    // and it lets the caller write
                                    // `dragAimSpace()` inline instead of hoisting
                                    // a named local it could forget to refresh.
-    TransformTool.ClusterPivots clusterPivots,
-    TransformTool.ClusterAxes clusterAxes,
+    ClusterPivots clusterPivots,
+    ClusterAxes clusterAxes,
     const ref SymmetryPacket dragSymmetry,
     bool[] toProcess)
 {
@@ -282,8 +282,8 @@ void applyRotateFromOrig(
                                    // and it lets the caller write
                                    // `dragAimSpace()` inline instead of hoisting
                                    // a named local it could forget to refresh.
-    TransformTool.ClusterPivots clusterPivots,
-    TransformTool.ClusterAxes clusterAxes,
+    ClusterPivots clusterPivots,
+    ClusterAxes clusterAxes,
     const ref SymmetryPacket dragSymmetry,
     bool[] symMask)
 {
@@ -517,8 +517,8 @@ void applyXformMatrix(
                                    // and it lets the caller write
                                    // `dragAimSpace()` inline instead of hoisting
                                    // a named local it could forget to refresh.
-    TransformTool.ClusterPivots clusterPivots,
-    TransformTool.ClusterAxes clusterAxes,
+    ClusterPivots clusterPivots,
+    ClusterAxes clusterAxes,
     float[16][] clusterM,
     const ref SymmetryPacket dragSymmetry,
     bool[] toProcess,

@@ -10,7 +10,7 @@ import mesh    : Mesh;
 import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
-import tools.transform.transform : TransformTool;
+import tools.transform.cluster_values : ClusterPivots, ClusterAxes;
 import perf_probe : g_perf, Cat;
 import tools.transform.xform_kernels;
 // Task 0719 (T5) — the matrix builder the kernel tests below drive the fold
@@ -286,8 +286,8 @@ private FalloffPacket weightsFalloff(float[] w) {
 
 private FalloffPacket plainFalloff() { FalloffPacket f; f.enabled = false; return f; }
 private SymmetryPacket noMirror()    { SymmetryPacket s; s.enabled = false; return s; }
-private TransformTool.ClusterPivots noPivots() { TransformTool.ClusterPivots c; return c; }
-private TransformTool.ClusterAxes   noAxes()   { TransformTool.ClusterAxes   a; return a; }
+private ClusterPivots noPivots() { ClusterPivots c; return c; }
+private ClusterAxes   noAxes()   { ClusterAxes   a; return a; }
 
 unittest { // T5/1 — soft rotate is the MATRIX lerp (1-w)I + w·R, NOT the arc R(w·θ)
     //
@@ -583,7 +583,7 @@ unittest { // T5/7 — an out-of-range cluster id falls back; it does not index 
     auto m = new Mesh();
     m.vertices = [Vec3(1, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 0)];
 
-    TransformTool.ClusterPivots cp;
+    ClusterPivots cp;
     cp.centers   = [Vec3(50, 0, 0), Vec3(-50, 0, 0)];   // >= 2 ⇒ active
     cp.clusterOf = [0, 7];   // vertex 1 names a cluster that does not exist,
                              // vertex 2 is past the end of clusterOf entirely
@@ -639,7 +639,7 @@ unittest { // ArcRotation (register row 83, capture K-F4, task 9446): exactly on
     auto fal = weightsFalloff([0.5f, 0.5f]);
     auto sym = noMirror();
     bool[] proc = [true, true];
-    TransformTool.ClusterPivots cp;
+    ClusterPivots cp;
     cp.centers = [Vec3(0, 0, 0), Vec3(0, 0, 0)];
     cp.clusterOf = [-1, 0];   // vertex 0 global, vertex 1 in cluster 0
     float[16][] clusterM = [identityMatrix, identityMatrix];

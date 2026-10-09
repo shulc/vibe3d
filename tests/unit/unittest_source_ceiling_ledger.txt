@@ -13,8 +13,8 @@
 # Counts are compiler-aware: comments and string/character literals are
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
-source-files 595
-unittest-blocks 625
+source-files 596
+unittest-blocks 622
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -26,7 +26,7 @@ block packages/common/source/command_registry.d 1
 block packages/common/source/commands/mesh/session_edit.d 1
 block packages/common/source/commands/select/element.d 1
 block packages/common/source/io/image_decode.d 5
-block packages/common/source/io/native.d 14
+block packages/common/source/io/native.d 13
 block packages/common/source/json_num.d 3
 block packages/common/source/log.d 4
 block packages/common/source/math.d 19
@@ -158,7 +158,6 @@ block source/tools/edit/tack.d 1
 block source/tools/slice/slice_tool.d 1
 block source/tools/transform/arcball.d 6
 block source/tools/transform/item_xform_kernels.d 11
-block source/tools/transform/morph_route.d 2
 block source/tools/transform/relocate_plane_test.d 6
 block source/tools/transform/rotate.d 1
 block source/tools/transform/transform.d 1

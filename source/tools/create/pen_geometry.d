@@ -16,7 +16,7 @@ import seltype : SelType;
 import symmetry : mirrorPosition;
 import toolpipe.guide : SnapGuide;
 import toolpipe.packets : SnapPacket, SnapType, SymmetryPacket;
-import tools.create.create_common : transformPoint;
+import math : transformPoint;
 
 /// The pen tool's wire schema (panel / `tool.attr` values). Compared with
 /// `memcmp` by the prepared images, so it must stay plain data: 4-byte fields

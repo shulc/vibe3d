@@ -1,6 +1,7 @@
 module tools.transform.transform;
 import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import tool;
+static import tools.transform.cluster_values;
 import prepared_record_context : PreparedRecordContext;
 
 /// Exact state-image equality for float channels. Unlike `Vec3.opEquals` this
@@ -1971,11 +1972,7 @@ protected:
     // per-cluster transforms (Scale, Rotate) call this and use
     // `centers[clusterOf[vi]]` as the per-vertex pivot. Move is
     // pivot-invariant for translates so it ignores the per-cluster path.
-    public static struct ClusterPivots {
-        Vec3[] centers;
-        int [] clusterOf;
-        bool active() const { return centers.length >= 2; }
-    }
+    public alias ClusterPivots = tools.transform.cluster_values.ClusterPivots;
     ClusterPivots queryClusterPivots(ref VectorStack vts) {
         import toolpipe.packets : ActionCenterPacket;
         ClusterPivots out_;
@@ -1989,12 +1986,7 @@ protected:
     // Per-cluster basis from the AXIS stage (Phase 4). Active only when
     // axis.local has ≥2 disjoint clusters in the current selection (kept
     // in lockstep with ClusterPivots via shared clusterOf indexing).
-    public static struct ClusterAxes {
-        Vec3[] right;
-        Vec3[] up;
-        Vec3[] fwd;
-        bool active() const { return right.length >= 2; }
-    }
+    public alias ClusterAxes = tools.transform.cluster_values.ClusterAxes;
     ClusterAxes queryClusterAxes(ref VectorStack vts) {
         import toolpipe.packets : AxisPacket;
         ClusterAxes out_;
