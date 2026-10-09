@@ -1,0 +1,35 @@
+{
+  "name": "vibe3d-interchange-tests",
+  "description": "Independent scene interchange consumer tests",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": [],
+  "importPaths": [
+    "source"
+  ],
+  "sourceFiles": [
+    "source/tests/unit/assimp_wire_test.d",
+    "source/tests/unit/io/lwo_import_test.d",
+    "source/tests/unit/io/lwo_export_test.d",
+    "source/tests/unit/io/lwo_export_ptag_census_test.d",
+    "source/tests/unit/io/lwo_ptag_fixture.d"
+  ],
+  "dflags": [],
+  "dependencies": {
+    "vibe3d-interchange": {
+      "path": ".."
+    }
+  },
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "configurations": [
+    {
+      "name": "interchange"
+    }
+  ],
+  "subConfigurations": {
+    "vibe3d-interchange": "modeling-noai"
+  }
+}

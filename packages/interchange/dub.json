@@ -1,0 +1,204 @@
+{
+  "license": "MIT",
+  "targetType": "staticLibrary",
+  "sourcePaths": [
+    "source"
+  ],
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "name": "vibe3d-interchange",
+  "description": "Scene interchange codecs",
+  "dependencies": {
+    "vibe3d-common": {
+      "path": "../common"
+    },
+    "lwo2-writer": {
+      "version": "6d35b70a2a23c16c5b6cc19ea3e2d05a99eb0061",
+      "repository": "git+https://github.com/shulc/D-Lwo2Writer.git"
+    }
+  },
+  "subConfigurations": {
+    "lwo2-writer": "core"
+  },
+  "configurations": [
+    {
+      "name": "modeling",
+      "subConfigurations": {
+        "vibe3d-common": "modeling",
+        "bindbc-assimp6": "static"
+      },
+      "dependencies": {
+        "bindbc-assimp6": {
+          "version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
+          "repository": "git+https://github.com/shulc/bindbc-assimp6.git"
+        }
+      }
+    },
+    {
+      "name": "modeling-noai",
+      "subConfigurations": {
+        "vibe3d-common": "modeling-noai",
+        "bindbc-assimp6": "static"
+      },
+      "dependencies": {
+        "bindbc-assimp6": {
+          "version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
+          "repository": "git+https://github.com/shulc/bindbc-assimp6.git"
+        }
+      }
+    },
+    {
+      "name": "with-render",
+      "subConfigurations": {
+        "vibe3d-common": "with-render",
+        "bindbc-assimp6": "static"
+      },
+      "dependencies": {
+        "bindbc-assimp6": {
+          "version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
+          "repository": "git+https://github.com/shulc/bindbc-assimp6.git"
+        }
+      }
+    },
+    {
+      "name": "web",
+      "subConfigurations": {
+        "vibe3d-common": "web"
+      },
+      "versions": [
+        "web"
+      ]
+    }
+  ]
+}
