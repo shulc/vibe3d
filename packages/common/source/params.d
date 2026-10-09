@@ -274,6 +274,10 @@ struct Param {
     enum Kind { Bool, Int, Float, Enum, String, Vec3_, IntEnum, IntArray, Vec3Array,
                 PodArray }
 
+    bool* supplied;       // optional caller-owned successful-write marker
+
+    Param present(bool* storage) { supplied = storage; return this; }
+
     string name;          // internal id — matches JSON wire key
     string label;         // UI label
     Kind   kind;
@@ -1466,7 +1470,7 @@ private void injectParamsImpl(Param[] params, ref JSONValue pj,
             case Param.Kind.Int: {
                 int iv;
                 if (!paramGateInt(p, _jsonNum(*jp), iv)) {
-                    if (tolerate(p.name)) break;
+                    if (tolerate(p.name)) continue;
                     throw new Exception(
                         "param '" ~ p.name ~ "' is not a representable integer");
                 }
@@ -1476,7 +1480,7 @@ private void injectParamsImpl(Param[] params, ref JSONValue pj,
             case Param.Kind.Float: {
                 float fv;
                 if (!paramGateFloat(p, _jsonNum(*jp), fv)) {
-                    if (tolerate(p.name)) break;
+                    if (tolerate(p.name)) continue;
                     throw new Exception(
                         "param '" ~ p.name ~ "' must be a finite number");
                 }
@@ -1513,7 +1517,7 @@ private void injectParamsImpl(Param[] params, ref JSONValue pj,
                 if (!paramGateFloat(p, _jsonNum(a[0]), vx)
                  || !paramGateFloat(p, _jsonNum(a[1]), vy)
                  || !paramGateFloat(p, _jsonNum(a[2]), vz)) {
-                    if (tolerate(p.name)) break;
+                    if (tolerate(p.name)) continue;
                     throw new Exception(
                         "param '" ~ p.name ~ "' must be a finite number");
                 }
@@ -1598,7 +1602,7 @@ private void injectParamsImpl(Param[] params, ref JSONValue pj,
                     }
                     result[i] = Vec3(ax, ay, az);
                 }
-                if (dropWhole) break;
+                if (dropWhole) continue;
                 *p.v3aPtr = result;
                 break;
             }
@@ -1608,6 +1612,7 @@ private void injectParamsImpl(Param[] params, ref JSONValue pj,
                 throw new Exception(
                     "param '" ~ p.name ~ "' is not injectable");
         }
+        if (p.supplied !is null) *p.supplied = true;
     }
 }
 

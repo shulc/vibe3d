@@ -8,7 +8,10 @@ import document : Document, primaryModelSpaceResolver;
 import mesh : Mesh, makeCube, g_isDocumentMesh;
 import mesh_dirty : allWatchers, MeshDirtyEpochs, g_geomEpochs, g_topoEpochs, noteMeshChange;
 import mesh_edit_delta : MeshEditScope;
-import snapshot : MeshSnapshot;
+import snapshot : MeshSnapshot, SelectionSnapshot;
+import editmode : EditMode;
+import std.algorithm : sort, canFind;
+import std.json : JSONValue;
 import standalone_application : StandaloneApplication;
 import std.stdio : writeln;
 
@@ -134,4 +137,225 @@ unittest {
     assert(host.state() == before,
         "standalone-no-target: complete planes/history/delivery preserved");
     writeln("CORE-CELL passed=standalone-no-target");
+}
+
+
+private void seedSelection(StandaloneApplication host) {
+    host.activeMesh.clearVertexSelection(); host.activeMesh.clearEdgeSelection();
+    host.activeMesh.clearFaceSelection();
+    foreach (id; [6, 1]) host.activeMesh.selectVertex(id);
+    foreach (id; [5, 3]) host.activeMesh.selectEdge(id);
+    foreach (id; [1, 0]) host.activeMesh.selectFace(id);
+    host.session.promoteGeometryType(EditMode.Polygons);
+    host.history.clear();
+    assert(host.activeMesh.vertices.length == 8 && host.activeMesh.edges.length == 12
+        && host.activeMesh.faces.length == 6 && host.history.undoEntriesVisible().length == 0,
+        "selection rig: cube population and history headroom");
+}
+
+// Observe ranks independently of command enumeration and production order readers.
+private uint[] ordered(const bool[] selected, const int[] ranks) {
+    uint[] ids;
+    foreach (i, on; selected) if (on) ids ~= cast(uint)i;
+    ids.sort!((a, b) => ranks[a] < ranks[b]);
+    return ids;
+}
+
+private void sameGeometry(StandaloneApplication host, ref MeshSnapshot before) {
+    assert(host.activeMesh.vertices == before.vertices && host.activeMesh.edges == before.edges
+        && host.activeMesh.faces == before.faces && host.activeMesh.faceMaterial == before.faceMaterial,
+        "selection: geometry and material planes preserved");
+}
+
+unittest {
+    struct Case { string payload; uint[] expected; int counter; }
+    Case[] cases = [
+        Case(`{"type":"vertex","action":"set","indices":[5,2]}`, [5u,2u], 2),
+        Case(`{"type":"vertex","action":"replace","indices":[5,2]}`, [5u,2u], 2),
+        Case(`{"type":"vertex","action":"add","indices":[5,2]}`, [6u,1u,5u,2u], 4),
+        Case(`{"type":"vertex","action":"add","indices":[6,6]}`, [6u,1u], 2),
+        Case(`{"type":"vertex","action":"remove","indices":[6]}`, [1u], 2),
+        Case(`{"type":"vertex","action":"del","indices":[6]}`, [1u], 2),
+        Case(`{"type":"vertex","action":"remove","indices":[7]}`, [6u,1u], 2),
+        Case(`{"type":"vertex","action":"toggle","indices":[6,2]}`, [1u,2u], 3),
+        Case(`{"type":"vertex","action":"toggle","indices":[2,2]}`, [6u,1u], 3),
+        Case(`{"type":"vertex","action":"set","indices":[-1,5,99,2]}`, [5u,2u], 2),
+        Case(`{"type":"vertex","action":"set","indices":[99,-1]}`, [6u,1u], 2),
+        Case(`{"type":"vertex","action":"set","indices":[]}`, [], 0),
+        Case(`{"type":"unknown","action":"unknown","indices":[2]}`, [6u,1u,2u], 3),
+    ];
+    assert(cases.length == 13, "element: named batch-case population");
+    foreach (cell; cases) {
+        auto host = new StandaloneApplication(Document.bootstrap(makeCube()));
+        scope(exit) host.close();
+        seedSelection(host);
+        auto before = SelectionSnapshot.capture(host.activeMesh);
+        auto geometry = MeshSnapshot.capture(host.activeMesh);
+        assert(host.invoke("select.element", cell.payload).applied, "element: batch accepted " ~ cell.payload);
+        auto after = SelectionSnapshot.capture(host.activeMesh);
+        assert(ordered(after.selectedVertices, after.vertexSelectionOrder) == cell.expected
+            && after.vertexSelectionOrderCounter == cell.counter,
+            "element: exact sequential fold/order/counter " ~ cell.payload);
+        int rank;
+        foreach (id; cell.expected) {
+            assert(after.vertexSelectionOrder[id] > rank, "element: increasing stored ranks");
+            rank = after.vertexSelectionOrder[id];
+        }
+        assert(after.selectedEdges == before.selectedEdges && after.edgeSelectionOrder == before.edgeSelectionOrder
+            && after.edgeSelectionOrderCounter == 2 && after.selectedFaces == before.selectedFaces
+            && after.faceSelectionOrder == before.faceSelectionOrder && after.faceSelectionOrderCounter == 2,
+            "element: populated dormant ordered domains preserved");
+        sameGeometry(host, geometry);
+        assert(host.session.editMode == EditMode.Polygons && host.state()["selType"].str == "Polygon",
+            "element: active type unchanged");
+        assert(host.state()["history"]["uiDepth"].uinteger == 1
+            && host.history.undoEntriesVisible().length == 1,
+            "element: exactly one UI invocation row including identity");
+        assert(host.invoke("history.undo").applied && SelectionSnapshot.capture(host.activeMesh) == before,
+            "element: undo restores exact image");
+        assert(host.invoke("history.redo").applied && SelectionSnapshot.capture(host.activeMesh) == after,
+            "element: redo restores exact image");
+    }
+    auto host = new StandaloneApplication(Document.bootstrap(makeCube()));
+    scope(exit) host.close();
+    seedSelection(host);
+    foreach (payload; [`{"action":"set","indices":[]}`, `{"type":"vertex","indices":[]}`,
+            `{"type":"vertex","action":"set"}`, `{"type":"vertex","action":"set","indices":[1,"bad"]}`]) {
+        auto before = host.state();
+        bool refused;
+        try { host.invoke("select.element", payload); } catch (Exception e) { refused = true; }
+        assert(refused && host.state() == before, "element: required or malformed arguments refuse before writes");
+    }
+    // The same registered factories must resolve a replacement document and mode.
+    host.document = Document.bootstrap(makeCube());
+    host.session.promoteGeometryType(EditMode.Edges);
+    assert(host.invoke("select.element", `{"type":"edge","action":"set","indices":[9,2]}`).applied
+        && ordered(host.activeMesh.selectedEdges, host.activeMesh.edgeSelectionOrder) == [9u,2u]
+        && host.session.editMode == EditMode.Edges, "element: lower host resolves replacement mesh/mode");
+    assert(host.invoke("select.element", `{"type":"polygon","action":"set","indices":[4,1]}`).applied
+        && ordered(host.activeMesh.selectedFaces, host.activeMesh.faceSelectionOrder) == [4u,1u],
+        "element: polygon domain wiring");
+    writeln("CORE-CELL passed=standalone-select-element");
+}
+
+unittest {
+    auto host = new StandaloneApplication(Document.bootstrap(makeCube()));
+    scope(exit) host.close();
+    seedSelection(host);
+    foreach (payload; ["", `{"type":"unknown"}`]) {
+        auto beforeState = host.state(); bool refused;
+        try { host.invoke("select.drop", payload); } catch (Exception e) { refused = true; }
+        assert(refused && host.state() == beforeState, "drop: required type and strict unknown refusal");
+    }
+    auto before = SelectionSnapshot.capture(host.activeMesh);
+    auto geometry = MeshSnapshot.capture(host.activeMesh);
+    assert(host.invoke("select.drop", `{"type":"edge"}`).applied, "drop: explicit edge accepted");
+    auto after = SelectionSnapshot.capture(host.activeMesh);
+    assert(ordered(after.selectedEdges, after.edgeSelectionOrder).length == 0
+        && after.edgeSelectionOrderCounter == 0 && after.selectedVertices == before.selectedVertices
+        && after.vertexSelectionOrder == before.vertexSelectionOrder && after.vertexSelectionOrderCounter == 2
+        && after.selectedFaces == before.selectedFaces && after.faceSelectionOrder == before.faceSelectionOrder
+        && after.faceSelectionOrderCounter == 2, "drop: only explicit domain clears");
+    assert(host.session.editMode == EditMode.Edges && host.state()["selType"].str == "Edge",
+        "drop: explicit target promotion");
+    assert(host.invoke("select.drop", `{"type":"edge"}`).applied
+        && SelectionSnapshot.capture(host.activeMesh) == after,
+        "drop: empty repeat accepted identity");
+    assert(host.state()["history"]["uiDepth"].uinteger == 2
+        && host.history.undoEntriesVisible().length == 2, "drop: two UI invocation rows");
+    assert(host.invoke("history.undo").applied && SelectionSnapshot.capture(host.activeMesh) == after
+        && host.session.editMode == EditMode.Edges, "drop: undo empty repeat retains prior edge mode");
+    assert(host.invoke("history.undo").applied && SelectionSnapshot.capture(host.activeMesh) == before
+        && host.session.editMode == EditMode.Polygons && host.state()["selType"].str == "Polygon",
+        "drop: undo restores ordered image and prior polygon mode");
+    assert(host.invoke("history.redo").applied && SelectionSnapshot.capture(host.activeMesh) == after
+        && host.session.editMode == EditMode.Edges, "drop: redo reapplies target mode and image");
+    assert(host.invoke("history.redo").applied && SelectionSnapshot.capture(host.activeMesh) == after
+        && host.history.undoEntriesVisible().length == 2, "drop: redo empty repeat keeps both rows");
+    sameGeometry(host, geometry);
+    foreach (target; ["vertex", "polygon"])
+        assert(host.invoke("select.drop", `{"type":"` ~ target ~ `"}`).applied,
+            "drop: all component domain doors execute");
+    assert(!host.activeMesh.selectedVertices.canFind(true) && !host.activeMesh.selectedFaces.canFind(true)
+        && host.session.editMode == EditMode.Polygons, "drop: vertex/polygon domain wiring");
+    import commands.select.drop : SelectDropCommand;
+    import view : View;
+    auto directMesh = makeCube(); directMesh.syncSelection(); directMesh.selectVertex(2);
+    auto directView = new View(0,0,10,10);
+    EditMode directMode = EditMode.Polygons;
+    auto direct = new SelectDropCommand(&directMesh, directView, directMode, &directMode);
+    direct.setTargetType("vertex");
+    assert(direct.isUiUndo() && direct.apply() && direct.undoRecorded()
+        && directMode == EditMode.Vertices && !directMesh.isVertexSelected(2),
+        "drop: in-process setter and mode-cell fallback remain usable");
+    assert(direct.revert() && directMode == EditMode.Polygons && directMesh.isVertexSelected(2),
+        "drop: in-process fallback restores mode and image");
+    auto legacy = new SelectDropCommand(&directMesh, directView, EditMode.Edges);
+    legacy.setTargetType("vertex");
+    assert(legacy.apply() && legacy.revert() && directMesh.isVertexSelected(2),
+        "drop: legacy construction retains selection undo");
+    writeln("CORE-CELL passed=standalone-select-drop");
+}
+
+unittest {
+    foreach (mode; [EditMode.Vertices, EditMode.Edges, EditMode.Polygons]) {
+        auto host = new StandaloneApplication(Document.bootstrap(makeCube()));
+        scope(exit) host.close();
+        seedSelection(host); host.session.promoteGeometryType(mode);
+        auto before = SelectionSnapshot.capture(host.activeMesh);
+        auto geometry = MeshSnapshot.capture(host.activeMesh);
+        assert(host.invoke("select.invert").applied, "invert: first complement accepted");
+        auto after = SelectionSnapshot.capture(host.activeMesh);
+        assert(host.invoke("select.invert").applied, "invert: second complement accepted");
+        auto repeated = SelectionSnapshot.capture(host.activeMesh);
+        foreach (domain; [EditMode.Vertices, EditMode.Edges, EditMode.Polygons]) {
+            const original = domain == EditMode.Vertices ? before.selectedVertices
+                : domain == EditMode.Edges ? before.selectedEdges : before.selectedFaces;
+            const first = domain == EditMode.Vertices ? after.selectedVertices
+                : domain == EditMode.Edges ? after.selectedEdges : after.selectedFaces;
+            const second = domain == EditMode.Vertices ? repeated.selectedVertices
+                : domain == EditMode.Edges ? repeated.selectedEdges : repeated.selectedFaces;
+            const ranks = domain == EditMode.Vertices ? after.vertexSelectionOrder
+                : domain == EditMode.Edges ? after.edgeSelectionOrder : after.faceSelectionOrder;
+            const originalRanks = domain == EditMode.Vertices ? before.vertexSelectionOrder
+                : domain == EditMode.Edges ? before.edgeSelectionOrder : before.faceSelectionOrder;
+            const reranks = domain == EditMode.Vertices ? repeated.vertexSelectionOrder
+                : domain == EditMode.Edges ? repeated.edgeSelectionOrder : repeated.faceSelectionOrder;
+            assert(original.length == (domain == EditMode.Vertices ? 8 : domain == EditMode.Edges ? 12 : 6),
+                "invert: real domain population");
+            if (domain == mode) {
+                uint[] expected;
+                foreach (i, on; original) { assert(first[i] == !on && second[i] == on, "invert: complement membership");
+                    if (!on) expected ~= cast(uint)i; }
+                assert(ordered(first, ranks) == expected, "invert: first complement enumeration order");
+                assert(ordered(second, reranks) == (domain == EditMode.Vertices ? [1u,6u]
+                    : domain == EditMode.Edges ? [3u,5u] : [0u,1u]), "invert: repeat enumeration order");
+            } else assert(first == original && second == original && ranks == originalRanks && reranks == originalRanks,
+                "invert: dormant ordered domain preserved");
+        }
+        assert(host.session.editMode == mode && host.state()["history"]["modelDepth"].uinteger == 2,
+            "invert: unchanged mode and two Model rows");
+        assert(host.invoke("history.undo").applied && SelectionSnapshot.capture(host.activeMesh) == after,
+            "invert: undo second exact image");
+        assert(host.invoke("history.undo").applied && SelectionSnapshot.capture(host.activeMesh) == before,
+            "invert: undo first exact descending image");
+        assert(host.invoke("history.redo").applied && SelectionSnapshot.capture(host.activeMesh) == after,
+            "invert: redo first exact image");
+        assert(host.invoke("history.redo").applied && SelectionSnapshot.capture(host.activeMesh) == repeated,
+            "invert: redo second exact image");
+        sameGeometry(host, geometry);
+    }
+    auto empty = new StandaloneApplication(Document.bootstrap(Mesh.init));
+    scope(exit) empty.close();
+    empty.history.clear();
+    assert(empty.activeMesh.vertices.length == 0 && empty.activeMesh.edges.length == 0
+        && empty.activeMesh.faces.length == 0, "invert: genuinely empty mesh");
+    foreach (_; 0 .. 2) assert(empty.invoke("select.invert").applied, "invert: empty invocation accepted");
+    assert(empty.history.undoEntriesVisible().length == 2, "invert: two empty steps retained");
+    foreach (_; 0 .. 2) assert(empty.invoke("history.undo").applied, "invert: each empty step undone");
+    assert(empty.history.undoEntriesVisible().length == 0 && empty.history.redoEntriesVisible().length == 2,
+        "invert: both empty undo steps observed");
+    foreach (_; 0 .. 2) assert(empty.invoke("history.redo").applied, "invert: each empty step redone");
+    assert(empty.history.undoEntriesVisible().length == 2, "invert: both empty redo steps observed");
+    writeln("CORE-CELL passed=standalone-select-invert");
 }

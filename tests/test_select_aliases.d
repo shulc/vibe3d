@@ -188,7 +188,7 @@ unittest { // dedicated edit-mode commands used by statusline buttons
 }
 
 // ---------------------------------------------------------------------------
-// 2. select.drop — clears selection in given mode, keeps EditMode
+// 2. select.drop — clears selection in given mode and promotes it
 // ---------------------------------------------------------------------------
 
 unittest { // drop polygon clears face selection, keeps edge/vert selections
@@ -197,8 +197,7 @@ unittest { // drop polygon clears face selection, keeps edge/vert selections
     postSelect("vertices", [1, 3]);    // also set some vert selection
     postCommand("select.drop polygon");
     assertSet(selectedFaces(), [], "drop polygon: faces should be empty");
-    // Mode should still be whatever /api/select set last (vertices)
-    // The important thing is that the face selection is cleared.
+    assert(editMode() == "polygons", "drop polygon promotes the explicit domain");
     assertSet(selectedVerts(), [1, 3], "drop polygon: vert selection preserved");
 }
 
@@ -271,15 +270,15 @@ unittest { // element polygon remove on index not in selection is harmless
 unittest { // element polygon set with zero indices clears selection
     resetCube();
     postSelect("polygons", [0, 1, 2]);
-    postCommand(`{"id":"select.element","params":{"_positional":["polygon","set"]}}`);
+    postCommand(`{"id":"select.element","params":{"type":"polygon","action":"set","indices":[]}}`);
     assertSet(selectedFaces(), [], "element set with no indices clears selection");
 }
 
-unittest { // element out-of-range index returns error
+unittest { // element all-invalid set is accepted unchanged
     resetCube();
-    auto resp = postCommandRaw("select.element polygon set 99");
-    assert(parseJSON(resp)["status"].str == "error",
-        "element out-of-range: expected error, got: " ~ resp);
+    postSelect("polygons", [1, 0]);
+    postCommand("select.element polygon set 99");
+    assertSet(selectedFaces(), [1, 0], "element all-invalid set preserves selection");
 }
 
 // ---------------------------------------------------------------------------

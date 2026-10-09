@@ -24,6 +24,7 @@ block packages/common/source/command.d 2
 block packages/common/source/command_history.d 14
 block packages/common/source/command_registry.d 1
 block packages/common/source/commands/mesh/session_edit.d 1
+block packages/common/source/commands/select/element.d 1
 block packages/common/source/io/image_decode.d 5
 block packages/common/source/io/native.d 14
 block packages/common/source/json_num.d 3
@@ -57,7 +58,6 @@ block source/commands/mesh/vertex_set.d 4
 block source/commands/select/boundary.d 7
 block source/commands/select/by_stat.d 11
 block source/commands/select/by_tag.d 9
-block source/commands/select/element.d 1
 block source/commands/select/type_from.d 4
 block source/commands/workplane.d 3
 block source/constraint.d 8

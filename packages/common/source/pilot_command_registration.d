@@ -4,6 +4,9 @@ import command : Command;
 import command_history : CommandHistory;
 import commands.mesh.triple : MeshTriple;
 import commands.mesh.select : MeshSelect;
+import commands.select.element : SelectElementCommand;
+import commands.select.drop : SelectDropCommand;
+import commands.select.invert : SelectInvert;
 import commands.history.undo : HistoryUndo;
 import commands.history.redo : HistoryRedo;
 import editmode : EditMode;
@@ -46,4 +49,20 @@ void registerHistoryNavigationCommands(Registrar)(ref Registrar registry,
         new HistoryUndo(&deps.activeMesh(), deps.view(), *deps.mode, history));
     registry.registerCommand("history.redo", () => cast(Command)
         new HistoryRedo(&deps.activeMesh(), deps.view(), *deps.mode, history));
+}
+
+void registerElementSelectionCommand(Registrar)(ref Registrar registry, PilotCommandDeps deps) {
+    registry.registerCommand("select.element", () => cast(Command)
+        new SelectElementCommand(&deps.activeMesh(), deps.view(), *deps.mode));
+}
+
+void registerDropSelectionCommand(Registrar)(ref Registrar registry, PilotCommandDeps deps) {
+    registry.registerCommand("select.drop", () => cast(Command)
+        (new SelectDropCommand(&deps.activeMesh(), deps.view(), *deps.mode, deps.mode))
+            .setPromoteHook(deps.promoteGeometryType));
+}
+
+void registerInvertSelectionCommand(Registrar)(ref Registrar registry, PilotCommandDeps deps) {
+    registry.registerCommand("select.invert", () => cast(Command)
+        new SelectInvert(&deps.activeMesh(), deps.view(), *deps.mode));
 }

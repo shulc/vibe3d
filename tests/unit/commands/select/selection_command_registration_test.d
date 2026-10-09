@@ -73,6 +73,8 @@ private static immutable ReachRow[] kModeCellReach = [
         "20261770: common history helper takes the live mode cell"),
     ReachRow("mesh_command_registration.d", 1,
         "6509: mesh.select takes the mode cell"),
+    ReachRow("selection_command_registration.d", 1,
+        "20261900: common selection helpers take the live mode cell"),
     ReachRow("transform_tool_registration.d", 5,
         "6506: one unified helper plus four deform factories"),
 ];
@@ -419,11 +421,20 @@ unittest { // S9: production call, ordering and old-path census
                       "RemeshModalRefs", "with (", "app."])
         assert(sel.count(needle) == 0,
             "6000 no-app witness: selection registrar names " ~ needle);
-    assert(sel.count("reg.registerCommand(") == 29,
-        "6000 census: 29 factory rows");
+    assert(sel.count("reg.registerCommand(") == 26,
+        "6000 census: 26 desktop factory rows");
+    foreach (helper; ["registerElementSelectionCommand", "registerDropSelectionCommand", "registerInvertSelectionCommand"])
+        assert(sel.count(helper ~ "(reg, deps);") == 1,
+            "selection production common helper: " ~ helper);
+    assert(sel.indexOf("registerInvertSelectionCommand(reg, deps);") > selSrc.indexOf(`reg.registerCommand("select.ring"`)
+        && sel.indexOf("registerInvertSelectionCommand(reg, deps);") < selSrc.indexOf(`reg.registerCommand("select.connect"`)
+        && sel.indexOf("registerDropSelectionCommand(reg, deps);") > selSrc.indexOf(`reg.registerCommand("select.byStat.polygon"`)
+        && sel.indexOf("registerDropSelectionCommand(reg, deps);") < sel.indexOf("registerElementSelectionCommand(reg, deps);")
+        && sel.indexOf("registerElementSelectionCommand(reg, deps);") < selSrc.indexOf(`reg.registerCommand("select.convert"`),
+        "selection common helpers preserve factory order");
     assert(sel.count("doors.editMode_") == 11
         && sel.count("owner.document()") == 1
-        && sel.count("doors.promoteGeometry_") == 6
+        && sel.count("doors.promoteGeometry_") == 7
         && sel.count("doors.switchGeometry_") == 5
         && sel.count("doors.switchItem_") == 5,
         format("6000 census: mode/document/door reads %d/%d/%d/%d/%d",
@@ -476,7 +487,7 @@ unittest { // S9: production call, ordering and old-path census
             assert(expectedEditModePtrs > 0,
                 "6000 mode-cell reach: a recorded editModePtr row became empty: " ~ file);
     }
-    assert(regFiles.length >= 15 && kModeCellReach.length == 6
+    assert(regFiles.length >= 15 && kModeCellReach.length == 7
         && modeRowsSeen == kModeCellReach.length
         && editModePtrRowsSeen == kEditModePtrReach.length,
         format("6000 mode-cell reach population: files=%d mode rows=%d/%d "

@@ -20,7 +20,8 @@ CORE_ROOTS = ('application_core_command_test.d', 'application_core_mesh_test.d',
 CORE_CELLS = ('document-primary', 'invocation-order', 'invocation-outcomes', 'invocation-tweak',
               'mesh-cube', 'model-delivery', 'no-edit-target', 'pilot-live',
               'registry-authority', 'selected-triangle-refusal', 'session-carrier', 'standalone-no-target',
-              'standalone-owner', 'triple-roundtrip')
+              'standalone-owner', 'standalone-select-drop', 'standalone-select-element',
+              'standalone-select-invert', 'triple-roundtrip')
 
 STB_REVISION = 'a66f6917718ea128076a2c5660e37f362a785144'
 # Canonical JSON pins include configuration/build-type grants and platform keys.

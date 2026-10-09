@@ -299,6 +299,10 @@ private Run differential(string root, JSONValue doc, string[] scriptRows, bool s
             assert(actual["phase"].str == "error" && actual["id"] == expectedId
                 && actual["outcome"].type == JSONType.null_,
                 "CLI state: malformed/unknown error row");
+            if (expectedId.type == JSONType.string && ["select.element", "select.drop"].canFind(expectedId.str)) {
+                auto response = parseJSON(postRawAllowingErrorStatus("/api/command", row));
+                assert(response["status"].str == "error", "CLI required arguments: desktop refusal");
+            }
             assert(actual["state"] == previousCli, "CLI error: complete state preservation");
             assert(desktopState() == previousDesktop, "CLI error: desktop complete state preservation");
         } else {
@@ -365,6 +369,42 @@ unittest {
     auto root = buildPath("/var/tmp", "vibe3d-cli-test-" ~ thisProcessID.to!string);
     mkdirRecurse(root); scope(exit) rmdirRecurse(root);
     auto doc = fixture(root);
+    string[] selectionRows = [
+        `{"id":"mesh.select","params":{"mode":"vertices","indices":[6,1]}}`,
+        `{"id":"mesh.select","params":{"mode":"edges","indices":[5,3]}}`,
+        `{"id":"mesh.select","params":{"mode":"polygons","indices":[1,0]}}`,
+        `{"id":"select.element","params":{"type":"vertex","action":"set","indices":[-1,5,99,2]}}`,
+        `{"id":"select.element","params":{"type":"unknown","action":"unknown","indices":[1]}}`,
+        `{"id":"select.element","params":{"type":"vertex","action":"toggle","indices":[2,2]}}`,
+        `{"id":"select.element","params":{"type":"vertex","action":"del","indices":[5]}}`,
+        `{"id":"select.element","params":{"type":"vertex","action":"replace","indices":[]}}`,
+        `{"id":"select.drop","params":{"type":"edge"}}`,
+        `{"id":"select.drop","params":{"type":"edge"}}`,
+        `{"id":"history.undo"}`, `{"id":"history.undo"}`,
+        `{"id":"history.redo"}`, `{"id":"history.redo"}`,
+        `{"id":"select.invert"}`, `{"id":"select.invert"}`,
+        `{"id":"history.undo"}`, `{"id":"history.undo"}`,
+        `{"id":"history.redo"}`, `{"id":"history.redo"}`,
+        `{"id":"mesh.select","params":{"mode":"polygons","indices":[0]}}`,
+        `{"id":"mesh.triple"}`, `{"id":"history.undo"}`, `{"id":"history.redo"}`
+    ];
+    assert(selectionRows.length == 24, "CLI selection: integrated invocation population");
+    string[] selectionOutcomes; foreach (_; selectionRows) selectionOutcomes ~= "applied";
+    auto selection = differential(root, doc, selectionRows, true, selectionOutcomes);
+    assert(selection.states[11]["state"]["editMode"].str == "Edges"
+        && selection.states[12]["state"]["editMode"].str == "Polygons"
+        && selection.states[14]["state"]["editMode"].str == "Edges",
+        "CLI drop: real cross-domain undo/redo mode chronology");
+    assert(selection.states[24]["state"]["planes"]["counts"]["faces"].integer == 7,
+        "CLI selection: triple plus undo/redo before production save");
+    foreach (row; [
+        `{"id":"select.element","params":{"action":"set","indices":[]}}`,
+        `{"id":"select.element","params":{"type":"vertex","indices":[]}}`,
+        `{"id":"select.element","params":{"type":"vertex","action":"set"}}`,
+        `{"id":"select.element","params":{"type":"vertex","action":"set","indices":[1,"bad"]}}`,
+        `{"id":"select.drop"}`, `{"id":"select.drop","params":{"type":"unknown"}}`
+    ]) differential(root, doc, [selectionRows[0], selectionRows[1], selectionRows[2], row],
+        false, ["applied", "applied", "applied", "error"]);
     auto undoOnly = differential(root, doc, [
         `{"id":"mesh.select","params":{"mode":"polygons","indices":[0]}}`,
         `{"id":"mesh.triple"}`, `{"id":"history.undo"}`],
@@ -460,7 +500,7 @@ unittest {
     auto unicode = "{\"id\":\"mesh.select\",\"params\":{\"mode\":\"polygons\",\"indices\":[0],\"bogus\":\"a\u2028b\u2029c\u0085d\"}}";
     differential(root, doc, ["", unicode ~ "\r", `{"id":"mesh.triple","params":{"bogus":1}}`], true, ["applied", "applied"]);
     // A populated real process gives /proc maps/exe/env/argv witnesses while it
-    // runs the same four-ID roster; no debug pause flag or alternate CLI exists.
+    // runs a populated registered command; no debug pause flag or alternate CLI exists.
     auto input = buildPath(root, "input.v3d"), script = buildPath(root, "script.jsonl"), output = buildPath(root, "output.v3d");
     write(input, doc.toString);
     string longScript; foreach (_; 0 .. 300) longScript ~= `{"id":"mesh.select","params":{"mode":"polygons","indices":[0]}}` ~ "\n";
@@ -582,5 +622,5 @@ unittest {
         "CLI save error: complete pre-save state and existing native output preserved");
     errorSchema(unwritable, "save");
     noOrphan(root);
-    writeln("CLI-WITNESS source=", sourcePin, " binary-sha256=", binaryHash, " roster=4 cases=quad,whole,triangle,no-target,errors,unicode,aliases,atomic");
+    writeln("CLI-WITNESS source=", sourcePin, " binary-sha256=", binaryHash, " roster=7 cases=selection,required,quad,whole,triangle,no-target,errors,unicode,aliases,atomic");
 }

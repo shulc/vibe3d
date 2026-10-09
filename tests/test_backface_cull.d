@@ -613,25 +613,25 @@ unittest {
     click(winPx(vp, kQuads[iB0].c));
     assert(sel("selectedFaces") == [cast(long)iB0],
         format("P1: a click inside B0 selected %s, expected [%d] (picking unchanged)", sel("selectedFaces"), iB0));
-    cmd(commandBody("select.drop"));
+    cmd("select.drop polygon");
     // P3: the polygon lasso has a facing term — positive control over F0 first.
     D3 lo(int i) { return [kQuads[i].c[0] - 0.4, kQuads[i].c[1] - 0.4, 0]; }
     D3 hi(int i) { return [kQuads[i].c[0] + 0.4, kQuads[i].c[1] + 0.4, 0]; }
     lasso(winPx(vp, lo(iF0)), winPx(vp, hi(iF0)));
     assert(sel("selectedFaces") == [cast(long)iF0], format("P3 control: a lasso over F0 selected %s", sel("selectedFaces")));
-    cmd(commandBody("select.drop"));
+    cmd("select.drop polygon");
     lasso(winPx(vp, lo(iB0)), winPx(vp, hi(iB0)));
     assert(sel("selectedFaces").length == 0, format("P3: a lasso over B0 selected %s, expected none", sel("selectedFaces")));
     // P2: a vertex click on B0's corner picks it.
     cmd("select.typeFrom vertex");
-    cmd(commandBody("select.drop"));
+    cmd("select.drop vertex");
     immutable D3 b0c = corners(kQuads[iB0])[0];
     click(winPx(vp, b0c));
     assert(sel("selectedVertices") == [4L * iB0],
         format("P2: a vertex click on B0's corner selected %s, expected [%d]", sel("selectedVertices"), 4 * iB0));
     // P4: Ft's corner behind the (culled) Bo is NOT picked: the vertex pre-pass
     // is two-sided (unchanged). The reference picks it (C7i) — gap row, 9041.
-    cmd(commandBody("select.drop"));
+    cmd("select.drop vertex");
     immutable D3 ftc = corners(kQuads[iFt])[2];
     click(winPx(vp, ftc));
     assert(sel("selectedVertices").length == 0,

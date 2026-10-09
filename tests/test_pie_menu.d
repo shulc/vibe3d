@@ -264,7 +264,7 @@ unittest { // L19: the modal press/release cannot reach picking
     play([motion(CX, 300), button(1, true, CX, 300), button(1, false, CX, 300, 21)]);
     assert(getJson("/api/selection")["selectedFaces"].array.length == 1,
            "L19 control click missed the cube");
-    cmd("select.drop");
+    cmd("select.drop polygon");
     openAndAim(CX, 300);
     play([button(1, true, CX, 300), button(1, false, CX, 300, 21)]);
     assert(getJson("/api/selection")["selectedFaces"].array.length == 0,

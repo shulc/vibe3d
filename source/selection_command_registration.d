@@ -24,6 +24,10 @@ import commands.select.type_from : SelectTypeFromCommand;
 import editmode : EditMode;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import registry : Registry;
+import mesh : Mesh;
+import view : View;
+import pilot_command_registration : PilotCommandDeps, registerElementSelectionCommand,
+    registerDropSelectionCommand, registerInvertSelectionCommand;
 
 /// The stable EditMode cell and three selection-type doors reached by this
 /// family. The promotion door does not drop the active tool; Model commands
@@ -56,6 +60,13 @@ public:
 /// created.
 void registerSelectionCommands(ref Registry reg, LiveSessionRole owner,
         LiveViewModeRole live, SelectionTypeDoors doors) {
+    PilotCommandDeps deps;
+    ref Mesh liveMesh() { return owner.activeMesh(); }
+    ref View liveView() { return live.view(); }
+    deps.activeMesh = &liveMesh;
+    deps.view = &liveView;
+    deps.mode = live.modeCell();
+    deps.promoteGeometryType = doors.promoteGeometry_;
     reg.registerCommand("select.expand", () => cast(Command)
         new SelectionExpand(&owner.activeMesh(), live.view(), live.mode));
     reg.registerCommand("select.contract", () => cast(Command)
@@ -68,8 +79,7 @@ void registerSelectionCommands(ref Registry reg, LiveSessionRole owner,
         new SelectLoop(&owner.activeMesh(), live.view(), live.mode));
     reg.registerCommand("select.ring", () => cast(Command)
         new SelectRing(&owner.activeMesh(), live.view(), live.mode));
-    reg.registerCommand("select.invert", () => cast(Command)
-        new SelectInvert(&owner.activeMesh(), live.view(), live.mode));
+    registerInvertSelectionCommand(reg, deps);
     reg.registerCommand("select.connect", () => cast(Command)
         new SelectConnect(&owner.activeMesh(), live.view(), live.mode));
     reg.registerCommand("select.between", () => cast(Command)
@@ -122,10 +132,8 @@ void registerSelectionCommands(ref Registry reg, LiveSessionRole owner,
         (new SelectByStatPolygon(&owner.activeMesh(), live.view(), live.mode,
                                  doors.editMode_))
             .setPromoteHook(doors.promoteGeometry_));
-    reg.registerCommand("select.drop", () => cast(Command)
-        new SelectDropCommand(&owner.activeMesh(), live.view(), live.mode));
-    reg.registerCommand("select.element", () => cast(Command)
-        new SelectElementCommand(&owner.activeMesh(), live.view(), live.mode));
+    registerDropSelectionCommand(reg, deps);
+    registerElementSelectionCommand(reg, deps);
     reg.registerCommand("select.convert", () => cast(Command)
         (new SelectConvertCommand(&owner.activeMesh(), live.view(), live.mode,
                                   doors.editMode_))

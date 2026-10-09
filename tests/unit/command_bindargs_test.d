@@ -144,12 +144,13 @@ private final class TailCmd : Command {
     string t;
     string act;
     uint[] idx;
+    bool typePresent, actionPresent, indicesPresent;
     this() { static Mesh m; static View v; super(&m, v, EditMode.Vertices); }
     override string name() const { return "test.tail"; }
     override Param[] params() {
-        return [ Param.string_("type", "Type", &t, ""),
-                 Param.string_("action", "Action", &act, ""),
-                 Param.intArray_("indices", "Indices", &idx) ];
+        return [ Param.string_("type", "Type", &t, "").present(&typePresent),
+                 Param.string_("action", "Action", &act, "").present(&actionPresent),
+                 Param.intArray_("indices", "Indices", &idx).present(&indicesPresent) ];
     }
 }
 
@@ -220,4 +221,64 @@ unittest { // the payload helpers and the binder agree on the wire key
     JSONValue empty = parseJSON(`{}`);
     assert(firstPositionalString(empty) == "");
     assert(positionalArgs(empty).length == 0);
+}
+
+
+unittest { // Presence belongs to a successful supplied write, including [].
+    import params : injectParamsInto, injectParamsTolerant;
+    auto omitted = new TailCmd();
+    bindArgs(omitted, `{"_positional":["vertex","set"]}`);
+    assert(omitted.typePresent && omitted.actionPresent && !omitted.indicesPresent,
+        "omitted array tail must not establish presence");
+    auto empty = new TailCmd();
+    bindArgs(empty, `{"type":"vertex","action":"set","indices":[]}`);
+    assert(empty.indicesPresent && empty.idx.length == 0,
+        "explicit empty array must establish presence");
+    auto tail = new TailCmd();
+    bindArgs(tail, `{"_positional":["vertex","add",5,1]}`);
+    assert(tail.indicesPresent && tail.idx == [5u, 1u],
+        "positional tail must establish presence");
+    auto bad = new TailCmd();
+    bool refused;
+    try { bindArgs(bad, `{"indices":[1,"bad"]}`); }
+    catch (Exception e) { refused = true; }
+    assert(refused && !bad.indicesPresent && bad.idx.length == 0,
+        "malformed array must not establish presence or write storage");
+    int ordinary = 7;
+    bool present;
+    auto ps = [Param.int_("value", "Value", &ordinary, 7).present(&present)];
+    auto invalid = parseJSON(`{"value":"bad"}`);
+    auto dropped = injectParamsTolerant(ps, invalid);
+    assert(dropped == ["value"] && !present && ordinary == 7,
+        "tolerated failed write must not establish presence");
+    auto valid = parseJSON(`{"value":9}`);
+    injectParamsInto(ps, valid);
+    assert(present && ordinary == 9, "ordinary supplied parameter still writes");
+    auto absent = parseJSON(`{}`);
+    injectParamsInto(ps, absent);
+    assert(present && ordinary == 9, "absent key must leave stable presence alone");
+    auto unchanged = new BindTestCmd();
+    bindArgs(unchanged, `{"n":11}`);
+    assert(unchanged.n == 11 && unchanged.b, "unmarked ordinary parameters stay compatible");
+}
+
+
+unittest { // Each tolerant numeric shape skips both its write and presence marker.
+    import params : injectParamsTolerant;
+    import math : Vec3;
+    float scalar = 4;
+    Vec3 vector = Vec3(1,2,3);
+    Vec3[] vectors = [Vec3(4,5,6)];
+    bool scalarPresent, vectorPresent, vectorsPresent;
+    auto ps = [Param.float_("scalar", "Scalar", &scalar, 4).present(&scalarPresent),
+        Param.vec3_("vector", "Vector", &vector, Vec3(1,2,3)).present(&vectorPresent),
+        Param.vec3Array_("vectors", "Vectors", &vectors).present(&vectorsPresent)];
+    auto invalid = parseJSON(`{"scalar":"bad","vector":[1,2,"bad"],"vectors":[[1,2,3],[4,5,"bad"]]}`);
+    assert(injectParamsTolerant(ps, invalid) == ["scalar","vector","vectors[1]"]
+        && !scalarPresent && !vectorPresent && !vectorsPresent
+        && scalar == 4 && vector == Vec3(1,2,3) && vectors == [Vec3(4,5,6)],
+        "tolerated numeric shapes must not establish presence or partial storage");
+    auto supplied = parseJSON(`{"scalar":7,"vector":[7,8,9],"vectors":[[1,2,3]]}`);
+    assert(injectParamsTolerant(ps, supplied).length == 0 && scalarPresent && vectorPresent && vectorsPresent,
+        "successful numeric shapes establish presence");
 }

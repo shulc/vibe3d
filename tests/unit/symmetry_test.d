@@ -189,7 +189,7 @@ unittest {
         const rel = de.name[kRepoRoot.length + 1 .. $];
         if (rel == "source/commands/mesh/symmetrize.d") continue;
         ++n;
-        if (rel == "source/commands/select/element.d") sawElement = true;
+        if (rel == "packages/common/source/commands/select/element.d") sawElement = true;
         if (rel == "packages/common/source/commands/mesh/select.d") sawSelect = true;
         const code = codeOf(rel);
         foreach (tok; ["mirrorElement(", "symmetricSelect", "pairOf["])

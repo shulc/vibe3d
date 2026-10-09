@@ -9,8 +9,8 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 591
-task-citation-lines 5203
-citing-files 459
+task-citation-lines 5202
+citing-files 458
 long-comment-runs 260
 files-with-long-runs 140
 
@@ -155,10 +155,9 @@ allow source/commands/select/by_tag.d 6
 allow source/commands/select/connect.d 1
 allow source/commands/select/contract.d 2
 allow source/commands/select/convert.d 4
-allow source/commands/select/drop.d 1
 allow source/commands/select/expand.d 2
 allow source/commands/select/fill.d 3
-allow source/commands/select/invert.d 2
+allow packages/common/source/commands/select/invert.d 2
 allow source/commands/select/less.d 2
 allow source/commands/select/loop.d 7
 allow source/commands/select/more.d 2

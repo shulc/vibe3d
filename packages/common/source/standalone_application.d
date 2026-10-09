@@ -14,7 +14,8 @@ import math : ModelSpace, Viewport;
 import mesh : Mesh, g_isDocumentMesh;
 import mesh_dirty : noteMeshChange;
 import pilot_command_registration : PilotCommandDeps, registerTripleCommand,
-    registerMeshSelectionCommand, registerHistoryNavigationCommands;
+    registerMeshSelectionCommand, registerHistoryNavigationCommands,
+    registerElementSelectionCommand, registerDropSelectionCommand, registerInvertSelectionCommand;
 import session_owner : Session;
 import std.conv : to;
 import std.json : JSONValue, parseJSON;
@@ -67,6 +68,9 @@ public:
         deps.promoteGeometryType = (mode) { session_.promoteGeometryType(mode); };
         registerMeshSelectionCommand(registry_, deps);
         registerTripleCommand(registry_, deps);
+        registerElementSelectionCommand(registry_, deps);
+        registerDropSelectionCommand(registry_, deps);
+        registerInvertSelectionCommand(registry_, deps);
         registerHistoryNavigationCommands(registry_, deps, history_);
         executor_ = new CommandExecutor(history_, () => false,
             (transition) { throw new Exception("standalone host has no tools to drop"); });
