@@ -110,7 +110,10 @@ private void parity(JSONValue cli, JSONValue desktop, JSONValue previousCli, JSO
             ~ " cli=" ~ cli[key].toString ~ " desktop=" ~ desktop[key].toString);
     foreach (key; ["lastDeliveryFlags", "lastDeliverySelDomains"])
         assert(cli["changes"][key] == desktop["changes"][key],
-            "CLI differential: delivery gauge mismatch " ~ key);
+            "CLI differential: delivery gauge mismatch " ~ key
+                ~ " phase=" ~ (previousCli.type == JSONType.null_ ? "loaded" : "command")
+                ~ " target=" ~ cli["hasEditTarget"].toString
+                ~ " cli=" ~ cli["changes"][key].toString ~ " desktop=" ~ desktop["changes"][key].toString);
     if (previousCli.type != JSONType.null_) {
         auto cliDelta = cli["changes"]["deliveryCount"].integer - previousCli["changes"]["deliveryCount"].integer;
         auto desktopDelta = desktop["changes"]["deliveryCount"].integer - previousDesktop["changes"]["deliveryCount"].integer;
