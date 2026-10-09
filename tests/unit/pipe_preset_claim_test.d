@@ -495,6 +495,8 @@ unittest { // W-2a/W-2b: the mutable writer surface is an exact ledger.
 
     const variableAttributeWriters = writerLedger(`\.setAttr\((?!")`);
     const expectedVariableAttributeWriters =
+        // GC.setAttr in the child-first finalization fixture is not a stage choice.
+        "bvh_pick.d 1\n" ~
         "commands/tool/pipe.d 1\n" ~
         "falloff_handles.d 1\n" ~
         "tool_presets.d 1\n" ~
