@@ -86,6 +86,45 @@ class BoundaryControls(unittest.TestCase):
                 boundary.check_input(text)
         boundary.check_input('/std/core/sys/posix/pthread.d')
 
+    def test_cli_resolved_settings(self):
+        with tempfile.TemporaryDirectory(prefix='cli-settings-') as temporary:
+            root = Path(temporary) / 'tools/cli'
+            root.mkdir(parents=True)
+            image = Path(temporary) / boundary.STB_REVISION / 'd-stb-image'
+            image.mkdir(parents=True)
+            (root / 'dub.json').write_text(json.dumps({
+                'sourcePaths': ['source'], 'importPaths': ['../../source'],
+                'dependencies': {'d-stb-image': {'version': boundary.STB_REVISION,
+                    'repository': 'git+https://github.com/shulc/D-StbImage.git'}}}))
+            def settings(main):
+                return {'sourceFiles': [str(root / 'source/main.d')] if main else [str(image / 'source/stb_image/c.d')],
+                    'dflags': ['-i'] if main else [], 'lflags': ['-L' + str(image / 'build')],
+                    'libs': ['stb_image_c', 'm'], 'linkerFiles': [str(image / 'libd-stb-image.a')] if main else []}
+            description = {'rootPackage': 'vibe3d-cli',
+                'targets': [{'rootPackage': 'vibe3d-cli', 'buildSettings': settings(True)},
+                            {'rootPackage': 'd-stb-image', 'buildSettings': settings(False)}],
+                'packages': [{'name': 'vibe3d-cli', 'active': True, 'dependencies': ['d-stb-image']},
+                    {'name': 'd-stb-image', 'active': True, 'path': str(image), 'dependencies': [],
+                     'preBuildCommands': [
+                         'cmake -B $PACKAGE_DIR/build -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $PACKAGE_DIR',
+                         'cmake --build $PACKAGE_DIR/build --config Release']}]}
+            _, roots, native = boundary.validate_cli_settings(description, root)
+            self.assertEqual(roots, [root / 'source/main.d'])
+            self.assertEqual(len(native), 2)
+            boundary.check_input(str(image / 'libd-stb-image.a'), native_inputs=native)
+            for mutate, message in [
+                (lambda d: d['packages'][0]['dependencies'].append('vibe3d'), 'desktop root'),
+                (lambda d: d['targets'][0]['buildSettings']['libs'].append('SDL2'), 'forbidden resolved'),
+                (lambda d: d['targets'][0]['buildSettings']['linkerFiles'].append('/x/libSDL2.a'), 'forbidden resolved'),
+                (lambda d: d['targets'][0]['buildSettings']['libs'].append('calculation'), 'computational/native'),
+                (lambda d: d['targets'][0]['buildSettings']['sourceFiles'].append('/x/extra.d'), 'sole explicit root')]:
+                changed = copy.deepcopy(description)
+                mutate(changed)
+                with self.assertRaisesRegex(boundary.BoundaryError, message):
+                    boundary.validate_cli_settings(changed, root)
+            with self.assertRaisesRegex(boundary.BoundaryError, 'unexpected resolved native archive'):
+                boundary.check_input('/x/other.a', native_inputs=native)
+
     def compiler_fixture(self):
         files = {str(Path('/fixture/lower' + str(i) + '.d')) for i in range(20)}
         modules = {name: '/fixture/' + name.replace('.', '/') + '.d' for name in boundary.KNOWN_MODULES}

@@ -14,21 +14,21 @@ import core.sys.posix.sys.stat : stat, stat_t;
 import core.stdc.stdlib : free;
 import std.process : thisProcessID;
 import std.stdio : File, stdout, stderr;
-import std.string : splitLines, strip;
+import std.string : split, strip;
 
 private struct Options { string input, commands, output, stateOutput; }
 
 private string resolvedPath(string value) {
-    auto normalized = buildNormalizedPath(absolutePath(value));
-    auto resolved = realpath(normalized.toStringz, null);
+    auto spelling = absolutePath(value);
+    auto resolved = realpath(spelling.toStringz, null);
     if (resolved !is null) {
         scope(exit) free(resolved);
         return resolved.fromStringz.idup;
     }
-    auto parent = realpath(dirName(normalized).toStringz, null);
-    if (parent is null) return normalized;
+    auto parent = realpath(dirName(spelling).toStringz, null);
+    if (parent is null) return buildNormalizedPath(spelling);
     scope(exit) free(parent);
-    return buildPath(parent.fromStringz.idup, baseName(normalized));
+    return buildPath(parent.fromStringz.idup, baseName(spelling));
 }
 
 private bool sameFile(string first, string second) {
@@ -103,7 +103,7 @@ int main(string[] args) {
         snapshot(diagnostic, host, "loaded", JSONValue(0), JSONValue.init, JSONValue.init);
         stage = "script";
         auto script = readText(flags.commands);
-        foreach (offset, physical; script.splitLines()) {
+        foreach (offset, physical; script.split("\n")) {
             if (!physical.strip.length) continue;
             line = JSONValue(offset + 1); id = JSONValue.init;
             JSONValue command;
