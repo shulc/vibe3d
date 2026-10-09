@@ -245,7 +245,7 @@ package(tests.unit) string[] pilotRegistrationIds(string source) {
         assert(body.length != 0, "1D common registrar balanced pilot body: " ~ name);
         string[] ids;
         foreach (m; matchAll(visible[open .. open + body.length],
-                ctRegex!(`\bregistry\s*\.\s*registerCommand\s*\(\s*"([^"]+)"\s*,`)))
+                ctRegex!(`[;{]\s*registry\s*\.\s*registerCommand\s*\(\s*"([^"]+)"\s*,`)))
             ids ~= m[1].idup;
         assert(ids == expected[i], "1D common registrar exact pilot IDs and receiver: " ~ name);
         result ~= ids;
@@ -1489,6 +1489,14 @@ unittest {
     rejected(probe.replace(`registry.registerCommand("history.undo", factory);`, ``), "exact pilot IDs and receiver");
     rejected(probe.replace(`registry.registerCommand("history.redo"`, `other.registerCommand("history.redo"`),
         "exact pilot IDs and receiver");
+    rejected(probe.replace(`registry.registerCommand("history.redo"`, `other.registry.registerCommand("history.redo"`),
+        "exact pilot IDs and receiver");
+    rejected(probe.replace(`registry.registerCommand("history.redo"`, `other . registry . registerCommand("history.redo"`),
+        "exact pilot IDs and receiver");
+    rejected(probe.replace(`registry.registerCommand("history.redo"`, `other /* owner */ . /* receiver */ registry.registerCommand("history.redo"`),
+        "exact pilot IDs and receiver");
+    rejected(probe.replace(`registry.registerCommand("history.redo"`, `myregistry.registerCommand("history.redo"`),
+        "exact pilot IDs and receiver");
     rejected(probe.replace(`registry.registerCommand("mesh.triple", factory);`,
         `registry.registerCommand("mesh.triple", factory); registry.registerCommand("mesh.triple", factory);`),
         "exact pilot IDs and receiver");
@@ -1525,6 +1533,11 @@ unittest {
 unittest {
     enum name = "registerHistoryNavigationCommands";
     requirePilotDesktopCaller("registerHistoryNavigationCommands(reg, deps, history);", name);
+    string prefixedMessage;
+    try { requirePilotDesktopCaller("otherregisterHistoryNavigationCommands(reg, deps, history);", name); }
+    catch (AssertError error) { prefixedMessage = error.msg; }
+    assert(prefixedMessage.canFind("supported desktop reg receiver"),
+        "1D supported desktop caller rejects prefixed helper name");
     assertThrown!AssertError(requirePilotDesktopCaller("registerHistoryNavigationCommands(other, deps, history);", name));
     assertThrown!AssertError(requirePilotDesktopCaller("registerHistoryNavigationCommands(reg, deps, history); registerHistoryNavigationCommands(other, deps, history);", name));
 }
