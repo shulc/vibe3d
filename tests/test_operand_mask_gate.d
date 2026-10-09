@@ -18,7 +18,7 @@
 // bug once. So the first unittest below points the SAME scanner at a synthetic
 // file containing one occurrence of each pattern plus a decoy, and asserts it
 // finds exactly the two real ones at the right lines and NOT the decoy. Only
-// then does the second unittest scan `source/`.
+// then does the second unittest scan the desktop and common source roots.
 //
 // HOW TO FIX A FAILURE.
 //   * You added a whole-mesh fallback in production code: don't. Call
@@ -197,8 +197,8 @@ shared static this() {
     //     "a new fixture". ---
     //
     //     This section is nearly empty since task 0706 moved module unittests
-    //     to tests/unit/, and that is deliberate: the scanner reads `source/`
-    //     only, because what it guards is PRODUCTION code re-opening the idiom.
+    //     to tests/unit/, and that is deliberate: the scanner reads the desktop
+    //     and common source roots, guarding PRODUCTION code re-opening the idiom.
     //     A fixture under tests/unit/ is out of scope by construction, so the
     //     exemption list shrank from 29 lines to 6 — the gate got tighter, not
     //     looser. The two entries left are blocks that could not leave source/
@@ -209,6 +209,7 @@ shared static this() {
 
 unittest {
     auto hits = scanTree("source");
+    hits ~= scanTree("packages/common/source");
 
     size_t[string] byFile;
     foreach (h; hits) byFile[h.file] = byFile.get(h.file, 0) + 1;
