@@ -259,8 +259,10 @@ unittest {
     // Task 9492: the attribute doors read `tool_attr_bounds` (+1).
     // Task 9490: the radial ring start reads `workplane_fit`'s frame (+1).
     // Task 20261660: Tool reaches the detached model_preview view (+1).
-    assert(meshClosure.queue.length == 197,
-        format("6509 import scanner closure=%d/197",
+    // Task 20261900: the common pilot registrar imports the three shared
+    // commands.select element/drop/invert modules (+3).
+    assert(meshClosure.queue.length == 200,
+        format("6509 import scanner closure=%d/200",
             meshClosure.queue.length));
     assert("editor_app" in positive.reached,
         "6509 positive control: registration does not reach editor_app");
