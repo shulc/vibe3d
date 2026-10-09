@@ -246,7 +246,7 @@ unittest {
 // forms-engine startup-strict validator (forms.d) would throw for the first
 // form bound to "axis".
 unittest {
-    import toolpipe.stage : assertRejectsUndeclaredAttrs;
+    import tests.unit.toolpipe.prepared_stage_regression_test : assertRejectsUndeclaredAttrs;
     auto st = new AxisStage();
     auto names = st.knownAttrs();
     assert(names.length > 0, "axis knownAttrs must not be empty");

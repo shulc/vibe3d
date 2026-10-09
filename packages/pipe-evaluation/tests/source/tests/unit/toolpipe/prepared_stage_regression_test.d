@@ -6,6 +6,68 @@ import toolpipe.stages.axis : AxisStage;
 import toolpipe.stages.constrain : ConstrainStage, Remembered;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.packets : ConstrainGeom, FalloffType, FalloffShape, ElementMode;
+import toolpipe.stage : Stage;
+
+version (unittest) {
+    /// Attr names drawn from every shipping pipe stage (snap / falloff /
+    /// action-centre / workplane / symmetry / axis) plus generic knob names.
+    /// Used as the "must be rejected unless declared" probe set — see
+    /// `assertRejectsUndeclaredAttrs`.
+    immutable string[] stageAttrProbeCorpus = [
+        // snap
+        "enabled", "types", "snapMode", "innerRange", "outerRange",
+        "fixedGrid", "fixedGridSize", "fixedGridToggle", "typeToggle",
+        "typeVertex", "typeEdge", "typePolygon", "typeWorkplane",
+        // falloff
+        "type", "shape", "start", "end", "center", "size", "axis", "dist",
+        "steps", "anchorRing", "connect", "screenCx", "screenCy",
+        "screenSize", "transparent", "lassoStyle", "lassoPoly", "lassoClear",
+        "softBorder", "in", "out", "mix", "map", "autosize", "reverse",
+        // action centre
+        "cenX", "cenY", "cenZ", "userPlacedCenter", "userPlacedX",
+        "userPlacedY", "userPlacedZ", "selectSubMode",
+        // workplane
+        "auto", "rotX", "rotY", "rotZ", "mode",
+        // symmetry
+        "offset", "useWorkplane", "topology", "epsilon",
+        // generic knobs a stage might plausibly grow
+        "snapping", "symmetry", "workplane", "falloff", "constrain",
+        "visible", "active", "locked", "strength", "weight", "value",
+        "state", "reset", "scope", "target", "count",
+    ];
+
+    /// Values fed to each probe name. A stage that grew an undeclared `case`
+    /// may only accept SOME shapes of value, so probe several — and a value
+    /// that makes the arm THROW while parsing counts as accepted too (reaching
+    /// a parse at all proves the arm exists).
+    immutable string[] stageAttrProbeValues = [
+        "true", "false", "0", "1", "1.5", "auto", "x", "",
+    ];
+
+    /// Assert `st` rejects every probe name it does not declare in
+    /// `knownAttrs()`. `who` labels the failure (defaults to `st.id()`).
+    void assertRejectsUndeclaredAttrs(Stage st, string who = null) {
+        import std.algorithm : canFind;
+        const label    = who.length ? who : st.id();
+        const declared = st.knownAttrs();
+        foreach (probe; stageAttrProbeCorpus) {
+            if (declared.canFind(probe)) continue;   // legitimately declared
+            foreach (v; stageAttrProbeValues) {
+                bool accepted;
+                try
+                    accepted = st.setAttr(probe, v);
+                catch (Exception)
+                    accepted = true;   // reached a parse ⇒ the arm exists
+                assert(!accepted,
+                       "stage '" ~ label ~ "' accepts setAttr(\"" ~ probe
+                       ~ "\", \"" ~ v ~ "\") but does not list '" ~ probe
+                       ~ "' in knownAttrs() — the forms startup-strict "
+                       ~ "validator's universe is under-reported, so the "
+                       ~ "first form binding it throws at boot (task 0685 T1)");
+            }
+        }
+    }
+}
 
 
 unittest {

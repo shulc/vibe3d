@@ -179,7 +179,7 @@ unittest {
 // every symmetry attr, while an enabled one under-reported 4 of the 6 names
 // applySetAttr accepts (stage.d's fullParams contract forbids both).
 unittest {
-    import toolpipe.stage : assertRejectsUndeclaredAttrs;
+    import tests.unit.toolpipe.prepared_stage_regression_test : assertRejectsUndeclaredAttrs;
     auto st = new SymmetryStage();
     assert(!st.enabled, "fixture assumes the default-constructed stage is off");
 

@@ -19,7 +19,7 @@ import toolpipe.stages.workplane;
 // had NO attr universe at all, so the forms-engine startup-strict validator
 // (forms.d) would throw for the first form bound to "workplane".
 unittest {
-    import toolpipe.stage : assertRejectsUndeclaredAttrs;
+    import tests.unit.toolpipe.prepared_stage_regression_test : assertRejectsUndeclaredAttrs;
     auto st = new WorkplaneStage();
     auto names = st.knownAttrs();
     assert(names.length > 0, "workplane knownAttrs must not be empty");
