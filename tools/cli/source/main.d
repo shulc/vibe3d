@@ -8,7 +8,7 @@ import standalone_application : StandaloneApplication;
 import std.conv : to;
 import std.file : readText, exists, remove, rename, getcwd;
 import std.json : JSONValue, JSONType, parseJSON;
-import std.path : absolutePath, buildPath, buildNormalizedPath, dirName, baseName;
+import std.path : absolutePath, buildPath, dirName, baseName;
 import std.string : toStringz, fromStringz;
 import core.sys.posix.stdlib : realpath;
 import core.sys.posix.sys.stat : stat, stat_t;
@@ -27,7 +27,7 @@ private string resolvedPath(string value) {
         return resolved.fromStringz.idup;
     }
     auto parent = realpath(dirName(spelling).toStringz, null);
-    if (parent is null) return buildNormalizedPath(spelling);
+    if (parent is null) return spelling;
     scope(exit) free(parent);
     return buildPath(parent.fromStringz.idup, baseName(spelling));
 }

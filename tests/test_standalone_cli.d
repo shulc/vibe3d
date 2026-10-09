@@ -6,7 +6,7 @@ import std.conv : to;
 import std.digest.sha : sha256Of;
 import std.digest : toHexString;
 import std.file : read, readText, write, exists, mkdirRecurse, rmdirRecurse,
-    dirEntries, SpanMode, readLink, symlink;
+    dirEntries, SpanMode, readLink, symlink, isFile;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.path : buildPath, dirName, baseName;
 import std.process : execute, spawnProcess, wait, kill, tryWait, Pid, Config,
@@ -95,10 +95,21 @@ private JSONValue desktopState() {
     }
     return state;
 }
-private void parity(JSONValue cli, JSONValue desktop, JSONValue previousCli, JSONValue previousDesktop) {
+private void parity(JSONValue cli, JSONValue desktop, JSONValue previousCli, JSONValue previousDesktop, bool noTargetContext = false) {
     assert(cli.object.length == 6, "CLI state: exact six-key schema");
     foreach (key; ["hasEditTarget", "selType", "editMode", "planes", "history", "changes"])
         assert(key in cli.object, "CLI state: required schema key " ~ key);
+    assert(cli["hasEditTarget"].type == JSONType.true_ || cli["hasEditTarget"].type == JSONType.false_,
+        "CLI state: target boolean schema");
+    assert(cli["selType"].type == JSONType.string && cli["editMode"].type == JSONType.string
+        && cli["planes"].type == JSONType.object && cli["history"].object.length == 4
+        && cli["changes"].object.length == 4, "CLI state: complete typed nested schema");
+    foreach (key; ["undo", "redo"])
+        foreach (entry; cli["history"][key].array) {
+            assert(entry.object.length == 6, "CLI history: exact row schema");
+            foreach (field; ["command", "label", "args", "flags", "runId", "tweakGen"])
+                assert(field in entry.object, "CLI history: required row field " ~ field);
+        }
     auto cliPlanes = cleanPlanes(cli["planes"]);
     foreach (key, value; cliPlanes.object)
         assert(key in desktop["planes"].object && value == desktop["planes"][key],
@@ -108,7 +119,28 @@ private void parity(JSONValue cli, JSONValue desktop, JSONValue previousCli, JSO
     foreach (key; ["hasEditTarget", "selType", "editMode", "history"])
         assert(cli[key] == desktop[key], "CLI differential: state mismatch " ~ key
             ~ " cli=" ~ cli[key].toString ~ " desktop=" ~ desktop[key].toString);
-    foreach (key; ["lastDeliveryFlags", "lastDeliverySelDomains"])
+    if (noTargetContext) {
+        assert(!cli["hasEditTarget"].boolean && !desktop["hasEditTarget"].boolean,
+            "CLI context: marked population requires absent targets");
+        foreach (state; [cli, desktop])
+            assert(state["history"]["undo"].array.length == 0 && state["history"]["redo"].array.length == 0
+                && state["history"]["modelDepth"].integer == 0 && state["history"]["uiDepth"].integer == 0,
+                "CLI context: marked population requires empty history/depths");
+        if (previousCli.type != JSONType.null_) {
+            assert(cli["changes"]["deliveryCount"] == previousCli["changes"]["deliveryCount"]
+                && desktop["changes"]["deliveryCount"] == previousDesktop["changes"]["deliveryCount"],
+                "CLI context: marked current row requires zero mesh delivery delta");
+            foreach (key; ["hasEditTarget", "selType", "editMode", "planes", "history"])
+                assert(cli[key] == previousCli[key] && desktop[key] == previousDesktop[key],
+                    "CLI context: host-local complete planes/selection/history preserved " ~ key);
+            assert(cli["changes"]["docRevision"] == previousCli["changes"]["docRevision"],
+                "CLI context: host-local document revision preserved");
+            foreach (key; ["lastDeliveryFlags", "lastDeliverySelDomains"])
+                assert(cli["changes"][key] == previousCli["changes"][key]
+                    && desktop["changes"][key] == previousDesktop["changes"][key],
+                    "CLI context: host-local incoming gauge preserved " ~ key);
+        }
+    } else foreach (key; ["lastDeliveryFlags", "lastDeliverySelDomains"])
         assert(cli["changes"][key] == desktop["changes"][key],
             "CLI differential: delivery gauge mismatch " ~ key
                 ~ " phase=" ~ (previousCli.type == JSONType.null_ ? "loaded" : "command")
@@ -159,20 +191,34 @@ private Run runCli(string root, string input, string script, string output, stri
     result.status = wait(pid); reaped = true;
     outFile.close(); errFile.close();
     result.outcomes = jsonRows(readText(outLog)); result.error = readText(errLog);
-    if (diagnostics.length && exists(diagnostics)) result.states = jsonRows(readText(diagnostics));
+    if (diagnostics.length && exists(diagnostics) && isFile(diagnostics)) result.states = jsonRows(readText(diagnostics));
+    foreach (row; result.states) {
+        assert(row.object.length == 5, "CLI state: exact diagnostic row schema");
+        foreach (key; ["phase", "line", "id", "outcome", "state"])
+            assert(key in row.object, "CLI state: required diagnostic row key " ~ key);
+    }
     assert(digest(argv[0]) == binaryHash, "CLI process: binary stable throughout run");
     return result;
+}
+private void errorSchema(Run result, string stage, JSONValue line = JSONValue.init, JSONValue id = JSONValue.init) {
+    auto rows = jsonRows(result.error);
+    assert(result.status == 1 && rows.length == 1 && rows[0].object.length == 4
+        && rows[0]["error"].type == JSONType.string && rows[0]["error"].str.length > 0
+        && rows[0]["stage"].str == stage && rows[0]["line"] == line && rows[0]["id"] == id,
+        "CLI stderr: exact error schema and stage " ~ stage ~ " actual=" ~ result.error);
 }
 private void noOrphan(string root) {
     foreach (entry; dirEntries(root, SpanMode.shallow))
         assert(!baseName(entry.name).canFind(".vibe3d-cli-"), "CLI transaction: no owned temporary orphan");
 }
 
-private void loadDesktop(string input) {
+private JSONValue loadDesktop(string input) {
     command("scene.reset");
+    auto incoming = getJson("/api/changes");
     command("file.load", JSONValue(["path": JSONValue(input)]).toString);
     command("history.clear");
     quiesce();
+    return incoming;
 }
 private JSONValue fixture(string root) {
     command("scene.reset");
@@ -194,7 +240,7 @@ private JSONValue fixture(string root) {
     return doc;
 }
 
-private Run differential(string root, JSONValue doc, string[] scriptRows, bool success, string[] outcomes) {
+private Run differential(string root, JSONValue doc, string[] scriptRows, bool success, string[] outcomes, bool noTargetContext = false) {
     auto input = buildPath(root, "input.v3d"), script = buildPath(root, "script.jsonl");
     auto output = buildPath(root, "output.v3d"), diagnostics = buildPath(root, "state.jsonl");
     write(input, doc.toString); write(script, scriptRows.join("\n") ~ "\n");
@@ -206,9 +252,30 @@ private Run differential(string root, JSONValue doc, string[] scriptRows, bool s
     assert(result.states[0]["phase"].str == "loaded" && result.states[0]["line"].integer == 0
         && result.states[0]["id"].type == JSONType.null_ && result.states[0]["outcome"].type == JSONType.null_,
         "CLI state: exact loaded timing/schema");
-    loadDesktop(input);
+    auto incoming = loadDesktop(input);
     auto previousDesktop = desktopState(), previousCli = result.states[0]["state"];
-    parity(previousCli, previousDesktop, JSONValue.init, JSONValue.init);
+    if (noTargetContext) {
+        assert(!success && outcomes == ["refused"] && scriptRows == [`{"id":"mesh.triple"}`]
+            && result.states.length == 2, "CLI context: exact loaded plus one refused command population");
+        assert(doc["layers"].array.length == 2 && doc["layers"][0]["mesh"]["vertices"].array.length == 8
+            && doc["layers"][0]["mesh"]["weightMaps"].array.length == 1,
+            "CLI context: nonempty authored two-layer maps fixture");
+        foreach (layer; doc["layers"].array)
+            assert(!layer["selected"].boolean, "CLI context: native layer selected flags absent");
+        foreach (item; getJson("/api/selection")["items"].array)
+            assert(!item["primary"].boolean && !item["selected"].boolean,
+                "CLI context: loaded desktop layer selection and primary absent");
+        foreach (key; ["deliveryCount", "lastDeliveryFlags", "lastDeliverySelDomains"])
+            assert(previousDesktop["changes"][key] == incoming[key],
+                "CLI context: desktop no-target load preserves incoming " ~ key);
+        assert(previousCli["changes"]["deliveryCount"].integer == 0
+            && previousCli["changes"]["lastDeliveryFlags"].integer == 0
+            && previousCli["changes"]["lastDeliverySelDomains"].integer == 0,
+            "CLI context: fresh CLI no-target construction has zero gauges");
+        writeln("CLI-CONTEXT cli-loaded=", previousCli["changes"].toString,
+            " desktop-incoming=", incoming.toString, " desktop-loaded=", previousDesktop["changes"].toString);
+    }
+    parity(previousCli, previousDesktop, JSONValue.init, JSONValue.init, noTargetContext);
     size_t step, stdoutStep;
     foreach (offset, row; scriptRows) {
         if (!row.strip.length) continue;
@@ -220,9 +287,13 @@ private Run differential(string root, JSONValue doc, string[] scriptRows, bool s
         try { commandRow = parseJSON(row); valid = commandRow.type == JSONType.object; } catch (Exception) {}
         auto expected = outcomes[step];
         if (expected == "error") {
-            assert(actual["phase"].str == "error" && actual["outcome"].type == JSONType.null_,
+            auto expectedId = valid && "id" in commandRow.object && commandRow["id"].type == JSONType.string
+                ? commandRow["id"] : JSONValue.init;
+            assert(actual["phase"].str == "error" && actual["id"] == expectedId
+                && actual["outcome"].type == JSONType.null_,
                 "CLI state: malformed/unknown error row");
             assert(actual["state"] == previousCli, "CLI error: complete state preservation");
+            assert(desktopState() == previousDesktop, "CLI error: desktop complete state preservation");
         } else {
             assert(valid && actual["phase"].str == "command"
                 && actual["id"] == commandRow["id"] && actual["outcome"].str == expected,
@@ -236,7 +307,7 @@ private Run differential(string root, JSONValue doc, string[] scriptRows, bool s
             assert(response["status"].str == (expected == "refused" ? "error" : "ok"),
                 "CLI differential: actual HTTP refusal/status contract");
             auto nextDesktop = desktopState();
-            parity(actual["state"], nextDesktop, previousCli, previousDesktop);
+            parity(actual["state"], nextDesktop, previousCli, previousDesktop, noTargetContext);
             previousDesktop = nextDesktop;
         }
         previousCli = actual["state"];
@@ -321,6 +392,14 @@ unittest {
         assert(alignment > 0, "CLI reopen: triangle winding agrees with source quad orientation alignment=" ~ alignment.to!string);
         ++children;
     }
+    size_t selectedChildren;
+    foreach (i, mark; after["faceMarks"].array) {
+        if ((mark.integer & 1) == 0) continue;
+        assert(saved["layers"][0]["mesh"]["faces"][i].array.length == 3,
+            "CLI selected quad: selected face is an actual triangle child");
+        ++selectedChildren;
+    }
+    assert(selectedChildren == 2, "CLI selected quad: exactly two selected triangle children");
     assert(children == 2, "CLI reopen: populated pair of oriented triangle children");
     assert(saved["layers"].array.length == 2 && saved["layers"][0]["mesh"]["faces"].array.length == 7,
         "CLI selected quad: reopened authored layers and geometry population");
@@ -340,12 +419,30 @@ unittest {
         `{"id":"mesh.triple"}`], false, ["applied", "refused"]);
     differential(root, doc, ["", "  ", "{broken", `{"id":"mesh.triple"}`], false, ["error"]);
     differential(root, doc, ["", `{"id":"not.supported"}`, `{"id":"mesh.triple"}`], false, ["error"]);
+    foreach (badRow; ["[]", "1", "null", "{}", `{"id":1}`])
+        differential(root, doc, [badRow, `{"id":"mesh.triple"}`], false, ["error"]);
+    foreach (badRow; ["{broken", `{"id":"not.supported"}`])
+        differential(root, doc, [`{"id":"mesh.select","params":{"mode":"polygons","indices":[0]}}`,
+            badRow, `{"id":"mesh.triple"}`], false, ["applied", "error"]);
     auto noTarget = parseJSON(doc.toString); noTarget["primaryLayer"] = -1;
     foreach (ref layer; noTarget["layers"].array) layer["selected"] = false;
-    auto absent = differential(root, noTarget, [`{"id":"mesh.triple"}`], false, ["refused"]);
+    auto absent = differential(root, noTarget, [`{"id":"mesh.triple"}`], false, ["refused"], true);
     assert(!absent.states[0]["state"]["hasEditTarget"].boolean
         && absent.states[0]["state"] == absent.states[1]["state"],
         "CLI no target: actual absent primary and complete state preservation");
+    foreach (badScript; ["{broken\n", "{\"id\":\"not.supported\"}\n"]) {
+        write(buildPath(root, "script.jsonl"), badScript);
+        auto failedNoTarget = runCli(root, buildPath(root, "input.v3d"), buildPath(root, "script.jsonl"),
+            buildPath(root, "output.v3d"), buildPath(root, "state.jsonl"));
+        assert(failedNoTarget.status == 1 && failedNoTarget.states.length == 2
+            && failedNoTarget.outcomes.length == 0 && failedNoTarget.states[1]["phase"].str == "error"
+            && failedNoTarget.states[0]["state"] == failedNoTarget.states[1]["state"]
+            && !failedNoTarget.states[0]["state"]["hasEditTarget"].boolean
+            && readText(buildPath(root, "output.v3d")) == "sentinel",
+            "CLI no-target errors: no writes/history/delivery or later rows");
+        errorSchema(failedNoTarget, badScript[0 .. 2] == "{b" ? "script" : "command", JSONValue(1),
+            badScript[0 .. 2] == "{b" ? JSONValue.init : JSONValue("not.supported"));
+    }
     auto unicode = "{\"id\":\"mesh.select\",\"params\":{\"mode\":\"polygons\",\"indices\":[0],\"bogus\":\"a\u2028b\u2029c\u0085d\"}}";
     differential(root, doc, ["", unicode ~ "\r", `{"id":"mesh.triple","params":{"bogus":1}}`], true, ["applied", "applied"]);
     // A populated real process gives /proc maps/exe/env/argv witnesses while it
@@ -362,6 +459,8 @@ unittest {
     auto original = readText(input);
     auto failed = runCli(root, input, script, input, buildPath(root, "state.jsonl"));
     assert(failed.status == 1 && readText(input) == original, "CLI transaction: input==output preserved on command failure");
+    errorSchema(failed, "command", JSONValue(1), JSONValue("not.supported"));
+    noOrphan(root);
     write(script, "");
     auto success = runCli(root, input, script, input, buildPath(root, "state.jsonl"));
     assert(success.status == 0 && parseJSON(readText(input)) == doc,
@@ -379,6 +478,9 @@ unittest {
             auto bad = runCli(root, input, script, output, aliasPath);
             assert(bad.status == 1 && read(protectedPath) == originalBytes,
                 "CLI diagnostics alias: lexical/symlink/hardlink preserves protected file");
+            assert(bad.states.length == 0 && bad.outcomes.length == 0,
+                "CLI diagnostics alias: argument refusal precedes loading and invocation");
+            errorSchema(bad, "arguments");
         }
     }
     // Symlink/.. is resolved by the filesystem before lexical normalization.
@@ -398,15 +500,52 @@ unittest {
     auto pathAlias = runCli(root, requestedInput, script, output, requestedInput);
     assert(pathAlias.status == 1 && read(requestedInput) == protectedBytes,
         "CLI diagnostics alias: symlink parent/.. preserves requested input");
+    // A missing intermediate component must retain filesystem lookup failure.
+    auto existingInput = read(input), existingOutput = read(output);
+    auto missingInput = runCli(root, buildPath(root, "missing", "..", "input.v3d"), script, output,
+        buildPath(root, "missing-input-state.jsonl"));
+    assert(missingInput.status == 1 && missingInput.states.length == 0
+        && read(input) == existingInput && read(output) == existingOutput,
+        "CLI filesystem path: missing intermediate input must fail without choosing normalized file");
+    errorSchema(missingInput, "load");
+    auto missingOutput = runCli(root, input, script, buildPath(root, "missing", "..", "output.v3d"),
+        buildPath(root, "state.jsonl"));
+    assert(missingOutput.status == 1 && missingOutput.states.length == 2
+        && missingOutput.states[0]["state"] == missingOutput.states[1]["state"]
+        && read(input) == existingInput && read(output) == existingOutput,
+        "CLI filesystem path: missing intermediate output must fail preserving existing files");
+    errorSchema(missingOutput, "save");
+    auto diagnosticOpen = runCli(root, input, script, output, buildPath(root, "missing", "state.jsonl"));
+    assert(diagnosticOpen.states.length == 0 && diagnosticOpen.outcomes.length == 0
+        && read(input) == existingInput && read(output) == existingOutput,
+        "CLI diagnostics: open failure preserves native files before commands/save");
+    errorSchema(diagnosticOpen, "diagnostics");
+    auto diagnosticWrite = runCli(root, input, script, output, "/dev/full");
+    assert(diagnosticWrite.states.length == 0 && diagnosticWrite.outcomes.length == 0
+        && read(input) == existingInput && read(output) == existingOutput,
+        "CLI diagnostics: actual write failure preserves native files before commands/save");
+    errorSchema(diagnosticWrite, "diagnostics");
+    foreach (flags; [["run"], ["bad"], ["run", "--other", "file"],
+        ["run", "--input"], ["run", "--input", ""], ["run", "--input", input, "--input", input]]) {
+        auto badArguments = execute([buildPath(repo, "tools/cli/vibe3d-cli")] ~ flags);
+        Run bad; bad.status = badArguments.status; bad.error = badArguments.output;
+        errorSchema(bad, "arguments");
+        assert(read(input) == existingInput && read(output) == existingOutput,
+            "CLI arguments: errors preserve native files");
+    }
     auto missing = runCli(root, buildPath(root, "missing.v3d"), script, output, buildPath(root, "empty-state.jsonl"));
     auto loadError = jsonRows(missing.error);
     assert(loadError.length == 1 && loadError[0]["stage"].str == "load"
         && loadError[0]["line"].type == JSONType.null_, "CLI stderr: native load diagnostic path");
-    assert(missing.status == 1 && missing.states.length == 0, "CLI load error: no loaded state rows");
+    assert(missing.status == 1 && missing.states.length == 0 && missing.outcomes.length == 0
+        && read(output) == existingOutput, "CLI load error: no loaded state rows or native writes");
+    errorSchema(missing, "load");
     auto sentinel = read(output);
     write(input, "bad native");
     auto malformed = runCli(root, input, script, output);
-    assert(malformed.status == 1 && read(output) == sentinel, "CLI load error: malformed input preserves output");
+    assert(malformed.status == 1 && malformed.states.length == 0 && malformed.outcomes.length == 0
+        && read(output) == sentinel, "CLI load error: malformed input preserves output");
+    errorSchema(malformed, "load");
     write(input, doc.toString);
     auto unwritable = runCli(root, input, script, buildPath(root, "missing-dir/out.v3d"), buildPath(root, "state.jsonl"));
     assert(unwritable.status == 1 && unwritable.states.length == 2
@@ -414,6 +553,10 @@ unittest {
     auto saveError = jsonRows(unwritable.error);
     assert(saveError.length == 1 && saveError[0]["stage"].str == "save"
         && saveError[0]["line"].type == JSONType.null_, "CLI stderr: native save diagnostic path");
+    assert(unwritable.states[0]["state"] == unwritable.states[1]["state"]
+        && unwritable.outcomes.length == 0 && read(output) == sentinel,
+        "CLI save error: complete pre-save state and existing native output preserved");
+    errorSchema(unwritable, "save");
     noOrphan(root);
     writeln("CLI-WITNESS source=", sourcePin, " binary-sha256=", binaryHash, " roster=4 cases=quad,whole,triangle,no-target,errors,unicode,aliases,atomic");
 }

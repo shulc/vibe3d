@@ -39,6 +39,13 @@ unittest {
         && ctor.count("session_.editMesh().syncSelection();") == 1
         && ctor.count("session_.editMesh().publishChange(MeshChangeAll);") == 1,
         "standalone-wiring: live factories and actual model subscriber");
+    auto targetPublication = body(ctor, "if (session_.document.hasEditTarget())");
+    assert(ctor.count("changeBus = ChangeBus.init;") == 1
+        && owner.count("changeBus = ChangeBus.init;") == 1
+        && ctor.indexOf("changeBus = ChangeBus.init;") < ctor.indexOf("registerMeshSelectionCommand(")
+        && targetPublication.count("session_.editMesh().syncSelection();") == 1
+        && targetPublication.count("session_.editMesh().publishChange(MeshChangeAll);") == 1,
+        "standalone-wiring: single incoming bus init and target-guarded publication");
     auto invoke = body(owner, "CommandInvocationResult invoke(");
     assert(invoke.count("return service_.invokeLine(id, paramsJson,") == 1
         && invoke.count("CommandInvocationContext(CommandOrigin.script, false)") == 1,
@@ -47,7 +54,9 @@ unittest {
     auto main = body(cli, "int main(string[] args)");
     auto observer = body(cli, "private void snapshot(");
     auto save = body(cli, "private void save(");
-    assert(main.count("host = new StandaloneApplication(loaded);") == 1
+    assert(main.count("readV3d(flags.input, loaded)") == 1
+        && main.indexOf("readV3d(flags.input, loaded)") < main.indexOf("host = new StandaloneApplication(loaded);")
+        && main.count("host = new StandaloneApplication(loaded);") == 1
         && main.count("host.invoke(id.str,") == 1
         && observer.count("host.state()") == 1
         && observer.count("diagnostic.flush();") == 1

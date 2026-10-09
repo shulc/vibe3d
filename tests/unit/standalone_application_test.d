@@ -72,6 +72,21 @@ unittest {
     assert(host.invoke("history.redo").outcome == CommandInvocationOutcome.applied
         && after.matches(host.activeMesh),
         "standalone-roundtrip: redo restores all planes");
+    assert(changeBus.lastDeliveryFlags != 0,
+        "standalone-current-context: supported commands establish nonzero gauge");
+    const currentDeliveries = changeBus.deliveryCount;
+    host.document.layers = null; host.document.noteLayerListChanged();
+    assert(!host.document.hasEditTarget() && host.document.primary is null
+        && changeBus.deliveryCount == currentDeliveries,
+        "standalone-current-context: target removal has no mesh delivery");
+    auto currentContext = host.state();
+    assert(currentContext["history"]["undo"].array.length == 2
+        && currentContext["changes"]["lastDeliveryFlags"].integer != 0,
+        "standalone-current-context: populated history and real nonzero observation");
+    assert(host.invoke("mesh.triple").outcome == CommandInvocationOutcome.refused,
+        "standalone-current-context: no-target refusal with incoming context");
+    assert(host.state() == currentContext,
+        "standalone-current-context: complete state and incoming gauges preserved");
     host.close(); host.close();
     assert(g_editTargetResolver == beforeTarget && activeMeshResolver == beforeActive
         && primaryModelSpaceResolver == beforeSpace && g_isDocumentMesh == beforeFilter
@@ -99,6 +114,15 @@ unittest {
     auto host = new StandaloneApplication(doc);
     scope(exit) host.close();
     auto before = host.state();
+    assert(!before["hasEditTarget"].boolean && host.document.primary is null
+        && before["history"]["undo"].array.length == 0
+        && before["history"]["redo"].array.length == 0
+        && before["history"]["modelDepth"].integer == 0
+        && before["history"]["uiDepth"].integer == 0
+        && before["changes"]["deliveryCount"].integer == 0
+        && before["changes"]["lastDeliveryFlags"].integer == 0
+        && before["changes"]["lastDeliverySelDomains"].integer == 0,
+        "standalone-no-target: init-only construction has empty history and zero gauges");
     auto result = host.invoke("mesh.triple");
     assert(result.outcome == CommandInvocationOutcome.refused,
         "standalone-no-target: script refusal");
