@@ -142,6 +142,7 @@ unittest {
 
 
 private void seedSelection(StandaloneApplication host) {
+    host.activeMesh.syncSelection();
     host.activeMesh.clearVertexSelection(); host.activeMesh.clearEdgeSelection();
     host.activeMesh.clearFaceSelection();
     foreach (id; [6, 1]) host.activeMesh.selectVertex(id);
