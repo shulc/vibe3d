@@ -59,6 +59,7 @@ import std.exception : enforce;
 import std.file      : exists, readText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
+import std.process   : execute;
 import std.string    : indexOf;
 
 import tests.unit.census_symbols : sharedBlankNonCode = blankNonCode;
@@ -83,6 +84,50 @@ private size_t lineOf(string src, size_t off)
     size_t line = 1;
     foreach (ch; src[0 .. off]) if (ch == '\n') line++;
     return line;
+}
+
+// Task 20261990: call the production reader, then omit one real input from
+// each owner in temporary trees. Independent floors must refuse before a
+// missing owner can silently evade the lexer check; see the task evidence.
+unittest
+{
+    const probe = q"PY
+from pathlib import Path
+import sys
+import tempfile
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "tools/dspans"))
+import census_contracts
+failures = census_contracts.production_lexer_census(root)
+if failures:
+    raise SystemExit("prepared-protocol production lexer census: " + "; ".join(failures))
+owners = {"source": 492, "packages/common/source": 75,
+          "packages/mesh-ops/source": 17, "packages/interchange/source": 8}
+for owner, floor in owners.items():
+    with tempfile.TemporaryDirectory(prefix="protocol-owner-") as scratch:
+        partial = Path(scratch)
+        for other in owners:
+            target = partial / other
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if other != owner:
+                target.symlink_to(root / other, target_is_directory=True)
+                continue
+            inputs = sorted((root / owner).rglob("*.d"))
+            # The omission population is independently frozen, not derived
+            # from the reader or the fixture it will judge.
+            if len(inputs) != floor:
+                raise SystemExit(f"prepared-protocol omission input changed: {owner}")
+            for path in inputs[1:]:
+                link = target / path.relative_to(root / owner)
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(path)
+        got = census_contracts.production_lexer_census(partial)
+        want = f"dspans lexer census owner {owner} read {floor - 1} files; floor {floor} (measured 2026-10-09)"
+        if got != [want]:
+            raise SystemExit(f"prepared-protocol omission guard {owner}: got {got!r}, want {[want]!r}")
+PY";
+    const result = execute(["python3", "-c", probe, repoRoot]);
+    assert(result.status == 0, result.output);
 }
 
 private size_t countOf(string hay, string needle)

@@ -30,12 +30,31 @@ KNOWN_LEX_ERRORS = {"source/subpatch_osd.d": 4}
 # a deleted cell reddens the census itself (review round 3, M1).
 CONTRACT_CELLS = 21
 
+# Task 20261990: the production union follows package ownership. The old
+# desktop-only walk measured 577 files on 2026-09-27 (floor 500); after the
+# ownership moves, the independent 2026-10-09 inventory is 492/75/17/8.
+PRODUCTION_ROOTS = ("source", "packages/common/source", "packages/mesh-ops/source",
+                    "packages/interchange/source")
+PRODUCTION_OWNER_FLOORS = {
+    "source": 492,
+    "packages/common/source": 75,
+    "packages/mesh-ops/source": 17,
+    "packages/interchange/source": 8,
+}
+
 
 def production_lexer_census(root):
-    """Failures: tree files under source/ whose lexer diagnostics differ from
-    KNOWN_LEX_ERRORS, and any file with a parse error."""
+    """Failures: incomplete production owners, changed KNOWN_LEX_ERRORS,
+    and any production file with a parse error."""
     found, parse = {}, []
-    files = sorted((root / "source").rglob("*.d"))
+    files = sorted(path for sub in PRODUCTION_ROOTS
+                   for path in (root / sub).rglob("*.d"))
+    failures = []
+    for owner, floor in PRODUCTION_OWNER_FLOORS.items():
+        count = sum(path.is_relative_to(root / owner) for path in files)
+        if count < floor:
+            failures.append(f"dspans lexer census owner {owner} read {count} files; "
+                            f"floor {floor} (measured 2026-10-09)")
     for path in files:
         rel = path.relative_to(root).as_posix()
         sp = dspans_client.spans(path.read_text(), parse=True)
@@ -43,10 +62,6 @@ def production_lexer_census(root):
             found[rel] = len(sp.lex_errors)
         if sp.parse_errors:
             parse.append(f"{rel}: {sp.parse_errors[0]}")
-    failures = []
-    if len(files) < 500:
-        failures.append(f"dspans lexer census read only {len(files)} files under source/ "
-                        "(measured 577 on 2026-09-27)")
     if found != KNOWN_LEX_ERRORS:
         failures.append(f"dspans lexer diagnostics on tree files {found}, expected exactly "
                         f"{KNOWN_LEX_ERRORS}: the census cannot trust its spans for a file "
