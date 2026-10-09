@@ -49,12 +49,9 @@ import std.regex     : ctRegex, regex, Regex, matchAll;
 import std.string    : splitLines, strip, indexOf, stripLeft;
 
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
-    enclosingSymbols, symbolAt, LedgerRow, LedgerHit, reconcile, balancedSpan;
+    enclosingSymbols, symbolAt, LedgerRow, LedgerHit, reconcile, balancedSpan, registrationFamilyText;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-private enum registrarEntryRe = ctRegex!(
-    `void[ \t\r\n]+(register[A-Za-z0-9_]*Commands)[ \t\r\n]*\([ \t\r\n]*ref[ \t\r\n]+Registry[ \t\r\n]+reg\b`);
-
 // ---------------------------------------------------------------------------
 // Scanner
 // ---------------------------------------------------------------------------
@@ -391,35 +388,7 @@ private static immutable BuiltElsewhere[] kBuiltElsewhere = [
 ];
 
 unittest {
-    const sourceDir = buildPath(repoRoot, "source");
-    const parentPath = buildPath(sourceDir, "registration.d");
-    const parentCode = blankNonCode(readText(parentPath));
-    string[] regPaths = [parentPath];
-    foreach (de; dirEntries(sourceDir, "*_registration.d", SpanMode.shallow))
-        regPaths ~= de.name;
-    regPaths.sort;
-    assert(regPaths.length >= 4,
-        format("command registration census found only %d registration modules",
-               regPaths.length));
-
-    string regCode;
-    foreach (path; regPaths) {
-        assert(exists(path) && isFile(path),
-            "the census cannot find " ~ path ~ " — it is measuring nothing");
-        const source = readText(path);
-        if (path != parentPath) {
-            string[] entries;
-            foreach (m; matchAll(blankNonCode(source), registrarEntryRe))
-                entries ~= m[1].idup;
-            assert(entries.length == 1,
-                format("%s must expose exactly one register…Commands(ref Registry reg entry; found %d",
-                       path, entries.length));
-            assert(parentCode.count(entries[0] ~ "(") == 1,
-                path ~ " exposes " ~ entries[0]
-              ~ " but comment-blanked registration.d never calls it exactly once");
-        }
-        regCode ~= blankUnittestBodies(blankNonCode(source));
-    }
+    const regCode = blankUnittestBodies(blankNonCode(registrationFamilyText(repoRoot)));
     assert(regCode.length > 50_000,
         format("registration modules blanked to only %d bytes — wrong files", regCode.length));
 

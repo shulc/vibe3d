@@ -32,7 +32,9 @@ camera_stamp
 change_bus
 command
 command_args
+command_executor
 command_history
+command_invocation
 command_registry
 command_tool_policy
 commands.actr
@@ -320,6 +322,7 @@ path
 perf_probe
 pie_menus
 pie_state
+pilot_command_registration
 pipe_command_registration
 pipe_gizmo_host
 plane_bytes

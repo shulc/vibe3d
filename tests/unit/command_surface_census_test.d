@@ -24,19 +24,16 @@ import std.regex : ctRegex, matchAll;
 import std.string : count, indexOf, split, splitLines, startsWith, strip;
 
 import buttonset : ActionKind, allButtons, loadButtons;
-import tests.unit.census_symbols : blankNonCode, balancedSpan;
+import tests.unit.census_symbols : blankNonCode, balancedSpan, registrationFamilyText;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-private enum registeredIdRe = ctRegex!(`reg\.registerCommand\(\s*"([^"]+)"\s*,`);
+private enum registeredIdRe = ctRegex!(`(?:reg|registry)\.registerCommand\(\s*"([^"]+)"\s*,`);
 private enum aliasIdRe = ctRegex!(`reg\.aliasCommand\(\s*"[^"]+"\s*,\s*"([^"]+)"`);
 private enum pairedRegisteredIdRe = ctRegex!(
     `registerHeadlessTool\s*!\s*(?:[A-Za-z_]\w*|\(\s*[A-Za-z_]\w*\s*(?:,\s*[A-Za-z_]\w*\s*)?\))\s*\(\s*reg\s*,\s*"([^"]+)"\s*,\s*\(\s*\)\s*\{`);
 private enum configTokenRe = ctRegex!(`[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+`);
 private enum quotedValueRe = ctRegex!(`"([^"]+)"`);
 private enum actrPresetRe = ctRegex!(`Preset\("([^"]+)"`);
-private enum registrarEntryRe = ctRegex!(
-    `void[ \t\r\n]+(register[A-Za-z0-9_]*Commands)[ \t\r\n]*\([ \t\r\n]*ref[ \t\r\n]+Registry[ \t\r\n]+reg\b`);
-
 // Four registration loops construct ids from a literal prefix and a closed
 // literal value list. A regex that stops at the first quote reports fake ids
 // such as `file.import` and misses every real suffixed command. Keep their
@@ -137,39 +134,6 @@ private string withoutYamlComments(string src)
     return result.idup;
 }
 
-private string registrationText()
-{
-    const sourceDir = buildPath(repoRoot, "source");
-    const parentPath = buildPath(sourceDir, "registration.d");
-    const parentCode = blankNonCode(readText(parentPath));
-    string[] paths = [parentPath];
-    foreach (de; dirEntries(sourceDir, "*_registration.d", SpanMode.shallow))
-        paths ~= de.name;
-    paths.sort;
-    assert(paths.length >= 4,
-        format("command surface census found only %d registration modules", paths.length));
-
-    string result;
-    foreach (path; paths) {
-        assert(exists(path) && isFile(path),
-            "command surface census cannot find " ~ path);
-        const source = readText(path);
-        if (path != parentPath) {
-            string[] entries;
-            foreach (m; matchAll(blankNonCode(source), registrarEntryRe))
-                entries ~= m[1].idup;
-            assert(entries.length == 1,
-                format("%s must expose exactly one register…Commands(ref Registry reg entry; found %d",
-                       path, entries.length));
-            assert(parentCode.count(entries[0] ~ "(") == 1,
-                path ~ " exposes " ~ entries[0]
-              ~ " but comment-blanked registration.d never calls it exactly once");
-        }
-        result ~= source;
-    }
-    return result;
-}
-
 private string[] pairedRegisteredIds(string source)
 {
     // Keep literal ids while using the same-length lexical projection for structure.
@@ -198,7 +162,7 @@ private string[] pairedRegisteredIds(string source)
 
 private string[] registeredCommandIds()
 {
-    const registration = registrationText();
+    const registration = registrationFamilyText(repoRoot);
     bool[string] seen;
     foreach (m; matchAll(registration, registeredIdRe))
         seen[m[1].idup] = true;

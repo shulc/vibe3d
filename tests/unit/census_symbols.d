@@ -89,13 +89,14 @@
 // list of keywords cannot cover a construct whose head is user-chosen.
 module tests.unit.census_symbols;
 
-import std.algorithm : canFind, find;
+import std.algorithm : canFind, find, sort;
 import std.array     : appender, join;
 import std.conv      : to;
-import std.file      : dirEntries, readText, SpanMode;
+import std.file      : dirEntries, exists, isFile, readText, SpanMode;
 import std.format    : format;
-import std.path      : buildPath, dirName;
-import std.string    : indexOf, lastIndexOf, strip;
+import std.path      : baseName, buildPath, dirName;
+import std.regex     : ctRegex, matchAll;
+import std.string    : indexOf, lastIndexOf, split, strip;
 
 package bool isIdentChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
@@ -158,6 +159,61 @@ package(tests.unit) size_t registrationFamilyBytes(
         bytes += readText(de.name).length;
     }
     return bytes;
+}
+
+/// Shared production registration reader. Legacy families keep their exact
+/// root entry; the common pilot has three operation-only template entries.
+/// Task 20261770; the signatures and actual desktop callers are identities.
+package(tests.unit) string registrationFamilyText(string repoRoot) {
+    const sourceDir = buildPath(repoRoot, "source");
+    const parentPath = buildPath(sourceDir, "registration.d");
+    const parentCode = blankNonCode(readText(parentPath));
+    string[] paths = [parentPath];
+    foreach (de; dirEntries(sourceDir, "*_registration.d", SpanMode.shallow))
+        paths ~= de.name;
+    sort(paths);
+    assert(paths.length >= 4, "registration reader family population");
+    enum legacyEntry = ctRegex!(
+        `void[ \t\r\n]+(register[A-Za-z0-9_]*Commands)[ \t\r\n]*\([ \t\r\n]*ref[ \t\r\n]+Registry[ \t\r\n]+reg\b`);
+    string result;
+    foreach (path; paths) {
+        assert(exists(path) && isFile(path), "registration reader missing " ~ path);
+        const source = readText(path);
+        const code = blankNonCode(source);
+        if (baseName(path) == "pilot_command_registration.d") {
+            enum names = ["registerTripleCommand", "registerMeshSelectionCommand",
+                "registerHistoryNavigationCommands"];
+            enum callers = ["mesh_command_registration.d", "mesh_command_registration.d",
+                "history_macro_registration.d"];
+            string[] entries;
+            foreach (m; matchAll(code, ctRegex!(`\bvoid\s+(register[A-Za-z0-9_]*)\s*\(`)))
+                entries ~= m[1].idup;
+            assert(entries == names, "1D common registrar exact three entry identities");
+            const normalized = code.split.join(" ");
+            foreach (i, name; names) {
+                const tail = i == 2 ? ", CommandHistory history) {" : ") {";
+                const header = "void " ~ name
+                    ~ "(Registrar)(ref Registrar registry, PilotCommandDeps deps" ~ tail;
+                assert(countOccurrences(normalized, header) == 1,
+                    "1D common registrar supported template signature: " ~ name);
+                const caller = blankNonCode(readText(buildPath(sourceDir, callers[i])));
+                assert(countOccurrences(caller, name ~ "(") == 1,
+                    "1D common registrar exact desktop caller: " ~ name);
+            }
+            assert(countOccurrences(code, "registry.registerCommand(") == 4,
+                "1D common registrar exact four supported registration sites");
+        } else if (path != parentPath) {
+            string[] entries;
+            foreach (m; matchAll(code, legacyEntry)) entries ~= m[1].idup;
+            assert(entries.length == 1,
+                format("%s must expose exactly one register…Commands(ref Registry reg entry; found %d",
+                    path, entries.length));
+            assert(countOccurrences(parentCode, entries[0] ~ "(") == 1,
+                path ~ " exposes " ~ entries[0] ~ " but registration.d never calls it exactly once");
+        }
+        result ~= source;
+    }
+    return result;
 }
 
 /// The span starting at `open` through its matching delimiter, inclusive.

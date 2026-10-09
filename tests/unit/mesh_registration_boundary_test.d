@@ -197,10 +197,12 @@ unittest {
     const code = blankNonCode(raw);
     assert(raw.length > 20_000,
         "6509 boundary population: mesh registrar source is unexpectedly small");
-    assert(countOccurrences(code, "reg.registerCommand(") == 108
-            && countOccurrences(code, "reg.aliasCommand(") == 2,
+    assert(countOccurrences(code, "reg.registerCommand(") == 106
+            && countOccurrences(code, "reg.aliasCommand(") == 2
+            && countOccurrences(code, "registerTripleCommand(reg, pilot);") == 1
+            && countOccurrences(code, "registerMeshSelectionCommand(reg, pilot);") == 1,
         "6509 boundary population: code projection must contain exactly 110 "
-      ~ "mesh command registrations");
+      ~ "mesh command registrations including two common-helper slots");
     immutable moved = ["EditorApp", "with (", "vpm", "remeshModalState"];
     immutable before = [1, 2, 3, 1];
     foreach (i, needle; moved)
@@ -256,8 +258,8 @@ unittest {
     // Task 9492: the attribute doors read `tool_attr_bounds` (+1).
     // Task 9490: the radial ring start reads `workplane_fit`'s frame (+1).
     // Task 20261660: Tool reaches the detached model_preview view (+1).
-    assert(meshClosure.queue.length == 189,
-        format("6509 import scanner closure=%d/189",
+    assert(meshClosure.queue.length == 197,
+        format("6509 import scanner closure=%d/197",
             meshClosure.queue.length));
     assert("editor_app" in positive.reached,
         "6509 positive control: registration does not reach editor_app");
@@ -287,16 +289,16 @@ unittest {
         "void registerMeshCommands(ref Registry reg, LiveSessionRole owner,");
     assert(body.length > 16_000,
         format("6509 registrar-body floor: body read as %d bytes", body.length));
-    assert(identifierCount(body, "owner") == 108,
-        "6509 receiver reconciliation: owner must serve exactly 108 reads (S1e: +mesh.surfaceAttr)");
-    assert(identifierCount(body, "live") == 217,
-        "6509 receiver reconciliation: live must serve exactly 217 reads (S1e: +mesh.surfaceAttr)");
+    assert(identifierCount(body, "owner") == 107,
+        "6509 receiver reconciliation: owner must serve exactly 107 reads (S1e: +mesh.surfaceAttr)");
+    assert(identifierCount(body, "live") == 214,
+        "6509 receiver reconciliation: live must serve exactly 214 reads (S1e: +mesh.surfaceAttr)");
     assert(identifierCount(body, "deps") == 14,
         "6509 receiver reconciliation: deps must serve exactly 14 reads");
     struct Row { string receiver, member; size_t count; }
     immutable rows = [
-        Row("owner", "activeMesh", 108),
-        Row("live", "view", 108), Row("live", "mode", 108),
+        Row("owner", "activeMesh", 107),
+        Row("live", "view", 107), Row("live", "mode", 106),
         Row("live", "modeCell", 1),
         Row("deps", "meshRebuildDrop", 7),
         Row("deps", "originSnapshot", 3), Row("deps", "remeshJob", 2),

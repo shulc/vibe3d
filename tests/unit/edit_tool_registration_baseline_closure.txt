@@ -7,7 +7,10 @@ buttonset
 bvh_pick
 change_bus
 command
+command_args
+command_executor
 command_history
+command_invocation
 command_registry
 command_tool_policy
 commands.layer.xform_edit
