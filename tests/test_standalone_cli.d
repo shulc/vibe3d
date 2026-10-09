@@ -305,14 +305,17 @@ unittest {
         foreach (i; 0 .. 3) { x[i] = b[i].floating - a[i].floating; y[i] = c[i].floating - a[i].floating; }
         return [x[1]*y[2]-x[2]*y[1], x[2]*y[0]-x[0]*y[2], x[0]*y[1]-x[1]*y[0]];
     }
-    auto sourceNormal = normal(vertices[parent[0].integer], vertices[parent[1].integer], vertices[parent[2].integer]);
+    auto sourceVertices = doc["layers"][0]["mesh"]["vertices"].array;
+    JSONValue[] sourcePositions;
+    foreach (index; parent) sourcePositions ~= sourceVertices[index.integer];
+    auto sourceNormal = normal(sourcePositions[0], sourcePositions[1], sourcePositions[2]);
     size_t children;
     foreach (face; saved["layers"][0]["mesh"]["faces"].array) {
         if (face.array.length != 3) continue;
-        foreach (corner; face.array) assert(parent.canFind(corner), "CLI winding oracle: child belongs to selected source quad");
+        foreach (corner; face.array) assert(sourcePositions.canFind(vertices[corner.integer]), "CLI winding oracle: child belongs to selected source quad");
         auto childNormal = normal(vertices[face[0].integer], vertices[face[1].integer], vertices[face[2].integer]);
         double alignment; foreach (i; 0 .. 3) alignment += sourceNormal[i] * childNormal[i];
-        assert(alignment > 0, "CLI reopen: triangle winding agrees with source quad orientation");
+        assert(alignment > 0, "CLI reopen: triangle winding agrees with source quad orientation alignment=" ~ alignment.to!string);
         ++children;
     }
     assert(children == 2, "CLI reopen: populated pair of oriented triangle children");
