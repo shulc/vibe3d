@@ -1645,8 +1645,8 @@ string[] gateViolations(string testsDir) {
 /// helper object build and the per-test compile, so the two cannot drift: an
 /// object built under different -version / -w / -unittest flags than the test
 /// that links it is a different program, and would link anyway.
-string httpTestFlags()   { return " -unittest -J=tests -I=tests -w"; }
-string sourceTestFlags() { return " -unittest -J=tests -I=tests" ~ sourceCompileFlags(); }
+string httpTestFlags()   { return " -unittest -J=tests -J=packages/creation-ops/tests/fixtures -I=tests -w"; }
+string sourceTestFlags() { return " -unittest -J=tests -J=packages/creation-ops/tests/fixtures -I=tests" ~ sourceCompileFlags(); }
 
 /// Build the injected modules (injectedTestModules: http_client, every
 /// *_helpers.d, liveness_gate) ONCE per run into one object file, instead of
@@ -1733,6 +1733,7 @@ string[] compileTests(string[] paths, string outDir) {
         string of   = buildPath(outDir, name);
         // -J=tests lets a test embed a golden fixture via
         // `import("fixtures/<name>.json")` (see tests/fixture_helpers.d).
+        // Pen's owned fixture directory is granted beside it for the basename import.
         //
         // Source-backed tests link the prebuilt project library plus the
         // harvested dependency graph. We drop `-w` for these because the
