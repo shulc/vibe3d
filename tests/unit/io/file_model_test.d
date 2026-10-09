@@ -101,7 +101,7 @@ unittest {
         assert(!code.split.join("").canFind("voidselectBrowserBackendForTest("),
             "file model setter has only its lower production owner: " ~ file.name);
     }
-    assert(sourceFiles == 590, "file model production source population");
+    assert(sourceFiles == 591, "file model production source population");
 }
 
 unittest {
