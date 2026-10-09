@@ -387,7 +387,6 @@ unittest {
 
 // Task 20262020: private _surfacePicker ownership is lazy, shared, and torn down immediately.
 unittest {
-    import core.lifetime : destroy;
     import std.math : fabs;
     Mesh src;
     src.vertices = [Vec3(-1,0,-1), Vec3(1,0,-1), Vec3(1,0,1), Vec3(-1,0,1)];

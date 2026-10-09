@@ -195,9 +195,10 @@ unittest // K1-K9: whole-tree census
     size_t sourceFiles, testFiles;
     Scan renderer, editorApp;
     size_t rendererSeen, editorAppSeen;
-    foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source"]) {
+    foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source"]) {
         const production = root == "source" || root == "packages/common/source"
-            || root == "packages/mesh-ops/source" || root == "packages/interchange/source";
+            || root == "packages/mesh-ops/source" || root == "packages/interchange/source"
+            || root == "packages/interaction-query/source" || root == "packages/pipe-evaluation/source";
         foreach (entry; dirEntries(buildPath(repoRoot, root), "*.d", SpanMode.depth)) {
             const rel = relativePath(entry.name, repoRoot).replace("\\", "/");
             if (production) ++sourceFiles; else ++testFiles;

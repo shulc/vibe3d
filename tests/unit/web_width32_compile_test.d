@@ -73,7 +73,7 @@ case " $flags " in *" -version=web "*) ;; *)
 esac
 mapfile -t files < <(dub describe --config=web --data=source-files --data-list \
     2>>"$2" | sed '/^$/d' | grep '\.d$')
-for package in common mesh-ops interchange; do
+for package in common mesh-ops interchange interaction-query pipe-evaluation; do
     mapfile -t package_files < <(dub describe --root="packages/$package" --config=web \
         --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
     files+=("${package_files[@]}")
@@ -95,6 +95,8 @@ SH";
     const commonPrefix = buildPath(repoRoot, "packages/common/source") ~ "/";
     const meshPrefix = buildPath(repoRoot, "packages/mesh-ops/source") ~ "/";
     const interchangePrefix = buildPath(repoRoot, "packages/interchange/source") ~ "/";
+    const queryPrefix = buildPath(repoRoot, "packages/interaction-query/source") ~ "/";
+    const evaluationPrefix = buildPath(repoRoot, "packages/pipe-evaluation/source") ~ "/";
     foreach (line; readText(depsPath).splitLines)
     {
         const first = line.indexOf(" : ");
@@ -108,7 +110,7 @@ SH";
         if (!parseDepNode(tail[cast(size_t)secondRel + 3 .. $], imported)) continue;
         importsByModule[importer.moduleName] ~= imported.moduleName;
         foreach (node; [importer, imported])
-            if (node.path.startsWith(sourcePrefix, commonPrefix, meshPrefix, interchangePrefix) && node.path.endsWith(".d"))
+            if (node.path.startsWith(sourcePrefix, commonPrefix, meshPrefix, interchangePrefix, queryPrefix, evaluationPrefix) && node.path.endsWith(".d"))
                 sourcePathByModule[node.moduleName] = node.path;
     }
     bool[string] reached;

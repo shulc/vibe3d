@@ -92,7 +92,7 @@ unittest // every production snapCursor call declares guide semantics
     // Floor, then the roster: eight production calls, one per file.
     assert(calls.length == 8, format("snapCursor production calls: %s %s", calls.length, fileRoster(calls)));
     assert(fileRoster(calls) == [
-        "source/http_providers.d", "packages/interaction-query/source/snap.d", "packages/pipe-evaluation/source/toolpipe/stages/snap.d",
+        "packages/interaction-query/source/snap.d", "packages/pipe-evaluation/source/toolpipe/stages/snap.d", "source/http_providers.d",
         "source/tools/create/create_common.d", "source/tools/create/pen.d",
         "source/tools/edit/topology_pen/tool.d",
         "source/tools/transform/move.d", "source/tools/transform/transform.d"],
@@ -172,13 +172,13 @@ unittest // one packet read, one finder: the deleted copies stay deleted
     // reads it beside its other packets. Text needle: `get!(SnapPacket)` or
     // an alias would pass it.
     packetReads.sort();
-    assert(packetReads == ["source/http_providers.d", "packages/interaction-query/source/snap.d"],
+    assert(packetReads == ["packages/interaction-query/source/snap.d", "source/http_providers.d"],
         format("get!SnapPacket production roster: %s", packetReads));
     liveCalls.sort();
-    assert(liveCalls == ["source/commands/snap/mode.d", "source/commands/snap/toggle.d",
-                         "source/commands/snap/toggle_type.d", "source/editor_app.d",
-                         "packages/pipe-evaluation/source/toolpipe/stages/snap.d", "packages/pipe-evaluation/source/toolpipe/stages/snap.d",
-                         "packages/pipe-evaluation/source/toolpipe/stages/snap.d",
+    assert(liveCalls == ["packages/pipe-evaluation/source/toolpipe/stages/snap.d", "packages/pipe-evaluation/source/toolpipe/stages/snap.d",
+                         "packages/pipe-evaluation/source/toolpipe/stages/snap.d", "source/commands/snap/mode.d",
+                         "source/commands/snap/toggle.d", "source/commands/snap/toggle_type.d",
+                         "source/editor_app.d",
                          "source/tools/create/pen.d", "source/tools/create/pen.d",
                          "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",

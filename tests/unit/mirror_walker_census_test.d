@@ -99,7 +99,7 @@ unittest { // (c2) ONE side test
     size_t scanned;
     const users = filesWith("symmetrySide(", scanned);
     assert(users == ["packages/common/source/symmetry_plane.d",
-                     "packages/mesh-ops/source/mesh_ops/extrude.d", "packages/interaction-query/source/symmetry.d",
+                     "packages/interaction-query/source/symmetry.d", "packages/mesh-ops/source/mesh_ops/extrude.d",
                      "packages/pipe-evaluation/source/toolpipe/stages/symmetry.d", "source/tools/edit/edge_extend.d"],
            "(c2) symmetrySide( users: " ~ users.to!string);
     const lower = codeOf("packages/common/source/symmetry_plane.d");

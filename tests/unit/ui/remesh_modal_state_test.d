@@ -574,7 +574,7 @@ unittest { // production census: one owner, live provider, no pointer-era path
 
     size_t sourceFiles;
     string allSource;
-    foreach (scanSourceRoot; [root.buildPath("source"), root.buildPath("packages/common/source"), root.buildPath("packages/mesh-ops/source"), root.buildPath("packages/interchange/source")])
+    foreach (scanSourceRoot; [root.buildPath("source"), root.buildPath("packages/common/source"), root.buildPath("packages/mesh-ops/source"), root.buildPath("packages/interchange/source"), root.buildPath("packages/interaction-query/source"), root.buildPath("packages/pipe-evaluation/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         allSource ~= blankNonCode(readText(entry.name));

@@ -212,6 +212,8 @@ unittest {
     hits ~= scanTree("packages/common/source");
     hits ~= scanTree("packages/mesh-ops/source");
     hits ~= scanTree("packages/interchange/source");
+    hits ~= scanTree("packages/interaction-query/source");
+    hits ~= scanTree("packages/pipe-evaluation/source");
 
     size_t[string] byFile;
     foreach (h; hits) byFile[h.file] = byFile.get(h.file, 0) + 1;
