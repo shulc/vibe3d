@@ -98,8 +98,12 @@ private void parity(JSONValue cli, JSONValue desktop, JSONValue previousCli, JSO
     assert(cli.object.length == 6, "CLI state: exact six-key schema");
     foreach (key; ["hasEditTarget", "selType", "editMode", "planes", "history", "changes"])
         assert(key in cli.object, "CLI state: required schema key " ~ key);
-    assert(cleanPlanes(cli["planes"]) == desktop["planes"],
-        "CLI differential: complete plane mismatch");
+    auto cliPlanes = cleanPlanes(cli["planes"]);
+    foreach (key, value; cliPlanes.object)
+        assert(key in desktop["planes"].object && value == desktop["planes"][key],
+            "CLI differential: plane " ~ key ~ " mismatch cli=" ~ value.toString
+                ~ " desktop=" ~ desktop["planes"][key].toString);
+    assert(cliPlanes == desktop["planes"], "CLI differential: complete plane mismatch");
     foreach (key; ["hasEditTarget", "selType", "editMode", "history"])
         assert(cli[key] == desktop[key], "CLI differential: state mismatch " ~ key
             ~ " cli=" ~ cli[key].toString ~ " desktop=" ~ desktop[key].toString);
