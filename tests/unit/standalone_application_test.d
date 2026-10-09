@@ -81,7 +81,7 @@ unittest {
         "standalone-current-context: target removal has no mesh delivery");
     auto currentContext = host.state();
     assert(currentContext["history"]["undo"].array.length == 2
-        && currentContext["changes"]["lastDeliveryFlags"].integer != 0,
+        && currentContext["changes"]["lastDeliveryFlags"].uinteger != 0,
         "standalone-current-context: populated history and real nonzero observation");
     assert(host.invoke("mesh.triple").outcome == CommandInvocationOutcome.refused,
         "standalone-current-context: no-target refusal with incoming context");
@@ -117,11 +117,11 @@ unittest {
     assert(!before["hasEditTarget"].boolean && host.document.primary is null
         && before["history"]["undo"].array.length == 0
         && before["history"]["redo"].array.length == 0
-        && before["history"]["modelDepth"].integer == 0
-        && before["history"]["uiDepth"].integer == 0
-        && before["changes"]["deliveryCount"].integer == 0
-        && before["changes"]["lastDeliveryFlags"].integer == 0
-        && before["changes"]["lastDeliverySelDomains"].integer == 0,
+        && before["history"]["modelDepth"].uinteger == 0
+        && before["history"]["uiDepth"].uinteger == 0
+        && before["changes"]["deliveryCount"].uinteger == 0
+        && before["changes"]["lastDeliveryFlags"].uinteger == 0
+        && before["changes"]["lastDeliverySelDomains"].uinteger == 0,
         "standalone-no-target: init-only construction has empty history and zero gauges");
     auto result = host.invoke("mesh.triple");
     assert(result.outcome == CommandInvocationOutcome.refused,
