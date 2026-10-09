@@ -7,12 +7,36 @@ import standalone_application : StandaloneApplication;
 import std.conv : to;
 import std.file : readText, exists, remove, rename, getcwd;
 import std.json : JSONValue, JSONType, parseJSON;
-import std.path : absolutePath, buildPath, dirName, baseName;
+import std.path : absolutePath, buildPath, buildNormalizedPath, dirName, baseName;
+import std.string : toStringz, fromStringz;
+import core.sys.posix.stdlib : realpath;
+import core.sys.posix.sys.stat : stat, stat_t;
+import core.stdc.stdlib : free;
 import std.process : thisProcessID;
 import std.stdio : File, stdout, stderr;
 import std.string : splitLines, strip;
 
 private struct Options { string input, commands, output, stateOutput; }
+
+private string resolvedPath(string value) {
+    auto normalized = buildNormalizedPath(absolutePath(value));
+    auto resolved = realpath(normalized.toStringz, null);
+    if (resolved !is null) {
+        scope(exit) free(resolved);
+        return resolved.fromStringz.idup;
+    }
+    auto parent = realpath(dirName(normalized).toStringz, null);
+    if (parent is null) return normalized;
+    scope(exit) free(parent);
+    return buildPath(parent.fromStringz.idup, baseName(normalized));
+}
+
+private bool sameFile(string first, string second) {
+    if (first == second) return true;
+    stat_t a, b;
+    return stat(first.toStringz, &a) == 0 && stat(second.toStringz, &b) == 0
+        && a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+}
 
 private Options options(string[] args) {
     if (args.length < 2 || args[1] != "run")
@@ -24,17 +48,17 @@ private Options options(string[] args) {
             throw new Exception("missing or duplicate option: " ~ args[i]);
         seen[args[i]] = true;
         switch (args[i]) {
-            case "--input": result.input = absolutePath(args[i + 1]); break;
-            case "--commands": result.commands = absolutePath(args[i + 1]); break;
-            case "--output": result.output = absolutePath(args[i + 1]); break;
-            case "--state-output": result.stateOutput = absolutePath(args[i + 1]); break;
+            case "--input": result.input = resolvedPath(args[i + 1]); break;
+            case "--commands": result.commands = resolvedPath(args[i + 1]); break;
+            case "--output": result.output = resolvedPath(args[i + 1]); break;
+            case "--state-output": result.stateOutput = resolvedPath(args[i + 1]); break;
             default: throw new Exception("unknown option: " ~ args[i]);
         }
     }
     if (!result.input.length || !result.commands.length || !result.output.length)
         throw new Exception("input, commands and output are required");
-    if (result.stateOutput.length && (result.stateOutput == result.input
-        || result.stateOutput == result.commands || result.stateOutput == result.output))
+    if (result.stateOutput.length && (sameFile(result.stateOutput, result.input)
+        || sameFile(result.stateOutput, result.commands) || sameFile(result.stateOutput, result.output)))
         throw new Exception("state-output must differ from input, commands and output");
     return result;
 }

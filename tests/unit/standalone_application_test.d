@@ -17,7 +17,7 @@ unittest {
     const beforeActive = activeMeshResolver;
     const beforeSpace = primaryModelSpaceResolver;
     const beforeFilter = g_isDocumentMesh;
-    auto beforeBus = changeBus;
+
     auto watchers = allWatchers();
     MeshDirtyEpochs[] epochs;
     foreach (watcher; watchers) epochs ~= *watcher;
@@ -25,6 +25,7 @@ unittest {
     auto first = Document.bootstrap(makeCube());
     auto second = Document.bootstrap(makeCube());
     assert(first.primary !is second.primary, "standalone-lifetime: two distinct documents");
+    auto beforeBus = changeBus;
     auto firstMesh = &first.activeMeshRef();
     auto secondMesh = &second.activeMeshRef();
     auto host = new StandaloneApplication(first);
