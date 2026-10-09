@@ -66,7 +66,7 @@ import std.path : isAbsolute, absolutePath, buildNormalizedPath, dirName,
                   relativePath, isDirSeparator;
 
 import document       : ImageData;
-import io.file_dialog  : browserFileModel;
+import io.file_model   : browserFileModel;
 import io.image_decode : ImageInfo, imageInfo, MAX_IMAGE_BYTES;
 import log            : logWarn;
 

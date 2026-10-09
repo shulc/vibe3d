@@ -58,7 +58,7 @@ def banned_module(module):
     return module in BANNED_MODULES or module.startswith(BANNED_PREFIXES)
 
 
-def check_input(value):
+def check_input(value, owners=(), runtime_registry=()):
     # Archive filenames use libSDL2.a rather than a module separator.
     normalized = re.sub(r'(^|/)(?:lib)(?=[A-Za-z])', r'\1', str(value))
     normalized = re.sub(r'(^|\s)(?:-L)?-l', r'\1', normalized)
@@ -66,7 +66,10 @@ def check_input(value):
     require(not str(value).endswith('.a'),
             'unexpected resolved native archive: ' + str(value) + ' PLAN-FINDING')
     basename = Path(str(value)).stem
-    require(basename not in BANNED_MODULES, 'forbidden file owner: ' + str(value))
+    runtime_owner = (set(owners) == {'core.gc.registry'}
+                     and str(Path(str(value)).resolve()) in runtime_registry)
+    require(basename not in BANNED_MODULES or runtime_owner,
+            'forbidden file owner: ' + str(value))
     components = Path(str(value)).parts
     require('ui' not in components and 'handles' not in components,
             'forbidden file owner: ' + str(value))
@@ -84,11 +87,25 @@ def compiler_inputs(deps, verbose, cwd):
     return modules, files
 
 
-def validate_compiler(modules, files, roots):
+def runtime_registry_inputs(verbose):
+    # DMD's own default DFLAGS identify its runtime import owner. Explicit -I
+    # arguments are search paths, not an ownership grant to a project file.
+    defaults = re.findall(r'^DFLAGS\s+(.*)$', verbose, re.M)
+    return {str((Path(flag[2:]) / 'core/gc/registry.d').resolve())
+            for row in defaults for flag in shlex.split(row)
+            if flag.startswith('-I') and (Path(flag[2:]) / 'core/gc/registry.d').is_file()}
+
+
+def validate_inputs(modules, files, runtime_registry=()):
     for module, filename in modules.items():
         require(not banned_module(module), 'forbidden compiler module: ' + module + ' (' + filename + ')')
     for filename in files:
-        check_input(filename)
+        owners = {module for module, path in modules.items() if path == filename}
+        check_input(filename, owners, runtime_registry)
+
+
+def validate_compiler(modules, files, roots, runtime_registry=()):
+    validate_inputs(modules, files, runtime_registry)
     require(len(files) >= 20, 'compiler file population below 20')
     require(set(KNOWN_MODULES) <= set(modules), 'missing production Mesh/Document/Command compiler roots')
     require(set(map(str, roots)) <= files, 'explicit source roots missing from compiler file-set')
@@ -246,7 +263,7 @@ def main(argv=None):
     modules, files = compiler_inputs(deps.read_text() if deps.is_file() else '', result.stdout, root)
     (evidence / 'compiler-inputs.json').write_text(json.dumps(
         {'modules': modules, 'files': sorted(files)}, indent=2) + '\n')
-    validate_compiler(modules, files, sources)
+    validate_compiler(modules, files, sources, runtime_registry_inputs(result.stdout))
     require(deps.is_file(), 'NO-VERDICT: compiler did not emit dependencies')
     validate_link_output(result.stdout, object_outputs)
     require(result.returncode == 0, 'compiler/build/runtime failed (see build-run.log)')

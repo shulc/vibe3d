@@ -254,10 +254,10 @@ unittest {
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
     // Task 20261660: Tool reaches the detached model_preview view (+1 each).
     pinClosure("transform_tool_registration", transform, 261);
-    pinClosure("registration", positive, 529);
-    assert(transform.queue.length == 261 && positive.queue.length == 529,
+    pinClosure("registration", positive, 530);
+    assert(transform.queue.length == 261 && positive.queue.length == 530,
         format("6506 import closure census changed: transform=%d/261 "
-            ~ "registration=%d/529", transform.queue.length,
+            ~ "registration=%d/530", transform.queue.length,
             positive.queue.length));
 }
 

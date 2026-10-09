@@ -118,6 +118,32 @@ class BoundaryControls(unittest.TestCase):
             with self.assertRaisesRegex(boundary.BoundaryError, 'compiler module'):
                 boundary.validate_compiler(dict(modules, **{module: '/outside/renamed.d'}), files, roots)
 
+    def test_runtime_registry_ownership(self):
+        modules, files, roots = self.compiler_fixture()
+        runtime = str((Path(shutil.which('dmd')).resolve().parents[2]
+                       / 'src/druntime/import/core/gc/registry.d').resolve())
+        self.assertTrue(Path(runtime).is_file())
+        actual = dict(modules, **{'core.gc.registry': runtime})
+        boundary.validate_compiler(actual, files | {runtime}, roots, {runtime})
+        for changed_modules, changed_files, runtime_inputs, message in [
+            (dict(modules, registry=runtime), files | {runtime}, {runtime}, 'compiler module'),
+            (dict(modules, registry='/fixture/renamed.d'), files, {runtime}, 'compiler module'),
+            (dict(modules, **{'core.gc.registry': '/fixture/core/gc/registry.d'}),
+             files | {'/fixture/core/gc/registry.d'}, {runtime}, 'file owner'),
+            (modules, files | {runtime}, {runtime}, 'file owner'),
+            (actual, files | {runtime}, set(), 'file owner'),
+        ]:
+            with self.assertRaisesRegex(boundary.BoundaryError, message):
+                boundary.validate_compiler(changed_modules, changed_files, roots, runtime_inputs)
+        defaults = 'DFLAGS -I' + str(Path(runtime).parents[2]) + '\n'
+        self.assertEqual(boundary.runtime_registry_inputs(defaults), {runtime})
+        self.assertEqual(boundary.runtime_registry_inputs(''), set())
+        self.assertEqual(boundary.runtime_registry_inputs('DFLAGS -X' + str(Path(runtime).parents[2]) + '\n'), set())
+        self.assertEqual(boundary.runtime_registry_inputs('DFLAGS -I/fixture/absent\n'), set())
+        for owners in (set(), {'synthetic'}, {'core.gc.registry', 'synthetic'}):
+            with self.assertRaisesRegex(boundary.BoundaryError, 'file owner'):
+                boundary.check_input(runtime, owners, {runtime})
+
     def test_runtime_population(self):
         good = '11 modules passed unittests\n' + ''.join('CORE-CELL passed=' + name + '\n' for name in boundary.CORE_CELLS)
         self.assertEqual(boundary.validate_runtime(good), 11)

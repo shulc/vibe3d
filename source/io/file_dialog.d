@@ -35,6 +35,8 @@ module io.file_dialog;
 // ---------------------------------------------------------------------------
 
 import io.formats : FilterSpec;
+public import io.file_model : browserFileModel;
+version (unittest) public import io.file_model : selectBrowserBackendForTest;
 import io.file_dialog_browser : BrowserPickOutcome, BrowserPickResult,
                                 browserPickOpenPath = pickOpenPath,
                                 browserPickSavePath = pickSavePath;
@@ -92,35 +94,11 @@ private PickResult classifyBrowser(BrowserPickResult r) {
 }
 
 version (unittest) {
-    private bool g_browserBackendForTest;
-
-    /// Test-only selection of the production browser adapter. Keeping the
-    /// switch here lets a real command consumer distinguish its outcomes.
-    void selectBrowserBackendForTest(bool enabled) {
-        g_browserBackendForTest = enabled;
-    }
-
     private bool delegate(string) g_deliverSavedFileForTest;
 
     /// Test-only stand-in for the browser hand-off; null restores the default.
     void setDeliverSavedFileForTest(bool delegate(string) deliver) {
         g_deliverSavedFileForTest = deliver;
-    }
-}
-
-/// The browser file model (task 7400): files live in MEMFS under
-/// `io.browser_pick_resume.workRoot()`, an open resumes asynchronously and a
-/// save is handed to the browser. True in the web build and under
-/// `selectBrowserBackendForTest(true)`; false on the desktop.
-bool browserFileModel() {
-    version (web) {
-        return true;
-    } else {
-        version (unittest) {
-            return g_browserBackendForTest;
-        } else {
-            return false;
-        }
     }
 }
 
@@ -184,7 +162,7 @@ PickResult pickOpenPath(FilterSpec[] fs, string startDir = null) {
         return classifyBrowser(browserPickOpenPath(fs, startDir));
     } else {
         version (unittest) {
-            if (g_browserBackendForTest)
+            if (browserFileModel())
                 return classifyBrowser(browserPickOpenPath(fs, startDir));
         }
         import command : g_testMode;
@@ -203,7 +181,7 @@ PickResult pickSavePath(FilterSpec[] fs, string defaultName, string startDir = n
         return classifyBrowser(browserPickSavePath(fs, defaultName, startDir));
     } else {
         version (unittest) {
-            if (g_browserBackendForTest)
+            if (browserFileModel())
                 return classifyBrowser(browserPickSavePath(fs, defaultName, startDir));
         }
         import command : g_testMode;

@@ -251,6 +251,7 @@ io.browser_pick_resume
 io.doc_state
 io.file_dialog
 io.file_dialog_browser
+io.file_model
 io.formats
 io.image_decode
 io.image_path

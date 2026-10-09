@@ -269,8 +269,8 @@ unittest {
                 ~ ": " ~ reachChain("create_tool_registration", forbidden, create));
     // Task 20261660: Tool reaches the detached model_preview view (+1 each).
     pinClosure("create_tool_registration", create, 264);
-    pinClosure("registration", positive, 529);
-    assert(create.queue.length == 264 && positive.queue.length == 529,
+    pinClosure("registration", positive, 530);
+    assert(create.queue.length == 264 && positive.queue.length == 530,
         "6507 reviewed narrow and broad closure populations");
 }
 
