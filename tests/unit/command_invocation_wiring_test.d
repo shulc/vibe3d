@@ -11,11 +11,14 @@ private size_t occurrences(string text, string needle) { return text.count(needl
 unittest { // Production seams, with scanner-blanked comments and literals.
     import tests.unit.census_symbols : blankNonCode;
     auto binding = blankNonCode(repoFile("source/application_command_binding.d"));
+    auto owner = blankNonCode(repoFile("source/registry.d"));
     auto invocation = blankNonCode(repoFile("source/command_invocation.d"));
     auto meshFamily = blankNonCode(repoFile("source/mesh_command_registration.d"));
     auto historyFamily = blankNonCode(repoFile("source/history_macro_registration.d"));
     auto pilot = blankNonCode(repoFile("source/pilot_command_registration.d"));
-    assert(occurrences(binding, "new CommandInvocationService(") == 1
+    assert(occurrences(binding, "registry.createCommandInvocationService(executor, history,") == 1
+        && occurrences(binding, "new CommandInvocationService(") == 0
+        && occurrences(owner, "new CommandInvocationService(commandRegistry_, executor, history,") == 1
         && occurrences(binding, "return invocation.invokeLine(id, paramsJson, context);") == 1
         && occurrences(binding, "bindArgs(") == 0
         && occurrences(binding, "applyOrRefire(") == 0,
@@ -23,9 +26,9 @@ unittest { // Production seams, with scanner-blanked comments and literals.
     assert(occurrences(invocation,
         "executor.applyOrRefire(command, RecordMode.Coalescing, null)") == 1,
         "1D production script dispatch must retain null throw message");
-    assert(occurrences(meshFamily, "registerTripleCommand(reg.commandRegistry(), pilot)") == 1
-        && occurrences(meshFamily, "registerMeshSelectionCommand(reg.commandRegistry(), pilot)") == 1
-        && occurrences(historyFamily, "registerHistoryNavigationCommands(reg.commandRegistry(),") == 1,
+    assert(occurrences(meshFamily, "registerTripleCommand(reg, pilot)") == 1
+        && occurrences(meshFamily, "registerMeshSelectionCommand(reg, pilot)") == 1
+        && occurrences(historyFamily, "registerHistoryNavigationCommands(reg,") == 1,
         "1D production families must consume common pilot registrar");
     foreach (type; ["MeshTriple", "MeshSelect", "HistoryUndo", "HistoryRedo"]) {
         assert(occurrences(meshFamily ~ historyFamily, "new " ~ type ~ "(") == 0,

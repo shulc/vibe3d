@@ -276,7 +276,7 @@ unittest { // production wiring, scope fences, and the single panel owner
             "new HistoryUndo(&deps.activeMesh(), deps.view(), *deps.mode, history)") == 1
         && pilot.count(
             "new HistoryRedo(&deps.activeMesh(), deps.view(), *deps.mode, history)") == 1
-        && registrar.count("registerHistoryNavigationCommands(reg.commandRegistry(),") == 1
+        && registrar.count("registerHistoryNavigationCommands(reg,") == 1
         && registrar.count("EditSession") == 0
         && registrar.count(".navigate(") == 0,
         "5810 raw-door fence: history.undo/redo stopped stepping CommandHistory directly");

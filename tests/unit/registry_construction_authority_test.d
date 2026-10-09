@@ -219,8 +219,16 @@ static assert(__traits(compiles, {
 
 // The complete member pin catches a new writable capability even when it has
 // an unrelated name. Keep this after the targeted existence/visibility fence.
-static assert([__traits(allMembers, Registry)] == [
-    "toolFactories_", "commandRegistry_", "commandRegistry", "registerCommand", "registerTool",
+unittest {
+    enum replacesOwner = __traits(compiles, {
+        Registry reg;
+        reg.commandRegistry() = typeof(reg.commandRegistry()).init;
+    });
+    assert(!replacesOwner, "1D owner replacement capability fence");
+    enum exportsPointer = __traits(compiles, { Registry reg; auto ptr = &reg.commandRegistry(); });
+    assert(!exportsPointer, "1D owner pointer capability fence");
+    assert([__traits(allMembers, Registry)] == [
+    "toolFactories_", "commandRegistry_", "createCommandInvocationService", "registerCommand", "registerTool",
     "replaceCommand", "replaceTool", "aliasCommand", "hasCommand",
     "hasTool", "commandIds", "toolIds", "toolFactory", "makeCommand",
     "bindSelTypeAuthority", "preActivate", "preparedPipeAttrs",
@@ -230,6 +238,7 @@ static assert([__traits(allMembers, Registry)] == [
     "commandCommitsToolEditBeforeApply", "cacheSupportedModes",
     "registryJson", "isModeBlocked", "actionRefusal"
 ], "6510 Registry capability surface changed; classify the new member");
+}
 
 private struct BypassCounts {
     size_t tuples;
@@ -404,14 +413,15 @@ unittest {
 }
 
 // The lower behavior probe is complemented by actual desktop attachment wiring.
-unittest {
+version (AccessRuntimeOnly) {} else unittest {
     const lower = blankNonCode(readText(buildPath(repoRoot, "source", "command_registry.d")));
     const desktop = blankNonCode(readText(buildPath(repoRoot, "source", "registry.d")));
-    const exposed = symbolTokenHits(desktop, "source/registry.d",
-        "return commandRegistry_");
-    assert(desktop.count("ref CommandRegistry commandRegistry()") == 1
-        && exposed.length == 1 && exposed[0].key == "Registry.commandRegistry",
-        "1D Registry getter must return the embedded lower owner by ref");
+    const factory = symbolTokenHits(desktop, "source/registry.d",
+        "new CommandInvocationService(commandRegistry_, executor, history,");
+    assert(factory.length == 1 && factory[0].key == "Registry.createCommandInvocationService",
+        "1D owner factory must borrow the embedded lower owner");
+    assert(desktop.count("ref CommandRegistry") == 0 && desktop.count("CommandRegistry*") == 0,
+        "1D owner must not export a named ref or pointer");
     const attached = symbolTokenHits(lower, "source/command_registry.d",
         "command.setSelTypeProvider(selTypeAuthority_)");
     assert(attached.length == 1 && attached[0].key == "CommandRegistry.makeCommand",
@@ -429,16 +439,102 @@ unittest {
     assert(cached.length == 1 && cached[0].key == "Registry.cacheSupportedModes",
         "1C desktop metadata must walk its embedded command owner once");
 
-    Registry reg;
-    auto lower = &reg.commandRegistry();
-    assert(lower is &reg.commandRegistry(),
-        "1D Registry getter must retain the same lower owner address");
-    auto original = new OriginalProbeCommand("k.getter");
-    lower.registerCommand("k.getter", () => cast(Command) original);
-    assert(reg.makeCommand("k.getter") is original,
-        "1D lower getter registration must reach desktop construction");
-    auto replacement = new ReplacementProbeCommand("k.getter");
-    reg.replaceCommand("k.getter", () => cast(Command) replacement);
-    assert(lower.makeCommand("k.getter") is replacement,
-        "1D desktop replacement must reach the same lower getter owner");
+}
+
+
+unittest { // Construct before first registration: empty AA storage cannot mask a copy.
+    import command_executor : CommandExecutor;
+    import command_history : CommandHistory;
+    import command_invocation : CommandInvocationOutcome;
+    auto rig = new LiveRegistrationRig;
+    Registry owner;
+    assert(owner.commandIds().length == 0, "1D factory requires fresh empty owner");
+    owner.bindSelTypeAuthority(rig.liveSession());
+    auto history = new CommandHistory;
+    auto executor = new CommandExecutor(history, () => false, (transition) {});
+    auto service = owner.createCommandInvocationService(executor, history,
+        (Command command, string id) => true);
+    owner.registerCommand("k.factory", () => cast(Command)new OriginalProbeCommand("k.factory"));
+    auto first = service.invokeLine("k.factory", "",
+        CommandInvocationContext(CommandOrigin.script, false));
+    auto original = cast(OriginalProbeCommand)first.command;
+    assert(first.outcome == CommandInvocationOutcome.applied && original !is null,
+        "1D owner factory must see registration after construction");
+    Registry fallback;
+    fallback.registerCommand("k.fallback", () => cast(Command)new ProbeCommand("k.fallback"));
+    auto cold = cast(ProbeCommand)fallback.makeCommand("k.fallback");
+    assert(cold.observedType() == SelType.Polygon && original.observedType() == SelType.Vertex,
+        "1D factory live authority must differ from mode fallback");
+    rig.session.selTypeOrder.touch(SelType.Item);
+    assert(original.observedType() == SelType.Item && cold.observedType() == SelType.Polygon,
+        "1D factory constructed command must read changed live authority");
+    owner.replaceCommand("k.factory", () => cast(Command)new ReplacementProbeCommand("k.factory"));
+    auto replaced = service.invokeLine("k.factory", "",
+        CommandInvocationContext(CommandOrigin.script, false));
+    auto replacement = cast(ReplacementProbeCommand)replaced.command;
+    assert(replacement !is null && replacement.observedType() == SelType.Item,
+        "1D owner factory must see replacement and live authority");
+    rig.session.selTypeOrder.touch(SelType.Polygon);
+    assert(original.observedType() == SelType.Polygon && replacement.observedType() == SelType.Polygon,
+        "1D factory both existing commands must retain live authority");
+}
+
+
+unittest { // The desktop receiver instantiates the same operation-only helpers.
+    import command : g_editTargetResolver;
+    import command_executor : CommandExecutor;
+    import command_history : CommandHistory;
+    import command_invocation;
+    import change_bus : changeBus, ChangeBus;
+    import mesh : makeCube, g_isDocumentMesh;
+    import pilot_command_registration;
+    import math : Viewport, Vec3;
+
+    const savedResolver = g_editTargetResolver; auto savedBus = changeBus;
+    const savedFilter = g_isDocumentMesh;
+    scope(exit) { g_editTargetResolver = savedResolver; changeBus = savedBus; g_isDocumentMesh = savedFilter; }
+    g_editTargetResolver = null; changeBus = ChangeBus.init; g_isDocumentMesh = null;
+    auto a = makeCube(), b = makeCube(); Mesh* active = &a;
+    auto firstView = new View(0,0,1,1), secondView = new View(0,0,2,2);
+    View currentView = firstView;
+    EditMode mode = EditMode.Vertices;
+    auto live = new LiveRegistrationRig;
+    size_t promotions, topologyCalls;
+    Viewport viewport; viewport.focus = Vec3(31,0,0);
+    ref Mesh liveMesh() { return *active; }
+    ref View liveView() { return currentView; }
+    auto deps = PilotCommandDeps(cast(PilotMesh)&liveMesh, cast(PilotView)&liveView, &mode, () => viewport,
+        (EditMode next) { ++promotions; mode = next; live.session.selTypeOrder.touch(SelType.Polygon); },
+        () { ++topologyCalls; });
+    auto h = new CommandHistory; h.clear(); Registry registry;
+    registry.bindSelTypeAuthority(live.liveSession());
+    registerTripleCommand(registry, deps);
+    registerMeshSelectionCommand(registry, deps);
+    registerHistoryNavigationCommands(registry, deps, h);
+    assert(registry.commandIds().length == 4, "pilot registrar exact four-ID population");
+    foreach (id; registry.commandIds()) {
+        auto c = registry.makeCommand(id);
+        assert(c.meshPtr() is &a && c.viewRef is firstView && c.editModeVal == EditMode.Vertices,
+            "pilot registrar must resolve initial live data");
+    }
+    active = &b; currentView = secondView; mode = EditMode.Edges;
+    foreach (id; registry.commandIds()) {
+        auto c = registry.makeCommand(id);
+        assert(c.meshPtr() is &b && c.viewRef is secondView && c.editModeVal == EditMode.Edges,
+            "pilot registrar must resolve changed live data");
+    }
+    auto service = registry.createCommandInvocationService(new CommandExecutor(h, () => false, (transition) {}), h);
+    auto context = CommandInvocationContext(CommandOrigin.script, false);
+    assert(service.invokeLine("mesh.select", `{"mode":"polygons","indices":[0]}`, context).applied,
+        "pilot selection must apply");
+    assert(promotions == 1 && mode == EditMode.Polygons && live.liveSession().subjectType() == SelType.Polygon
+        && b.selectedFaces[0], "pilot selection must promote geometry type and select");
+    assert(service.invokeLine("mesh.triple", "", context).applied
+        && b.faces.length == 7 && a.faces.length == 6 && topologyCalls == 1,
+        "pilot triple must use live target and topology capability");
+    assert(service.invokeLine("history.undo", "", context).applied && b.faces.length == 6,
+        "pilot undo must navigate same history");
+    assert(service.invokeLine("history.redo", "", context).applied && b.faces.length == 7,
+        "pilot redo must navigate same history");
+
 }

@@ -35,7 +35,7 @@ void registerHistoryCommands(ref Registry reg,
     import view : View;
     ref Mesh pilotMesh() { return session.activeMesh(); }
     ref View pilotView() { return live.view(); }
-    registerHistoryNavigationCommands(reg.commandRegistry(),
+    registerHistoryNavigationCommands(reg,
         PilotCommandDeps(&pilotMesh, &pilotView, live.modeCell()), history);
     reg.registerCommand("history.show", () => cast(Command)
         new HistoryShow(&session.activeMesh(), live.view(), live.mode,

@@ -175,7 +175,7 @@ void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
     reg.registerCommand("mesh.subdivide_faceted", () => cast(Command)
         new SubdivideFaceted(&owner.activeMesh(), live.view(), live.mode(),
                              deps.meshRebuildDrop()));
-    registerTripleCommand(reg.commandRegistry(), pilot);
+    registerTripleCommand(reg, pilot);
     reg.registerCommand("mesh.quadruple", () => cast(Command)
         new MeshQuadruple(&owner.activeMesh(), live.view(), live.mode(),
                           deps.meshRebuildDrop()));
@@ -318,7 +318,7 @@ void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
     // No promote hook: Make Polygon leaves the selection type alone (task 7132).
     reg.registerCommand("mesh.makePolygon", () => cast(Command)
         new MeshMakePolygon(&owner.activeMesh(), live.view(), live.mode()));
-    registerMeshSelectionCommand(reg.commandRegistry(), pilot);
+    registerMeshSelectionCommand(reg, pilot);
     reg.registerCommand("mesh.transform", () {
         auto c = new MeshTransform(&owner.activeMesh(), live.view(), live.mode());
         // Viewport camera single-source (0181): see mesh.screenSlice above.

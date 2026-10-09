@@ -1,7 +1,6 @@
 module pilot_command_registration;
 
 import command : Command;
-import command_registry : CommandRegistry;
 import command_history : CommandHistory;
 import commands.mesh.triple : MeshTriple;
 import commands.mesh.select : MeshSelect;
@@ -26,13 +25,13 @@ struct PilotCommandDeps {
     void delegate() topologyInteraction;
 }
 
-void registerTripleCommand(ref CommandRegistry registry, PilotCommandDeps deps) {
+void registerTripleCommand(Registrar)(ref Registrar registry, PilotCommandDeps deps) {
     registry.registerCommand("mesh.triple", () => cast(Command)
         new MeshTriple(&deps.activeMesh(), deps.view(), *deps.mode,
                        deps.topologyInteraction));
 }
 
-void registerMeshSelectionCommand(ref CommandRegistry registry, PilotCommandDeps deps) {
+void registerMeshSelectionCommand(Registrar)(ref Registrar registry, PilotCommandDeps deps) {
     registry.registerCommand("mesh.select", () {
         auto command = new MeshSelect(&deps.activeMesh(), deps.view(), *deps.mode, deps.mode);
         command.setPromoteHook(deps.promoteGeometryType);
@@ -41,7 +40,7 @@ void registerMeshSelectionCommand(ref CommandRegistry registry, PilotCommandDeps
     });
 }
 
-void registerHistoryNavigationCommands(ref CommandRegistry registry,
+void registerHistoryNavigationCommands(Registrar)(ref Registrar registry,
         PilotCommandDeps deps, CommandHistory history) {
     registry.registerCommand("history.undo", () => cast(Command)
         new HistoryUndo(&deps.activeMesh(), deps.view(), *deps.mode, history));

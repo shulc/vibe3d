@@ -112,7 +112,7 @@ unittest {
         "application binding ownership: binding population is implausibly small");
     assert(binding.canFind("CommandInvocationService invocation")
         && binding.canFind("session.tryRefireDispatch(command, id)")
-        && binding.canFind("registry.commandRegistry()")
+        && binding.canFind("registry.createCommandInvocationService(executor, history,")
         && binding.canFind("CommandInvocationContext")
         && binding.canFind("GuardedActionController uiPolicy"),
         "application binding ownership: required binding inputs disappeared");

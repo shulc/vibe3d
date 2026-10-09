@@ -47,8 +47,7 @@ public:
         this.history = history;
         this.uiPolicy = uiPolicy;
         this.textNotice = textNotice;
-        invocation = new CommandInvocationService(registry.commandRegistry(),
-            executor, history,
+        invocation = registry.createCommandInvocationService(executor, history,
             (Command command, string id) => session.tryRefireDispatch(command, id),
             (Command command, RecordMode mode, string id) => uiResult(command, mode, id),
             (Command command, bool interactive) {

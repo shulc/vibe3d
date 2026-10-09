@@ -9,6 +9,10 @@ import tool;
 import command;
 public import command_registry : CommandFactory;
 import command_registry : CommandRegistry;
+import command_executor : CommandExecutor;
+import command_history : CommandHistory;
+import command_invocation : CommandInvocationService, RefireDispatch, UiInvocation,
+    InteractiveConfiguration, RefusalNotice;
 import live_registration_roles : LiveSessionRole;
 import seltype : SelType;
 
@@ -88,8 +92,13 @@ private:
     CommandRegistry        commandRegistry_;
 
 public:
-    ref CommandRegistry commandRegistry() {
-        return commandRegistry_;
+    CommandInvocationService createCommandInvocationService(
+            CommandExecutor executor, CommandHistory history,
+            RefireDispatch tryRefireDispatch = null, UiInvocation invokeUi = null,
+            InteractiveConfiguration configureInteractive = null,
+            RefusalNotice noticeRefusal = null) {
+        return new CommandInvocationService(commandRegistry_, executor, history,
+            tryRefireDispatch, invokeUi, configureInteractive, noticeRefusal);
     }
 
     void registerCommand(string id, CommandFactory factory) {
