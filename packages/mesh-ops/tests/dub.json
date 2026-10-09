@@ -1,0 +1,52 @@
+{
+  "name": "vibe3d-mesh-ops-tests",
+  "description": "Independent mesh operation algorithm tests",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": [],
+  "importPaths": [
+    "source"
+  ],
+  "sourceFiles": [
+    "source/tests/unit/mesh_ops/bevel_fin_test.d",
+    "source/tests/unit/mesh_ops/bevel_vertex_test.d",
+    "source/tests/unit/mesh_ops/box_geom_corner_provenance_test.d",
+    "source/tests/unit/mesh_ops/bridge_test.d",
+    "source/tests/unit/mesh_ops/cleanup_test.d",
+    "source/tests/unit/mesh_ops/connected_mask_test.d",
+    "source/tests/unit/mesh_ops/cut_test.d",
+    "source/tests/unit/mesh_ops/extrude_test.d",
+    "source/tests/unit/mesh_ops/loop_slice_test.d",
+    "source/tests/unit/mesh_ops/poly_bevel_test.d",
+    "source/tests/unit/mesh_ops/revolve_seam_test.d",
+    "source/tests/unit/mesh_ops/revolve_test.d",
+    "source/tests/unit/mesh_ops/select_loop_test.d",
+    "source/tests/unit/mesh_ops/vertex_pos_grid_test.d",
+    "source/tests/unit/mesh_ops/seam_differential.d",
+    "../../../tests/unit/fixtures.d"
+  ],
+  "dflags": [
+    "-i"
+  ],
+  "dependencies": {
+    "vibe3d-mesh-ops": {
+      "path": ".."
+    },
+    "vibe3d-common": {
+      "path": "../../common"
+    }
+  },
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "configurations": [
+    {
+      "name": "algorithm"
+    }
+  ],
+  "subConfigurations": {
+    "vibe3d-mesh-ops": "modeling-noai",
+    "vibe3d-common": "modeling-noai"
+  }
+}
