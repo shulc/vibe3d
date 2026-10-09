@@ -727,3 +727,106 @@ bool moveMirrorCenter(const ref SymmetryPacket sp,uint source,Vec3 point,
     center=projectOnPlane(sp,point);
     return true;
 }
+
+version (unittest) {
+    import std.conv : to;
+private SymmetryPacket xPlanePacket(float eps = 1e-4f) {
+        SymmetryPacket sp;
+        sp.enabled      = true;
+        sp.topology     = true;
+        sp.axisIndex    = 0;
+        sp.planeNormal  = Vec3(1, 0, 0);
+        sp.planePoint   = Vec3(0, 0, 0);
+        sp.epsilonWorld = eps;
+        sp.baseSide     = +1;
+        return sp;
+    }
+}
+
+unittest { // rebuildPairingTopological: CYCLIC fan branch — closed mesh, no boundary edges
+    import std.conv : to;
+
+    // Build a closed square tube straddling X=0 (homeomorphic to a sphere —
+    // every edge has a twin, so every fan is CYCLIC).
+    //
+    // Vertex layout:
+    //   seam ring  (X=0): v0=(0,0,0)  v1=(0,1,0)  v2=(0,1,1)  v3=(0,0,1)
+    //   +X cap ring:      v4=(1,0,0)  v5=(1,1,0)  v6=(1,1,1)  v7=(1,0,1)
+    //   -X cap ring:      v8=(-1,0,0) v9=(-1,1,0) v10=(-1,1,1) v11=(-1,0,1)
+    //
+    // v8..v11 are the exact spatial mirrors of v4..v7 (clean expected pairing).
+    //
+    // 10 quad faces form the closed manifold:
+    //   +X cap [5,4,7,6], -X cap [8,9,10,11],
+    //   four +X-side quads, four -X-side quads.
+    // Seam edges are shared between one +X-side and one -X-side quad,
+    // wound in opposite directions — verified to be a valid 2-manifold.
+
+    Mesh m;
+    // seam (X=0)
+    m.addVertex(Vec3( 0.0f, 0.0f, 0.0f));  //  0
+    m.addVertex(Vec3( 0.0f, 1.0f, 0.0f));  //  1
+    m.addVertex(Vec3( 0.0f, 1.0f, 1.0f));  //  2
+    m.addVertex(Vec3( 0.0f, 0.0f, 1.0f));  //  3
+    // +X side (mirrors of 8,9,10,11)
+    m.addVertex(Vec3( 1.0f, 0.0f, 0.0f));  //  4
+    m.addVertex(Vec3( 1.0f, 1.0f, 0.0f));  //  5
+    m.addVertex(Vec3( 1.0f, 1.0f, 1.0f));  //  6
+    m.addVertex(Vec3( 1.0f, 0.0f, 1.0f));  //  7
+    // -X side (mirrors of 4,5,6,7)
+    m.addVertex(Vec3(-1.0f, 0.0f, 0.0f));  //  8
+    m.addVertex(Vec3(-1.0f, 1.0f, 0.0f));  //  9
+    m.addVertex(Vec3(-1.0f, 1.0f, 1.0f));  // 10
+    m.addVertex(Vec3(-1.0f, 0.0f, 1.0f));  // 11
+
+    // Faces — winding verified: every shared edge is traversed in opposite
+    // directions by its two incident faces (valid closed 2-manifold).
+    m.addFace([5u, 4u, 7u, 6u]);         // +X cap
+    m.addFace([8u, 9u, 10u, 11u]);       // -X cap
+    m.addFace([0u, 4u, 5u, 1u]);         // bottom +X
+    m.addFace([1u, 5u, 6u, 2u]);         // front  +X
+    m.addFace([2u, 6u, 7u, 3u]);         // top    +X
+    m.addFace([3u, 7u, 4u, 0u]);         // back   +X
+    m.addFace([0u, 1u, 9u, 8u]);         // bottom -X
+    m.addFace([1u, 2u, 10u, 9u]);        // front  -X
+    m.addFace([2u, 3u, 11u, 10u]);       // top    -X
+    m.addFace([3u, 0u, 8u, 11u]);        // back   -X
+    m.buildLoops();
+
+    // Every vertex must have a CYCLIC fan — this confirms the !openA branch
+    // in rebuildPairingTopological is exercised by the test below.
+    foreach (vi; 0u .. 12u)
+        assert(!isBoundaryVertexMesh(m, vi),
+            "vertex " ~ vi.to!string
+            ~ " should be CYCLIC (no boundary edge), got OPEN");
+
+    auto sp = xPlanePacket(1e-4f);
+    int[]  pairOf; bool[] onPlane; int[] vertSign;
+    rebuildPairingTopological(m, sp, pairOf, onPlane, vertSign);
+
+    assert(pairOf.length == 12);
+
+    // Seam vertices: on-plane, pairOf = -1.
+    foreach (vi; 0 .. 4)
+        assert(onPlane[vi] && pairOf[vi] == -1,
+            "seam v" ~ vi.to!string ~ " should be on-plane/unpaired; got onPlane="
+            ~ onPlane[vi].to!string ~ " pairOf=" ~ pairOf[vi].to!string);
+
+    // Off-plane vertices: +X ↔ -X mirror pairs.
+    assert(pairOf[4]  ==  8, "v4  ↔ v8  expected; got " ~ pairOf[4].to!string);
+    assert(pairOf[8]  ==  4, "v8  ↔ v4  expected; got " ~ pairOf[8].to!string);
+    assert(pairOf[5]  ==  9, "v5  ↔ v9  expected; got " ~ pairOf[5].to!string);
+    assert(pairOf[9]  ==  5, "v9  ↔ v5  expected; got " ~ pairOf[9].to!string);
+    assert(pairOf[6]  == 10, "v6  ↔ v10 expected; got " ~ pairOf[6].to!string);
+    assert(pairOf[10] ==  6, "v10 ↔ v6  expected; got " ~ pairOf[10].to!string);
+    assert(pairOf[7]  == 11, "v7  ↔ v11 expected; got " ~ pairOf[7].to!string);
+    assert(pairOf[11] ==  7, "v11 ↔ v7  expected; got " ~ pairOf[11].to!string);
+
+    // vertSign: +X = +1, -X = -1, seam = 0.
+    assert(vertSign[4] == +1 && vertSign[5] == +1
+        && vertSign[6] == +1 && vertSign[7] == +1,
+        "+X verts should have vertSign +1");
+    assert(vertSign[8] == -1 && vertSign[9] == -1
+        && vertSign[10] == -1 && vertSign[11] == -1,
+        "-X verts should have vertSign -1");
+}
