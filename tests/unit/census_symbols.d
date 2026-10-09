@@ -1496,6 +1496,30 @@ unittest {
     rejected(probe[0 .. $ - 1], "balanced pilot body");
     rejected(probe.replace("registerTripleCommand", "registerOtherCommand"), "exact three entry identities");
     rejected(probe.replace("ref Registrar registry", "Registrar registry"), "supported template signature");
+
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.process : thisProcessID;
+    const root = buildPath(tempDir, format("pilot-reader-%d", thisProcessID));
+    mkdirRecurse(buildPath(root, "source"));
+    scope(exit) rmdirRecurse(root);
+    const directory = buildPath(root, "source");
+    const pilotPath = buildPath(directory, "pilot_command_registration.d");
+    const historyPath = buildPath(directory, "history_macro_registration.d");
+    enum historySource = `void registerHistoryCommands(ref Registry reg) {
+        registerHistoryNavigationCommands(reg, deps, history);
+    }`;
+    write(buildPath(directory, "registration.d"), `registerMeshCommands(reg); registerHistoryCommands(reg);`);
+    write(buildPath(directory, "mesh_command_registration.d"), `void registerMeshCommands(ref Registry reg) {
+        registerTripleCommand(reg, deps); registerMeshSelectionCommand(reg, deps);
+    }`);
+    write(historyPath, historySource);
+    write(pilotPath, probe);
+    assert(registrationFamilyText(root).canFind("history.undo"), "1D registration reader bounded pilot positive");
+    write(pilotPath, probe.replace(`"mesh.triple"`, `"mesh.select"`));
+    assertThrown!AssertError(registrationFamilyText(root));
+    write(pilotPath, probe);
+    write(historyPath, historySource.replace("registerHistoryNavigationCommands(reg,", "registerHistoryNavigationCommands(other,"));
+    assertThrown!AssertError(registrationFamilyText(root));
 }
 
 unittest {
