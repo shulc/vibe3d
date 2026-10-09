@@ -401,6 +401,7 @@ subpatch_factories
 subpatch_osd
 subpatch_preview
 subpatch_worker_web
+surface_pick
 symmetry
 symmetry_pick
 symmetry_plane
@@ -427,6 +428,7 @@ toolpipe.stages.path
 toolpipe.stages.snap
 toolpipe.stages.symmetry
 toolpipe.stages.workplane
+toolpipe.state_paths
 toolpipe.subject
 tools.alignment.align_kernels
 tools.alignment.array_tool
@@ -548,4 +550,5 @@ viewport_probe_sampling
 viewport_scheme
 web_gl_loader
 weightmap_view
+workplane_basis
 workplane_fit

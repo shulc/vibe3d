@@ -163,9 +163,9 @@ unittest // one packet read, one finder: the deleted copies stay deleted
     // The finder lives in the stage module; the prepared activations read the
     // pipe they are handed, not the live one, so they keep their own lookup
     // (the pipe activation clears the guide registry at every arm, task 9416).
-    enum kFinderRoster = ["source/prepared_pipe_activation.d",
-                          "source/prepared_topology_pen_activation.d",
-                          "packages/pipe-evaluation/source/toolpipe/stages/snap.d"];
+    enum kFinderRoster = ["packages/pipe-evaluation/source/toolpipe/stages/snap.d",
+                          "source/prepared_pipe_activation.d",
+                          "source/prepared_topology_pen_activation.d"];
     assert(finders == kFinderRoster, format("findByTask(TaskCode.Snap) roster: %s", finders));
     assert(casts == kFinderRoster, format("cast(SnapStage) roster: %s", casts));
     // One packet read: `snapPacketOf` in snap.d; the pipe-state HTTP provider

@@ -71,8 +71,12 @@ public:
 
 
     ~this() {
+        import core.memory : GC;
         invalidate();
-        if (_surfacePicker !is null) _surfacePicker.invalidateSurface();
+        // GC may have finalized the surface owner already; immediate destroy
+        // still invalidates its live native tree (task 20262020, Wave5 §5C).
+        if (!GC.inFinalizer && _surfacePicker !is null)
+            _surfacePicker.invalidateSurface();
         _surfacePicker = null;
     }
 
@@ -388,6 +392,9 @@ unittest {
 // Task 20262020: private _surfacePicker ownership is lazy, shared, and torn down immediately.
 unittest {
     import std.math : fabs;
+    import core.memory : GC;
+    import core.thread : Thread;
+    import core.stdc.stdlib : calloc, free;
     Mesh src;
     src.vertices = [Vec3(-1,0,-1), Vec3(1,0,-1), Vec3(1,0,1), Vec3(-1,0,1)];
     src.faces = [cast(uint[])[0,3,2,1]];
@@ -405,4 +412,52 @@ unittest {
     destroy(pick);
     assert(owner.pickSurfaceRay(Vec3(0,5,0), Vec3(0,-1,0), src, ModelSpace.world(), hit));
     assert(fabs(hit.point.y - 2) < 1e-4f, "facade destructor invalidates native surface tree immediately");
+
+    struct Finalization {
+        uint queries, sequence, child, parent;
+        bool childFromGC, parentFromGC;
+    }
+    static class Child : SurfacePicker {
+        Finalization* witness;
+        this(Finalization* witness) { this.witness = witness; }
+        ~this() {
+            witness.childFromGC = GC.inFinalizer;
+            witness.child = ++witness.sequence;
+        }
+    }
+    static class Parent : BvhPick {
+        Finalization* witness;
+        this(Finalization* witness) { this.witness = witness; }
+        ~this() {
+            witness.parentFromGC = GC.inFinalizer;
+            witness.parent = ++witness.sequence;
+        }
+    }
+    auto witness = cast(Finalization*)calloc(1, Finalization.sizeof);
+    auto root = cast(BvhPick*)calloc(1, BvhPick.sizeof);
+    assert(witness !is null && root !is null);
+    GC.addRange(root, BvhPick.sizeof);
+    scope(exit) { GC.removeRange(root); free(root); free(witness); }
+    // A departed allocator thread leaves no conservative stack roots. NO_SCAN
+    // on this test parent makes the permitted child-first GC order deterministic.
+    auto allocator = new Thread({
+        auto parent = new Parent(witness);
+        parent._surfacePicker = new Child(witness);
+        SurfaceHit populated;
+        assert(parent.pickSurfaceRay(Vec3(0,5,0), Vec3(0,-1,0), src,
+            ModelSpace.world(), populated), "GC fixture has a native surface tree");
+        ++witness.queries;
+        GC.setAttr(cast(void*)parent, GC.BlkAttr.NO_SCAN);
+        *root = parent;
+    });
+    allocator.start();
+    allocator.join();
+    GC.collect();
+    assert(witness.queries == 1, "GC finalization query population");
+    assert(witness.childFromGC && witness.child == 1 && witness.parent == 0,
+        "child must actually finalize from GC before the rooted parent");
+    *root = null;
+    GC.collect();
+    assert(witness.parentFromGC && witness.parent == 2 && witness.sequence == 2,
+        "parent must actually finalize from GC after its child");
 }
