@@ -34,6 +34,7 @@ private void command(string id, string params = "") {
     assert(row["status"].str == "ok", "CLI desktop control command: " ~ row.toString);
 }
 private JSONValue cleanPlanes(JSONValue planes) {
+    planes = parseJSON(planes.toString);
     planes.object.remove("provenance");
     return planes;
 }
