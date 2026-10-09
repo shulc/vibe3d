@@ -118,10 +118,12 @@ unittest {
         foreach (decoy; [valid ~ wrong, "void nested(){" ~ valid ~ "}" ~ wrong,
                          "version(disabled){" ~ valid ~ "}" ~ wrong,
                          valid.replace(" pick", " prefixpick") ~ wrong,
+                         valid.replace("PickResult", "PrefixPickResult") ~ wrong,
                          header ~ ";" ~ wrong, header ~ ";"])
             assertThrown!AssertError(requireChooser(decoy, call));
         assertThrown!AssertError(requireChooser("void nested(){" ~ valid ~ "}", call));
         assertThrown!AssertError(requireChooser(header ~ "{", call));
+        assertThrown!AssertError(requireChooser(valid[0 .. $ - 1], call));
         assertThrown!AssertError(requireChooser(valid.replace("FilterSpec[]", "OtherSpec[]"), call));
         assertThrown!AssertError(requireChooser(header ~ "{if(false)" ~ body ~ "return desktop;}", call));
     }
