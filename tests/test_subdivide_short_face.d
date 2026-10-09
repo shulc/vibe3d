@@ -587,13 +587,31 @@ private void pen2(string id) {
 // The captured pen rows (S1 / S4t / S4n programs) drop the pen with Space and
 // then clear the selection ("rig clearsel") before the door: the pen's commit
 // selects its new elements (selectNew, pen wave plan S8). The selection drop
-// writes no history row here (the labels below stay the pen's and the door's).
+// now owns a separate UI history row. Check the real pen commit before that
+// rig edit, and remove only the checked rig row from the door's fixture view.
 private void dropAndClear(string id) {
     key(32, 44, id ~ "/drop");
     assert(getJson("/api/input/context")["tool"].str.length == 0,
         id ~ ": Space did not drop the pen tool");
+    assert(hist().labels == ["Pen Polygon"],
+        id ~ ": Space must record exactly the pen commit before rig clearsel");
+    assert(sel() == [6], id ~ ": committed pen must select its new face");
+    auto committed = modelSig(model());
     ok("select.drop polygon", id);
     assert(sel().length == 0, id ~ ": clearsel floor failed");
+    assert(modelSig(model()) == committed,
+        id ~ ": rig selection drop must preserve the committed pen geometry");
+    assert(hist().labels == ["Pen Polygon", "select.drop"],
+        id ~ ": rig clearsel must add exactly its selection history row");
+}
+
+private string[] penDoorLabels(string id) {
+    auto h = hist();
+    assert(h.labels.length >= 2,
+        id ~ ": pen door history must contain the commit and rig selection row");
+    assert(h.labels[0 .. 2] == ["Pen Polygon", "select.drop"],
+        id ~ ": pen door history must retain the real commit and rig selection row");
+    return h.labels[0 .. 1] ~ h.labels[2 .. $];
 }
 
 private void selectFace(int fi, string id) {
@@ -745,16 +763,16 @@ unittest {
         pen3(id); dropAndClear(id); auto h0 = hist();
         auto r = cmdJson(id == "SD-T" ? `{"id":"mesh.subdivide"}`
             : `{"id":"mesh.subdivide","params":{"mode":"flat"}}`);
-        auto m = model(); auto h1 = hist();
+        auto m = model(); auto labelsAfterDoor = penDoorLabels(id);
         JSONValue[string] got;
         got["status"] = r["status"];
         got["mesh"] = meshRead(m);
         JSONValue[] labels;
-        foreach (label; h1.labels) labels ~= JSONValue(label);
+        foreach (label; labelsAfterDoor) labels ~= JSONValue(label);
         got["undoLabels"] = JSONValue(labels);
         got["cornerHistogram"] = histogramRead(m);
         compareCell(bad, fx, id, JSONValue(got));
-        writeln(id, " census mesh=", counts(m), " labels=", h1.labels);
+        writeln(id, " census mesh=", counts(m), " labels=", labelsAfterDoor);
     }
 
     foreach (id; ["SD-2c", "SD-2c/flat"]) {
@@ -1027,14 +1045,14 @@ unittest {
     dropAndClear("SD-5");
     assert(counts(model()) == "10/13/7",
         "SD-5: Space did not commit the two-point pen face");
-    auto sd5PenHistory = hist();
-    assert(sd5PenHistory.labels == ["Pen Polygon"],
+    auto sd5PenLabels = penDoorLabels("SD-5");
+    assert(sd5PenLabels == ["Pen Polygon"],
         "SD-5: Space did not record exactly the pen commit");
     auto sd5 = cmdJson(`{"id":"mesh.subdivide"}`);
     auto sd5Model = model();
-    auto sd5History = hist();
+    auto sd5LabelsAfterDoor = penDoorLabels("SD-5");
     JSONValue[] sd5Labels;
-    foreach (label; sd5History.labels) sd5Labels ~= JSONValue(label);
+    foreach (label; sd5LabelsAfterDoor) sd5Labels ~= JSONValue(label);
     JSONValue[string] sd5Got;
     sd5Got["status"] = sd5["status"];
     sd5Got["mesh"] = meshRead(sd5Model);
@@ -1043,7 +1061,7 @@ unittest {
     compareCell(bad, fx, "SD-5", JSONValue(sd5Got));
     writeln("SD-5 parity status=", sd5["status"].str,
             " mesh=", counts(sd5Model), " tool=",
-            sd5Got["tool"].toString, " labels=", sd5History.labels);
+            sd5Got["tool"].toString, " labels=", sd5LabelsAfterDoor);
 
     foreach (ext; ["obj", "lwo", "glb"]) {
         auto id = "SD-X/" ~ ext; free2(id);

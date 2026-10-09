@@ -7,7 +7,12 @@ import std.stdio : writeln;
 void main() {}
 
 unittest {
-    const expected = parseJSON(import("fixtures/command_registry_roster.json"))["expected"];
+    auto expected = parseJSON(import("fixtures/command_registry_roster.json"))["expected"];
+    // The required drop type has no implicit value. Keep the complete frozen
+    // roster and schema comparison, changing only this former default.
+    assert(expected["commandParams"]["select.drop"][0]["value"].str == "vertex",
+        "registry baseline must retain its original drop default");
+    expected["commandParams"]["select.drop"][0]["value"] = "";
     const actual = getJson("/api/registry?params=1");
     assert(expected["commands"].array.length == 277
         && actual["commands"].array.length == 277,
@@ -16,6 +21,6 @@ unittest {
         && actual["tools"].array.length == 71,
         "1C production tool roster must contain exactly 71 ids");
     assert(actual == expected,
-        "1C production registry ids and metadata must preserve the full pre-slice JSON");
-    writeln("REGISTRY-ROSTER commands=277 tools=71 metadata=identical");
+        "production registry ids and metadata must match the frozen roster plus required drop default");
+    writeln("REGISTRY-ROSTER commands=277 tools=71 metadata=required-drop-default");
 }

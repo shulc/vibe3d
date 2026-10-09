@@ -992,7 +992,7 @@ bool testFlowG() {
 bool testFlowH() {
     writeln("  [H] Overlay axis on/off, and selection surviving it...");
     resetApp();
-    scope(exit) { postArgstring("select.element edge set");
+    scope(exit) { postCommandRaw("select.element", `{"type":"edge","action":"set","indices":[]}`);
                   restoreDisplayDefaults(); }
 
     postArgstring("select.typeFrom edge");
@@ -1015,7 +1015,7 @@ bool testFlowH() {
     // THE assertion. Same overlay setting (off), selection dropped: if the
     // framebuffer is unchanged, the selection was never being drawn once the
     // overlay went off.
-    postArgstring("select.element edge set");
+    postCommandRaw("select.element", `{"type":"edge","action":"set","indices":[]}`);
     immutable string hNoneNoSel = bufferHash();
     enforce(hNoneSel != hNoneNoSel,
         "with the overlay switched OFF, selecting edges changed nothing on "

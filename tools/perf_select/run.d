@@ -194,7 +194,7 @@ int main(string[] args)
 
     // fit_selected with nothing selected (whole-mesh frame).
     bench("viewport.fit_selected (whole mesh)",
-          () { postCmd("select.drop"); },
+          () { postCmd("select.drop", ["polygon"]); },
           () { postCmd("viewport.fit_selected"); });
 
     // Sibling selection-family ops that shared the same O(n²) pattern.

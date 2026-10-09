@@ -362,7 +362,7 @@ int weldScene(string scene, string[] snapAttrs = null) {
         cmd(commandBody("mesh.select", format(`{"mode":"vertices","indices":[%d]}`,
                                                scene == "hid" ? 0 : 8)));
         cmd(`{"id":"mesh.hide"}`);
-        cmd(commandBody("select.drop"));
+        cmd(commandBody("select.drop", `{"type":"vertex"}`));
     } else if (scene == "bg") {
         loadLayerMesh(B ~ Y, q2);
         bIdx = 0;
@@ -511,7 +511,7 @@ void sameQuadMove(double[3][] pts, double[3] release, int dx, int dy,
     if (hide.length) {
         cmd(commandBody("mesh.select", format(`{"mode":"vertices","indices":%s}`, hide)));
         cmd(`{"id":"mesh.hide"}`);
-        cmd(commandBody("select.drop"));
+        cmd(commandBody("select.drop", `{"type":"vertex"}`));
     }
     cmd("history.clear");
     cmd("workplane.reset");

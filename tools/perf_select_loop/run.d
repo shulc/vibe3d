@@ -179,7 +179,7 @@ void benchCase(string shape, string mode, string json, size_t elems)
     loadMeshJson(json, shape);
     const modeCmd  = mode == "poly" ? "select.polygon" : "select.vertex";
 
-    void seed() { postCmd(modeCmd); postCmd("select.drop"); postCmd("select.invert"); }
+    void seed() { postCmd(modeCmd); postCmd("select.drop", [mode == "poly" ? "polygon" : "vertex"]); postCmd("select.invert"); }
 
     double[] xs;
     foreach (_; 0 .. gReps) {
