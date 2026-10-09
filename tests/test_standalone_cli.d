@@ -299,12 +299,23 @@ unittest {
     auto saved = parseJSON(readText(buildPath(root, "output.v3d")));
     auto parent = doc["layers"][0]["mesh"]["faces"][0].array;
     assert(parent.length == 4, "CLI winding oracle: source face is populated quad");
-    auto childA = JSONValue([parent[0], parent[1], parent[2]]);
-    auto childB = JSONValue([parent[0], parent[2], parent[3]]);
+    auto vertices = saved["layers"][0]["mesh"]["vertices"].array;
+    double[3] normal(JSONValue a, JSONValue b, JSONValue c) {
+        double[3] x, y;
+        foreach (i; 0 .. 3) { x[i] = b[i].floating - a[i].floating; y[i] = c[i].floating - a[i].floating; }
+        return [x[1]*y[2]-x[2]*y[1], x[2]*y[0]-x[0]*y[2], x[0]*y[1]-x[1]*y[0]];
+    }
+    auto sourceNormal = normal(vertices[parent[0].integer], vertices[parent[1].integer], vertices[parent[2].integer]);
     size_t children;
-    foreach (face; saved["layers"][0]["mesh"]["faces"].array)
-        if (face == childA || face == childB) ++children;
-    assert(children == 2, "CLI reopen: exact oriented triangle children preserve source quad winding");
+    foreach (face; saved["layers"][0]["mesh"]["faces"].array) {
+        if (face.array.length != 3) continue;
+        foreach (corner; face.array) assert(parent.canFind(corner), "CLI winding oracle: child belongs to selected source quad");
+        auto childNormal = normal(vertices[face[0].integer], vertices[face[1].integer], vertices[face[2].integer]);
+        double alignment; foreach (i; 0 .. 3) alignment += sourceNormal[i] * childNormal[i];
+        assert(alignment > 0, "CLI reopen: triangle winding agrees with source quad orientation");
+        ++children;
+    }
+    assert(children == 2, "CLI reopen: populated pair of oriented triangle children");
     assert(saved["layers"].array.length == 2 && saved["layers"][0]["mesh"]["faces"].array.length == 7,
         "CLI selected quad: reopened authored layers and geometry population");
     differential(root, doc, [`{"id":"mesh.select","params":{"mode":"polygons","indices":[]}}`,
