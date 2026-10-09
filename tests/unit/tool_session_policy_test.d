@@ -43,6 +43,8 @@ import prepared_tool_transition : toolArmEmitsLifecycle;
 import tool         : CommandClose, HandleAnchor, OpensAt, Rollover, Tool, ToolSessionPolicy;
 import tool_presets : loadToolPresets;
 import tests.unit.census_symbols : blankNonCode;
+import tools.common.command_wrapper : CommandWrapperTool;
+import commands.mesh.vertex_position_result : VertexPositionResultBuilder;
 
 import core.memory  : GC;
 import std.algorithm : canFind, count, endsWith, filter, sort;
@@ -194,6 +196,14 @@ private Tool blit(const TypeInfo_Class ci) {
     auto mem = GC.malloc(init.length)[0 .. init.length];
     mem[] = init[];
     return cast(Tool) cast(Object) mem.ptr;
+}
+
+// Task 20262080: read the inherited policy through a concrete vtable; an abstract
+// initializer's slot was null in the LDC core (doc/tasks/work/20262080-abstract-wrapper-policy-test.md).
+private final class CommandWrapperPolicyProbe : CommandWrapperTool {
+    protected override void onDragDelta(int dx, int dy) {}
+    protected override float handleSize() const { return 0; }
+    protected override VertexPositionResultBuilder resultBuilder() { return null; }
 }
 
 private bool derivesFromTool(TypeInfo_Class c) {
@@ -668,8 +678,8 @@ unittest { // (4)
     assert(!ToolSessionPolicy.init.stepsParamWrites(),
            "UND2: a tool with the default (session-less) policy steps its parameter writes — "
            ~ "the panel would capture an attribute image for every row every frame");
-    const wrapperPol = blit(TypeInfo_Class.find("tools.common.command_wrapper.CommandWrapperTool"))
-        .sessionPolicy();
+    Tool wrapper = new CommandWrapperPolicyProbe;
+    const wrapperPol = wrapper.sessionPolicy();
     assert(!wrapperPol.sessionSteps && !wrapperPol.stepsParamWrites(),
            "UND2: the command-wrapper family's session-less policy steps its parameter writes");
     sort(paramArmIds);
