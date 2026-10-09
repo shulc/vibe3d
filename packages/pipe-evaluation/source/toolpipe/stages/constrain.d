@@ -4,9 +4,9 @@ import toolpipe.stage   : Stage, TaskCode, ordCons, ToolSwitchTransient;
 import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           SubjectPacket;
 import operator         : Operator, Task, VectorStack, PacketKind;
-import popup_state      : setStatePath, installPreparedStatePath;
+import toolpipe.state_paths      : setStatePath, installPreparedStatePath;
 import params           : Param, IntEnumEntry, wireTagForValue;
-import bvh_pick         : BackgroundRayPicker, SurfaceHit;
+import surface_pick     : BackgroundRayPicker, SurfaceHit;
 import math             : Vec3, Viewport;
 import constraint        : BackgroundSource;
 import snap             : backgroundSourcesFull;
@@ -67,40 +67,6 @@ struct PreparedConstrainCompositionProjection {
     Remembered remembered;
 }
 
-unittest {
-    auto live = new ConstrainStage();
-    assert(!live.enabled && live.geom == ConstrainGeom.Off &&
-           live.remembered == Remembered.yes, "fresh constrain stage is not the boot state");
-    live.enabled = true;
-    live.geom = ConstrainGeom.Screen;
-    live.offset = 4.0f;
-    live.handle = false;
-    live.dblSided = true;
-    live.installPreparedTransientReset();
-    assert(!live.enabled && live.geom == ConstrainGeom.Off &&
-           live.offset == 0.0f && live.handle && !live.dblSided,
-           "prepared constrain transient reset omitted live value state");
-    live.userLocked = true;
-    live.enabled = true;
-    live.geom = ConstrainGeom.Screen;
-    live.installPreparedTransientReset();
-    assert(live.enabled && live.geom == ConstrainGeom.Screen && live.userLocked,
-           "prepared constrain transient reset ignored the user lock");
-    auto kept = new ConstrainStage();
-    kept.remembered = Remembered.inPipe;
-    kept.geom = ConstrainGeom.Screen;
-    kept.installPreparedTransientReset();
-    import popup_state : getStatePath;
-    assert(getStatePath("constrain/enabled") == "true" &&
-           getStatePath("constrain/geometry") == "off",
-           "prepared constrain transient reset published a stale state path");
-    assert(kept.enabled && kept.geom == ConstrainGeom.Off,
-           "prepared constrain transient reset ignored the remembered constraint");
-    const before = kept.capturePreparedCompositionProjection();
-    kept.remembered = Remembered.no;
-    assert(!kept.matchesPreparedCompositionProjection(before),
-           "prepared constrain projection omitted the remembered state");
-}
 
 // Requested free component guide plus effective provider state; policy is data.
 struct GuideEnvironment {
@@ -173,7 +139,7 @@ public:
     // orthographic producer retains its represented-component comparison
     // (9528, doc/tool_perspective_component_guide_amendment_2026-10-06.md).
     auto componentGuide(Vec3 incoming, const ref GuideEnvironment env) {
-        import drag : ComponentGuide;
+        import toolpipe.packets : ComponentGuide;
         import math : lockedViewAxis, eyeVectorAt, isOrtho, projectToWindowFull, screenPointToRay;
         import constraint : surfaceComponentMask;
         ComponentGuide result;

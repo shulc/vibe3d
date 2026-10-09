@@ -9,8 +9,8 @@ import toolpipe.stage    : Stage, TaskCode, ordWork;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : WorkplanePacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import tools.create.create_common : pickMostFacingPlane;
-import popup_state        : setStatePath;
+import workplane_basis : pickMostFacingPlane;
+import toolpipe.state_paths        : setStatePath;
 
 // ---------------------------------------------------------------------------
 // WorkplaneStage — construction-plane state.

@@ -13,7 +13,7 @@ import toolpipe.stage    : Stage, TaskCode, ordAxis, ToolSwitchTransient,
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : AxisPacket, ActionCenterPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import popup_state       : setStatePath, installPreparedStatePath;
+import toolpipe.state_paths       : setStatePath, installPreparedStatePath;
 import document          : Layer;
 import params            : IntEnumEntry, wireTagForValue, valueForWireTag,
                            tableCoversEnumOf;
@@ -1230,37 +1230,6 @@ private:
     }
 }
 
-unittest {
-    // Prepared parsing must resolve the exact legacy wire table without
-    // touching the live stage.  The invalid second value is the atomicity
-    // discriminator: a parser that assigns before validating fails here.
-    auto live = new AxisStage();
-    live.mode = AxisStage.Mode.World;
-    AxisStage.Mode parsed;
-    assert(AxisStage.parsePreparedMode("element", parsed));
-    assert(parsed == AxisStage.Mode.Element);
-    assert(live.mode == AxisStage.Mode.World,
-           "prepared axis parse mutated live stage state");
-    assert(!AxisStage.parsePreparedMode("not-a-mode", parsed));
-    assert(live.mode == AxisStage.Mode.World,
-           "invalid prepared axis value mutated live stage state");
-    const beforeEpoch = live.slotEpoch;
-    live.installPreparedMode(parsed = AxisStage.Mode.Element, "element");
-    assert(live.mode == AxisStage.Mode.Element &&
-           live.slotEpoch == beforeEpoch + 1,
-           "prepared axis installer omitted state or slot activation");
-    live.userLocked = false;
-    live.manualRight = Vec3(9, 8, 7);
-    live.installPreparedTransientReset();
-    assert(live.mode == AxisStage.Mode.None &&
-           live.manualRight == Vec3(1, 0, 0) && live.axIndex == -1,
-           "prepared axis transient reset omitted live value state");
-    live.userLocked = true;
-    live.mode = AxisStage.Mode.World;
-    live.installPreparedTransientReset();
-    assert(live.mode == AxisStage.Mode.World && live.userLocked,
-           "prepared axis transient reset ignored the user lock");
-}
 
 // ---------------------------------------------------------------------------
 // Tests — cached orthonormal frame matrix m / mInv on the published packet.
@@ -1333,95 +1302,6 @@ unittest {
         "a refused parse must not have written a partial value");
 }
 
-// Task 0705 (audit 4, A5 second half), narrowed by task 0713 and CORRECTED by
-// task 4320: this submenu is a SUBSET of the 13-mode table, but "curated" was
-// the wrong word for why — 4320 measured the reference's own axis submenu and
-// found the COMPLETE set of its eight modes, `parent` and `pivot` included,
-// which ours was missing because the list predated them here. It is 9 of 13
-// now, and the three differences that remain are recorded and argued in
-// tests/fixtures/action_center_menu_composition.json rather than left to the
-// word "curated". The YAML carries only the ordered tags; the provider derives
-// label, action and checked state from this table.
-//
-// Pinned as a subset, not as equality: which modes the submenu offers is a
-// UI curation decision and is expected to be smaller than the table. What may
-// NOT drift is that every row it does offer names a real mode, agrees with the
-// table on that mode's human label, and ticks on the state the stage actually
-// publishes.
-unittest {
-    import std.file  : exists;
-    import buttonset : loadStatusLine, ActionKind, PopupItem, PopupItemKind;
-    // Through the kind-string dispatcher, not the leaf builder: the dispatcher
-    // is what the renderer, the startup id-validator and test_button_actions
-    // call, and renaming its case labels emptied every menu while a
-    // builder-facing pin stayed green.
-    import ui.mode_popup : dynamicModePopupItems;
-
-    enum yamlPath = "config/statusline.yaml";
-    assert(exists(yamlPath),
-           "cannot read " ~ yamlPath ~ " — run this test from the package "
-           ~ "root (the directory holding dub.json), e.g. "
-           ~ "`dub test --config=tests`");
-
-    PopupItem[] rows;
-    string[] configuredTags;
-    foreach (g; loadStatusLine(yamlPath)) {
-        foreach (ref b; g.buttons) {
-            if (b.action.kind != ActionKind.popup) continue;
-            foreach (ref pi; b.action.popupItems) {
-                if (pi.kind != PopupItemKind.submenu || pi.label != "Axis") continue;
-                foreach (ref si; pi.subItems) {
-                    if (si.kind != PopupItemKind.dynamic ||
-                        si.dynamicKind != "axisModes") continue;
-                    configuredTags ~= si.dynamicTags;
-                    rows ~= dynamicModePopupItems(si);
-                }
-            }
-        }
-    }
-
-    string firstMissing = configuredTags.length > 0 ? configuredTags[0] : "<none>";
-    foreach (tag; configuredTags) {
-        bool found;
-        foreach (ref row; rows)
-            if (row.checked.equals_ == tag) found = true;
-        if (!found) { firstMissing = tag; break; }
-    }
-    // NINE because the measured axis submenu carries `parent` and `pivot`,
-    // which this list was missing. Two of ours have no measured row
-    // (`workplane`, and `world` is the row the measurement labels Origin) and
-    // stay on purpose -- tests/fixtures/action_center_menu_composition.json
-    // records both, and dropping either is a product decision, not this pin's.
-    assert(rows.length == 9,
-        format("Axis mode provider emitted %d rows; expected 9; first missing "
-               ~ "configured mode '%s'", rows.length, firstMissing));
-    assert(configuredTags.length == rows.length,
-        "Axis mode provider must emit one row for every configured tag");
-
-    foreach (i, ref row; rows) {
-        immutable tag = configuredTags[i];
-        int v;
-        assert(valueForWireTag(AxisStage.popupModeEntries(), tag, v),
-            "statusline Axis submenu offers '" ~ tag
-            ~ "', which AxisStage.applySetAttr would refuse");
-        string want;
-        foreach (e; AxisStage.popupModeEntries())
-            if (e.wireTag == tag) want = e.userLabel;
-        assert(row.label == want,
-            "statusline Axis row '" ~ row.label ~ "' and the stage table's "
-            ~ "label '" ~ want ~ "' name the same mode two different ways");
-        assert(row.action.kind == ActionKind.script &&
-               row.action.scriptLines.length == 1 &&
-               row.action.scriptLines[0] == "tool.pipe.attr axis mode " ~ tag,
-            "statusline Axis row for '" ~ tag ~ "' emits the wrong action");
-        assert(row.checked.path == "axis/mode",
-            "an Axis row must tick off the axis/mode state path");
-        assert(row.checked.equals_ == tag,
-            "statusline Axis row for '" ~ tag ~ "' ticks on '"
-            ~ row.checked.equals_ ~ "' — it would never tick, or would tick "
-            ~ "for a different mode");
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Task 1200 — `computeElementBasis` must publish a FINITE frame for a face

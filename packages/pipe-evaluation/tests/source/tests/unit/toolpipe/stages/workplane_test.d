@@ -10,8 +10,8 @@ import math : Vec3, Viewport;
 import toolpipe.stage    : Stage, TaskCode, ordWork;
 import toolpipe.packets  : WorkplanePacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import tools.create.create_common : pickMostFacingPlane;
-import popup_state        : setStatePath;
+import workplane_basis : pickMostFacingPlane;
+import toolpipe.state_paths        : setStatePath;
 import toolpipe.stages.workplane;
 
 // task 0678 P4 — knownAttrs must mirror applySetAttr's switch: every listed

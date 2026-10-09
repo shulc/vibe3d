@@ -20,41 +20,8 @@ import std.array     : split;
 
 import buttonset : Checked;
 
-private string[string] g_state;
-
-/// Publish (or overwrite) the value at `path`. Empty string is a
-/// valid value — subsystems that want to "clear" should remove the
-/// path explicitly via clearStatePath.
-void setStatePath(string path, string value) {
-    g_state[path] = value;
-}
-
-/// Commit-time counterpart for a prepared transition. Prepared producers run
-/// after each stage constructor has published these fixed keys, so install is
-/// an overwrite rather than a map-shape change. Any ordinary Exception here
-/// is a broken prepared-install invariant, not a recoverable partial commit.
-void installPreparedStatePath(string path, string value) nothrow {
-    try g_state[path] = value;
-    catch (Exception) assert(false);
-}
-
-/// Read the current value at `path`, or empty string when unset.
-string getStatePath(string path) {
-    if (auto p = path in g_state) return *p;
-    return "";
-}
-
-/// Drop a path entirely (subsequent reads return "").
-void clearStatePath(string path) {
-    g_state.remove(path);
-}
-
-/// Wipe the registry — used by tests and by `/api/reset`.
-void clearAllState() {
-    g_state.clear();
-}
-
-
+public import toolpipe.state_paths : setStatePath, installPreparedStatePath,
+    getStatePath, clearStatePath, clearAllState;
 
 bool resolveChecked(ref Checked chk) {
     if (!chk.present) return false;

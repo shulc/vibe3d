@@ -18,7 +18,7 @@ import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffSha
                             FalloffMix, LassoStyle, ElementConnect, ElementMode;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.stages.workplane : WorkplaneStage;
-import popup_state       : setStatePath;
+import toolpipe.state_paths       : setStatePath;
 import params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
 import toolpipe.stages.falloff;
 

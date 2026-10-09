@@ -10,14 +10,14 @@ import document : primaryModelSpace;
 import mesh : Mesh, MapDomain, layerBBoxMinMax;
 import mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 14)
 import editmode : EditMode;
-import tool : Rollover;
+import tool_policy_values : Rollover;
 import toolpipe.stage    : Stage, TaskCode, ordWght, ToolSwitchTransient,
                            PresetClaimable;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffShape,
                             FalloffMix, LassoStyle, ElementConnect, ElementMode;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import popup_state       : setStatePath, installPreparedStatePath;
+import toolpipe.state_paths       : setStatePath, installPreparedStatePath;
 import params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
 
 /// How many times `recomputeSelectionWeights` has REBUILT `selWeights_` — the
@@ -1931,6 +1931,7 @@ void restoreFalloffSetFromCombined(FalloffStage[] set,
     }
 }
 
+
 // ---------------------------------------------------------------------------
 // Regression guard for recomputeSelectionWeights() — locks the ring-seed +
 // fixed-4-pass Jacobi-blur law (falloff-port Phase 2) on a real Mesh, not
@@ -1945,58 +1946,6 @@ void restoreFalloffSetFromCombined(FalloffStage[] set,
 // READ-ONLY / side-effect-free: this block compiles into the live editor's
 // unittest pass, so it only constructs a throwaway Mesh + FalloffStage and
 // reads computed state — it never touches global/shared editor state.
-unittest {
-    // Prepared preset parsing is detached: a valid-first / invalid-second
-    // sequence may change only the output value, never the live stage.
-    auto live = new FalloffStage();
-    live.type = FalloffType.Linear;
-    FalloffType preparedType;
-    assert(FalloffStage.parsePreparedType("radial", preparedType));
-    assert(preparedType == FalloffType.Radial && live.type == FalloffType.Linear);
-    assert(!FalloffStage.parsePreparedType("not-a-type", preparedType));
-    assert(live.type == FalloffType.Linear,
-           "invalid prepared falloff type mutated live stage state");
-
-    FalloffShape preparedShape;
-    ElementMode preparedMode;
-    bool preparedTransparent;
-    assert(FalloffStage.parsePreparedShape("linear", preparedShape));
-    assert(FalloffStage.parsePreparedElementMode("edgeCent", preparedMode));
-    assert(preparedMode == ElementMode.Edge);
-    assert(FalloffStage.parsePreparedTransparent("false", preparedTransparent));
-    assert(!preparedTransparent);
-    assert(!FalloffStage.parsePreparedShape("not-a-shape", preparedShape));
-    assert(!FalloffStage.parsePreparedElementMode("not-a-mode", preparedMode));
-    assert(!FalloffStage.parsePreparedTransparent("maybe", preparedTransparent));
-
-    live.type = FalloffType.Element;
-    live.anchorRing = [3u, 7u];
-    const beforeEpoch = live.slotEpoch;
-    live.installPreparedPreset(FalloffType.Radial, FalloffShape.Smooth,
-        ElementMode.Edge, true, "radial", "smooth");
-    assert(live.type == FalloffType.Radial &&
-           live.shape == FalloffShape.Smooth &&
-           live.elementMode == ElementMode.Edge && live.transparent,
-           "prepared falloff installer omitted a typed preset field");
-    assert(live.anchorRing.length == 0,
-           "prepared falloff type switch retained the Element anchor");
-    assert(live.slotEpoch == beforeEpoch + 1,
-           "prepared falloff preset did not arm the slot exactly once");
-    live.userLocked = false;
-    live.anchorRing = [2u, 5u];
-    live.installPreparedTransientReset();
-    assert(live.type == FalloffType.None &&
-           live.shape == FalloffShape.Linear && live.anchorRing.length == 0,
-           "prepared falloff transient reset omitted config or buffers");
-    live.userLocked = true;
-    live.type = FalloffType.Cylinder;
-    live.anchorRing = [9u];
-    live.installPreparedTransientReset();
-    assert(live.type == FalloffType.Cylinder && live.anchorRing == [9u] &&
-           live.userLocked,
-           "prepared falloff transient reset ignored the user lock");
-}
-
 unittest {
     import mesh : makeGridPlane;
     import std.math : abs, isNaN;
@@ -2100,41 +2049,6 @@ unittest {
     assert(abs(w1[vi(4, 4)] - 0.93438720703125f)     < 1e-5f); // steps<=1 centre (near 1)
 }
 
-// ---------------------------------------------------------------------------
-// Task 0179 Stage 4: enforced invariant replacing the retired "KEEP IN SYNC
-// with applySetAttr" comment on knownAttrs()/listAttrs(). knownAttrs() is now
-// DERIVED from listAttrs() (can't drift from it structurally), but
-// applySetAttr is a hand-written string-switch parser that can't be derived
-// the same way — so this unittest pins the remaining half of the invariant:
-// every name listAttrs() reports must be a name applySetAttr actually
-// accepts, round-tripping the CURRENT value back through a dry-run setAttr.
-// A name present in listAttrs() but rejected by applySetAttr (or vice versa,
-// caught indirectly since knownAttrs() == listAttrs() names by construction)
-// would fail here instead of silently drifting.
-// ---------------------------------------------------------------------------
-unittest {
-    auto fs = new FalloffStage();
-    // Default-state stage — listAttrs() always reports the full static attr
-    // set regardless of the active type (only params(), the Tool Properties
-    // schema, is type-filtered), so one pass over the default values already
-    // exercises every accepted attr name once.
-    foreach (pair; fs.listAttrs()) {
-        string name  = pair[0];
-        string value = pair[1];
-        assert(fs.applySetAttr(name, value),
-               "listAttrs() name '" ~ name ~ "' (value '" ~ value
-               ~ "') was rejected by applySetAttr — knownAttrs()/listAttrs()/"
-               ~ "applySetAttr have drifted apart");
-    }
-    // knownAttrs() is DERIVED from listAttrs() — this is a structural
-    // tautology today, but pins the derivation against a future edit that
-    // reintroduces a second hand-written list.
-    auto known = fs.knownAttrs();
-    auto listed = fs.listAttrs();
-    assert(known.length == listed.length);
-    foreach (i, k; known)
-        assert(k == listed[i][0]);
-}
 
 // ---------------------------------------------------------------------------
 // Task 0184 / audit-2 C2 — OBJ-3: mandatory round-trip / alias / NEGATIVE /

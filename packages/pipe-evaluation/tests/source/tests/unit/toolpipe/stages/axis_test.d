@@ -13,7 +13,7 @@ import seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAxis;
 import toolpipe.packets  : AxisPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import popup_state       : setStatePath;
+import toolpipe.state_paths       : setStatePath;
 import document          : Layer;
 import params            : IntEnumEntry, wireTagForValue, valueForWireTag,
                            tableCoversEnumOf;

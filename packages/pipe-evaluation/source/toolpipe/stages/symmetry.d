@@ -11,7 +11,7 @@ import toolpipe.stage    : Stage, TaskCode, ordSymm;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : SymmetryPacket, SymmetryConfig;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import popup_state       : setStatePath;
+import toolpipe.state_paths       : setStatePath;
 import symmetry          : rebuildPairing, rebuildPairingTopological, symmetrySide;
 import perf_probe        : g_perf, Cat;
 import params            : Param, IntEnumEntry;

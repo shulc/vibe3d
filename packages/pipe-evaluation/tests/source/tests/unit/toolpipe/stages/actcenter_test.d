@@ -13,7 +13,7 @@ import toolpipe.stage    : Stage, TaskCode, ordAcen;
 import params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
 import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import popup_state       : setStatePath;
+import toolpipe.state_paths       : setStatePath;
 import document          : Layer;
 import toolpipe.stages.actcenter;
 

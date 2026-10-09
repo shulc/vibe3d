@@ -11,7 +11,7 @@ import toolpipe.stage    : Stage, TaskCode, ordSnap;
 import toolpipe.packets  : SnapPacket, SnapConfig, SnapHitPacket, SnapType, SnapMode;
 import toolpipe.guide    : SnapGuide, GuideDrawState;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import popup_state       : setStatePath;
+import toolpipe.state_paths       : setStatePath;
 import params            : Param, IntEnumEntry;
 import math : Vec3;
 import toolpipe.stages.snap;

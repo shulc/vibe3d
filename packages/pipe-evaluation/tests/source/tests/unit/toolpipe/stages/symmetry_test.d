@@ -10,7 +10,7 @@ import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordSymm;
 import toolpipe.packets  : SymmetryPacket, SymmetryConfig;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import popup_state       : setStatePath;
+import toolpipe.state_paths       : setStatePath;
 import symmetry          : rebuildPairing, rebuildPairingTopological;
 import params            : Param, IntEnumEntry;
 import toolpipe.stages.symmetry;
