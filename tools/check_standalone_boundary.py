@@ -157,7 +157,7 @@ def main(argv=None):
     require(binary.is_file(), 'fresh DUB output missing: ' + str(binary))
     revision = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=root, text=True, capture_output=True)
     sha = revision.stdout.strip() if revision.returncode == 0 else 'uncommitted-copy'
-    witness = {'mode': mode, 'sha': sha, 'compiler': compiler, 'describedSourceRoots': list(map(str, roots)),
+    witness = {'mode': mode, 'sha': sha, 'compiler': compiler, 'sources': list(map(str, roots)),
                'outputSha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'druntimeModules': total,
                'namedCells': list(CORE_CELLS) if args.unittest else [], 'command': command, 'describeCommand': describe}
     (evidence / 'witness.json').write_text(json.dumps(witness, indent=2) + '\n')
