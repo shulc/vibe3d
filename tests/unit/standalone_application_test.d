@@ -63,6 +63,11 @@ unittest {
         "standalone-roundtrip: selection plus topology exact history");
     const observationDeliveries = changeBus.deliveryCount;
     auto state = host.state();
+    assert(state["changes"]["docRevision"].uinteger == changeBus.docRevision()
+        && state["changes"]["docRevision"].uinteger > revision
+        && state["changes"]["lastDeliveryFlags"].uinteger == changeBus.lastDeliveryFlags
+        && state["changes"]["lastDeliverySelDomains"].uinteger == changeBus.lastDeliverySelDomains,
+        "standalone-observer: actual revision and delivery gauges after supported command");
     assert(state["planes"]["counts"]["faces"].integer == 7
         && changeBus.deliveryCount == observationDeliveries,
         "standalone-observer: full planes read without delivering");
