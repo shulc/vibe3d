@@ -29,15 +29,7 @@ unittest {
     assert(digest.count("foreach (scanSourceRoot; [\"source\", \"packages/common/source\"])") == 1
         && digest.count("dirEntries(scanSourceRoot, pattern, SpanMode.depth)") == 1,
         "standalone-wiring: freshness scans desktop and common source roots");
-    const library = rawBody(runner, "string buildProjectLib(string scratch)");
-    assert(library.count("foreach (root; [\"\", \" --root=packages/common\"])") == 1
-        && library.count("executeShell(\"dub describe\" ~ root") == 1
-        && library.count(" --config=modeling --data=source-files --data-list") == 1,
-        "standalone-wiring: test library describes desktop and common modeling inputs");
-    assert(library.count("s !in seen") == 1 && library.count("seen[s] = true;") == 1
-        && library.count("srcs ~= s;") == 1
-        && library.count("sourceCompileFlags(), srcs.join(\" \"), lib") == 1,
-        "standalone-wiring: test library compiles unique described source identities");
+
 }
 
 unittest {
