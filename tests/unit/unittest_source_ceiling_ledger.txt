@@ -13,7 +13,7 @@
 # Counts are compiler-aware: comments and string/character literals are
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
-source-files 586
+source-files 587
 unittest-blocks 669
 version-ceiling 10
 
@@ -27,6 +27,7 @@ block source/bg_gpu_cache.d 2
 block source/bvh_pick.d 2
 block source/command.d 2
 block source/command_history.d 14
+block source/command_registry.d 1
 block source/commands/image/commands.d 11
 block source/commands/layer/commands.d 13
 block source/commands/layer/xform_edit.d 3
@@ -120,7 +121,7 @@ block source/prepared_vertex_extrude_activation.d 1
 block source/prepared_vertex_merge_activation.d 1
 block source/prepared_xfrm_activation_session.d 1
 block source/record_observer_hub.d 1
-block source/registry.d 9
+block source/registry.d 8
 block source/remesh/region_stitch.d 3
 block source/remesh/remesh_job.d 10
 block source/render/render_mvp.d 1

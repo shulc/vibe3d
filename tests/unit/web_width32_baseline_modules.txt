@@ -24,6 +24,7 @@ command
 command_args
 command_executor
 command_history
+command_registry
 command_tool_policy
 commands.actr
 commands.ai.toggle

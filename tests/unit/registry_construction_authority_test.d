@@ -16,6 +16,7 @@ import editmode : EditMode;
 import live_registration_roles : LiveSessionRole;
 import mesh : Mesh;
 import registry : CommandFactory, Registry;
+import command_registry : CommandRegistry;
 import seltype : SelType;
 import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes,
     symbolTokenHits;
@@ -178,9 +179,9 @@ unittest {
 }
 
 // H1: the visibility checks below target an existing member.
-static assert([__traits(allMembers, Registry)].canFind("commandFactories_"));
+static assert([__traits(allMembers, CommandRegistry)].canFind("commandFactories_"));
 // H2: returning the same member to public is a fence failure.
-static assert(__traits(getVisibility, Registry.commandFactories_) == "private");
+static assert(__traits(getVisibility, CommandRegistry.commandFactories_) == "private");
 // H3: the exact external read and write are both rejected.
 static assert(!__traits(compiles, {
     CommandFactory factory;
@@ -191,6 +192,24 @@ static assert(!__traits(compiles, {
     Registry reg;
     auto factory = reg.commandFactories_["k"];
 }));
+static assert(!__traits(compiles, {
+    CommandFactory factory;
+    CommandRegistry reg;
+    reg.commandFactories_["k"] = factory;
+}));
+static assert(!__traits(compiles, {
+    CommandRegistry reg;
+    auto factory = reg.commandFactories_["k"];
+}));
+static assert([__traits(allMembers, CommandRegistry)] == [
+    "commandFactories_", "selTypeAuthority_", "commandsBuiltWithoutAuthority_",
+    "registerCommand", "replaceCommand", "aliasCommand", "hasCommand",
+    "commandIds", "makeCommand", "bindSelTypeAuthority", "commandModes",
+    "commandNames", "commandParamsJson", "commandNeedsTarget",
+    "commandDiscardsWork", "commandDropsToolBeforeApply",
+    "commandCommitsToolEditBeforeApply", "cacheSupportedModes"
+], "1C lower command registry capability surface changed");
+
 // H5: failure above is meaningful only while the supported door compiles.
 static assert(__traits(compiles, {
     CommandFactory factory;
@@ -201,8 +220,7 @@ static assert(__traits(compiles, {
 // The complete member pin catches a new writable capability even when it has
 // an unrelated name. Keep this after the targeted existence/visibility fence.
 static assert([__traits(allMembers, Registry)] == [
-    "toolFactories_", "commandFactories_", "selTypeAuthority_",
-    "commandsBuiltWithoutAuthority_", "registerCommand", "registerTool",
+    "toolFactories_", "commandRegistry_", "registerCommand", "registerTool",
     "replaceCommand", "replaceTool", "aliasCommand", "hasCommand",
     "hasTool", "commandIds", "toolIds", "toolFactory", "makeCommand",
     "bindSelTypeAuthority", "preActivate", "preparedPipeAttrs",
@@ -297,10 +315,12 @@ unittest {
             codeBytes += code.length;
             registryTuple += code.count("Registry.tupleof");
             if (relative != "source/registry.d"
+                    && relative != "source/command_registry.d"
                     && relative != "tests/unit/registry_construction_authority_test.d")
                 if (hasIdentifier(code, "commandFactories_")
                         || hasIdentifier(code, "toolFactories_")) ++privateNames;
-            if (!hasIdentifier(raw, "Registry")) continue;
+            if (!hasIdentifier(raw, "Registry")
+                    && !hasIdentifier(raw, "CommandRegistry")) continue;
             ++scopeFiles;
             const counts = bypassCounts(raw);
             if (counts.tuples) foundTuple[relative] = counts.tuples;
@@ -381,4 +401,26 @@ unittest {
                 && line.indexOf("Commands(app.reg()") >= 0) ++calls;
     assert(calls >= 15,
         "6510 production registrar call population collapsed");
+}
+
+// The lower behavior probe is complemented by actual desktop attachment wiring.
+unittest {
+    const lower = blankNonCode(readText(buildPath(repoRoot, "source", "command_registry.d")));
+    const desktop = blankNonCode(readText(buildPath(repoRoot, "source", "registry.d")));
+    const attached = symbolTokenHits(lower, "source/command_registry.d",
+        "command.setSelTypeProvider(selTypeAuthority_)");
+    assert(attached.length == 1 && attached[0].key == "CommandRegistry.makeCommand",
+        "1C lower makeCommand must attach the live selection provider");
+    const forwarded = symbolTokenHits(desktop, "source/registry.d",
+        "return commandRegistry_.makeCommand(id)");
+    assert(forwarded.length == 1 && forwarded[0].key == "Registry.makeCommand",
+        "1C desktop makeCommand must forward to the embedded lower owner");
+    const bound = symbolTokenHits(desktop, "source/registry.d",
+        "commandRegistry_.bindSelTypeAuthority(() => owner.subjectType())");
+    assert(bound.length == 1 && bound[0].key == "Registry.bindSelTypeAuthority",
+        "1C desktop authority must bind a live owner delegate into lower storage");
+    const cached = symbolTokenHits(desktop, "source/registry.d",
+        "commandRegistry_.cacheSupportedModes()");
+    assert(cached.length == 1 && cached[0].key == "Registry.cacheSupportedModes",
+        "1C desktop metadata must walk its embedded command owner once");
 }

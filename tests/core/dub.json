@@ -6,7 +6,8 @@
   "sourcePaths": [],
   "sourceFiles": [
     "../unit/application_core_command_test.d",
-    "../unit/application_core_mesh_test.d"
+    "../unit/application_core_mesh_test.d",
+    "../unit/command_registry_test.d"
   ],
   "importPaths": [
     "../../source",

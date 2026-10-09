@@ -8,6 +8,7 @@ bvh_pick
 change_bus
 command
 command_history
+command_registry
 command_tool_policy
 commands.layer.xform_edit
 commands.mesh.edge_slide

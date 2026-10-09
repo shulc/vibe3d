@@ -7,6 +7,8 @@ import editmode;
 import shader;
 import tool;
 import command;
+public import command_registry : CommandFactory;
+import command_registry : CommandRegistry;
 import live_registration_roles : LiveSessionRole;
 import seltype : SelType;
 
@@ -27,7 +29,7 @@ struct AppContext {
 // ---------------------------------------------------------------------------
 
 alias ToolFactory    = Tool    delegate();
-alias CommandFactory = Command delegate();
+
 
 /// Behavior-neutral typed seam for the factory census. The inner delegate's
 /// concrete return type is checked by D; only the stored registry ABI widens
@@ -83,17 +85,11 @@ unittest {
 struct Registry {
 private:
     ToolFactory[string]    toolFactories_;
-    CommandFactory[string] commandFactories_;
-    SelType delegate()     selTypeAuthority_;
-    size_t                 commandsBuiltWithoutAuthority_;
+    CommandRegistry        commandRegistry_;
 
 public:
     void registerCommand(string id, CommandFactory factory) {
-        if (factory is null)
-            throw new Exception("registry: command '" ~ id ~ "' has a null factory");
-        if (id in commandFactories_)
-            throw new Exception("registry: command '" ~ id ~ "' is already registered");
-        commandFactories_[id] = factory;
+        commandRegistry_.registerCommand(id, factory);
     }
 
     void registerTool(string id, ToolFactory factory) {
@@ -105,11 +101,7 @@ public:
     }
 
     void replaceCommand(string id, CommandFactory factory) {
-        if (factory is null)
-            throw new Exception("registry: command '" ~ id ~ "' has a null factory");
-        if (id !in commandFactories_)
-            throw new Exception("registry: command '" ~ id ~ "' is not registered");
-        commandFactories_[id] = factory;
+        commandRegistry_.replaceCommand(id, factory);
     }
 
     void replaceTool(string id, ToolFactory factory) {
@@ -121,16 +113,11 @@ public:
     }
 
     void aliasCommand(string sourceId, string aliasId) {
-        auto source = sourceId in commandFactories_;
-        if (source is null)
-            throw new Exception("registry: command '" ~ sourceId ~ "' is not registered");
-        if (aliasId in commandFactories_)
-            throw new Exception("registry: command '" ~ aliasId ~ "' is already registered");
-        commandFactories_[aliasId] = *source;
+        commandRegistry_.aliasCommand(sourceId, aliasId);
     }
 
     bool hasCommand(string id) const {
-        return (id in commandFactories_) !is null;
+        return commandRegistry_.hasCommand(id);
     }
 
     bool hasTool(string id) const {
@@ -138,7 +125,7 @@ public:
     }
 
     string[] commandIds() const {
-        return commandFactories_.keys;
+        return commandRegistry_.commandIds();
     }
 
     string[] toolIds() const {
@@ -151,26 +138,11 @@ public:
     }
 
     Command makeCommand(string id) {
-        auto factory = id in commandFactories_;
-        if (factory is null) return null;
-        auto command = (*factory)();
-        if (selTypeAuthority_ !is null)
-            command.setSelTypeProvider(selTypeAuthority_);
-        else
-            ++commandsBuiltWithoutAuthority_;
-        return command;
+        return commandRegistry_.makeCommand(id);
     }
 
     void bindSelTypeAuthority(LiveSessionRole owner) {
-        if (commandsBuiltWithoutAuthority_ != 0) {
-            import std.conv : to;
-            throw new Exception("registry: "
-                ~ commandsBuiltWithoutAuthority_.to!string
-                ~ " command(s) were constructed before the selection-type authority "
-                ~ "was bound — they carry currentType()'s fallback. Move the bind "
-                ~ "above the first construction (task 6510).");
-        }
-        selTypeAuthority_ = () => owner.subjectType();
+        commandRegistry_.bindSelTypeAuthority(() => owner.subjectType());
     }
 
     // Per-tool side-effect hook run RIGHT BEFORE the factory in the
@@ -196,7 +168,12 @@ public:
     // edit mode (e.g. `mesh.subdivide` greyed out in Vertices/Edges).
     //
     // Missing-key lookup ⇒ "all modes supported" (no restriction).
-    EditMode[][string] commandModes;
+    @property ref EditMode[][string] commandModes() {
+        return commandRegistry_.commandModes;
+    }
+    @property ref const(EditMode[][string]) commandModes() const {
+        return commandRegistry_.commandModes;
+    }
     EditMode[][string] toolModes;
 
     // Cached `name()` per registered command id — populated once at app
@@ -206,7 +183,12 @@ public:
     // invariant — see doc/registry_name_integrity_plan.md). Tools are
     // deliberately excluded: a tool's `name()` is a human display string
     // by design (e.g. `move` → "Transform"), not a key.
-    string[string] commandNames;
+    @property ref string[string] commandNames() {
+        return commandRegistry_.commandNames;
+    }
+    @property ref const(string[string]) commandNames() const {
+        return commandRegistry_.commandNames;
+    }
 
     // Cached `params()` SCHEMA per registered id, already serialised to the
     // `GET /api/registry?params=1` wire form (a JSON array of
@@ -233,7 +215,12 @@ public:
     // applied on the ACTIVATION path, not in the factory. A ctor that starts
     // reading mutable app state would stale all three caches, not just this
     // one.
-    string[string] commandParamsJson;
+    @property ref string[string] commandParamsJson() {
+        return commandRegistry_.commandParamsJson;
+    }
+    @property ref const(string[string]) commandParamsJson() const {
+        return commandRegistry_.commandParamsJson;
+    }
     string[string] toolParamsJson;
 
     // Cached `needsEditTarget()` per registered id (task 0669) — the fact the
@@ -249,49 +236,44 @@ public:
     //
     // Missing-key lookup ⇒ "does not need one" (an id nobody registered
     // cannot be pressed).
-    bool[string] commandNeedsTarget;
+    @property ref bool[string] commandNeedsTarget() {
+        return commandRegistry_.commandNeedsTarget;
+    }
+    @property ref const(bool[string]) commandNeedsTarget() const {
+        return commandRegistry_.commandNeedsTarget;
+    }
     bool[string] toolNeedsTarget;
     /// Task 1521 — which registered ids declared `Command.discardsUnsavedWork`.
     /// Same shape and same reason as `commandNeedsTarget`: published so the
     /// declaration can be checked against BEHAVIOUR over the whole registry
     /// (tests/test_discard_census.d) instead of over a hand-written list.
-    bool[string] commandDiscardsWork;
+    @property ref bool[string] commandDiscardsWork() {
+        return commandRegistry_.commandDiscardsWork;
+    }
+    @property ref const(bool[string]) commandDiscardsWork() const {
+        return commandRegistry_.commandDiscardsWork;
+    }
     /// Snapshot of the single pre-apply tool-drop policy in command.d.
-    bool[string] commandDropsToolBeforeApply;
+    @property ref bool[string] commandDropsToolBeforeApply() {
+        return commandRegistry_.commandDropsToolBeforeApply;
+    }
+    @property ref const(bool[string]) commandDropsToolBeforeApply() const {
+        return commandRegistry_.commandDropsToolBeforeApply;
+    }
     /// Snapshot of the bounded pre-apply tool-commit policy in command.d.
-    bool[string] commandCommitsToolEditBeforeApply;
+    @property ref bool[string] commandCommitsToolEditBeforeApply() {
+        return commandRegistry_.commandCommitsToolEditBeforeApply;
+    }
+    @property ref const(bool[string]) commandCommitsToolEditBeforeApply() const {
+        return commandRegistry_.commandCommitsToolEditBeforeApply;
+    }
 
     /// Walk every registered factory once and snapshot its
     /// `supportedModes()` into the cache. Call after all
     /// command/tool registrations.
     void cacheSupportedModes() {
         import params : paramsSchemaJson;
-        const commandKeys = commandIds();
-        foreach (id; commandKeys) {
-            auto cmd = makeCommand(id);
-            commandModes[id] = cmd.supportedModes().dup;
-            commandNames[id] = cmd.name;
-            commandParamsJson[id] = paramsSchemaJson(cmd.params());
-            commandNeedsTarget[id] = cmd.needsEditTarget();
-            commandDiscardsWork[id] = cmd.discardsUnsavedWork();
-            import command : dropsActiveToolBeforeApply,
-                             commitsActiveToolEditBeforeApply;
-            commandDropsToolBeforeApply[id] = dropsActiveToolBeforeApply(cmd);
-            commandCommitsToolEditBeforeApply[id] =
-                commitsActiveToolEditBeforeApply(cmd);
-            // Fail fast on any command whose name() does not resolve back to
-            // a registered command key — a dead replay string in the making
-            // (history/scripting re-dispatch cmd.name through
-            // the command registry). This is "resolves-back", NOT "name()==id":
-            // alias keys (file.open, file.import.*, file.export.*) legitimately
-            // share one command class + name() with a DIFFERENT key, and that
-            // is fine as long as the name() itself is some live key. Scoped to
-            // commands ONLY — tool name() is a display string by
-            // design and is not part of this contract.
-            if (!hasCommand(cmd.name))
-                throw new Exception("registry: command '" ~ id ~ "' name() '"
-                    ~ cmd.name ~ "' is not a registered command key");
-        }
+        commandRegistry_.cacheSupportedModes();
         const toolKeys = toolIds();
         foreach (id; toolKeys) {
             auto tool = toolFactories_[id]();
@@ -512,17 +494,6 @@ public:
         }
         return "";
     }
-}
-
-// Paired positive control for the external construction-authority fence.
-// This expression must remain valid inside Registry's owning module; the
-// external half proves that the same expression is rejected by visibility.
-unittest {
-    static assert(__traits(compiles, {
-        CommandFactory factory;
-        Registry reg;
-        reg.commandFactories_["k"] = factory;
-    }));
 }
 
 // ---------------------------------------------------------------------------
