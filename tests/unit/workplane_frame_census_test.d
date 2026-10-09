@@ -120,7 +120,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     string[] principalCopies;
     foreach (src; prod)
         foreach (_; matchAll(src.code, principalCopy)) principalCopies ~= src.rel;
-    assert(principalCopies == ["source/tools/create/create_common.d"],
+    assert(principalCopies == ["packages/common/source/workplane_basis.d"],
            format("inline principal-axis copies in %s (only the distinct auto-view build plane is retained)", principalCopies));
 
     // PIN: the call-site rosters (definition + import + calls per file).

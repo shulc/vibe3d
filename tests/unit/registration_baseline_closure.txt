@@ -528,4 +528,5 @@ viewport_command_registration
 viewport_env
 viewport_scheme
 weightmap_view
+workplane_basis
 workplane_fit

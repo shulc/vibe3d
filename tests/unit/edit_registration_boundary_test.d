@@ -290,11 +290,11 @@ unittest {
     // Task 9525: `tools.edit.drag_weld` deleted (-1 each).
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
     // Task 20260660: Tool reaches the detached model_preview view (+1 each).
-    pinClosure("edit_tool_registration", edit, 260);
-    pinClosure("registration", positive, 531);
-    assert(edit.queue.length == 260 && positive.queue.length == 531,
-        format("6670 import closure census changed: edit=%d/260 "
-            ~ "registration=%d/531", edit.queue.length,
+    pinClosure("edit_tool_registration", edit, 261);
+    pinClosure("registration", positive, 532);
+    assert(edit.queue.length == 261 && positive.queue.length == 532,
+        format("6670 import closure census changed: edit=%d/261 "
+            ~ "registration=%d/532", edit.queue.length,
             positive.queue.length));
 }
 

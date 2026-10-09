@@ -32,12 +32,13 @@ CONTRACT_CELLS = 21
 
 # Task 20261990: the production union follows package ownership. The old
 # desktop-only walk measured 577 files on 2026-09-27 (floor 500); after the
-# ownership moves, the independent 2026-10-09 inventory is 492/75/17/8.
+# ownership moves, the independent 2026-10-09 inventory is 492/75/17/8. The Wave5 prerequisite adds workplane_basis,
+# independently inventoried as common76 (task 20262020, same date).
 PRODUCTION_ROOTS = ("source", "packages/common/source", "packages/mesh-ops/source",
                     "packages/interchange/source")
 PRODUCTION_OWNER_FLOORS = {
     "source": 492,
-    "packages/common/source": 75,
+    "packages/common/source": 76,
     "packages/mesh-ops/source": 17,
     "packages/interchange/source": 8,
 }

@@ -4,6 +4,7 @@ import std.math : sqrt, isNaN, abs;
 import math;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
 import toolpipe.packets : GesturePacket, GestureTrack;
+public import toolpipe.packets : ComponentGuide;
 import coord_rounding : CoordinateRounding, kFixedIncrementDefault, coordRounding,
                        coordRoundingFixedIncrement;
 
@@ -1631,11 +1632,6 @@ struct DragFrame {
     Vec3 basisX = Vec3(1, 0, 0), basisY = Vec3(0, 1, 0), basisZ = Vec3(0, 0, 1);
 }
 
-/// Components accepted by a guide, in the client's projected world space.
-struct ComponentGuide {
-    ubyte acceptedMask;
-    Vec3 valuesWorld;
-}
 alias ComponentGuideResolver = ComponentGuide delegate(Vec3);
 
 /// A handle drag's client point: the handle at the press plus the pointer

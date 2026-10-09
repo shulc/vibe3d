@@ -18,6 +18,12 @@ import seltype : SelType;
 // rearranging the layout.
 // ---------------------------------------------------------------------------
 
+/// Components accepted by a guide, in the client's projected world space.
+struct ComponentGuide {
+    ubyte acceptedMask;
+    Vec3 valuesWorld;
+}
+
 /// Subject packet — mesh + selection + edit mode at pipe entry.
 /// Read-only snapshot; stages must not mutate the scene mesh through this
 /// pointer (use the regular Mesh* path with snapshot/undo as elsewhere).
