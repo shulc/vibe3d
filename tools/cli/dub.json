@@ -1,0 +1,16 @@
+{
+  "name": "vibe3d-cli",
+  "description": "Native document command runner",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": ["source"],
+  "importPaths": ["../../source"],
+  "dflags": ["-i"],
+  "dependencies": {
+    "d-stb-image": {
+      "version": "a66f6917718ea128076a2c5660e37f362a785144",
+      "repository": "git+https://github.com/shulc/D-StbImage.git"
+    }
+  },
+  "toolchainRequirements": {"dmd": ">=2.111.0"}
+}

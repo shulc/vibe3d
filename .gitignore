@@ -148,3 +148,7 @@ build_class.txt
 .gesture-lane/
 scratch/*.log
 scratch/*.lock
+
+# Standalone command runner artifacts
+tools/cli/vibe3d-cli
+tools/cli/.boundary/
