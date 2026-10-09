@@ -94,4 +94,3 @@ unittest {
     assert(bad.length == 1 && bad[0] == "source/tools/mystery.d",
         "a hit outside the home set must be REPORTED, not silently accepted");
 }
-
