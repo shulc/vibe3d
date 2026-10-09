@@ -1601,6 +1601,13 @@ unittest
     }
     const owners = scanWorkingTree(sandbox);
     assert(owners.length == 4, "Wave4 census observes all four new ownership roots");
+    string[] ownerPaths;
+    foreach (file; owners) ownerPaths ~= file.path;
+    assert(ownerPaths == ["packages/interchange/source/probe.d",
+                          "packages/interchange/tests/source/probe.d",
+                          "packages/mesh-ops/source/probe.d",
+                          "packages/mesh-ops/tests/source/probe.d"],
+        "Wave4 census exact independent ownership membership");
     const ownershipTotal = total(owners);
     assert(ownershipTotal.blocks == 4 && ownershipTotal.asserts == 8,
         "Wave4 census preserves each owner's nonzero block/assert contribution");

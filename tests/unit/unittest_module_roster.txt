@@ -58,7 +58,6 @@ mesh_corner_maps
 mesh_dirty
 mesh_edit_delta
 mesh_gpu
-mesh_ops.cut
 mesh_ops.extrude
 mesh_ops.loop_slice
 mesh_ops.poly_bevel
@@ -375,6 +374,7 @@ tests.unit.mesh_ops.bridge_patch_test
 tests.unit.mesh_ops.bridge_test
 tests.unit.mesh_ops.cleanup_test
 tests.unit.mesh_ops.connected_mask_test
+tests.unit.mesh_ops.cut_gap_regression_test
 tests.unit.mesh_ops.cut_test
 tests.unit.mesh_ops.decimate_precision_test
 tests.unit.mesh_ops.decimate_test
