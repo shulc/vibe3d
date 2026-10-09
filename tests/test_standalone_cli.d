@@ -6,7 +6,7 @@ import std.conv : to;
 import std.digest.sha : sha256Of;
 import std.digest : toHexString;
 import std.file : read, readText, write, exists, mkdirRecurse, rmdirRecurse,
-    dirEntries, SpanMode, readLink, symlink, isFile;
+    dirEntries, SpanMode, readLink, symlink;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.path : buildPath, dirName, baseName;
 import std.process : execute, spawnProcess, wait, kill, tryWait, Pid, Config,
@@ -157,7 +157,7 @@ private void parity(JSONValue cli, JSONValue desktop, JSONValue previousCli, JSO
 }
 
 private struct Run { int status; JSONValue[] states, outcomes; string error; }
-private Run runCli(string root, string input, string script, string output, string diagnostics = "", bool observeProcess = false) {
+private Run runCli(string root, string input, string script, string output, string diagnostics = "", bool observeProcess = false, bool readDiagnostics = true) {
     auto outLog = buildPath(root, "stdout.jsonl"), errLog = buildPath(root, "stderr.log");
     auto outFile = File(outLog, "w"), errFile = File(errLog, "w");
     string[] argv = [buildPath(repo, "tools/cli/vibe3d-cli"), "run", "--input", input,
@@ -194,7 +194,11 @@ private Run runCli(string root, string input, string script, string output, stri
     result.status = wait(pid); reaped = true;
     outFile.close(); errFile.close();
     result.outcomes = jsonRows(readText(outLog)); result.error = readText(errLog);
-    if (diagnostics.length && exists(diagnostics) && isFile(diagnostics)) result.states = jsonRows(readText(diagnostics));
+    auto errors = jsonRows(result.error);
+    bool producedState = result.status == 0 || (errors.length == 1
+        && errors[0]["stage"].str != "arguments" && errors[0]["stage"].str != "load");
+    if (readDiagnostics && producedState && diagnostics.length && exists(diagnostics))
+        result.states = jsonRows(readText(diagnostics));
     foreach (row; result.states) {
         assert(row.object.length == 5, "CLI state: exact diagnostic row schema");
         foreach (key; ["phase", "line", "id", "outcome", "state"])
@@ -523,7 +527,7 @@ unittest {
         && read(input) == existingInput && read(output) == existingOutput,
         "CLI diagnostics: open failure preserves native files before commands/save");
     errorSchema(diagnosticOpen, "diagnostics");
-    auto diagnosticWrite = runCli(root, input, script, output, "/dev/full");
+    auto diagnosticWrite = runCli(root, input, script, output, "/dev/full", false, false);
     assert(diagnosticWrite.states.length == 0 && diagnosticWrite.outcomes.length == 0
         && read(input) == existingInput && read(output) == existingOutput,
         "CLI diagnostics: actual write failure preserves native files before commands/save");
