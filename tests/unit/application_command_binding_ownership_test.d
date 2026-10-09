@@ -108,11 +108,11 @@ unittest {
     auto httpCommand = repoFile("source/http_command_adapter.d");
     auto app = repoFile("source/app.d");
 
-    assert(binding.length > 4_000,
+    assert(binding.length > 3_000,
         "application binding ownership: binding population is implausibly small");
-    assert(binding.canFind("Registry* registry")
-        && binding.canFind("CommandExecutor executor")
-        && binding.canFind("EditSession session")
+    assert(binding.canFind("CommandInvocationService invocation")
+        && binding.canFind("session.tryRefireDispatch(command, id)")
+        && binding.canFind("registry.commandRegistry()")
         && binding.canFind("CommandInvocationContext")
         && binding.canFind("GuardedActionController uiPolicy"),
         "application binding ownership: required binding inputs disappeared");
@@ -472,4 +472,35 @@ unittest { // K3 Bridge refusal through ordinary UI and repeated dispatch.
     assert(script.outcome == CommandInvocationOutcome.refused && m.faces.length == 2
         && history.undoEntriesVisible().length == 0 && notices == 2,
         "K3 ordinary script refusal does not add UI notice or history");
+}
+
+
+unittest { // Production seams, with scanner-blanked comments and literals.
+    import tests.unit.census_symbols : blankNonCode;
+    auto binding = blankNonCode(repoFile("source/application_command_binding.d"));
+    auto invocation = blankNonCode(repoFile("source/command_invocation.d"));
+    auto meshFamily = blankNonCode(repoFile("source/mesh_command_registration.d"));
+    auto historyFamily = blankNonCode(repoFile("source/history_macro_registration.d"));
+    auto pilot = blankNonCode(repoFile("source/pilot_command_registration.d"));
+    assert(occurrences(binding, "new CommandInvocationService(") == 1
+        && occurrences(binding, "return invocation.invokeLine(id, paramsJson, context);") == 1
+        && occurrences(binding, "bindArgs(") == 0
+        && occurrences(binding, "applyOrRefire(") == 0,
+        "1D production binding must use the one lower invocation service");
+    assert(occurrences(invocation,
+        "executor.applyOrRefire(command, RecordMode.Coalescing, null)") == 1,
+        "1D production script dispatch must retain null throw message");
+    assert(occurrences(meshFamily, "registerTripleCommand(reg.commandRegistry(), pilot)") == 1
+        && occurrences(meshFamily, "registerMeshSelectionCommand(reg.commandRegistry(), pilot)") == 1
+        && occurrences(historyFamily, "registerHistoryNavigationCommands(reg.commandRegistry(),") == 1,
+        "1D production families must consume common pilot registrar");
+    foreach (type; ["MeshTriple", "MeshSelect", "HistoryUndo", "HistoryRedo"]) {
+        assert(occurrences(meshFamily ~ historyFamily, "new " ~ type ~ "(") == 0,
+            "1D desktop retained a second pilot factory: " ~ type);
+        assert(occurrences(pilot, "new " ~ type ~ "(") == 1,
+            "1D common registrar must own exactly one factory: " ~ type);
+    }
+    assert(occurrences(binding, "attr.setInteractive(interactive)") == 1
+        && occurrences(binding, "session.tryRefireDispatch(command, id)") == 1,
+        "1D desktop capabilities lost interactive or live session policy");
 }

@@ -19,11 +19,13 @@ import sys
 import tempfile
 
 CORE_ROOTS = ('application_core_command_test.d', 'application_core_mesh_test.d',
-              'command_registry_test.d')
-CORE_CELLS = ('document-primary', 'mesh-cube', 'model-delivery', 'no-edit-target',
+              'command_invocation_test.d', 'command_registry_test.d')
+CORE_CELLS = ('document-primary', 'invocation-order', 'invocation-outcomes', 'invocation-tweak',
+              'mesh-cube', 'model-delivery', 'no-edit-target', 'pilot-live',
               'registry-authority', 'selected-triangle-refusal', 'session-carrier', 'triple-roundtrip')
 KNOWN_MODULES = ('mesh', 'document', 'command', 'command_executor', 'command_history',
-                 'commands.mesh.triple', 'commands.mesh.session_edit', 'command_registry')
+                 'commands.mesh.triple', 'commands.mesh.session_edit', 'command_registry',
+                 'command_invocation', 'pilot_command_registration')
 # Ownership bans apply equally to project modules, external files and link inputs.
 BANNED_MODULES = {
     'tool', 'editor_app', 'app', 'registry', 'display_sync', 'shader',

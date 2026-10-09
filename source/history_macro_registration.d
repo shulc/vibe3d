@@ -4,10 +4,9 @@ import argstring : serializeCommandLine;
 import command : Command;
 import command_history : CommandHistory, HistoryFlags;
 import commands.history.clear : HistoryClear;
-import commands.history.redo : HistoryRedo;
+import pilot_command_registration : PilotCommandDeps, registerHistoryNavigationCommands;
 import commands.history.save_as_script : HistorySaveAsScript;
 import commands.history.show : HistoryShow;
-import commands.history.undo : HistoryUndo;
 import commands.macros.record : MacroRecord;
 import commands.macros.save_recorded : MacroSaveRecorded;
 import commands.test_undo_flags : UndoForceNoop, UndoSuppressNoop;
@@ -32,10 +31,12 @@ void registerHistoryCommands(ref Registry reg,
     assert(panelState !is null, "history registration requires panel state");
     assert(macroRecorder !is null, "history registration requires macro recorder");
 
-    reg.registerCommand("history.undo", () => cast(Command)
-        new HistoryUndo(&session.activeMesh(), live.view(), live.mode, history));
-    reg.registerCommand("history.redo", () => cast(Command)
-        new HistoryRedo(&session.activeMesh(), live.view(), live.mode, history));
+    import mesh : Mesh;
+    import view : View;
+    ref Mesh pilotMesh() { return session.activeMesh(); }
+    ref View pilotView() { return live.view(); }
+    registerHistoryNavigationCommands(reg.commandRegistry(),
+        PilotCommandDeps(&pilotMesh, &pilotView, live.modeCell()), history);
     reg.registerCommand("history.show", () => cast(Command)
         new HistoryShow(&session.activeMesh(), live.view(), live.mode,
                         () { panelState.visible = !panelState.visible; }));

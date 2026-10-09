@@ -8,31 +8,9 @@ import guarded_action_controller : GuardedActionController;
 import registry : Registry;
 import ui.discard_guard : UiRunOutcome;
 
-/// Call-site facts that affect application dispatch.  The caller identity and
-/// continuous-interaction boundary are explicit so neither is inferred from an
-/// HTTP-owned latch or from exception control flow (task 4711).
-struct CommandInvocationContext {
-    CommandOrigin origin;
-    bool interactive;
-}
-
-enum CommandInvocationOutcome {
-    applied,
-    refused,
-    deferred,
-    query,
-}
-
-struct CommandInvocationResult {
-    CommandInvocationOutcome outcome;
-    Command command;
-    string queryJson;
-
-    @property bool applied() const {
-        return outcome == CommandInvocationOutcome.applied
-            || outcome == CommandInvocationOutcome.query;
-    }
-}
+public import command_invocation : CommandInvocationContext,
+    CommandInvocationOutcome, CommandInvocationResult;
+import command_invocation : CommandInvocationService;
 
 alias CommandNotice = void delegate(Command);
 alias TextNotice = void delegate(string);
@@ -42,29 +20,17 @@ alias TextNotice = void delegate(string);
 /// this module deliberately has no HTTP dependency (task 4711).
 final class ApplicationCommandBinding {
 private:
-    Registry* registry;
-    CommandExecutor executor;
-    EditSession session;
+    CommandInvocationService invocation;
     CommandHistory history;
     GuardedActionController uiPolicy;
-    CommandNotice commandNotice;
     TextNotice textNotice;
 
-    CommandInvocationResult result(CommandInvocationOutcome outcome,
-                                   Command command,
-                                   string queryJson = "") {
-        return CommandInvocationResult(outcome, command, queryJson);
-    }
-
-    CommandInvocationResult uiResult(Command command, RecordMode mode,
-                                     string dispatchedId) {
+    CommandInvocationOutcome uiResult(Command command, RecordMode mode,
+                                      string dispatchedId) {
         final switch (uiPolicy.invoke(command, mode, dispatchedId)) {
-            case UiRunOutcome.applied:
-                return result(CommandInvocationOutcome.applied, command);
-            case UiRunOutcome.refused:
-                return result(CommandInvocationOutcome.refused, command);
-            case UiRunOutcome.deferred:
-                return result(CommandInvocationOutcome.deferred, command);
+            case UiRunOutcome.applied: return CommandInvocationOutcome.applied;
+            case UiRunOutcome.refused: return CommandInvocationOutcome.refused;
+            case UiRunOutcome.deferred: return CommandInvocationOutcome.deferred;
         }
     }
 
@@ -78,74 +44,23 @@ public:
         assert(uiPolicy !is null, "ApplicationCommandBinding requires UI policy");
         assert(commandNotice !is null, "ApplicationCommandBinding requires command notice policy");
         assert(textNotice !is null, "ApplicationCommandBinding requires text notice policy");
-        this.registry = &registry;
-        this.executor = executor;
-        this.session = session;
         this.history = history;
         this.uiPolicy = uiPolicy;
-        this.commandNotice = commandNotice;
         this.textNotice = textNotice;
+        invocation = new CommandInvocationService(registry.commandRegistry(),
+            executor, history,
+            (Command command, string id) => session.tryRefireDispatch(command, id),
+            (Command command, RecordMode mode, string id) => uiResult(command, mode, id),
+            (Command command, bool interactive) {
+                import commands.tool.attr : ToolAttrCommand;
+                if (auto attr = cast(ToolAttrCommand) command)
+                    attr.setInteractive(interactive);
+            }, commandNotice);
     }
 
     CommandInvocationResult invokeLine(string id, string paramsJson,
                                        CommandInvocationContext context) {
-        import command_args : bindArgs;
-        import commands.tool.attr : ToolAttrCommand;
-        import perf_probe : Cat, g_perf;
-        import std.json : JSONType, parseJSON;
-
-        auto command = registry.makeCommand(id);
-        if (command is null)
-            throw new Exception("unknown command id '" ~ id ~ "'");
-        command.origin = context.origin;
-
-        if (context.interactive)
-            if (auto attr = cast(ToolAttrCommand) command)
-                attr.setInteractive(true);
-
-        if (paramsJson.length > 0) {
-            auto params = parseJSON(paramsJson);
-            bindArgs(command, params);
-
-            if (params.type == JSONType.object) {
-                if (auto falloffJson = "falloff" in params.object) {
-                    if (falloffJson.type == JSONType.object) {
-                        import falloff : IFalloffAware, parseFalloffJson;
-                        if (auto aware = cast(IFalloffAware) command)
-                            aware.setFalloff(parseFalloffJson(*falloffJson));
-                    }
-                }
-            }
-        }
-
-        auto commandApply = g_perf.scope_(Cat.commandApply);
-        if (command.isQuery()) {
-            if (!command.apply()) {
-                if (context.origin == CommandOrigin.ui)
-                    commandNotice(command);
-                return result(CommandInvocationOutcome.refused, command);
-            }
-            return result(CommandInvocationOutcome.query, command,
-                          command.queryResultJson());
-        }
-
-        CommandInvocationResult dispatchResult;
-        if (session.tryRefireDispatch(command, id)) {
-            dispatchResult = result(CommandInvocationOutcome.applied, command);
-        } else if (context.origin == CommandOrigin.ui) {
-            dispatchResult = uiResult(command, RecordMode.Coalescing, id);
-        } else if (executor.applyOrRefire(command, RecordMode.Coalescing, null)) {
-            dispatchResult = result(CommandInvocationOutcome.applied, command);
-        } else {
-            dispatchResult = result(CommandInvocationOutcome.refused, command);
-        }
-
-        // A discrete pipe tweak starts a new refire generation. Continuous UI
-        // and automation invocations share one generation until their adapter
-        // announces the interaction boundary through endInteractiveTweak().
-        if (id == "tool.pipe.attr" && !context.interactive)
-            history.bumpTweakGeneration();
-        return dispatchResult;
+        return invocation.invokeLine(id, paramsJson, context);
     }
 
     UiRunOutcome invokeUiCommand(Command command, RecordMode mode,

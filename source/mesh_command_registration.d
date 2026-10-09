@@ -8,7 +8,8 @@ import registry : Registry;
 import remesh.remesh_job : RemeshJob;
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
-import commands.mesh.triple      : MeshTriple;
+import pilot_command_registration : PilotCommandDeps, registerTripleCommand,
+    registerMeshSelectionCommand;
 import commands.mesh.quadruple   : MeshQuadruple;
 import commands.mesh.detriangulate : MeshDetriangulate;
 import commands.mesh.merge         : MeshMergeFaces;
@@ -149,6 +150,12 @@ public:
 void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
         LiveViewModeRole live, MeshCommandDeps deps) {
     auto regPtr = &reg;
+    import mesh : Mesh;
+    import view : View;
+    ref Mesh pilotMesh() { return owner.activeMesh(); }
+    ref View pilotView() { return live.view(); }
+    auto pilot = PilotCommandDeps(&pilotMesh, &pilotView, live.modeCell(),
+        deps.originSnapshot(), deps.promoteGeometryType(), deps.meshRebuildDrop());
     reg.registerCommand("mesh.subdivide", () => cast(Command)
         new Subdivide(&owner.activeMesh(), live.view(), live.mode(),
                       deps.meshRebuildDrop()));
@@ -168,9 +175,7 @@ void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
     reg.registerCommand("mesh.subdivide_faceted", () => cast(Command)
         new SubdivideFaceted(&owner.activeMesh(), live.view(), live.mode(),
                              deps.meshRebuildDrop()));
-    reg.registerCommand("mesh.triple", () => cast(Command)
-        new MeshTriple(&owner.activeMesh(), live.view(), live.mode(),
-                       deps.meshRebuildDrop()));
+    registerTripleCommand(reg.commandRegistry(), pilot);
     reg.registerCommand("mesh.quadruple", () => cast(Command)
         new MeshQuadruple(&owner.activeMesh(), live.view(), live.mode(),
                           deps.meshRebuildDrop()));
@@ -313,13 +318,7 @@ void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
     // No promote hook: Make Polygon leaves the selection type alone (task 7132).
     reg.registerCommand("mesh.makePolygon", () => cast(Command)
         new MeshMakePolygon(&owner.activeMesh(), live.view(), live.mode()));
-    reg.registerCommand("mesh.select", () {
-        auto c = new MeshSelect(&owner.activeMesh(), live.view(), live.mode(), live.modeCell());
-        c.setPromoteHook(deps.promoteGeometryType());
-        // Viewport camera single-source (0181): see mesh.screenSlice above.
-        c.setResolvedVpProvider(deps.originSnapshot());
-        return cast(Command) c;
-    });
+    registerMeshSelectionCommand(reg.commandRegistry(), pilot);
     reg.registerCommand("mesh.transform", () {
         auto c = new MeshTransform(&owner.activeMesh(), live.view(), live.mode());
         // Viewport camera single-source (0181): see mesh.screenSlice above.

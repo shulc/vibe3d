@@ -88,6 +88,10 @@ private:
     CommandRegistry        commandRegistry_;
 
 public:
+    ref CommandRegistry commandRegistry() {
+        return commandRegistry_;
+    }
+
     void registerCommand(string id, CommandFactory factory) {
         commandRegistry_.registerCommand(id, factory);
     }
