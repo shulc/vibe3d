@@ -23,6 +23,13 @@ unittest { // Production seams, with scanner-blanked comments and literals.
         && occurrences(binding, "bindArgs(") == 0
         && occurrences(binding, "applyOrRefire(") == 0,
         "1D production binding must use the one lower invocation service");
+    assert(occurrences(invocation, "private:\n    CommandRegistry* registry;") == 1
+        && occurrences(invocation, "this(ref CommandRegistry registry,") == 1
+        && occurrences(invocation, "this.registry = &registry;") == 1
+        && occurrences(invocation, "ref CommandRegistry") == 1
+        && occurrences(invocation, "CommandRegistry*") == 1
+        && occurrences(invocation, "return registry;") == 0,
+        "1D lower service must privately borrow one owner without exposing it");
     assert(occurrences(invocation,
         "executor.applyOrRefire(command, RecordMode.Coalescing, null)") == 1,
         "1D production script dispatch must retain null throw message");

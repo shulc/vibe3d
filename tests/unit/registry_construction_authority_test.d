@@ -59,7 +59,7 @@ private final class ReplacementProbeCommand : ProbeCommand {
 
 // A1/A5: a real application binding sees a command registered after an
 // ordinary family and after authority binding; enumeration grows live too.
-version (AccessRuntimeOnly) {} else unittest {
+version (AccessCensusOnly) {} else version (AccessRuntimeOnly) {} else unittest {
     auto rig = new LiveRegistrationRig;
     rig.registerLifecycle();
     const before = rig.registry.commandIds().length;
@@ -79,7 +79,7 @@ version (AccessRuntimeOnly) {} else unittest {
 }
 
 // A2: authority stays live after binding rather than retaining a snapshot.
-version (AccessRuntimeOnly) {} else unittest {
+version (AccessCensusOnly) {} else version (AccessRuntimeOnly) {} else unittest {
     auto rig = new LiveRegistrationRig;
     rig.registry.bindSelTypeAuthority(rig.liveSession());
     rig.session.selTypeOrder.touch(SelType.Item);
@@ -95,7 +95,7 @@ version (AccessRuntimeOnly) {} else unittest {
 
 // A3: the cold metadata door constructs through the same authority-aware
 // path. Its fallback is deliberately different, proving the cell discriminates.
-version (AccessRuntimeOnly) {} else unittest {
+version (AccessCensusOnly) {} else version (AccessRuntimeOnly) {} else unittest {
     auto rig = new LiveRegistrationRig;
     rig.session.switchGeometryType(EditMode.Polygons);
     rig.session.selTypeOrder.touch(SelType.Item);
@@ -117,7 +117,7 @@ version (AccessRuntimeOnly) {} else unittest {
 }
 
 // A4: registration and replacement are distinct operations.
-version (AccessRuntimeOnly) {} else unittest {
+version (AccessCensusOnly) {} else version (AccessRuntimeOnly) {} else unittest {
     Registry reg;
     CommandFactory factory = () => cast(Command)new ProbeCommand("k.one");
     reg.registerCommand("k.one", factory);
@@ -127,7 +127,7 @@ version (AccessRuntimeOnly) {} else unittest {
 
 // A6: an alias copies the factory value present at alias time; replacing the
 // source later cannot silently retarget the alias.
-version (AccessRuntimeOnly) {} else unittest {
+version (AccessCensusOnly) {} else version (AccessRuntimeOnly) {} else unittest {
     Registry reg;
     reg.registerCommand("k.original",
         () => cast(Command)new OriginalProbeCommand("k.original"));
@@ -144,7 +144,7 @@ version (AccessRuntimeOnly) {} else unittest {
 
 // A7: the latch rejects late authority after an unbound construction, while
 // the honest bind-then-build order succeeds and carries the authority.
-version (AccessRuntimeOnly) {} else unittest {
+version (AccessCensusOnly) {} else version (AccessRuntimeOnly) {} else unittest {
     auto rig = new LiveRegistrationRig;
     Registry late;
     late.registerCommand("k.early",
@@ -164,7 +164,7 @@ version (AccessRuntimeOnly) {} else unittest {
 
 // Existing unknown-id behavior remains an exception at the application
 // binding and cannot create a history entry.
-version (AccessRuntimeOnly) {} else unittest {
+version (AccessCensusOnly) {} else version (AccessRuntimeOnly) {} else unittest {
     auto rig = new LiveRegistrationRig;
     const before = rig.history.undoEntries.length;
     bool threw;
