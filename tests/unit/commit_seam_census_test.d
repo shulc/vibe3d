@@ -3891,16 +3891,16 @@ unittest // L0-b — the hole a zone boundary leaves: packages/interaction-query
 
     string firstHit;
     immutable size_t raw = countRawPositionWrites(sy, firstHit);
-    assert(raw == 12,
-        format("packages/interaction-query/source/symmetry.d: %d raw position writes under §5.7, expected exactly 12 "
-             ~ "(five production and seven fixtures). Every allowed spelling is named "
+    assert(raw == 5,
+        format("packages/interaction-query/source/symmetry.d: %d raw position writes under §5.7, expected exactly 5 "
+             ~ "production writes. The seven transferred fixture writes are checked separately below. Every allowed spelling is named "
              ~ "below; an extra or missing write must fail. First hit: `%s`.", raw, firstHit));
 
     // The two-sided half — WHICH writes the allowance covers. The count row
-    // above reads 12 for ANY twelve raw writes, so a production write swapped
+    // above reads 5 for ANY five raw writes, so a production write swapped
     // for a differently-spelled one, or a fixture deleted while a production
     // one was added, would keep it green. This is the loop_slice.d idiom, run
-    // over the whole file because every one of the twelve is enumerable.
+    // over the whole file because every one of the five is enumerable.
     static immutable string[2][] kAllowedSymmetryWrites = [
         // --- the two PRODUCTION writes, the ones L0-b's deltas depend on ---
         ["(i, p) { mesh.vertices[i] = p; }", "2"],
@@ -3909,10 +3909,6 @@ unittest // L0-b — the hole a zone boundary leaves: packages/interaction-query
         // --- the shared corner-order Move stores (task 9504) ---
         ["mesh.vertices[vi]=points[i];", "1"],
         ["mesh.vertices[pi]=i<partners.length ? partners[i] : mirrorPosition(*sp,points[i]);", "1"],
-        // --- the seven unittest-FIXTURE writes, a local mesh with no batch ---
-        ["m.vertices[2] = baseline[2] + delta;", "2"],
-        ["m.vertices[4] = baseline[4];", "1"],
-        ["m.vertices[2].y += DRAG_Y;", "4"],
     ];
     size_t named = 0;
     foreach (row; kAllowedSymmetryWrites) {
@@ -3922,8 +3918,8 @@ unittest // L0-b — the hole a zone boundary leaves: packages/interaction-query
         assert(got == want,
             format("packages/interaction-query/source/symmetry.d spells `%s` %d time(s); the L0-b "
                  ~ "allowance is for exactly %d. Every one of this file's "
-                 ~ "twelve raw position writes is named here, so a count row "
-                 ~ "that still reads 12 over a DIFFERENT set of writes cannot "
+                 ~ "five raw position writes is named here, so a count row "
+                 ~ "that still reads 5 over a DIFFERENT set of writes cannot "
                  ~ "hide behind the total.", row[0], got, want));
         named += got;
     }
@@ -3934,6 +3930,29 @@ unittest // L0-b — the hole a zone boundary leaves: packages/interaction-query
              ~ "names, or a named spelling is being counted twice by the "
              ~ "predicate. Neither half is trustworthy until they agree.",
                named, raw));
+
+    // Task 20262020: the old12 is exactly production5 plus carrier7;
+    // byte-preserved transferred blocks are inventoried in the C receipts.
+    const fixture = readCode(buildPath(repoRoot, "packages/interaction-query/tests/source/tests/unit/symmetry_regression_test.d"));
+    string fixtureHit;
+    const fixtureRaw = countRawPositionWrites(fixture, fixtureHit);
+    assert(fixtureRaw == 7,
+        format("symmetry transferred fixture raw-write population: %d, expected 7", fixtureRaw));
+    static immutable string[2][] fixtureWrites = [
+        ["m.vertices[2] = baseline[2] + delta;", "2"],
+        ["m.vertices[4] = baseline[4];", "1"],
+        ["m.vertices[2].y += DRAG_Y;", "4"],
+    ];
+    size_t fixtureNamed;
+    foreach (row; fixtureWrites) {
+        import std.conv : to;
+        const want = row[1].to!size_t;
+        const got = countOccurrences(fixture, row[0]);
+        assert(got == want, format("symmetry transferred fixture spelling `%s`: %d, expected %d", row[0], got, want));
+        fixtureNamed += got;
+    }
+    assert(fixtureNamed == fixtureRaw,
+        "symmetry transferred fixture spellings account for every raw write");
 }
 
 unittest // L0-b — the recorder pins, one per command

@@ -44,18 +44,18 @@ unittest {
     assert(roster("placementPlaneHit(") == ["tools/create/create_common.d:3"],
         format("placementPlaneHit( roster: %s", roster("placementPlaneHit(")));
     // ui/viewport_render.d: the perspective work-plane lattice's offset (task 9509, K-GR rule 3).
-    assert(roster("viewWorkPlaneAnchor(") == ["tools/create/create_common.d:1",
-                                              "ui/viewport_render.d:1", "viewgrid.d:1"],
+    assert(roster("viewWorkPlaneAnchor(") == ["../packages/interaction-query/source/viewgrid.d:1",
+                                              "tools/create/create_common.d:1", "ui/viewport_render.d:1"],
         format("viewWorkPlaneAnchor( roster: %s", roster("viewWorkPlaneAnchor(")));
     // One body of the anchor's rounding.
-    assert(roster("Vec3 niceOrigin(") == ["viewgrid.d:1"],
+    assert(roster("Vec3 niceOrigin(") == ["../packages/interaction-query/source/viewgrid.d:1"],
         format("niceOrigin definitions: %s", roster("Vec3 niceOrigin(")));
     // Task 9415 (P1): the pen's first point is the create click; its own
     // anchor rounding, quantum and the temporary re-export are gone. Polarity:
     // before P1 pen.d held niceOrigin 1 / relocateQuantum 1 / placementQuantum 3.
-    assert(roster("niceOrigin(") == ["tools/transform/relocate_plane_test.d:9", "viewgrid.d:2"],
+    assert(roster("niceOrigin(") == ["../packages/interaction-query/source/viewgrid.d:2", "tools/transform/relocate_plane_test.d:9"],
         format("niceOrigin( roster: %s", roster("niceOrigin(")));
-    assert(roster("relocateQuantum(") == ["tools/transform/relocate_plane_test.d:2", "viewgrid.d:2"],
+    assert(roster("relocateQuantum(") == ["../packages/interaction-query/source/viewgrid.d:2", "tools/transform/relocate_plane_test.d:2"],
         format("relocateQuantum( roster: %s", roster("relocateQuantum(")));
     assert(roster("placementQuantum") == [] && roster("clickAnchor") == [],
         format("the pen's own click anchor returned: %s %s", roster("placementQuantum"),

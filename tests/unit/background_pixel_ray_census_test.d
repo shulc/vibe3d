@@ -171,7 +171,7 @@ unittest { // (a) the ONE background query: `.nearest` in the CONS stage only; i
         foreach (_; 0 .. memberNearest(code)) nearestHomes ~= f;
         foreach (form; forms) {
             immutable n = tokenAt(code, form).length;
-            if (f == "toolpipe/stages/constrain.d") { inStage[form] = n; continue; }
+            if (f == "../packages/pipe-evaluation/source/toolpipe/stages/constrain.d") { inStage[form] = n; continue; }
             foreach (_; 0 .. n) clients ~= f ~ ":" ~ form;
         }
     }
@@ -182,7 +182,7 @@ unittest { // (a) the ONE background query: `.nearest` in the CONS stage only; i
     assert(inStage == ["backgroundHit": size_t(2), "rayHit": 3, "rayHitAt": 2, "surfaceOnRay": 4,
                        "surfaceAt": 1],
         format("census floor: the stage's own form tokens (measured); got %s", inStage));
-    assert(nearestHomes == ["toolpipe/stages/constrain.d"],
+    assert(nearestHomes == ["../packages/pipe-evaluation/source/toolpipe/stages/constrain.d"],
         format("`.nearest` outside bvh_pick.d must be exactly constrain.d's `backgroundHit`; a client "
                ~ "calling the picker builds its own query: %s", nearestHomes));
     enum pen = "tools/edit/topology_pen/tool.d:";
@@ -207,7 +207,7 @@ unittest { // (b) the ONE CONS finder over g_pipeCtx: inline finders outside con
         immutable raw  = readText(buildPath(root, "source", f));
         immutable code = blankNonCode(raw);
         immutable t = consTaskFinders(code), i = consIdFinders(code, raw), c = consCastFinders(code);
-        if (f == "toolpipe/stages/constrain.d") { inStage = t; idInStage = i; castInStage = c; continue; }
+        if (f == "../packages/pipe-evaluation/source/toolpipe/stages/constrain.d") { inStage = t; idInStage = i; castInStage = c; continue; }
         foreach (_; 0 .. t) taskFinders ~= f;
         foreach (_; 0 .. i) idFinders ~= f;
         foreach (_; 0 .. c) castFinders ~= f;

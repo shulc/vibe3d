@@ -476,13 +476,22 @@ unittest { // W-2a/W-2b: the mutable writer surface is an exact ledger.
         "prepared_pipe_activation.d 1\n" ~
         "prepared_topology_pen_activation.d 1\n" ~
         "toolpipe/stages/actcenter.d 13\n" ~
-        "toolpipe/stages/axis.d 9\n" ~
-        "toolpipe/stages/constrain.d 4\n" ~
-        "toolpipe/stages/falloff.d 7\n";
+        "toolpipe/stages/axis.d 7\n" ~
+        "toolpipe/stages/constrain.d 3\n" ~
+        "toolpipe/stages/falloff.d 5\n";
     assert(lockAndLiteralWriters == expectedLockAndLiteralWriters,
         "W-2a a lock/mode/literal attribute writer changed; route a claimable "
         ~ "writer through noteUserStageChoice or record its disposition:\n"
         ~ lockAndLiteralWriters);
+
+    // Task 20262020: original axis2/constrain1/falloff2 fixture writes
+    // moved verbatim; retain their exact accounting outside production.
+    const fixture = commentsBlanked(readText(buildPath(repoRoot,
+        "packages/pipe-evaluation/tests/source/tests/unit/toolpipe/prepared_stage_regression_test.d")));
+    size_t fixtureWrites;
+    foreach (_; fixture.matchAll(regex(`userLocked\s*=(?!=)|\.setUserMode\(|setAttr\("(type|mode)"`)))
+        ++fixtureWrites;
+    assert(fixtureWrites == 5, "W-2a transferred preset fixture writer population");
 
     const variableAttributeWriters = writerLedger(`\.setAttr\((?!")`);
     const expectedVariableAttributeWriters =

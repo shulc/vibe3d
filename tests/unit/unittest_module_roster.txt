@@ -25,7 +25,6 @@ commands.select.by_tag
 commands.select.element
 commands.select.type_from
 commands.workplane
-constraint
 drag
 drag_identity
 edge_bevel_offset_cube_test
@@ -215,6 +214,7 @@ tests.unit.commit_seam_census_test
 tests.unit.composite_fold_census_test
 tests.unit.config_probe
 tests.unit.confined_publisher_census_test
+tests.unit.constraint_regression_test
 tests.unit.constraint_surface_at_test
 tests.unit.constraint_test
 tests.unit.coord_rounding_test
@@ -498,6 +498,7 @@ tests.unit.snap_election_corpus_test
 tests.unit.snap_guide_registry_test
 tests.unit.snap_near_occluder_test
 tests.unit.snap_overlay_test
+tests.unit.snap_regression_test
 tests.unit.snap_test
 tests.unit.snap_visibility_corpus_test
 tests.unit.snapshot_test
@@ -514,6 +515,7 @@ tests.unit.subpatch_osd_test
 tests.unit.surface_defaults_test
 tests.unit.surface_pack_test
 tests.unit.surface_smoothing_census_test
+tests.unit.symmetry_regression_test
 tests.unit.symmetry_test
 tests.unit.test_mode_request_census_test
 tests.unit.test_mode_request_gate_test
@@ -552,10 +554,13 @@ tests.unit.tool_state_owned_route_test
 tests.unit.toolchain_floor_test
 tests.unit.toolpipe.attr_cache_test
 tests.unit.toolpipe.local_component_frame_test
+tests.unit.toolpipe.obbox_regression_test
 tests.unit.toolpipe.obbox_test
 tests.unit.toolpipe.packets_test
 tests.unit.toolpipe.pipeline_order_test
+tests.unit.toolpipe.prepared_stage_regression_test
 tests.unit.toolpipe.required_packets_witness_test
+tests.unit.toolpipe.snap_stage_regression_test
 tests.unit.toolpipe.stages.actcenter_test
 tests.unit.toolpipe.stages.axis_test
 tests.unit.toolpipe.stages.constrain_test
@@ -662,6 +667,7 @@ tests.unit.vertex_extrude_apex_law_test
 tests.unit.vertex_normals_test
 tests.unit.view_test
 tests.unit.view_work_plane_anchor_census_test
+tests.unit.viewgrid_regression_test
 tests.unit.viewgrid_test
 tests.unit.viewport_cell_display_prefs_test
 tests.unit.viewport_composite_test
@@ -694,7 +700,6 @@ tool
 tool_disarm
 tool_input
 tool_presets
-toolpipe.obbox
 toolpipe.pipeline
 toolpipe.stages.actcenter
 toolpipe.stages.axis
@@ -741,5 +746,4 @@ unit.bevel_cold_arm_param_image_test
 unit.prepared_param_update_test
 unit.prepared_tool_transition_test
 view
-viewgrid
 weightmap_view
