@@ -26,7 +26,10 @@ private string sourcePin;
 private string digest(string path) { return read(path).sha256Of.toHexString.idup; }
 private JSONValue[] jsonRows(string text) {
     JSONValue[] rows;
-    foreach (line; text.split("\n")) if (line.strip.length) rows ~= parseJSON(line);
+    foreach (line; text.split("\n")) if (line.strip.length) {
+        try { rows ~= parseJSON(line); }
+        catch (Exception error) { assert(false, "CLI JSONL: non-JSON physical output row " ~ line ~ " error=" ~ error.msg); }
+    }
     return rows;
 }
 private void command(string id, string params = "") {

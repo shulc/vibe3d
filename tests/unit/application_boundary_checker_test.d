@@ -27,5 +27,11 @@ unittest {
         if (onlyUnittest) command ~= "--unittest";
         auto result = execute(command);
         assert(result.status == 0, "production independent boundary witness: " ~ result.output);
+        if (onlyProduction) {
+            command = ["python3", buildPath(repoRoot, "tools", "check_standalone_boundary.py"),
+                "--root", buildPath(repoRoot, "tools", "cli"), "--compiler", "dmd"];
+            auto cli = execute(command);
+            assert(cli.status == 0, "CLI production independent boundary witness: " ~ cli.output);
+        }
     }
 }
