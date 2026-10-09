@@ -24,10 +24,10 @@ import std.regex : ctRegex, matchAll;
 import std.string : count, indexOf, split, splitLines, startsWith, strip;
 
 import buttonset : ActionKind, allButtons, loadButtons;
-import tests.unit.census_symbols : blankNonCode, balancedSpan, registrationFamilyText;
+import tests.unit.census_symbols : blankNonCode, balancedSpan, registrationFamilyText, pilotRegistrationIds;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-private enum registeredIdRe = ctRegex!(`(?:reg|registry)\.registerCommand\(\s*"([^"]+)"\s*,`);
+private enum registeredIdRe = ctRegex!(`reg\.registerCommand\(\s*"([^"]+)"\s*,`);
 private enum aliasIdRe = ctRegex!(`reg\.aliasCommand\(\s*"[^"]+"\s*,\s*"([^"]+)"`);
 private enum pairedRegisteredIdRe = ctRegex!(
     `registerHeadlessTool\s*!\s*(?:[A-Za-z_]\w*|\(\s*[A-Za-z_]\w*\s*(?:,\s*[A-Za-z_]\w*\s*)?\))\s*\(\s*reg\s*,\s*"([^"]+)"\s*,\s*\(\s*\)\s*\{`);
@@ -166,6 +166,9 @@ private string[] registeredCommandIds()
     bool[string] seen;
     foreach (m; matchAll(registration, registeredIdRe))
         seen[m[1].idup] = true;
+    const pilot = pilotRegistrationIds(readText(
+        buildPath(repoRoot, "source", "pilot_command_registration.d")));
+    foreach (id; pilot) seen[id] = true;
     foreach (m; matchAll(registration, aliasIdRe))
         seen[m[1].idup] = true;
     const paired = pairedRegisteredIds(registration);
@@ -352,4 +355,17 @@ unittest {
         assertThrown!AssertError(pairedRegisteredIds(bad));
     assert(pairedRegisteredIds("// registerHeadlessTool!ExampleTool" ~ suffix).length == 0,
         "paired comments do not contribute ids");
+}
+
+unittest {
+    const legacy = `void registerExampleCommands(ref Registry reg) {
+        reg.registerCommand("legacy.example", factory);
+        registry.registerCommand("unrelated.example", factory);
+    }`;
+    string[] ids;
+    foreach (m; matchAll(legacy, registeredIdRe)) ids ~= m[1].idup;
+    assert(ids == ["legacy.example"], "1D legacy command scanner retains reg-only receiver");
+    const registered = registeredCommandIds();
+    foreach (id; ["mesh.triple", "mesh.select", "history.undo", "history.redo"])
+        assert(registered.canFind(id), "1D surface census includes bounded pilot ID: " ~ id);
 }

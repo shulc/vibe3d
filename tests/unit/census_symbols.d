@@ -92,11 +92,13 @@ module tests.unit.census_symbols;
 import std.algorithm : canFind, find, sort;
 import std.array     : appender, join;
 import std.conv      : to;
+import std.exception : assertThrown;
+import core.exception : AssertError;
 import std.file      : dirEntries, exists, isFile, readText, SpanMode;
 import std.format    : format;
 import std.path      : baseName, buildPath, dirName;
-import std.regex     : ctRegex, matchAll;
-import std.string    : indexOf, lastIndexOf, split, strip;
+import std.regex     : ctRegex, matchAll, regex;
+import std.string    : indexOf, lastIndexOf, replace, split, strip;
 
 package bool isIdentChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
@@ -185,23 +187,17 @@ package(tests.unit) string registrationFamilyText(string repoRoot) {
                 "registerHistoryNavigationCommands"];
             enum callers = ["mesh_command_registration.d", "mesh_command_registration.d",
                 "history_macro_registration.d"];
-            string[] entries;
-            foreach (m; matchAll(code, ctRegex!(`\bvoid\s+(register[A-Za-z0-9_]*)\s*\(`)))
-                entries ~= m[1].idup;
-            assert(entries == names, "1D common registrar exact three entry identities");
-            const normalized = code.split.join(" ");
+            pilotRegistrationIds(source);
             foreach (i, name; names) {
-                const tail = i == 2 ? ", CommandHistory history) {" : ") {";
-                const header = "void " ~ name
-                    ~ "(Registrar)(ref Registrar registry, PilotCommandDeps deps" ~ tail;
-                assert(countOccurrences(normalized, header) == 1,
-                    "1D common registrar supported template signature: " ~ name);
                 const caller = blankNonCode(readText(buildPath(sourceDir, callers[i])));
                 assert(countOccurrences(caller, name ~ "(") == 1,
                     "1D common registrar exact desktop caller: " ~ name);
+                size_t supportedCalls;
+                foreach (_; matchAll(caller, regex("\\b" ~ name ~ "\\s*\\(\\s*reg\\s*,")))
+                    ++supportedCalls;
+                assert(supportedCalls == 1,
+                    "1D common registrar supported desktop reg receiver: " ~ name);
             }
-            assert(countOccurrences(code, "registry.registerCommand(") == 4,
-                "1D common registrar exact four supported registration sites");
         } else if (path != parentPath) {
             string[] entries;
             foreach (m; matchAll(code, legacyEntry)) entries ~= m[1].idup;
@@ -213,6 +209,45 @@ package(tests.unit) string registrationFamilyText(string repoRoot) {
         }
         result ~= source;
     }
+    return result;
+}
+
+/// Only the frozen pilot bodies admit the `registry` receiver. The returned
+/// IDs are read from those bodies, with comments excluded from the projection.
+package(tests.unit) string[] pilotRegistrationIds(string source) {
+    enum names = ["registerTripleCommand", "registerMeshSelectionCommand",
+        "registerHistoryNavigationCommands"];
+    enum expected = [["mesh.triple"], ["mesh.select"], ["history.undo", "history.redo"]];
+    const code = blankNonCode(source);
+    const literals = blankNonCode(source, true);
+    auto visible = source.dup;
+    foreach (i; 0 .. visible.length)
+        if (code[i] != literals[i]) visible[i] = code[i];
+    string[] entries;
+    foreach (m; matchAll(code, ctRegex!(`\bvoid\s+(register[A-Za-z0-9_]*)\s*\(`)))
+        entries ~= m[1].idup;
+    assert(entries == names, "1D common registrar exact three entry identities");
+    const normalized = code.split.join(" ");
+    string[] result;
+    foreach (i, name; names) {
+        const tail = i == 2 ? ", CommandHistory history) {" : ") {";
+        const header = "void " ~ name
+            ~ "(Registrar)(ref Registrar registry, PilotCommandDeps deps" ~ tail;
+        assert(countOccurrences(normalized, header) == 1,
+            "1D common registrar supported template signature: " ~ name);
+        const declaration = matchAll(code, regex("\\bvoid\\s+" ~ name ~ "\\s*\\(")).front.pre.length;
+        const open = cast(size_t) declaration + cast(size_t) code[declaration .. $].indexOf('{');
+        const body = balancedSpan(code, open, '{', '}');
+        assert(body.length != 0, "1D common registrar balanced pilot body: " ~ name);
+        string[] ids;
+        foreach (m; matchAll(visible[open .. open + body.length],
+                ctRegex!(`\bregistry\s*\.\s*registerCommand\s*\(\s*"([^"]+)"\s*,`)))
+            ids ~= m[1].idup;
+        assert(ids == expected[i], "1D common registrar exact pilot IDs and receiver: " ~ name);
+        result ~= ids;
+    }
+    assert(countIdent(code, "registerCommand") == 4,
+        "1D common registrar exact four supported registration sites");
     return result;
 }
 
@@ -1421,4 +1456,38 @@ unittest {
       ~ "naming aggregates but losing their members — which is the `C.run` → "
       ~ "`C` bug the first cell in this file exists for, and it would merge "
       ~ "ledger keys rather than break a build.", nWithMembers, nFiles));
+}
+
+unittest {
+    enum probe = `void registerTripleCommand(Registrar)(ref Registrar registry, PilotCommandDeps deps) {
+        registry.registerCommand("mesh.triple", factory);
+    }
+    void registerMeshSelectionCommand(Registrar)(ref Registrar registry, PilotCommandDeps deps) {
+        registry.registerCommand("mesh.select", factory);
+    }
+    void registerHistoryNavigationCommands(Registrar)(ref Registrar registry, PilotCommandDeps deps, CommandHistory history) {
+        registry.registerCommand("history.undo", factory);
+        registry.registerCommand("history.redo", factory);
+    }`;
+    assert(pilotRegistrationIds(probe) == ["mesh.triple", "mesh.select", "history.undo", "history.redo"],
+        "1D bounded pilot scanner positive");
+    assert(pilotRegistrationIds(probe.replace(`registry.registerCommand("mesh.triple", factory);`,
+            `/* registry.registerCommand("comment.example", factory); */ registry.registerCommand("mesh.triple", factory);`))
+        == ["mesh.triple", "mesh.select", "history.undo", "history.redo"],
+        "1D bounded pilot scanner excludes comments");
+    void rejected(string bad, string reason) {
+        assert(assertThrown!AssertError(pilotRegistrationIds(bad)).msg.canFind(reason),
+            "1D bounded pilot scanner named refusal: " ~ reason);
+    }
+    rejected(probe.replace(`"mesh.triple"`, `"mesh.select"`), "exact pilot IDs and receiver");
+    rejected(probe.replace(`registry.registerCommand("history.undo", factory);`, ``), "exact pilot IDs and receiver");
+    rejected(probe.replace(`registry.registerCommand("history.redo"`, `other.registerCommand("history.redo"`),
+        "exact pilot IDs and receiver");
+    rejected(probe.replace(`registry.registerCommand("mesh.triple", factory);`,
+        `registry.registerCommand("mesh.triple", factory); registry.registerCommand("mesh.triple", factory);`),
+        "exact pilot IDs and receiver");
+    rejected(probe ~ ` registry.registerCommand("outside.example", factory);`, "exact four supported registration sites");
+    rejected(probe[0 .. $ - 1], "balanced pilot body");
+    rejected(probe.replace("registerTripleCommand", "registerOtherCommand"), "exact three entry identities");
+    rejected(probe.replace("ref Registrar registry", "Registrar registry"), "supported template signature");
 }
