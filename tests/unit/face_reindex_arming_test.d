@@ -1465,7 +1465,7 @@ private string[] productionSourceTree()
     assert(exists(srcDir) && isDir(srcDir),
            "the flag census cannot find source/ at " ~ srcDir);
     string[] targets;
-    foreach (scanSourceRoot; [srcDir, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [srcDir, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile) continue;
         if (entry.name.length < 2 || entry.name[$ - 2 .. $] != ".d") continue;

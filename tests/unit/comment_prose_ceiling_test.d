@@ -132,7 +132,7 @@ private Ledger parseLedger(string text, string origin)
                 break;
             case "allow":
                 assert(words.length == 3,
-                       format("%s:%d: expected `allow source/path.d N`", origin, lineNo));
+                       format("%s:%d: expected `allow packages/interaction-query/source/path.d N`", origin, lineNo));
                 assert((words[1] in result.allowance) is null,
                        format("%s:%d: duplicate allowance row for %s",
                               origin, lineNo, words[1]));
@@ -142,7 +142,7 @@ private Ledger parseLedger(string text, string origin)
                 break;
             case "allow-runs":
                 assert(words.length == 3,
-                       format("%s:%d: expected `allow-runs source/path.d N`", origin, lineNo));
+                       format("%s:%d: expected `allow-runs packages/interaction-query/source/path.d N`", origin, lineNo));
                 assert((words[1] in result.runAllowance) is null,
                        format("%s:%d: duplicate long-run allowance row for %s",
                               origin, lineNo, words[1]));
@@ -232,7 +232,7 @@ private FileCount[] scanSourceTree(string root)
     if (!isDir(sourceDir)) return [];
 
     auto found = appender!(FileCount[]);
-    foreach (scanSourceRoot; [sourceDir, buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source")])
+    foreach (scanSourceRoot; [sourceDir, buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source")])
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth))
     {
         if (!entry.isFile || !entry.name.endsWith(".d")) continue;

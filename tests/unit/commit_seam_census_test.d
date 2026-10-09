@@ -426,7 +426,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
     enum kGuard = "scope(failure) mesh.abortEditBatch();";
 
     string[] callers;
-    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (e.name == meshPath) continue;
         immutable src = readCode(e.name);
@@ -1847,7 +1847,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
         immutable srcRoot2 = buildPath(repoRoot, "source");
         string[] qualified;
         size_t scanned2 = 0;
-        foreach (scanSourceRoot; [srcRoot2, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+        foreach (scanSourceRoot; [srcRoot2, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned2;
             immutable src2 = readCode(e.name);
@@ -2187,7 +2187,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
         immutable srcRootF2 = buildPath(repoRoot, "source");
         string[] qualifiedF2;
         size_t scannedF2 = 0;
-        foreach (scanSourceRoot; [srcRootF2, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+        foreach (scanSourceRoot; [srcRootF2, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scannedF2;
             immutable srcF2 = readCode(e.name);
@@ -2606,7 +2606,7 @@ unittest // Stage G — the manifold edge bevel family
         import std.file : dirEntries, SpanMode;
         size_t scanned = 0;
         string[] offenders;
-        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned;
             immutable t = readCode(de.name);
@@ -2866,7 +2866,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
         import std.file : dirEntries, SpanMode;
         size_t scanned = 0;
         string[][string] offenders;
-        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned;
             immutable t = readCode(de.name);
@@ -3248,7 +3248,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         import std.path : relativePath;
         import std.string : replace;
 
-        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
 
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
@@ -3379,7 +3379,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         import std.string : replace;
 
         immutable srcRoot = buildPath(repoRoot, "source");
-        foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+        foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
             ++filesScanned;
@@ -3568,7 +3568,7 @@ unittest // L0-d — the nine files hold no raw position write
     assert(kL0dPositionCommands.length == 9,
         "the L0-d roster is no longer nine commands. §L0-d's scope IS exactly "
       ~ "nine files; `transform.d`/`symmetrize.d` have their own roster in the "
-      ~ "L0-b block below (they write through source/symmetry.d, which needs a "
+      ~ "L0-b block below (they write through packages/interaction-query/source/symmetry.d, which needs a "
       ~ "kAllow row this one does not), and `move_vertex.d` is L0-e (its "
       ~ "forward is deliberately version-silent).");
     auto sorted = kL0dPositionCommands.dup;
@@ -3682,7 +3682,7 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
     // and are now `== 0` rows of their own, in the L0-b block below. Their
     // seven writes are the whole of the drop from 15 to 8 — and the row that
     // matters for them is NOT this one: their forward writer moved into
-    // `source/symmetry.d`, which neither census zone scans, so the L0-b block
+    // `packages/interaction-query/source/symmetry.d`, which neither census zone scans, so the L0-b block
     // brings that file in by name (the `deform_magnet.d` shape).
     //
     // `edge_join.d:2` LEFT this list at task 2310. Its two writes were the
@@ -3789,11 +3789,11 @@ unittest // L0-d — the hole a zone boundary leaves: deform_magnet.d
 
 // ---------------------------------------------------------------------------
 // TASK 1903 L0-b — `transform` + `symmetrize`, the two commands that write
-// through `source/symmetry.d`
+// through `packages/interaction-query/source/symmetry.d`
 //
 // WHY THIS IS A SEPARATE BLOCK FROM L0-d'S AND NOT TWO MORE LITERALS IN ITS
 // ROSTER. Both commands' forward position writes happen in
-// `source/symmetry.d` — `applySymmetryMirror` and `applySymmetryMirrorDelta` —
+// `packages/interaction-query/source/symmetry.d` — `applySymmetryMirror` and `applySymmetryMirrorDelta` —
 // a module NEITHER census zone scans (`packages/mesh-ops/source/mesh_ops/**` +
 // `source/commands/**`) and whose signature belongs to Stage M / task 1905
 // (`source/tools/transform/**` are its other callers). `symmetrize` has ZERO
@@ -3804,7 +3804,7 @@ unittest // L0-d — the hole a zone boundary leaves: deform_magnet.d
 // here and they are not the same thing:
 //
 //   1. the two `== 0` rows — the TEXT half, per file;
-//   2. `source/symmetry.d`'s two-sided `kAllow` row: the COUNT, plus every
+//   2. `packages/interaction-query/source/symmetry.d`'s two-sided `kAllow` row: the COUNT, plus every
 //      one of its eleven raw writes named by exact text, four production and
 //      seven unittest-fixture;
 //   3. the RECORDER PIN on each command — `recordPositionDiff(` present
@@ -3858,7 +3858,7 @@ unittest // L0-b — the two files hold no raw position write
                  ~ "difference is the point of the L0-b group: this command's "
                  ~ "FORWARD writer never lived in this file. It is "
                  ~ "`applySymmetryMirror` / `applySymmetryMirrorDelta` in "
-                 ~ "source/symmetry.d, which neither census zone scans, so "
+                 ~ "packages/interaction-query/source/symmetry.d, which neither census zone scans, so "
                  ~ "this row read 0 for the forward before the migration and "
                  ~ "reads 0 after it. What moved it off its old count is the "
                  ~ "REVERT loop. The halves that can tell a recording build "
@@ -3870,19 +3870,19 @@ unittest // L0-b — the two files hold no raw position write
     }
 }
 
-unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
+unittest // L0-b — the hole a zone boundary leaves: packages/interaction-query/source/symmetry.d
 {
     // THE ROW THIS BLOCK EXISTS FOR, and it is `deform_magnet.d`'s shape with
     // a wider mouth: TWO writer functions (each storing through the one
     // mirror walker, task 9410), TWO production writes, and TWO commands
     // depending on them.
-    immutable path = buildPath(repoRoot, "source", "symmetry.d");
-    assert(exists(path), "cannot find source/symmetry.d at " ~ path);
+    immutable path = buildPath(repoRoot, "packages/interaction-query/source", "symmetry.d");
+    assert(exists(path), "cannot find packages/interaction-query/source/symmetry.d at " ~ path);
     immutable sy = readCode(path);
 
     assert(countOccurrences(sy, "void applySymmetryMirror(Mesh* mesh,") == 1
         && countOccurrences(sy, "void applySymmetryMirrorDelta(Mesh* mesh,") == 1,
-        "source/symmetry.d no longer declares BOTH `applySymmetryMirror` and "
+        "packages/interaction-query/source/symmetry.d no longer declares BOTH `applySymmetryMirror` and "
       ~ "`applySymmetryMirrorDelta` with a `Mesh*` receiver — the comment "
       ~ "stripper ate the file, or a signature changed. The counts below would "
       ~ "be 0 for the wrong reason, and a receiver change is exactly what task "
@@ -3892,7 +3892,7 @@ unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
     string firstHit;
     immutable size_t raw = countRawPositionWrites(sy, firstHit);
     assert(raw == 12,
-        format("source/symmetry.d: %d raw position writes under §5.7, expected exactly 12 "
+        format("packages/interaction-query/source/symmetry.d: %d raw position writes under §5.7, expected exactly 12 "
              ~ "(five production and seven fixtures). Every allowed spelling is named "
              ~ "below; an extra or missing write must fail. First hit: `%s`.", raw, firstHit));
 
@@ -3920,7 +3920,7 @@ unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
         immutable size_t want = row[1].to!size_t;
         immutable size_t got  = countOccurrences(sy, row[0]);
         assert(got == want,
-            format("source/symmetry.d spells `%s` %d time(s); the L0-b "
+            format("packages/interaction-query/source/symmetry.d spells `%s` %d time(s); the L0-b "
                  ~ "allowance is for exactly %d. Every one of this file's "
                  ~ "twelve raw position writes is named here, so a count row "
                  ~ "that still reads 12 over a DIFFERENT set of writes cannot "
@@ -3929,7 +3929,7 @@ unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
     }
     assert(named == raw,
         format("the L0-b allowance names %d raw position write(s) but the "
-             ~ "predicate counts %d in source/symmetry.d. The two halves of "
+             ~ "predicate counts %d in packages/interaction-query/source/symmetry.d. The two halves of "
              ~ "this row have drifted: either a write was added that no row "
              ~ "names, or a named spelling is being counted twice by the "
              ~ "predicate. Neither half is trustworthy until they agree.",
@@ -3962,7 +3962,7 @@ unittest // L0-b — the recorder pins, one per command
     ];
     LedgerHit[] hits;
     size_t filesRead;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = e.name[repoRoot.length + 1 .. $];
         const src = readCode(e.name);
@@ -4002,7 +4002,7 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
     immutable srcRoot = buildPath(repoRoot, "source");
     size_t scanned = 0;
     string[] sites;
-    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         immutable src = readCode(e.name);
@@ -4037,7 +4037,7 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
 // TASK 2310 — THE FIFTH ZONE: `packages/common/source/mesh.d` ITSELF
 //
 // WHY IT IS HERE AT ALL. `countRawPositionWrites` scans `packages/mesh-ops/source/mesh_ops/*.d`,
-// `source/commands/mesh/*.d`, `source/symmetry.d` and `source/deform_magnet.d`
+// `source/commands/mesh/*.d`, `packages/interaction-query/source/symmetry.d` and `source/deform_magnet.d`
 // — never `packages/common/source/mesh.d`. Four raw position writes on the LIVE subject mesh
 // were sitting in that hole: `collapseVerticesByMask`'s `vertices[i] = target`,
 // `weldVerticesByMask`'s average arm, `weldVertexPair`'s snap, and (in the

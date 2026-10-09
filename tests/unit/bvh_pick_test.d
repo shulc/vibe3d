@@ -553,3 +553,35 @@ unittest {
         ~ "; the (uploadVersion, mesh address) key has lost its address term");
 }
 
+
+// Task 20262020: real GPU metadata crosses both facade methods; cage and product coordinates differ.
+unittest {
+    import std.math : PI, fabs;
+    import math : lookAt, perspectiveMatrix, translationMatrix;
+    Mesh src;
+    src.vertices = [Vec3(-1,0,-1), Vec3(1,0,-1), Vec3(1,0,1), Vec3(-1,0,1)];
+    src.faces = [cast(uint[])[0,3,2,1]];
+    GpuMesh gpu;
+    gpu.faceOriginGpu = [7];
+    assert(gpu.faceOriginGpu.length == 1 && src.faces.length == 1, "mapped host fixture population");
+    auto pick = new BvhPick;
+    SurfaceHit hit;
+    assert(pick.pickSurfaceRay(Vec3(0,5,0), Vec3(0,-1,0), src, ModelSpace.world(), hit));
+    assert(hit.face == 0, "null GPU preserves cage identity");
+    pick = new BvhPick;
+    assert(pick.pickSurfaceRay(Vec3(0,5,0), Vec3(0,-1,0), src, ModelSpace.world(), hit, &gpu));
+    assert(hit.face == 7, "ray facade forwards GPU face-origin mapping");
+    Vec3 eye = Vec3(0,5,0);
+    Viewport vp = Viewport(lookAt(eye,Vec3(0,0,0),Vec3(0,0,-1)),
+        perspectiveMatrix(PI/4,1,0.01f,100),200,200,0,0,eye);
+    assert(pick.pickSurface(100,100,vp,src,ModelSpace.world(),hit,&gpu));
+    assert(hit.face == 7 && fabs(hit.point.y) < 1e-4f, "screen facade forwards GPU mapping and viewport");
+    ModelSpace moved;
+    moved.m = translationMatrix(Vec3(0,2,0));
+    moved.mInv = translationMatrix(Vec3(0,-2,0));
+    moved.isIdentity = false; moved.invertible = true;
+    assert(pick.pickSurfaceRay(Vec3(0,5,0),Vec3(0,-1,0),src,moved,hit,&gpu));
+    assert(fabs(hit.point.y-2) < 1e-4f && fabs(hit.t-3) < 1e-4f, "host world hit honors supplied model space");
+    assert(pick.pickSurfaceRay(Vec3(0,5,0),Vec3(0,-1,0),src,moved,hit,&gpu,true));
+    assert(fabs(hit.productRoundedPoint.y-2) < 1e-4f && fabs(hit.preciseT-3) < 1e-4f, "host product-point flag forwards precise rounded world output");
+}

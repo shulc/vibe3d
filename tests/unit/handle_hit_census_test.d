@@ -47,7 +47,7 @@ static assert([__traits(allMembers, Handler)].canFind("onKeyDown"));
 
 unittest {
     string[] files;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) files ~= e.name;
     string[string] code;
     foreach (f; files) code[f] = blankNonCode(readText(f));

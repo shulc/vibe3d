@@ -124,7 +124,7 @@ private size_t consIdFinders(string code, string raw) {
 
 private string[] sourceFiles() {
     string[] o;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         o ~= relativePath(e.name, buildPath(root, "source")).replace("\\", "/");
     o.sort();
@@ -303,7 +303,7 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
     immutable op = blankNonCode(readText(buildPath(root, "packages", "common", "source", "operator.d")));
     assert(matchAll(op, regex(`if\s*\(auto s = vts\.get!SubjectPacket\(\)\) return s\.viewport;`)).array.length == 1,
         "viewportOf must read the event SubjectPacket");
-    immutable cons = blankNonCode(readText(buildPath(root, "source", "toolpipe", "stages", "constrain.d")));
+    immutable cons = blankNonCode(readText(buildPath(root, "packages/pipe-evaluation/source", "toolpipe", "stages", "constrain.d")));
     assert(matchAll(cons, regex(`rayHitAt\(subj\.cursorX, subj\.cursorY, subj\.viewport, sh, bgFull\)`)).array.length == 1,
         "surface publication must raycast the event pixel under its SubjectPacket viewport");
     string[] syncSites, ownViewport;

@@ -49,7 +49,7 @@
 //     tag list, i.e. put the stale list back => reddens B's population floor
 //     ("validated 28 tag(s) ... not the 29"), not C, because a list that
 //     changed SIZE is caught by the floor first. The in-source pin in
-//     `source/toolpipe/stages/actcenter.d` reddens in the same run, which is
+//     `packages/pipe-evaluation/source/toolpipe/stages/actcenter.d` reddens in the same run, which is
 //     how that pin was shown to be alive too. A stays green.
 //   * C -- `config/statusline.yaml`: SWAP two tags in the axis submenu, same
 //     count, different order => reddens C naming the provider, the entry

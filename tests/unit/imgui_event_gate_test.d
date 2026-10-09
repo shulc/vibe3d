@@ -231,7 +231,7 @@ unittest {
 
     string[] callers;
     size_t scanned;
-    foreach (scanSourceRoot; [sourceDir, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [sourceDir, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (!e.isFile) continue;
         scanned++;

@@ -51,7 +51,7 @@ private void scanCalls(string file, string code, string id, string declType,
 
 private string[2][] productionSources() {
     string[2][] files;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         files ~= [de.name[repoRoot.length + 1 .. $], readText(de.name)];
     return files;
@@ -92,7 +92,7 @@ unittest // every production snapCursor call declares guide semantics
     // Floor, then the roster: eight production calls, one per file.
     assert(calls.length == 8, format("snapCursor production calls: %s %s", calls.length, fileRoster(calls)));
     assert(fileRoster(calls) == [
-        "source/http_providers.d", "source/snap.d", "source/toolpipe/stages/snap.d",
+        "source/http_providers.d", "packages/interaction-query/source/snap.d", "packages/pipe-evaluation/source/toolpipe/stages/snap.d",
         "source/tools/create/create_common.d", "source/tools/create/pen.d",
         "source/tools/edit/topology_pen/tool.d",
         "source/tools/transform/move.d", "source/tools/transform/transform.d"],
@@ -101,15 +101,15 @@ unittest // every production snapCursor call declares guide semantics
     // Stationary allowed set: zero bypasses, before and after any compliant edit.
     // A mutation removing any consumer's resolver must fail this assertion.
     Site[] bypasses;
-    foreach (c; calls) if (!consultsGuides(c.args)) bypasses ~= c;
+    foreach (c; calls) if (c.file == "packages/interaction-query/source/snap.d" ? wordsAt(c.args, "guides").length != 1 : !consultsGuides(c.args)) bypasses ~= c;
     assert(bypasses.length == 0,
         format("snapCursor calls bypassing declared query semantics: %s", fileRoster(bypasses)));
     // Every site has a positive policy pin. These are contracts, not exemptions:
     // the same no-bypass assertion above applies to every row.
     immutable string[string] expected = [
         "source/http_providers.d": "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)",
-        "source/snap.d": "queryPolicy",
-        "source/toolpipe/stages/snap.d": "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)",
+        "packages/interaction-query/source/snap.d": "guides",
+        "packages/pipe-evaluation/source/toolpipe/stages/snap.d": "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)",
         "source/tools/create/create_common.d": "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)",
         "source/tools/create/pen.d": "SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned)",
         "source/tools/edit/topology_pen/tool.d": "SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)",
@@ -165,20 +165,20 @@ unittest // one packet read, one finder: the deleted copies stay deleted
     // (the pipe activation clears the guide registry at every arm, task 9416).
     enum kFinderRoster = ["source/prepared_pipe_activation.d",
                           "source/prepared_topology_pen_activation.d",
-                          "source/toolpipe/stages/snap.d"];
+                          "packages/pipe-evaluation/source/toolpipe/stages/snap.d"];
     assert(finders == kFinderRoster, format("findByTask(TaskCode.Snap) roster: %s", finders));
     assert(casts == kFinderRoster, format("cast(SnapStage) roster: %s", casts));
     // One packet read: `snapPacketOf` in snap.d; the pipe-state HTTP provider
     // reads it beside its other packets. Text needle: `get!(SnapPacket)` or
     // an alias would pass it.
     packetReads.sort();
-    assert(packetReads == ["source/http_providers.d", "source/snap.d"],
+    assert(packetReads == ["source/http_providers.d", "packages/interaction-query/source/snap.d"],
         format("get!SnapPacket production roster: %s", packetReads));
     liveCalls.sort();
     assert(liveCalls == ["source/commands/snap/mode.d", "source/commands/snap/toggle.d",
                          "source/commands/snap/toggle_type.d", "source/editor_app.d",
-                         "source/toolpipe/stages/snap.d", "source/toolpipe/stages/snap.d",
-                         "source/toolpipe/stages/snap.d",
+                         "packages/pipe-evaluation/source/toolpipe/stages/snap.d", "packages/pipe-evaluation/source/toolpipe/stages/snap.d",
+                         "packages/pipe-evaluation/source/toolpipe/stages/snap.d",
                          "source/tools/create/pen.d", "source/tools/create/pen.d",
                          "source/tools/edit/topology_pen/tool.d",
                          "source/tools/edit/topology_pen/tool.d", "source/tools/edit/topology_pen/tool.d",
@@ -195,7 +195,7 @@ unittest // no client but the pen registers a guide: snapCursor elects no guide-
     // every non-pen client, so `snapCursor` offers no candidate of a guide type.
     // Floor: the constraint tier keeps exactly its box-face call. Needle: a guide
     // type in any `consider*` call, or the world-axis enumeration's math helper.
-    const code = blankUnittestBodies(blankNonCode(readText(buildPath(repoRoot, "source", "snap.d"))));
+    const code = blankUnittestBodies(blankNonCode(readText(buildPath(repoRoot, "packages/interaction-query/source", "snap.d"))));
     string[] constraintArgs, guideArgs;
     size_t offered;
     foreach (id; ["considerConstraint", "consider"])
@@ -227,7 +227,7 @@ unittest // one vertex finder for the topology tools (tasks 9407, 9437); the pen
         return balancedSpan(src, src.indexOf('{', at), '{', '}');
     }
     // The finder: the election's vertex leg, Global scope, both ranges, slot 0.
-    const finder = body(code("source/snap.d"), "int editedVertexAt(");
+    const finder = body(code("packages/interaction-query/source/snap.d"), "int editedVertexAt(");
     assert(finder.length > 200, format("editedVertexAt body: %s chars", finder.length));
     foreach (needle; ["snapCursor(", "SnapMode.Global", "outerRangePx", "slot == 0"])
         assert(countOccurrences(finder, needle) == 1,
@@ -239,12 +239,16 @@ unittest // one vertex finder for the topology tools (tasks 9407, 9437); the pen
             callers ~= f[0];
     callers.sort();
     assert(callers.length == 3, format("editedVertexAt mentions: %s %s", callers.length, callers));
-    assert(callers == ["source/snap.d", "source/tools/edit/topology_pen/tool.d",
+    assert(callers == ["packages/interaction-query/source/snap.d", "source/tools/edit/topology_pen/tool.d",
                        "source/tools/edit/topology_pen/tool.d"],
         format("editedVertexAt roster (declaration + import + call): %s", callers));
     const pen = code("source/tools/edit/topology_pen/tool.d");
-    assert(countOccurrences(body(pen, "int weldTargetVertex("), "editedVertexAt(") == 1,
+    const weld = body(pen, "int weldTargetVertex(");
+    assert(countOccurrences(weld, "editedVertexAt(") == 1,
         "the pen's weld target must be the shared finder");
+    assert(countOccurrences(weld, "liveSnapGuides(queryPolicy)") == 1 &&
+        weld.canFind("topoPenSnapAcceptPx(vp, dragSnap_), liveSnapGuides(queryPolicy), admit, exclude"),
+        "weld production call collects policy guides before admit/exclude");
     foreach (decl; ["int resolveSnapTargetVert(", "int resolveSplitTargetVert("]) {
         const b = body(pen, decl);
         assert(wordsAt(b, "findSourceVertex").length == 0,
@@ -359,8 +363,10 @@ unittest { // explicit policies at actual production seams, not helper-only rigs
     assert(body("source/tools/create/pen.d", "SnapResult nearestOf(").canFind(
         "SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned)"),
         "polygon merge must declare query-owned weld admission");
-    assert(body("source/snap.d", "int editedVertexAt(").canFind("liveSnapGuides(queryPolicy)"),
-        "edited vertex query must transport its caller's policy");
+    assert(body(pen, "int weldTargetVertex(").canFind("liveSnapGuides(queryPolicy)"),
+        "weld caller must collect its declared guide policy");
+    assert(body("packages/interaction-query/source/snap.d", "int editedVertexAt(").canFind("guides"),
+        "edited vertex query must transport its caller's guide array");
 }
 
 unittest { // the actual private Slice producer declares placement

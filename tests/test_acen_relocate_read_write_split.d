@@ -5,7 +5,7 @@
 // times in the tree — task 0712 filed it as two, and the third is why the
 // first cannot be flipped on its own:
 //
-//   `ActionCenterStage.honoursPlacedCenter(mode)`  (source/toolpipe/stages/actcenter.d)
+//   `ActionCenterStage.honoursPlacedCenter(mode)`  (packages/pipe-evaluation/source/toolpipe/stages/actcenter.d)
 //       the READ gate. "A user pin exists. Does this mode honour it over its
 //       own centre?"  Pivot/Parent: YES, deliberately, task 0187 — "an
 //       explicit relocation to a chosen point is defensible even for the live

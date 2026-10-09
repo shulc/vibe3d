@@ -101,8 +101,9 @@ import census_contracts
 failures = census_contracts.production_lexer_census(root)
 if failures:
     raise SystemExit("prepared-protocol production lexer census: " + "; ".join(failures))
-owners = {"source": 492, "packages/common/source": 76,
-          "packages/mesh-ops/source": 17, "packages/interchange/source": 8}
+owners = {"source": 472, "packages/common/source": 76,
+          "packages/mesh-ops/source": 17, "packages/interchange/source": 8,
+          "packages/interaction-query/source": 10, "packages/pipe-evaluation/source": 12}
 for owner, floor in owners.items():
     with tempfile.TemporaryDirectory(prefix="protocol-owner-") as scratch:
         partial = Path(scratch)

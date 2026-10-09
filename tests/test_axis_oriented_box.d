@@ -1,6 +1,6 @@
 // The AXIS stage's selection frame is the ORIENTED bounding box of the
 // selection — the stage-level half of the port whose law lives in
-// `source/toolpipe/obbox.d`.
+// `packages/pipe-evaluation/source/toolpipe/obbox.d`.
 //
 // ── WHAT MOVED, AND WHY IT COULD HIDE FOR SO LONG ─────────────────────────
 //

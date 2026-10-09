@@ -120,7 +120,7 @@ class MeshSymmetrize : Command, Operator {
     //
     // This command makes ZERO forward position writes of its own: its entire
     // forward is the `applySymmetryMirror(mesh, …)` call below, in
-    // `source/symmetry.d` — a module this stage may not change (its other
+    // `packages/interaction-query/source/symmetry.d` — a module this stage may not change (its other
     // callers are `source/tools/transform/**`, task 1905/T2's zone) and which
     // writes `mesh.vertices[…]` RAW. Under a RECORDING batch a raw write
     // produces no op-log entry, because `alias mesh this` makes that spelling

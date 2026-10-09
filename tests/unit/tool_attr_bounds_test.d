@@ -84,7 +84,7 @@ unittest { // the doors that read the table — and nothing else (a restore
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     size_t[string] uses, reclamps;
     size_t scanned;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const code = blankNonCode(readText(de.name));

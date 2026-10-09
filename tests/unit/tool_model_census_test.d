@@ -330,7 +330,7 @@ private struct SrcFile { string path; string mod; string src; }
 /// modules here declare a name that is not their path).
 private SrcFile[] sourceFiles(out size_t withoutModuleLine) {
     SrcFile[] files;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const src = readText(de.name);
         const rel = de.name[repoRoot.length + 1 .. $];

@@ -54,7 +54,7 @@
 // ── WHAT THIS FILE DOES NOT PIN ───────────────────────────────────────────
 //
 // The selection basis is now the ORIENTED bounding box of the selection
-// (`source/toolpipe/obbox.d`, and `tests/test_axis_oriented_box.d` for the
+// (`packages/pipe-evaluation/source/toolpipe/obbox.d`, and `tests/test_axis_oriented_box.d` for the
 // frame it produces). It USED to snap the averaged face normal to the nearest
 // world axis, which agrees with an oriented box exactly on an axis-aligned
 // subject — every rig recorded — and answers a signed world permutation on a

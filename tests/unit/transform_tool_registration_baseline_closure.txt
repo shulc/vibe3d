@@ -157,6 +157,7 @@ snap
 snap_election
 snap_render
 snapshot
+surface_pick
 symmetry
 symmetry_pick
 symmetry_plane
@@ -178,6 +179,7 @@ toolpipe.stages.falloff
 toolpipe.stages.snap
 toolpipe.stages.symmetry
 toolpipe.stages.workplane
+toolpipe.state_paths
 toolpipe.subject
 tools.alignment.align_kernels
 tools.alignment.array_tool
@@ -249,7 +251,6 @@ tools.transform.xfrm_transform
 trackball
 transform_tool_registration
 tsan_annotate
-ui.mode_popup
 value_drag
 vertex_normals
 view

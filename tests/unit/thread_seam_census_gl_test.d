@@ -135,7 +135,7 @@ SH";
     size_t glThreadGuardUses;
     size_t markMainThreadUses;
     size_t guardedCalls;
-    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
     {
         ++filesScanned;

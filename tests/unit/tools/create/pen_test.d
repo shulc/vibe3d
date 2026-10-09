@@ -167,7 +167,7 @@ unittest {
         return blankUnittestBodies(blankNonCode(readText(path)));
     }
     const pen = code("source/tools/create/pen.d");
-    const snapCode = code("source/snap.d");
+    const snapCode = code("packages/interaction-query/source/snap.d");
     const expr = "s.snapped && s.constraintType == SnapType.None";
     assert(countIdent(snapCode, "elementPlaced") == 1 && snapCode.count(expr) == 1 &&
         pen.count(expr) == 0,

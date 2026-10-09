@@ -1,5 +1,5 @@
 // Topology Pen P1 (doc/topopen_p1_plan.md) — golden-fixture Tier B: the
-// constraint layer's `resolveHoverTarget` (source/constraint.d), probed
+// constraint layer's `resolveHoverTarget` (packages/interaction-query/source/constraint.d), probed
 // end-to-end through GET /api/surface-raycast's `targetKind`/`targetVert`/
 // `targetEdge` fields (no GL, no active tool — pure pipeline-evaluate +
 // BvhPick + resolveHoverTarget). See

@@ -384,3 +384,26 @@ unittest {
 //
 // `pickFace` has the second and not the first. That is what these pin.
 // ---------------------------------------------------------------------------
+
+// Task 20262020: private _surfacePicker ownership is lazy, shared, and torn down immediately.
+unittest {
+    import core.lifetime : destroy;
+    import std.math : fabs;
+    Mesh src;
+    src.vertices = [Vec3(-1,0,-1), Vec3(1,0,-1), Vec3(1,0,1), Vec3(-1,0,1)];
+    src.faces = [cast(uint[])[0,3,2,1]];
+    auto pick = new BvhPick;
+    assert(pick._surfacePicker is null, "surface owner starts lazy");
+    SurfaceHit hit;
+    assert(pick.pickSurfaceRay(Vec3(0,5,0), Vec3(0,-1,0), src, ModelSpace.world(), hit));
+    auto owner = pick._surfacePicker;
+    assert(owner !is null && fabs(hit.point.y) < 1e-4f, "surface owner materializes on actual query");
+    assert(pick.pickSurfaceRay(Vec3(0,5,0), Vec3(0,-1,0), src, ModelSpace.world(), hit));
+    assert(pick._surfacePicker is owner, "facade reuses one surface owner");
+    foreach (ref v; src.vertices) v.y = 2;
+    assert(owner.pickSurfaceRay(Vec3(0,5,0), Vec3(0,-1,0), src, ModelSpace.world(), hit));
+    assert(fabs(hit.point.y) < 1e-4f, "unpublished geometry remains cached before destructor");
+    destroy(pick);
+    assert(owner.pickSurfaceRay(Vec3(0,5,0), Vec3(0,-1,0), src, ModelSpace.world(), hit));
+    assert(fabs(hit.point.y - 2) < 1e-4f, "facade destructor invalidates native surface tree immediately");
+}

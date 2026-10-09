@@ -703,7 +703,7 @@ def installer_image_writes(pt, fields):
                       + r")\s*=(?!=)", body)
 
 prepared_source_texts = {path: path.read_text()
-                         for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source") for path in (ROOT / sub).rglob("*.d"))}
+                         for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (ROOT / sub).rglob("*.d"))}
 for path, text in prepared_source_texts.items():
     module = source_module_name(path, text)
     if imports_prepared_module(text, "prepared_record_context") and module not in b3d_modules | {
@@ -939,7 +939,7 @@ for label, contract, wrong in observer_prepare_mutations:
 
 # P1.0b.3b history owner infrastructure remains unreachable from production.
 history_source = (ROOT / "packages/common/source/command_history.d").read_text()
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (ROOT / sub).rglob("*.d")):
     if path.name != "command_history.d" and ".prepareRecordBatch(" in path.read_text():
         fail("P1.0b.3b prepared history gained a pre-cutover caller")
 
@@ -996,7 +996,7 @@ for relative, fingerprints in coalescing_doors.items():
         if source.count(fingerprint) != 1:
             fail("P1.0b.3b exact legacy coalescing door census changed")
 if sum(len(re.findall(r"[\w.]+\.recordCoalescing\(cmd\);", path.read_text()))
-       for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source") for path in (ROOT / sub).rglob("*.d"))
+       for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (ROOT / sub).rglob("*.d"))
        if path.name != "command_history.d") != 2:
     fail("P1.0b.3b direct legacy coalescing callsite set changed")
 coalescing_pairs = (
@@ -1029,7 +1029,7 @@ except SystemExit as error:
 else:
     fail("P1.0b.3b live-top merge mutation did not RED")
 
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (ROOT / sub).rglob("*.d")):
     source = path.read_text()
     if not path.as_posix().endswith("command_history.d") and \
        "prepared_tool" in path.name and re.search(
@@ -1075,7 +1075,7 @@ for label, contract, wrong in history_mutations:
 # P1.0b.3c Layer-owned whole-Mesh image, still unreachable from production.
 mesh_source = (ROOT / "packages/common/source/mesh.d").read_text()
 document_source = (ROOT / "packages/common/source/document.d").read_text()
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (ROOT / sub).rglob("*.d")):
     if path.name != "document.d" and ".beginPreparedMesh(" in path.read_text():
         fail("P1.0b.3c prepared Mesh owner gained a pre-cutover caller")
 
@@ -1134,7 +1134,7 @@ for label, mutated_mesh, mutated_document in mesh_mutations:
 # P1.0b.4a dormant GL-resource owner. Raw GLuint sets stay owner-private;
 # production doors may carry only scalar identity/generation tokens.
 gpu_source = (ROOT / "source/mesh_gpu.d").read_text()
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (ROOT / sub).rglob("*.d")):
     if path.name != "mesh_gpu.d" and ".beginPreparedDestroy(" in path.read_text():
         fail("P1.0b.4a prepared GPU owner gained a pre-cutover caller")
 
@@ -1743,7 +1743,7 @@ if found != MANIFEST:
 
 # P1.0a's call-site census is intentionally empty. This detects an early
 # behavioral cutover or an unreviewed bypassing caller by exact file/line.
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (ROOT / sub).rglob("*.d")):
     if path.name == "prepared_tool_transition.d":
         continue
     text = path.read_text()
@@ -1874,7 +1874,7 @@ def prepared_token_declarations():
     own predicate, spelled here over the tree instead of over one module."""
     rows = {}
     sources = [(path, path.read_text())
-               for path in sorted(path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source") for path in (ROOT / sub).rglob("*.d"))]
+               for path in sorted(path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (ROOT / sub).rglob("*.d"))]
     pair_uses = [(path, text, use.group(1)) for path, text in sources
                  for use in TOKEN_PAIR_MIXIN_RE.finditer(mask_d_comments(text))]
     pair_template_disabled = False
@@ -1932,7 +1932,7 @@ def prepared_non_token_noncopyable():
     """{(module, TypeName)} for every non-copyable Prepared*/Validated* struct
     under source/ that is NOT spelled `*Token`."""
     rows = set()
-    for path in sorted(path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source") for path in (ROOT / sub).rglob("*.d")):
+    for path in sorted(path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (ROOT / sub).rglob("*.d")):
         text = path.read_text()
         head = re.search(r"^\s*module\s+([\w.]+)\s*;", text, re.M)
         if not head:
@@ -2179,7 +2179,7 @@ upload_contracts = (
 for contract in upload_contracts:
     if mesh_gpu.count(contract) != 1:
         fail(f"P1.0b.4b upload-owner contract drift: {contract}")
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (ROOT / sub).rglob("*.d")):
     if path.name == "mesh_gpu.d" and path.parent == ROOT / "source":
         continue
     if re.search(r"\.beginPreparedUpload\s*\(", path.read_text()):
@@ -5975,10 +5975,10 @@ topology_pen_activation_owner = prepared_module_source(
     "prepared_topology_pen_activation")
 topology_pen_activation_tool = (
     ROOT / "source/tools/edit/topology_pen/tool.d").read_text()
-topology_pen_snap = (ROOT / "source/toolpipe/stages/snap.d").read_text()
-topology_pen_constrain = (ROOT / "source/toolpipe/stages/constrain.d").read_text()
+topology_pen_snap = (ROOT / "packages/pipe-evaluation/source/toolpipe/stages/snap.d").read_text()
+topology_pen_constrain = (ROOT / "packages/pipe-evaluation/source/toolpipe/stages/constrain.d").read_text()
 topology_pen_pipeline = (ROOT / "packages/common/source/toolpipe/pipeline.d").read_text()
-topology_pen_popup = (ROOT / "source/popup_state.d").read_text()
+topology_pen_popup = (ROOT / "packages/pipe-evaluation/source/toolpipe/state_paths.d").read_text()
 def topology_pen_activation_gate(owner, context, tool, snap, constrain,
                                  pipeline, popup):
     activation_start = tool.find(
@@ -6565,7 +6565,7 @@ for target, old, new, label in (
     else: context = context.replace(old, new, 1)
     if (target == "gpu" and pos < 0) or combined_upload_gate(gpu, context):
         fail(f"combined GPU create-upload mutation did not RED: {label}")
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (ROOT / sub).rglob("*.d")):
     caller_text = path.read_text()
     caller_module = source_module_name(path, caller_text)
     if caller_module in ("mesh_gpu", "prepared_record_context",
@@ -7445,7 +7445,7 @@ def topopen_deact_gate(owner, context, tool_source, snap_source):
             tool_source.find("final PreparedDeactivateEffect prepareDeactivate("):
             tool_source.find("override bool prepareDoorDeactivate(")]
 
-snap_stage_source = prepared_source_texts[ROOT / "source/toolpipe/stages/snap.d"]
+snap_stage_source = prepared_source_texts[ROOT / "packages/pipe-evaluation/source/toolpipe/stages/snap.d"]
 if not topopen_deact_gate(topopen_deact_owner, record_context,
                           topopen_tool, snap_stage_source):
     fail("TopologyPen deactivate owner contract drift")
@@ -7790,7 +7790,7 @@ def xfrm_update_boundary_gate(owner, context, xfrm, acen):
             "softPin = Pin.init;"))
 if not xfrm_update_boundary_gate(xfrm_boundary_owner, record_context,
         prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"],
-        prepared_source_texts[ROOT / "source/toolpipe/stages/actcenter.d"]):
+        prepared_source_texts[ROOT / "packages/pipe-evaluation/source/toolpipe/stages/actcenter.d"]):
     fail("Xfrm update boundary owner contract drift")
 for target, old, new, label in (
     ("owner", "target.classinfo !is XfrmTransformTool.classinfo", "false", "broaden product"),
@@ -7814,7 +7814,7 @@ for target, old, new, label in (
 ):
     o, c = xfrm_boundary_owner, record_context
     x = prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"]
-    a = prepared_source_texts[ROOT / "source/toolpipe/stages/actcenter.d"]
+    a = prepared_source_texts[ROOT / "packages/pipe-evaluation/source/toolpipe/stages/actcenter.d"]
     if target == "owner": o = o.replace(old, new, 1)
     elif target == "context": c = c.replace(old, new, 1)
     elif target == "xfrm": x = x.replace(old, new, 1)

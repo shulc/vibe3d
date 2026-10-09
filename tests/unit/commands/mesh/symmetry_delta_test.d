@@ -1,7 +1,7 @@
 // symmetry_delta_test — the BEHAVIOURAL half of task 1903 §L0-b.
 //
 // `mesh.transform` and `mesh.symmetrize` are the two position commands whose
-// writes do not happen in their own file. Both go through `source/symmetry.d`
+// writes do not happen in their own file. Both go through `packages/interaction-query/source/symmetry.d`
 // (`applySymmetryMirror` at :302, `applySymmetryMirrorDelta` at :379), a module
 // NEITHER census zone scans — the zones are `source/mesh_ops/**` and
 // `source/commands/**` — and whose signature belongs to task 1905/T2, so this

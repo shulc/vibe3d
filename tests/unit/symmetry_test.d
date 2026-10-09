@@ -1,4 +1,4 @@
-// Module unittests for `symmetry`, moved verbatim out of source/symmetry.d by task 0706.
+// Module unittests for `symmetry`, moved verbatim out of packages/interaction-query/source/symmetry.d by task 0706.
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.symmetry_test;
@@ -199,12 +199,12 @@ unittest {
     // (c) `mirrorElement(` is called (outside its declaration) exactly in the
     // three pointer-gesture files — the set is EQUAL, not "at least".
     string[] callers;
-    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[kRepoRoot.length + 1 .. $];
         const code = codeOf(rel);
         size_t c = countOccurrences(code, "mirrorElement(");
-        if (rel == "source/symmetry.d") c -= countOccurrences(code, "uint mirrorElement(");
+        if (rel == "packages/interaction-query/source/symmetry.d") c -= countOccurrences(code, "uint mirrorElement(");
         if (c > 0) callers ~= rel;
     }
     callers.sort();
@@ -433,7 +433,7 @@ unittest {
         int[string] got;
         string[] needles = ["placeAuthoringBase(", "notePlacementAt(", "notePlacement()",
                             "placeActionCentreOnInstall("];
-        foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source")])
+        foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source")])
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             const rel = de.name[kRepoRoot.length + 1 .. $];
             const code = codeOf(rel);
@@ -558,7 +558,7 @@ unittest {
     // (e) THE CONSUMER'S PLACE: after the base-side restriction, before
     // `pkt.isAuto`, and it writes nothing into `pkt`.
     {
-        const ev = bodyAfter(codeOf("source/toolpipe/stages/actcenter.d"), "bool evaluate(ref VectorStack vts)");
+        const ev = bodyAfter(codeOf("packages/pipe-evaluation/source/toolpipe/stages/actcenter.d"), "bool evaluate(ref VectorStack vts)");
         const r = ev.indexOf("restrictToBaseSide(");
         const c = ev.indexOf("if (placementPending_)");
         const a = ev.indexOf("pkt.isAuto");

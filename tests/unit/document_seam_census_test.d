@@ -289,7 +289,7 @@ unittest
     // ---- (3) THE LAW. Nothing outside the declaring file and that one caller
     //          may name a seam reader.
     string[] strays;
-    foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source"])
+    foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source"])
     {
         const dir = buildPath(repoRoot, root);
         if (!isDir(dir)) continue;

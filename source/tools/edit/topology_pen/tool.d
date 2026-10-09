@@ -2296,7 +2296,7 @@ public:
         auto m = mesh;
         if (m is null) return -1;
         return editedVertexAt(mx, my, vp, *m, primaryModelSpace(), dragSnap_,
-                              topoPenSnapAcceptPx(vp, dragSnap_), queryPolicy, admit, exclude);
+                              topoPenSnapAcceptPx(vp, dragSnap_), liveSnapGuides(queryPolicy), admit, exclude);
     }
 
     // -----------------------------------------------------------------------

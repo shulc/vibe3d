@@ -223,7 +223,7 @@ unittest {
 unittest {
     ModuleImports[string] modules;
     size_t sourceFiles, createSeen;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         auto scanned = scanModule(readText(entry.name));
@@ -269,9 +269,9 @@ unittest {
             assert(false, "6507 create_tool_registration reaches " ~ forbidden
                 ~ ": " ~ reachChain("create_tool_registration", forbidden, create));
     // Task 20261660: Tool reaches the detached model_preview view (+1 each).
-    pinClosure("create_tool_registration", create, 264);
-    pinClosure("registration", positive, 532);
-    assert(create.queue.length == 264 && positive.queue.length == 532,
+    pinClosure("create_tool_registration", create, 265);
+    pinClosure("registration", positive, 533);
+    assert(create.queue.length == 265 && positive.queue.length == 533,
         "6507 reviewed narrow and broad closure populations");
 }
 

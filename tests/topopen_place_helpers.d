@@ -10,12 +10,12 @@
 // cross-engine differential against the reference editor —
 // toolcards/topology_pen/cross_engine_differential.md — superseding the P2
 // work-plane-cursor derivation this file originally used; see
-// source/toolpipe/stages/constrain.d's `publishSurfaceHit` for the
+// packages/pipe-evaluation/source/toolpipe/stages/constrain.d's `publishSurfaceHit` for the
 // full finding). Every
 // expected placement position in the test files that import this module is
 // computed by the functions below — an INDEPENDENT reimplementation of
 // screenRay / ray-sphere / ray-AABB intersection, not a call into
-// source/constraint.d or source/toolpipe/stages/constrain.d (the code under
+// packages/interaction-query/source/constraint.d or packages/pipe-evaluation/source/toolpipe/stages/constrain.d (the code under
 // test). Server responses are compared against these independently-computed
 // values, never against each other.
 
@@ -110,7 +110,7 @@ Vec3 screenRay(float sx, float sy, const ref Viewport vp) {
 /// the independent reimplementation backing every sphere place-test's
 /// "expected" value: the placement seed the tool now uses (CONFIRMED by a
 /// live cross-engine differential against the reference editor,
-/// source/toolpipe/stages/constrain.d's `publishSurfaceHit`) IS
+/// packages/pipe-evaluation/source/toolpipe/stages/constrain.d's `publishSurfaceHit`) IS
 /// this camera-ray hit.
 bool raySphereIntersect(Vec3 origin, Vec3 dir, Vec3 center, float R, out Vec3 hit) {
     Vec3 oc = origin - center;
@@ -238,7 +238,7 @@ bool shiftedWorldPoint(const ref Viewport vp, Vec3 src, int dx, int dy, out Vec3
 
 /// Closest point of triangle (a,b,c) to `p`, clamped to the triangle —
 /// the standard barycentric region walk, written out here so the expected
-/// value never comes from a call into source/constraint.d.
+/// value never comes from a call into packages/interaction-query/source/constraint.d.
 Vec3 closestPointOnTri(Vec3 p, Vec3 a, Vec3 b, Vec3 c) {
     Vec3 ab = b - a, ac = c - a, ap = p - a;
     float d1 = dot(ab, ap), d2 = dot(ac, ap);

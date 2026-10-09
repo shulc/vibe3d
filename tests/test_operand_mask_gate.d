@@ -188,7 +188,7 @@ shared static this() {
     //   `vertices.length` that sizes it sits on the line above. Was 15 until
     //   task 0706, when the fourteen unittest fixtures left source/mesh.d.
 
-    ALLOWED_COUNT["source/hover_state.d"] = 2;
+    ALLOWED_COUNT["packages/interaction-query/source/hover_state.d"] = 2;
     // Raw-support classification AND flags start true and clear per incidence.
     // Hidden support participates in representation scope; these are not operands.
 

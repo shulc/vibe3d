@@ -75,7 +75,7 @@ JSONValue clickBaseCornerAtOrigin() {
     return getJson("/api/snap/last");
 }
 
-// SnapType bitmask values (source/snap.d): Vertex=1.
+// SnapType bitmask values (packages/interaction-query/source/snap.d): Vertex=1.
 unittest { // Vertex snap fires on a cube vert during box base-corner click
     resetBoxWithSnap("vertex");
     auto sr = clickBaseCornerAtOrigin();

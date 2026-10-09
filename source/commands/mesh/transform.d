@@ -147,7 +147,7 @@ class MeshTransform : Command, Operator {
     //     `ed.setVertexPositions` after the loop. Its before-image is
     //     `touchedPrev`, captured immediately above it.
     //   pass 2, the symmetry mirror — shape (D). It writes through
-    //     `source/symmetry.d`, which this command may not change (its other
+    //     `packages/interaction-query/source/symmetry.d`, which this command may not change (its other
     //     callers are `source/tools/transform/**`, task 1905/T2's zone) and
     //     which writes `mesh.vertices[…]` RAW — under a recording batch that
     //     produces NO op-log entry, because `alias mesh this` makes the raw

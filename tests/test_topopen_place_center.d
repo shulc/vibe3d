@@ -3,7 +3,7 @@
 // Background = a UV sphere at the world origin. Placement seed = camera-ray
 // hit (CONFIRMED by a live cross-engine differential against the reference
 // editor, superseding P2's
-// work-plane-cursor derivation — see source/toolpipe/stages/constrain.d's
+// work-plane-cursor derivation — see packages/pipe-evaluation/source/toolpipe/stages/constrain.d's
 // `publishSurfaceHit`). `focus=(0,0,0)` puts the sphere's centre
 // exactly on the lookAt forward axis, so the viewport CENTRE pixel's ray is
 // guaranteed to pass through the sphere (the centre is always inside it) —

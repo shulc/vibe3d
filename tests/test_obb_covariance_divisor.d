@@ -262,7 +262,7 @@ unittest { // the five stands reproduce the reference's box rows
                       ~ "the divisor reverted to the textbook 1/n this row is "
                       ~ "off by 2.6e-3 on the rotated stand and 1.6e-3 on the "
                       ~ "combined one — see the module header of "
-                      ~ "source/toolpipe/obbox.d.",
+                      ~ "packages/pipe-evaluation/source/toolpipe/obbox.d.",
                       s.name, sv(s.recFwd), sv(normalize(box.m[2])), eFwd, REPRO));
         assert(eIn < REPRO,
                format("%s: the in-plane row pair must reproduce the "

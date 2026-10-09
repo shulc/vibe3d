@@ -13,8 +13,8 @@
 # Counts are compiler-aware: comments and string/character literals are
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
-source-files 593
-unittest-blocks 667
+source-files 595
+unittest-blocks 625
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -42,17 +42,24 @@ block packages/common/source/screen_buckets.d 1
 block packages/common/source/toolpipe/pipeline.d 6
 block packages/common/source/trackball.d 4
 block packages/common/source/view.d 26
+block packages/interaction-query/source/snap.d 8
+block packages/interaction-query/source/symmetry.d 1
 block packages/interchange/source/io/lwo_import.d 5
 block packages/interchange/source/io/scene_import.d 2
 block packages/interchange/source/io/scene_ir.d 7
 block packages/mesh-ops/source/mesh_ops/extrude.d 18
 block packages/mesh-ops/source/mesh_ops/loop_slice.d 1
 block packages/mesh-ops/source/mesh_ops/poly_bevel.d 6
+block packages/pipe-evaluation/source/toolpipe/stages/actcenter.d 5
+block packages/pipe-evaluation/source/toolpipe/stages/axis.d 2
+block packages/pipe-evaluation/source/toolpipe/stages/constrain.d 1
+block packages/pipe-evaluation/source/toolpipe/stages/falloff.d 4
+block packages/pipe-evaluation/source/toolpipe/stages/snap.d 1
 block source/ai/exploration.d 6
 block source/ai3d/event_queue.d 4
 block source/ai3d/worker_manager.d 9
 block source/bg_gpu_cache.d 2
-block source/bvh_pick.d 2
+block source/bvh_pick.d 3
 block source/commands/image/commands.d 11
 block source/commands/layer/commands.d 13
 block source/commands/layer/xform_edit.d 3
@@ -66,7 +73,6 @@ block source/commands/select/by_stat.d 11
 block source/commands/select/by_tag.d 9
 block source/commands/select/type_from.d 4
 block source/commands/workplane.d 3
-block source/constraint.d 8
 block source/drag.d 13
 block source/drag_identity.d 1
 block source/edit_session.d 1
@@ -129,19 +135,11 @@ block source/remesh/region_stitch.d 3
 block source/remesh/remesh_job.d 10
 block source/render/render_mvp.d 1
 block source/selection_product.d 4
-block source/snap.d 10
 block source/snap_render.d 6
-block source/symmetry.d 10
 block source/tool.d 9
 block source/tool_disarm.d 4
 block source/tool_input.d 6
 block source/tool_presets.d 1
-block source/toolpipe/obbox.d 13
-block source/toolpipe/stages/actcenter.d 7
-block source/toolpipe/stages/axis.d 4
-block source/toolpipe/stages/constrain.d 2
-block source/toolpipe/stages/falloff.d 6
-block source/toolpipe/stages/snap.d 3
 block source/tools/alignment/align_kernels.d 1
 block source/tools/alignment/mirror.d 1
 block source/tools/common/command_wrapper.d 3
@@ -169,7 +167,6 @@ block source/ui/availability.d 1
 block source/ui/image_rows.d 1
 block source/ui/item_rows.d 2
 block source/ui/viewport_render.d 1
-block source/viewgrid.d 2
 block source/weightmap_view.d 1
 
 # Files above the per-file version(unittest) ceiling of 10. This list may

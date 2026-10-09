@@ -310,7 +310,7 @@ unittest { // 9513: background placement and edited-only weld are distinct elect
     st.addGuide(guide);
     const ownedWeld = SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned);
     invalidateSnapGrids();
-    assert(editedVertexAt(sx, sy, vp, edited, ModelSpace.world(), cfg, 24, ownedWeld) == 0,
+    assert(editedVertexAt(sx, sy, vp, edited, ModelSpace.world(), cfg, 24, liveSnapGuides(ownedWeld)) == 0,
         "control: edited weld query accepts the primary vertex within reach");
     setBackgroundSnapSources([cast(const(Mesh)*)&background], [ModelSpace.world()]);
     invalidateSnapGrids();
@@ -318,7 +318,7 @@ unittest { // 9513: background placement and edited-only weld are distinct elect
         liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
     assert(placed.snapped && placed.targetSource == 1 && placed.targetIndex == 1,
         "background placement wins independently of the registered edited-mesh weld guide");
-    assert(editedVertexAt(sx, sy, vp, edited, ModelSpace.world(), cfg, 24, ownedWeld) == 0,
+    assert(editedVertexAt(sx, sy, vp, edited, ModelSpace.world(), cfg, 24, liveSnapGuides(ownedWeld)) == 0,
         "edited-only weld cannot elect the nearer background vertex");
 }
 
@@ -361,4 +361,38 @@ unittest { // 9513: a non-live stage resolves its own registered placement guide
     assert(snapped(), "non-live stage's placement query excludes its weld guide");
     st.addGuide(new RefusePurpose(SnapPurpose.placement));
     assert(!snapped(), "non-live stage must consult its own registered placement guide");
+}
+
+// Task 20262020: nonempty registered weld collection reaches the lower array query.
+unittest {
+    import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
+    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import toolpipe.stages.snap : SnapStage, liveSnapGuides;
+    import snap : editedVertexAt;
+    import std.math : round;
+    static class RefuseWeld : SnapGuide {
+        size_t asked;
+        override SnapPurpose purpose() const nothrow @nogc { return SnapPurpose.weld; }
+        override bool proximity(Vec3, SnapType, int, int, ref float, ref int) { ++asked; return false; }
+    }
+    auto saved = g_pipeCtx;
+    scope(exit) { g_pipeCtx = saved; invalidateSnapGrids(); }
+    auto ctx = new ToolPipeContext;
+    auto stage = new SnapStage;
+    ctx.pipeline.add(stage); g_pipeCtx = ctx;
+    auto guide = new RefuseWeld;
+    stage.addGuide(guide);
+    Mesh mesh; mesh.vertices = [Vec3(0,0,0)];
+    auto vp = rigView();
+    float x,y,z;
+    assert(projectToWindowFull(mesh.vertices[0],vp,x,y,z));
+    SnapPacket cfg; cfg.enabled = true; cfg.enabledTypes = SnapType.Vertex;
+    const policy = SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.registered);
+    auto guides = liveSnapGuides(policy);
+    assert(guides.length == 1 && guides[0] is guide, "registered weld collection is nonempty and retains guide identity");
+    invalidateSnapGrids();
+    assert(editedVertexAt(cast(int)round(x),cast(int)round(y),vp,mesh,ModelSpace.world(),cfg,24,null) == 0,
+        "guide-free lower weld control elects the vertex");
+    assert(editedVertexAt(cast(int)round(x),cast(int)round(y),vp,mesh,ModelSpace.world(),cfg,24,guides) == -1 && guide.asked > 0,
+        "collected registered weld guide reaches lower query admission");
 }

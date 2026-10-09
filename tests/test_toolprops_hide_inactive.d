@@ -6,7 +6,7 @@
 // "unknown" — matching the falloff precedent (pipe.d:86-88). Locked here.
 //
 // Module-level params() snapshots (disabled→1 param / None→0 params) live in
-// source/toolpipe/stages/constrain.d and source/toolpipe/stages/actcenter.d
+// packages/pipe-evaluation/source/toolpipe/stages/constrain.d and packages/pipe-evaluation/source/toolpipe/stages/actcenter.d
 // and run via `dub test --config=tests`. This file covers the HTTP surface.
 
 import http_client : testBaseUrl, getJson, postJson;

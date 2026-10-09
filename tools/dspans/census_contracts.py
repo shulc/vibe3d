@@ -34,13 +34,16 @@ CONTRACT_CELLS = 21
 # desktop-only walk measured 577 files on 2026-09-27 (floor 500); after the
 # ownership moves, the independent 2026-10-09 inventory is 492/75/17/8. The Wave5 prerequisite adds workplane_basis,
 # independently inventoried as common76 (task 20262020, same date).
+# Final Wave5 tracked membership: desktop472/common76/mesh17/interchange8/query10/evaluation12.
 PRODUCTION_ROOTS = ("source", "packages/common/source", "packages/mesh-ops/source",
-                    "packages/interchange/source")
+                    "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source")
 PRODUCTION_OWNER_FLOORS = {
-    "source": 492,
+    "source": 472,
     "packages/common/source": 76,
     "packages/mesh-ops/source": 17,
     "packages/interchange/source": 8,
+    "packages/interaction-query/source": 10,
+    "packages/pipe-evaluation/source": 12,
 }
 
 

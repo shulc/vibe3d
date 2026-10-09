@@ -336,7 +336,7 @@ unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
     // Domain from the RULE: every source file naming LitShader, plus shader.d
     // and the pen preview; light_rig.d declares the constants and is excluded.
     string[] files;
-    foreach (scanSourceRoot; [src, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [src, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = de.name[src.length + 1 .. $].replace("\\", "/");
         if (rel == "light_rig.d") continue;
@@ -417,7 +417,7 @@ unittest { // 5a. the fence: rig locations are private, and nobody spells around
     immutable src = buildPath(repoRoot, "source");
     size_t scanned;
     string[] named;
-    foreach (scanSourceRoot; [src, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [src, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = de.name[src.length + 1 .. $].replace("\\", "/");
         if (rel == "shader.d") continue;

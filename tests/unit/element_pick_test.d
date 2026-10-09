@@ -65,7 +65,7 @@ unittest { // clause 4 (inside its own tolerance -> win) is an early-out only fo
 unittest { // production-text census
     size_t files;
     string[] cmpDefs, electSites;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
         const rel = f.name[repoRoot.length + 1 .. $];
@@ -86,7 +86,7 @@ unittest { // production-text census
     assert(files > 100, format("element-pick census: only %d source files scanned", files));
 
     // One comparator, in the law's home.
-    assert(cmpDefs == ["source/hover_state.d"],
+    assert(cmpDefs == ["packages/interaction-query/source/hover_state.d"],
            format("element-pick census: comparator defined in %s", cmpDefs));
 
     // The comparator's call-site roster: the active-tool hover publish, the
@@ -254,7 +254,7 @@ unittest {
     assert(pen.indexOf("pickOcclusionOf(vts), null, ToolQueryIntent.legacyHover)") >= 0 &&
            pen.indexOf("policy.legacy =") >= 0 && pen.indexOf("return legacyPressGather(") >= 0,
            "press-wiring: production hover intent and old subset provider are explicit");
-    const query = blankNonCode(readText(buildPath(repoRoot, "source/hover_state.d")));
+    const query = blankNonCode(readText(buildPath(repoRoot, "packages/interaction-query/source/hover_state.d")));
     assert(query.indexOf("subset = support[si]; prepared = true;") >= 0 &&
            query.indexOf("if (!prepared && policy.legacySource.mesh !is null)") >= 0,
            "press-preparation: an empty matched source is already prepared at the actual provider call");
@@ -266,7 +266,7 @@ unittest {
 
 unittest {
     import std.string : count;
-    const query=blankNonCode(readText(buildPath(repoRoot,"source/hover_state.d")));
+    const query=blankNonCode(readText(buildPath(repoRoot,"packages/interaction-query/source/hover_state.d")));
     const pen=blankNonCode(readText(buildPath(repoRoot,"source/tools/edit/topology_pen/tool.d")));
     assert(query.count("toolPressCandidateWins(")==5,"tie-wiring: exactly four production comparisons and one declaration");
     foreach(needle;["toolPressCandidateWins(d, candidate, g.vertex, vertex)","toolPressCandidateWins(d, candidate, g.edge, edge)",

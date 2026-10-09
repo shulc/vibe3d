@@ -162,3 +162,9 @@ tools/cli/.boundary/
 /packages/mesh-ops/vibe3d-mesh-ops.lib
 /packages/interchange/libvibe3d-interchange.a
 /packages/interchange/vibe3d-interchange.lib
+
+# Wave5 ordinary package build outputs.
+/packages/interaction-query/libvibe3d-interaction-query.a
+/packages/interaction-query/vibe3d-interaction-query.lib
+/packages/pipe-evaluation/libvibe3d-pipe-evaluation.a
+/packages/pipe-evaluation/vibe3d-pipe-evaluation.lib

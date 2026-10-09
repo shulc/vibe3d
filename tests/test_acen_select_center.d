@@ -25,7 +25,7 @@
 //
 // The probe is a single-axis scale, and a single-axis scale only sees the pivot
 // at all along the axis it scales. When the selection frame became the ORIENTED
-// bounding box (`source/toolpipe/obbox.d`) this three-point L-shape stopped
+// bounding box (`packages/pipe-evaluation/source/toolpipe/obbox.d`) this three-point L-shape stopped
 // answering a world axis: three points of a right isoceles triangle have their
 // principal in-plane axis along the HYPOTENUSE, at 45 degrees, and that is
 // exactly PERPENDICULAR to the difference between the two candidate pivots

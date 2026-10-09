@@ -405,6 +405,7 @@ subpatch_osd
 subpatch_preview
 subpatch_worker
 subpatch_worker_web
+surface_pick
 symmetry
 symmetry_pick
 symmetry_plane
@@ -430,6 +431,7 @@ toolpipe.stages.path
 toolpipe.stages.snap
 toolpipe.stages.symmetry
 toolpipe.stages.workplane
+toolpipe.state_paths
 toolpipe.subject
 tools.alignment.align_kernels
 tools.alignment.array_tool
@@ -507,7 +509,6 @@ ui.channel_rows
 ui.discard_guard
 ui.guard_modal_state
 ui.history_panel
-ui.mode_popup
 ui.panel_chrome
 ui.remesh_modal_state
 ui.retained_item

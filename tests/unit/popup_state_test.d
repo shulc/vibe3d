@@ -57,3 +57,21 @@ unittest {
     assert(!resolveChecked(chk));
     clearAllState();
 }
+
+// Task 20262020: the desktop alias and lower producer share one registry.
+unittest {
+    import toolpipe.state_paths : lowerSet = setStatePath, lowerGet = getStatePath,
+        lowerInstall = installPreparedStatePath, lowerClear = clearAllState;
+    static assert(&setStatePath == &lowerSet);
+    static assert(&installPreparedStatePath == &lowerInstall);
+    lowerClear();
+    scope(exit) lowerClear();
+    lowerSet("wave5/identity", "ordinary");
+    assert(getStatePath("wave5/identity") == "ordinary", "lower publication reaches desktop alias");
+    installPreparedStatePath("wave5/identity", "prepared");
+    assert(lowerGet("wave5/identity") == "prepared", "desktop prepared overwrite reaches lower registry");
+    clearAllState();
+    assert(lowerGet("wave5/identity") == "", "desktop reset clears lower registry");
+    lowerSet("wave5/identity", "after-reset");
+    assert(getStatePath("wave5/identity") == "after-reset", "lower publication resumes after reset");
+}

@@ -338,7 +338,7 @@ unittest {
 
     size_t filesScanned;
     string[] found;
-    foreach (scanSourceRoot; [dir, buildPath(guardRepoRoot, "packages/common/source"), buildPath(guardRepoRoot, "packages/mesh-ops/source"), buildPath(guardRepoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [dir, buildPath(guardRepoRoot, "packages/common/source"), buildPath(guardRepoRoot, "packages/mesh-ops/source"), buildPath(guardRepoRoot, "packages/interchange/source"), buildPath(guardRepoRoot, "packages/interaction-query/source"), buildPath(guardRepoRoot, "packages/pipe-evaluation/source")])
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile || entry.name.length < 2
             || entry.name[$ - 2 .. $] != ".d") continue;

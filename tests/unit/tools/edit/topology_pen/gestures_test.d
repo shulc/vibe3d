@@ -8152,7 +8152,7 @@ unittest {
     // radius entirely in Fill mode, so a press at the bare centre of a gap
     // still resolves the cell. Gating `findFillRing`/`fillDown` on
     // `topoPenPressPickPx` to make Fill "consistent" with the other modes is
-    // the exact regression this line catches -- see `source/constraint.d`'s
+    // the exact regression this line catches -- see `packages/interaction-query/source/constraint.d`'s
     // MODE-DEPENDENT paragraph.
     auto cell = t.findFillRing(cast(int)cpix.x, cast(int)cpix.y, vp);
     assert(cell.length == 4, "findFillRing must resolve the one interior gap cell "

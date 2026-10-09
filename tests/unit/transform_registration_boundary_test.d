@@ -179,7 +179,7 @@ unittest {
 unittest {
     ModuleImports[string] modules;
     size_t sourceFiles, transformSeen;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         auto scanned = scanModule(readText(entry.name));
@@ -254,11 +254,11 @@ unittest {
     // Task 9525: `tools.edit.drag_weld` deleted (-1 each).
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
     // Task 20260660: Tool reaches the detached model_preview view (+1 each).
-    pinClosure("transform_tool_registration", transform, 261);
-    pinClosure("registration", positive, 532);
-    assert(transform.queue.length == 261 && positive.queue.length == 532,
-        format("6506 import closure census changed: transform=%d/261 "
-            ~ "registration=%d/532", transform.queue.length,
+    pinClosure("transform_tool_registration", transform, 262);
+    pinClosure("registration", positive, 533);
+    assert(transform.queue.length == 262 && positive.queue.length == 533,
+        format("6506 import closure census changed: transform=%d/262 "
+            ~ "registration=%d/533", transform.queue.length,
             positive.queue.length));
 }
 

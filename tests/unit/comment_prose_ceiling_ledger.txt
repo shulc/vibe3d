@@ -8,9 +8,9 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 593
-task-citation-lines 5199
-citing-files 458
+source-files 595
+task-citation-lines 5183
+citing-files 459
 long-comment-runs 260
 files-with-long-runs 140
 
@@ -71,6 +71,14 @@ allow packages/common/source/toolpipe/stage.d 11
 allow packages/common/source/toolpipe/subject.d 3
 allow packages/common/source/tsan_annotate.d 1
 allow packages/common/source/view.d 11
+allow packages/interaction-query/source/constraint.d 9
+allow packages/interaction-query/source/hover_state.d 5
+allow packages/interaction-query/source/snap.d 68
+allow packages/interaction-query/source/snap_election.d 11
+allow packages/interaction-query/source/surface_pick.d 6
+allow packages/interaction-query/source/symmetry.d 10
+allow packages/interaction-query/source/toolpipe/guide.d 1
+allow packages/interaction-query/source/workplane_fit.d 1
 allow packages/interchange/source/io/assimp_wire.d 1
 allow packages/interchange/source/io/lwo_export.d 7
 allow packages/interchange/source/io/lwo_import.d 21
@@ -93,6 +101,16 @@ allow packages/mesh-ops/source/mesh_ops/poly_bevel.d 65
 allow packages/mesh-ops/source/mesh_ops/revolve.d 25
 allow packages/mesh-ops/source/mesh_ops/select_loop.d 6
 allow packages/mesh-ops/source/mesh_ops/thicken.d 4
+allow packages/pipe-evaluation/source/toolpipe/obbox.d 1
+allow packages/pipe-evaluation/source/toolpipe/package.d 1
+allow packages/pipe-evaluation/source/toolpipe/stages/actcenter.d 58
+allow packages/pipe-evaluation/source/toolpipe/stages/axis.d 14
+allow packages/pipe-evaluation/source/toolpipe/stages/constrain.d 5
+allow packages/pipe-evaluation/source/toolpipe/stages/falloff.d 33
+allow packages/pipe-evaluation/source/toolpipe/stages/path.d 1
+allow packages/pipe-evaluation/source/toolpipe/stages/snap.d 10
+allow packages/pipe-evaluation/source/toolpipe/stages/symmetry.d 17
+allow packages/pipe-evaluation/source/toolpipe/stages/workplane.d 12
 allow source/ai/analysis.d 2
 allow source/ai/copilot_gate.d 5
 allow source/ai/exploration.d 1
@@ -111,7 +129,7 @@ allow source/application_command_binding.d 1
 allow source/args_dialog.d 1
 allow source/bg_gpu_cache.d 1
 allow source/buttonset.d 1
-allow source/bvh_pick.d 17
+allow source/bvh_pick.d 11
 allow source/camera_stamp.d 3
 allow source/commands/ai3d/generate.d 1
 allow source/commands/ai3d/generate_open.d 3
@@ -255,7 +273,6 @@ allow source/commands/viewport/layout_preset.d 1
 allow source/commands/viewport/master.d 1
 allow source/commands/viewport/view_preset.d 6
 allow source/commands/workplane.d 5
-allow source/constraint.d 11
 allow source/copilot_command_registration.d 1
 allow source/copilot_overlay.d 2
 allow source/copilot_panel.d 2
@@ -288,7 +305,6 @@ allow source/handles/gizmo_metrics.d 22
 allow source/handles/gl_util.d 6
 allow source/handles/shapes.d 37
 allow source/history_macro_registration.d 1
-allow source/hover_state.d 5
 allow source/http_command_adapter.d 3
 allow source/http_providers.d 69
 allow source/http_server.d 114
@@ -345,30 +361,16 @@ allow source/selection_projection.d 5
 allow source/selftest_fault.d 3
 allow source/shader.d 14
 allow source/shortcuts.d 3
-allow source/snap.d 69
-allow source/snap_election.d 11
 allow source/snap_render.d 3
 allow source/step_trace.d 1
 allow source/subpatch_osd.d 40
 allow source/subpatch_preview.d 24
 allow source/subpatch_worker.d 2
 allow source/subpatch_worker_web.d 1
-allow source/symmetry.d 13
 allow source/symmetry_pick.d 4
 allow source/tool.d 34
 allow source/tool_disarm.d 3
 allow source/tool_lifecycle_registration.d 1
-allow source/toolpipe/guide.d 1
-allow source/toolpipe/obbox.d 2
-allow source/toolpipe/package.d 1
-allow source/toolpipe/stages/actcenter.d 62
-allow source/toolpipe/stages/axis.d 16
-allow source/toolpipe/stages/constrain.d 5
-allow source/toolpipe/stages/falloff.d 34
-allow source/toolpipe/stages/path.d 1
-allow source/toolpipe/stages/snap.d 12
-allow source/toolpipe/stages/symmetry.d 17
-allow source/toolpipe/stages/workplane.d 12
 allow source/tools/alignment/align_kernels.d 6
 allow source/tools/alignment/array_tool.d 7
 allow source/tools/alignment/linear_align_tool.d 5
@@ -472,7 +474,6 @@ allow source/viewport_env.d 1
 allow source/viewport_overlay_mode.d 6
 allow source/viewport_scheme.d 8
 allow source/weightmap_view.d 1
-allow source/workplane_fit.d 1
 
 # Exact per-file counts of comment runs >= 40 lines, sorted by path.
 allow-runs packages/common/source/change_bus.d 3
@@ -504,6 +505,11 @@ allow-runs packages/common/source/params.d 2
 allow-runs packages/common/source/perf_probe.d 2
 allow-runs packages/common/source/plane_bytes.d 1
 allow-runs packages/common/source/toolpipe/packets.d 2
+allow-runs packages/interaction-query/source/constraint.d 1
+allow-runs packages/interaction-query/source/snap.d 5
+allow-runs packages/interaction-query/source/snap_election.d 2
+allow-runs packages/interaction-query/source/toolpipe/guide.d 1
+allow-runs packages/interaction-query/source/viewgrid.d 1
 allow-runs packages/interchange/source/io/scene_export.d 2
 allow-runs packages/interchange/source/io/scene_import.d 1
 allow-runs packages/mesh-ops/source/mesh_ops/bevel_fin.d 2
@@ -518,6 +524,10 @@ allow-runs packages/mesh-ops/source/mesh_ops/extrude.d 8
 allow-runs packages/mesh-ops/source/mesh_ops/loop_slice.d 2
 allow-runs packages/mesh-ops/source/mesh_ops/poly_bevel.d 3
 allow-runs packages/mesh-ops/source/mesh_ops/revolve.d 4
+allow-runs packages/pipe-evaluation/source/toolpipe/obbox.d 2
+allow-runs packages/pipe-evaluation/source/toolpipe/stages/actcenter.d 2
+allow-runs packages/pipe-evaluation/source/toolpipe/stages/axis.d 1
+allow-runs packages/pipe-evaluation/source/toolpipe/stages/falloff.d 1
 allow-runs source/ai/support_loop_candidates.d 1
 allow-runs source/app.d 7
 allow-runs source/camera_stamp.d 1
@@ -555,7 +565,6 @@ allow-runs source/commands/select/by_stat.d 1
 allow-runs source/commands/select/by_tag.d 1
 allow-runs source/commands/select/fill.d 1
 allow-runs source/commands/select/sets.d 2
-allow-runs source/constraint.d 1
 allow-runs source/display_state.d 1
 allow-runs source/drag.d 3
 allow-runs source/forms.d 1
@@ -575,16 +584,9 @@ allow-runs source/render/render_mvp.d 1
 allow-runs source/selection_product.d 1
 allow-runs source/selftest_fault.d 1
 allow-runs source/shader.d 1
-allow-runs source/snap.d 5
-allow-runs source/snap_election.d 2
 allow-runs source/subpatch_osd.d 3
 allow-runs source/subpatch_preview.d 2
 allow-runs source/tool_disarm.d 1
-allow-runs source/toolpipe/guide.d 1
-allow-runs source/toolpipe/obbox.d 2
-allow-runs source/toolpipe/stages/actcenter.d 2
-allow-runs source/toolpipe/stages/axis.d 1
-allow-runs source/toolpipe/stages/falloff.d 1
 allow-runs source/tools/alignment/align_kernels.d 1
 allow-runs source/tools/alignment/array_tool.d 1
 allow-runs source/tools/alignment/radial_array_tool.d 1
@@ -613,5 +615,4 @@ allow-runs source/ui/item_rows.d 2
 allow-runs source/ui/panels.d 1
 allow-runs source/ui/stat_rows.d 1
 allow-runs source/ui/viewport_render.d 1
-allow-runs source/viewgrid.d 1
 allow-runs source/weightmap_view.d 1

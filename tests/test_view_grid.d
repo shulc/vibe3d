@@ -10,7 +10,7 @@
 // grid used to be a fixed 1.0-unit world lattice, so at every zoom but one it
 // was a different thing entirely.
 //
-// WHY THIS FILE EXISTS AT ALL, given source/viewgrid.d's own unittests: those
+// WHY THIS FILE EXISTS AT ALL, given packages/interaction-query/source/viewgrid.d's own unittests: those
 // pin the arithmetic. This pins that the arithmetic is what the RUNNING APP
 // uses and DRAWS — a pure function nothing calls is not a grid.
 //

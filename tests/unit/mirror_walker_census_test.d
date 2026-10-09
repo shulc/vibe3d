@@ -51,7 +51,7 @@ private string[] filesWith(string needle, out size_t scanned) {
     import std.file : dirEntries, SpanMode;
     import std.path : buildPath;
     string[] hits;
-    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const rel = de.name[kRepoRoot.length + 1 .. $];
@@ -66,8 +66,8 @@ unittest { // (c1) ONE mirror walker
     const callers = filesWith("mirrorStepFor(", scanned);
     assert(scanned >= 500, "(c1) floor: scanned " ~ scanned.to!string ~ " source files");
     // Needle: the declaration + the walker's one call, and nothing else anywhere.
-    assert(callers == ["source/symmetry.d"], "(c1) mirrorStepFor( outside symmetry.d: " ~ callers.to!string);
-    const sym = codeOf("source/symmetry.d");
+    assert(callers == ["packages/interaction-query/source/symmetry.d"], "(c1) mirrorStepFor( outside symmetry.d: " ~ callers.to!string);
+    const sym = codeOf("packages/interaction-query/source/symmetry.d");
     assert(countOccurrences(sym, "mirrorStepFor(") == 2,
            "(c1) symmetry.d mirrorStepFor( count " ~ countOccurrences(sym, "mirrorStepFor(").to!string
            ~ ", expected 2 (declaration + walkMirrorPairs)");
@@ -76,8 +76,8 @@ unittest { // (c1) ONE mirror walker
     assert(countOccurrences(walker, "mirrorStepFor(") == 1, "(c1) the walker does not call mirrorStepFor(");
     // Structural: each of the four passes is a walker caller with no loop.
     string[2][] passes = [
-        ["source/symmetry.d", "void applySymmetryMirror(Mesh* mesh,"],
-        ["source/symmetry.d", "void applySymmetryMirrorDelta(Mesh* mesh,"],
+        ["packages/interaction-query/source/symmetry.d", "void applySymmetryMirror(Mesh* mesh,"],
+        ["packages/interaction-query/source/symmetry.d", "void applySymmetryMirrorDelta(Mesh* mesh,"],
         ["source/tools/transform/morph_route.d", "void applySymmetryMirrorRouted("],
         ["source/tools/transform/morph_route.d", "void applySymmetryMirrorDeltaRouted("],
     ];
@@ -99,11 +99,11 @@ unittest { // (c2) ONE side test
     size_t scanned;
     const users = filesWith("symmetrySide(", scanned);
     assert(users == ["packages/common/source/symmetry_plane.d",
-                     "packages/mesh-ops/source/mesh_ops/extrude.d", "source/symmetry.d",
-                     "source/toolpipe/stages/symmetry.d", "source/tools/edit/edge_extend.d"],
+                     "packages/mesh-ops/source/mesh_ops/extrude.d", "packages/interaction-query/source/symmetry.d",
+                     "packages/pipe-evaluation/source/toolpipe/stages/symmetry.d", "source/tools/edit/edge_extend.d"],
            "(c2) symmetrySide( users: " ~ users.to!string);
     const lower = codeOf("packages/common/source/symmetry_plane.d");
-    const desktop = codeOf("source/symmetry.d");
+    const desktop = codeOf("packages/interaction-query/source/symmetry.d");
     assert(countOccurrences(lower,
         "int symmetrySide(Vec3 planePoint, Vec3 planeNormal, Vec3 p, float eps) pure nothrow @nogc @safe") == 1,
         "(c2) lower side formula keeps its original signature and attributes");
@@ -136,12 +136,12 @@ unittest { // (c4) ONE work-plane symmetry plane function, ONE call
     size_t scanned;
     const hits = filesWith("workplaneSymmetryPlane(", scanned);
     assert(scanned > 300, "(c4) floor: scanned " ~ scanned.to!string ~ " source files");
-    assert(hits == ["source/toolpipe/stages/symmetry.d", "source/tools/create/pen.d"],
+    assert(hits == ["packages/pipe-evaluation/source/toolpipe/stages/symmetry.d", "source/tools/create/pen.d"],
            "(c4) workplaneSymmetryPlane( outside the stage and the pen: " ~ hits.to!string);
     // W twice (tasks 9417, 9452): ONE body, `mapByWorkplaneOnceMore` beside it,
     // called once by the pen's latch and once by Edge Extend's symmetry read.
     const twice = filesWith("mapByWorkplaneOnceMore(", scanned);
-    assert(twice == ["source/toolpipe/stages/symmetry.d", "source/tools/create/pen.d",
+    assert(twice == ["packages/pipe-evaluation/source/toolpipe/stages/symmetry.d", "source/tools/create/pen.d",
                      "source/tools/edit/edge_extend.d"],
            "(c4) mapByWorkplaneOnceMore( users: " ~ twice.to!string);
     const pen = codeOf("source/tools/create/pen.d");
@@ -154,7 +154,7 @@ unittest { // (c4) ONE work-plane symmetry plane function, ONE call
     foreach (body_; [bodyAfter(pen, "void latchMirror("), ee])
         assert(countOccurrences(body_, "transformPoint(") == 0 && countOccurrences(body_, "transformDir(") == 0,
                "(c4) a caller keeps its own copy of the W map");
-    const st = codeOf("source/toolpipe/stages/symmetry.d");
+    const st = codeOf("packages/pipe-evaluation/source/toolpipe/stages/symmetry.d");
     assert(countOccurrences(st, "workplaneSymmetryPlane(") == 2, "(c4) the stage does not define it and call it once");
     assert(countOccurrences(st, "mapByWorkplaneOnceMore(") == 1, "(c4) the stage does not hold the one W-twice body");
     const ev = bodyAfter(st, "bool evaluate(ref VectorStack vts)");

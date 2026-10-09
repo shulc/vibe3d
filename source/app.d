@@ -2692,7 +2692,7 @@ void main(string[] args) {
     }
 
     // The drop half of the per-preset tool attribute cache (slice M5,
-    // source/toolpipe/attr_cache.d): the dropped preset's tool node and the
+    // packages/pipe-evaluation/source/toolpipe/attr_cache.d): the dropped preset's tool node and the
     // pipe nodes it claimed go into the cache BEFORE deactivate()/destroy()
     // invalidates the tool's Param pointers and before the stages reset. NOT
     // gated on `prefsActive`: the in-memory cache is editor session state; only

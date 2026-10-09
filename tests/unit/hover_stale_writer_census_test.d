@@ -42,7 +42,7 @@ unittest {
     immutable press = ["TackTool.onMouseButtonDown", "MagnetTool.onMouseButtonDown",
         "LoopSliceTool.onMouseButtonDown", "EdgeSliceTool.onMouseButtonDown",
         "XfrmTransformTool.tryPickElement"];
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
         const rel = f.name[repoRoot.length + 1 .. $];
@@ -56,7 +56,7 @@ unittest {
                 if (name == kFlag || s == kWriter) return;   // the writer's own import
                 if (press.canFind!(p => s.length >= p.length && s[$ - p.length .. $] == p))
                     rawPressReads ~= rel ~ ":" ~ s;
-                else if (rel != "source/hover_state.d" && !frameReaders.canFind(rel))
+                else if (rel != "packages/interaction-query/source/hover_state.d" && !frameReaders.canFind(rel))
                     frameReaders ~= rel;
             });
         hits(code, "publishHover", (at, write) {
