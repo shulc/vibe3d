@@ -7,7 +7,7 @@ import std.stdio : writeln;
 void main() {}
 
 unittest {
-    const expected = parseJSON(import("fixtures/command_registry_roster.json"));
+    const expected = parseJSON(import("fixtures/command_registry_roster.json"))["expected"];
     const actual = getJson("/api/registry?params=1");
     assert(expected["commands"].array.length == 277
         && actual["commands"].array.length == 277,
