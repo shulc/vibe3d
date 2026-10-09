@@ -172,7 +172,7 @@ unittest {
     Viewport viewport; viewport.focus = Vec3(31,0,0);
     ref Mesh liveMesh() { return *active; }
     ref View liveView() { return currentView; }
-    auto deps = PilotCommandDeps(&liveMesh, &liveView, &mode, () => viewport,
+    auto deps = PilotCommandDeps(cast(PilotMesh)&liveMesh, cast(PilotView)&liveView, &mode, () => viewport,
         (EditMode next) { ++promotions; mode = next; authority = SelType.Polygon; },
         () { ++topologyCalls; });
     auto h = new CommandHistory; h.clear(); CommandRegistry registry;

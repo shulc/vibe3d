@@ -368,3 +368,30 @@ unittest { // detriangulate undo/redo
     assert(getModel()["faceCount"].integer == 6,
         "detriangulate redo: expected 6 faces");
 }
+
+
+unittest { // Production script refusal after selecting an already triangular face.
+    resetCube();
+    runCmd("mesh.triple");
+    setSelection("polygons", [0]);
+    auto before = getModel();
+    assert(before["faces"].array[0].array.length == 3
+        && getSel()["selectedFaces"].array.length == 1,
+        "1D script refusal fixture requires one selected triangle");
+    auto historyBefore = parseJSON(get(testBaseUrl() ~ "/api/history"));
+    auto changesBefore = parseJSON(get(testBaseUrl() ~ "/api/changes"));
+    auto refused = parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("mesh.triple")));
+    assert(refused["status"].str == "error",
+        "1D script selected-triangle refusal must be protocol error");
+    assert(parseJSON(get(testBaseUrl() ~ "/api/history"))["undo"].array.length
+        == historyBefore["undo"].array.length,
+        "1D script selected-triangle refusal must not add history");
+    auto after = getModel();
+    assert(after["faces"] == before["faces"] && after["vertices"] == before["vertices"],
+        "1D script selected-triangle refusal must preserve geometry");
+    assert(getSel()["selectedFaces"].array.length == 0,
+        "1D script selected-triangle refusal retains frozen marks clearing");
+    auto changesAfter = parseJSON(get(testBaseUrl() ~ "/api/changes"));
+    assert(changesAfter["deliveryCount"].integer == changesBefore["deliveryCount"].integer + 1,
+        "1D script selected-triangle refusal delivers exactly once");
+}
