@@ -1484,17 +1484,22 @@ bool isSourceBackedTest(string path) {
 /// are covered by the separate `dub test` step, and the test's own asserts are
 /// unchanged (verified: identical assertion output, just fewer module unittests).
 string buildProjectLib(string scratch) {
-    auto rr = executeShell(
-        "dub describe --config=modeling --data=source-files --data-list 2>/dev/null");
-    if (rr.status != 0) return "";
     string[] srcs;
-    foreach (line; rr.output.splitLines) {
-        auto s = line.strip;
-        // Exclude app.d: it carries the real `main`, which would clash with the
-        // test binary's own `main`. Every other modeling module compiles clean
-        // without WithRender (render/* bodies are version-gated to empty).
-        if (s.length && !s.endsWith("/app.d") && !s.endsWith("\\app.d"))
-            srcs ~= s;
+    bool[string] seen;
+    foreach (root; ["", " --root=packages/common"]) {
+        auto rr = executeShell("dub describe" ~ root
+            ~ " --config=modeling --data=source-files --data-list 2>/dev/null");
+        if (rr.status != 0) return "";
+        foreach (line; rr.output.splitLines) {
+            auto s = line.strip;
+            // Exclude app.d: it carries the real `main`, which would clash with
+            // the test binary's own `main`. Keep both package source inventories.
+            if (s.length && !s.endsWith("/app.d") && !s.endsWith("\\app.d")
+                    && s !in seen) {
+                seen[s] = true;
+                srcs ~= s;
+            }
+        }
     }
     if (srcs.empty) return "";
     const lib = buildPath(scratch, "libvibe3d_test.a");
