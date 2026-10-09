@@ -12,7 +12,8 @@ import mesh_planes : kFacePlanes, kVertPlanes, kEdgePlanes;
 import snapshot : MeshSnapshot;
 import mesh_topo : edgeKey;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
-import mesh_dirty : noteMeshChange, g_geomEpochs, g_topoEpochs;
+import mesh_dirty : noteMeshChange, g_geomEpochs, g_topoEpochs,
+    MeshDirtyEpochs, allWatchers;
 import change_bus : changeBus, ChangeBus;
 import tool_policy_values : AttrImage, StepOrigin, Rollover, rolloverDraws,
     DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
@@ -226,16 +227,32 @@ unittest {
     const savedMeshFilter = g_isDocumentMesh;
     scope(exit) g_isDocumentMesh = savedMeshFilter;
     g_isDocumentMesh = null;
-    const savedGeom = g_geomEpochs; const savedTopo = g_topoEpochs;
-    scope(exit) { changeBus = savedBus; g_editTargetResolver = savedResolver;
-        g_geomEpochs = savedGeom; g_topoEpochs = savedTopo; }
+    auto watchers = allWatchers();
+    MeshDirtyEpochs[] savedEpochs;
+    foreach (watcher; watchers) savedEpochs ~= *watcher;
+    scope(exit) {
+        foreach (i, watcher; watchers) *watcher = savedEpochs[i];
+        changeBus = savedBus; g_editTargetResolver = savedResolver;
+    }
     changeBus = ChangeBus.init;
     g_editTargetResolver = null;
     auto m = selectedQuad(); auto other = makeCube();
     m.publishChange(MeshEditScope.None); other.publishChange(MeshEditScope.None);
     const addr = cast(size_t)&m, otherAddr = cast(size_t)&other;
+    assert(addr != 0 && otherAddr != 0 && addr != otherAddr,
+        "model-delivery: two distinct real mesh addresses");
+    // Resident subjects distinguish targeted delivery from the conservative
+    // eviction fallback; save every watcher touched by the production fan-in.
+    g_geomEpochs.reset(); g_topoEpochs.reset();
+    noteMeshChange(addr, MeshEditScope.Geometry);
+    noteMeshChange(otherAddr, MeshEditScope.Geometry);
     const geom = g_geomEpochs.epochFor(addr), topo = g_topoEpochs.epochFor(addr);
     const otherGeom = g_geomEpochs.epochFor(otherAddr), otherTopo = g_topoEpochs.epochFor(otherAddr);
+    assert(g_geomEpochs.anyEpoch() == 2 && g_topoEpochs.anyEpoch() == 2
+        && geom == 1 && topo == 1 && otherGeom == 2 && otherTopo == 2,
+        "model-delivery: both subjects resident before command notification");
+    assert(g_geomEpochs.epochFor(size_t.max) == 0 && g_topoEpochs.epochFor(size_t.max) == 0,
+        "model-delivery: untracked address still reads zero fallback before notification");
     size_t deliveredAddr; uint deliveredFlags; size_t deliveries;
     changeBus.onMeshChanged((size_t subject, uint flags) nothrow {
         deliveredAddr = subject; deliveredFlags = flags; ++deliveries;
