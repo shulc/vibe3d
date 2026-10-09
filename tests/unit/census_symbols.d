@@ -1540,6 +1540,9 @@ unittest {
         assert(actual.canFind(reason), "1D bounded pilot scanner named refusal: " ~ reason);
     }
     rejected(probe.replace(`"mesh.triple"`, `"mesh.select"`), "exact pilot IDs and receiver");
+    rejected(probe.replace(`registry.registerCommand("history.redo", factory);`,
+        `registry.registerCommand(dynamicId, "history.redo", factory);`),
+        "exact pilot IDs and receiver");
     rejected(probe.replace(`registry.registerCommand("history.undo", factory);`, ``), "exact pilot IDs and receiver");
     rejected(probe.replace(`registry.registerCommand("history.redo"`, `other.registerCommand("history.redo"`),
         "exact pilot IDs and receiver");
@@ -1629,6 +1632,8 @@ unittest {
     foreach (inside; [`void delayed()`, `auto delayed = ()`])
         refused(caller(inside ~ " { registerHistoryNavigationCommands(reg, deps, history); };"),
             "supported desktop reg receiver");
+    refused(caller("registerHistoryNavigationCommands(other, reg, deps, history);"),
+        "supported desktop reg receiver");
     refused("void registerHistoryCommands(ref Registry reg); unittest { "
         ~ "registerHistoryNavigationCommands(reg, deps, history); }", "immediate production body");
     refused("void registerHistoryCommands(ref Registry reg, void delegate() callback = () { "
