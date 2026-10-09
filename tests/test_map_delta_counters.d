@@ -28,7 +28,7 @@
 // `mesh.morph.apply` records `Kind.SetPos`, so every `mesh.morph.*` line below
 // drives the kind's recorder, its replay guard and its bind terms for real.
 // The mutation that shows it: make `bindMapForEntry` refuse unconditionally in
-// `source/mesh_edit_delta.d` -> `mapDeltaBindRefused` moves on the undo pass
+// `packages/common/source/mesh_edit_delta.d` -> `mapDeltaBindRefused` moves on the undo pass
 // and this block reddens naming it. Verified in this lane, task 2230.
 //
 // STAGE L1-b (task 2250) FINISHED IT. `weightmap.d` (4 classes),
@@ -47,7 +47,7 @@
 //
 // The witnesses that ARE potent at this commit all live in the OTHER lane —
 // `dub test --config=tests`, over `tests/unit/map_value_delta_test.d`,
-// `tests/unit/map_delta_census_test.d` and `source/mesh_edit_delta.d`'s own
+// `tests/unit/map_delta_census_test.d` and `packages/common/source/mesh_edit_delta.d`'s own
 // W-K1/W-K2 blocks. `./run_test.d` links the prebuilt archive and never RUNS a
 // `source/**` or `tests/unit/**` unittest block (measured), so a cell placed
 // here instead of there is a cell that cannot redden.

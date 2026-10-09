@@ -10,7 +10,7 @@
 // transitively over direct or address-taken member edges. Named residual: a
 // member calling another member injected into the same class by a mixin
 // template is not followed through the real mixin graph. This is safe today:
-// source/command_history.d has no live mixin, and the gate's actor is an
+// packages/common/source/command_history.d has no live mixin, and the gate's actor is an
 // external caller, which cannot inject a member into the class. A future mixin
 // in that file is the trigger to extend and mutation-test this arm.
 // `blankNonCode` removes comments AND literals before brace matching. The
@@ -476,7 +476,7 @@ private LedgerHit[] deriveHistoryReceiverHits(string code) {
     auto owners = parseHistoryOwnerScans(code);
     LedgerHit[] ownerHits;
     foreach (ref owner; owners)
-        ownerHits ~= LedgerHit(owner.name, "source/command_history.d",
+        ownerHits ~= LedgerHit(owner.name, "packages/common/source/command_history.d",
             owner.line, owner.name);
     auto ownerProblems = reconcile(kHistoryOwners, ownerHits);
     assert(ownerProblems.length == 0,
@@ -537,7 +537,7 @@ private LedgerHit[] deriveHistoryReceiverHits(string code) {
             if (!m.hidden && ((m.name in reaches)
                     || auditedHistoryProtocolPeer(owner.name, m.name)))
                 proposals ~= LedgerHit(owner.name ~ "." ~ m.name,
-                    "source/command_history.d", m.line, m.name);
+                    "packages/common/source/command_history.d", m.line, m.name);
     }
     proposals.sort!((a, b) => a.key < b.key);
     return proposals;
@@ -599,7 +599,7 @@ package:
             && mentionsHistoryStackField("{ undoStack.remove(0); }"),
         "history receiver scanner: an indirect/ref/UFCS mitigation arm is dead");
 
-    immutable historyPath = buildPath(repoRoot, "source", "command_history.d");
+    immutable historyPath = buildPath(repoRoot, "packages", "common", "source", "command_history.d");
     assert(exists(historyPath),
         "command-record class census: command_history.d is missing");
     auto receiverProposals = deriveHistoryReceiverHits(
@@ -613,7 +613,8 @@ package:
     immutable sourceRoot = buildPath(repoRoot, "source");
     assert(exists(sourceRoot),
         "command-record class census: source population root is missing");
-    foreach (e; dirEntries(sourceRoot, "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         population ~= relativePath(e.name, repoRoot);
     population.sort();
     assert(population.length > 100,

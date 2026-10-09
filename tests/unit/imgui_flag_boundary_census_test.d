@@ -54,7 +54,8 @@ unittest { // every used flag crosses one int(void) accessor and one D funnel
     const sourceRoot = buildPath(repoRoot, "source");
     auto offenders = appender!string;
     size_t dFiles;
-    foreach (entry; dirEntries(sourceRoot, "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++dFiles;
         const rel = relativePath(entry.name, repoRoot);
         const code = blankNonCode(readText(entry.name));

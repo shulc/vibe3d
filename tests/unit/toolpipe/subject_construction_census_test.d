@@ -1,5 +1,5 @@
 // Task 1904 Stage 6 (doc/subject_stage_plan.md §6) — the census: "no site
-// decides what the subject is" outside source/toolpipe/subject.d.
+// decides what the subject is" outside packages/common/source/toolpipe/subject.d.
 //
 // WHAT THE CONTRACT IS. Before this task, ~15 call sites in 7 files each
 // hand-decided what "the subject" is (which Mesh*, which editMode, which
@@ -10,10 +10,10 @@
 // single caller of `Pipeline.evaluate` outside `toolpipe/pipeline.d`.
 //
 // WHY FIELD ASSIGNMENT, NOT DECLARATION. `SubjectPacket subj;` at a call
-// site is STORAGE, not a decision — `VectorStack` (source/operator.d) holds
+// site is STORAGE, not a decision — `VectorStack` (packages/common/source/operator.d) holds
 // raw pointers into caller-owned frames, and the pipe is genuinely
 // re-entered while an outer stack is alive (plan §2, hazard R1;
-// `source/toolpipe/subject.d`'s header comment). So "no `SubjectPacket(`
+// `packages/common/source/toolpipe/subject.d`'s header comment). So "no `SubjectPacket(`
 // outside subject.d" is unreachable AND wrong: `SubjectPacket subj;`
 // declarations must keep existing at every migrated call site. What must
 // NOT exist outside `subject.d` is an assignment to one of `subj`'s fields
@@ -52,7 +52,7 @@
 //
 // `with (subj) { mesh = ...; }` LEFT THAT LIST at task 2007. The sweep
 // proved the hole live — `with (subj) { mesh = hideBatchMesh; }` planted
-// straight after `SubjectPacket subj;` in `source/command.d`, census green
+// straight after `SubjectPacket subj;` in `packages/common/source/command.d`, census green
 // at the same module count — and `withSubjectOf` + `scanFieldAssignments`'
 // `withStack` now cover both the braced and the braceless single-statement
 // form. A bare field name is counted ONLY inside a `with` bound to a name
@@ -221,7 +221,7 @@ private bool[string] declaredSubjectPacketVars(string stripped) {
 /// `subj.` prefix at all. This file's own header used to list the shape under
 /// "WHAT IT DOES NOT SEE"; the sweep then PROVED it live, planting
 /// `with (subj) { mesh = hideBatchMesh; }` straight after `SubjectPacket subj;`
-/// in `source/command.d` and watching the census stay green at the same module
+/// in `packages/common/source/command.d` and watching the census stay green at the same module
 /// count. A hole a file names in its own header is still a hole.
 ///
 /// Returns the SubjectPacket variable a `with (…)` head binds, or `null` if
@@ -390,7 +390,7 @@ unittest {
 
     // TASK 2007 — the `with (subj)` arm. The field write carries no `subj.`
     // prefix; before this arm the scan read ZERO on every shape below, which
-    // the sweep proved live in `source/command.d` with the census green.
+    // the sweep proved live in `packages/common/source/command.d` with the census green.
     static FieldAssignment[] scanBoth(string src) {
         const st = stripCommentsAndStrings(src);
         return scanFieldAssignments(st, declaredSubjectPacketVars(st));
@@ -513,7 +513,9 @@ unittest {
     LedgerHit[] evalHits;            // assertion (b)
     LedgerHit[] workplaneHits;       // assertion (c)
 
-    foreach (entry; dirEntries(dir, SpanMode.depth)) {
+    foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/common/source")])
+
+    foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile || entry.name.length < 2
             || entry.name[$ - 2 .. $] != ".d") continue;
         filesScanned++;

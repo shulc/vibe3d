@@ -350,7 +350,8 @@ unittest { // u7: the ONE clear is the script scene.reset automation tail
     // it): one `toolAttrCache.clear(` in the whole source tree.
     import std.file : SpanMode, dirEntries;
     size_t clears, files;
-    foreach (f; dirEntries("source", "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
         clears += blankNonCode(readText(f.name)).count("toolAttrCache.clear(");
     }

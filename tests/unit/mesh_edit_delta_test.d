@@ -1,4 +1,4 @@
-// Module unittests for `mesh_edit_delta`, moved verbatim out of source/mesh_edit_delta.d by task 0706.
+// Module unittests for `mesh_edit_delta`, moved verbatim out of packages/common/source/mesh_edit_delta.d by task 0706.
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.mesh_edit_delta_test;
@@ -176,7 +176,7 @@ unittest {
 //
 // A live mutation is wired at the real call site as well: build with
 //   dub build --config=modeling --d-version=MutateIndexSpace0831
-// and `source/mesh.d` fails to compile on the restored 0703 line.
+// and `packages/common/source/mesh.d` fails to compile on the restored 0703 line.
 unittest {
     // (1) the defect, verbatim: a position in the array being built.
     static assert(!__traits(compiles, {

@@ -51,7 +51,8 @@ private string[] filesWith(string needle, out size_t scanned) {
     import std.file : dirEntries, SpanMode;
     import std.path : buildPath;
     string[] hits;
-    foreach (de; dirEntries(buildPath(kRepoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const rel = de.name[kRepoRoot.length + 1 .. $];
         if (countOccurrences(codeOf(rel), needle) > 0) hits ~= rel;

@@ -1298,13 +1298,14 @@ unittest {
         size_t sourceFiles;
         size_t oldSignatures;
         size_t stackedCallers;
-        foreach (entry; dirEntries(repoRoot.buildPath("source"), "*.d",
+        foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source")])
+        foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                    SpanMode.depth)) {
             ++sourceFiles;
             const source = blankNonCode(readText(entry.name));
             oldSignatures += source.count("drawToolPropertiesPanel(EditorApp");
             if (entry.name != repoRoot.buildPath(
-                    "source", "toolpipe", "pipeline.d"))
+                    "packages", "common", "source", "toolpipe", "pipeline.d"))
                 stackedCallers += source.count("addStacked(");
         }
         assert(sourceFiles > 500 && oldSignatures == 0,

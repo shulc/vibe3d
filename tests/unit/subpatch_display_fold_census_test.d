@@ -235,7 +235,7 @@ unittest // completed writes are recorded below every entry refusal
 unittest // deleted ownership channels stay absent from executable code
 {
     size_t files, pyFiles;
-    foreach (root; ["source", "tools", "tests"]) {
+    foreach (root; ["source", "packages/common/source", "tools", "tests"]) {
         foreach (de; dirEntries(buildPath(repoRoot, root), SpanMode.depth)) {
             if (!de.isFile) continue;
             const ext = extension(de.name);

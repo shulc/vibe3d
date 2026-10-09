@@ -998,7 +998,7 @@ private string[] scanArmSites(string rel, string text)
     // four `@property`, three `pragma(inline, true)`, two `ref` returns and
     // twelve `version (unittest) [private] …` helpers. One of the twenty-one
     // is not merely missed but MIS-READ: `ref inout(Mesh) mesh() inout
-    // return` in `source/mesh.d` records its owner as `inout`, a name that
+    // return` in `packages/common/source/mesh.d` records its owner as `inout`, a name that
     // is not a function at all.
     // A missed declaration leaves `owner` at the PREVIOUS name, so an arm
     // added inside one is attributed to a kernel that does not hold it —
@@ -1143,12 +1143,12 @@ unittest // the resolver itself, on hand-written text — it is the census's onl
 /// the cheaper `AddFaces` + `ReshapeFaces`.
 private static immutable string[] kArmedSites = [
     // task 3240 (plan 2910 step 3): the edge-slice family left `struct Mesh`
-    // for `source/mesh_edge_slice.d`. The kernel and its arm are byte-
+    // for `packages/common/source/mesh_edge_slice.d`. The kernel and its arm are byte-
     // identical; only the file changed. `productionTargets()` below grew to
     // include that file in the SAME commit — dropping the row instead would
     // have left the only `Kind.FaceReindex` arm in the chord-split path
     // unguarded while this census went green.
-    "source/mesh_edge_slice.d:rebuildFacesWithChordSplits",
+    "packages/common/source/mesh_edge_slice.d:rebuildFacesWithChordSplits",
     // Task 1903 Stage L10. The weld's OTHER apply half — the twin L5-a
     // deliberately left alone — reached by `weldVerticesByMask` (and so by
     // `collapse`, `vert_join`, `vert_merge` and `reduce`) and by
@@ -1161,15 +1161,15 @@ private static immutable string[] kArmedSites = [
     // drops a triangle below the arity floor. Log `[FaceReindex RemoveVerts
     // Reindex]` on both, and V, F and E all land on their pre-op values
     // (disarmed: E 11 of 12 and F 2 of 3, with `revert()` answering TRUE).
-    "source/mesh.d:applyVertexRemapAndRebuild",
+    "packages/common/source/mesh.d:applyVertexRemapAndRebuild",
     // Task 1903 Stage L5-a. The weld's apply half, reached by
     // `weldCoincidentVertices` and therefore by `mesh_ops/cleanup.cleanupMesh`
     // (L5), by `arrayFaces` / `radialArrayFaces` / `mirrorFacesPlane` (L6) and
     // by the reduce family (L10). Its TWIN — same file, reached by
     // `weldVerticesByMask` / `weldVertexPairs` — was deliberately NOT here
     // until Stage L10 measured it and armed it; the entry above is that arm.
-    "source/mesh.d:applyVertexRemap",
-    "source/mesh.d:triangulateFacesByMask",
+    "packages/common/source/mesh.d:applyVertexRemap",
+    "packages/common/source/mesh.d:triangulateFacesByMask",
     // Task 1903 Stage L7-d — the VERTEX chamfer, and the entry that INVERTS
     // Stage K's refusal. K left it out under "do not arm when a VALUE is
     // lost": its residual then held `meshMaps["W"]` (a Point-domain map
@@ -1190,7 +1190,7 @@ private static immutable string[] kArmedSites = [
 
 private string[] productionTargets()
 {
-    string[] targets = [buildPath(repoRoot, "source", "mesh.d")];
+    string[] targets = [buildPath(repoRoot, "packages", "common", "source", "mesh.d")];
     immutable opsDir = buildPath(repoRoot, "source", "mesh_ops");
     assert(exists(opsDir) && isDir(opsDir),
            "the census cannot find source/mesh_ops/ at " ~ opsDir);
@@ -1202,8 +1202,8 @@ private string[] productionTargets()
     // `mesh_edit_delta.d` calls `rewriteFaces` too — on the REPLAY path, where
     // no batch is recording — so it is scanned as well: an arm appearing there
     // would mean a replay re-recording its own entry.
-    targets ~= buildPath(repoRoot, "source", "mesh_edit_delta.d");
-    targets ~= buildPath(repoRoot, "source", "mesh_planes.d");
+    targets ~= buildPath(repoRoot, "packages", "common", "source", "mesh_edit_delta.d");
+    targets ~= buildPath(repoRoot, "packages", "common", "source", "mesh_planes.d");
     // The satellites plan 2910 is carving out of `struct Mesh`, one per step.
     // `mesh_edge_slice.d` (step 3) holds `rebuildFacesWithChordSplits` and so
     // holds a real arm; `mesh_visibility.d` (step 2) holds none and is listed
@@ -1289,7 +1289,7 @@ unittest // the census: exactly these kernels arm FaceReindex, and no others
 //
 // The census above pins the set of lines that say `faceReindexScope()`. It
 // cannot pin the RULE, because `MeshEditTracker.wantsFaceReindex` is a PUBLIC
-// field (`source/mesh_edit_delta.d`) and a kernel can arm itself without
+// field (`packages/common/source/mesh_edit_delta.d`) and a kernel can arm itself without
 // spelling the scope at all.
 //
 // Measured, not argued (Stage K review, MAJOR-2): with
@@ -1344,7 +1344,7 @@ private bool isFlagWriteLine(string line)
 }
 
 /// The line ranges (0-based, inclusive) of the two blocks that OWN the flag.
-/// Empty for every file but `source/mesh.d`.
+/// Empty for every file but `packages/common/source/mesh.d`.
 private size_t[2][] flagOwnerRanges(string[] lines)
 {
     size_t[2][] ranges;
@@ -1381,7 +1381,7 @@ private string[] scanFlagWrites(string rel, string text, out size_t insideCount)
     auto lines  = text.split("\n");
     auto owned  = flagOwnerRanges(lines);
     size_t[2][] checkpointOwned;
-    if (rel == "source/mesh_edit_delta.d") {
+    if (rel == "packages/common/source/mesh_edit_delta.d") {
         foreach (i, line; lines) if (line.strip == "void restore(ref Checkpoint c) nothrow @nogc {") {
             int depth;
             foreach (j; i .. lines.length) {
@@ -1465,7 +1465,8 @@ private string[] productionSourceTree()
     assert(exists(srcDir) && isDir(srcDir),
            "the flag census cannot find source/ at " ~ srcDir);
     string[] targets;
-    foreach (entry; dirEntries(srcDir, SpanMode.depth)) {
+    foreach (scanSourceRoot; [srcDir, buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile) continue;
         if (entry.name.length < 2 || entry.name[$ - 2 .. $] != ".d") continue;
         targets ~= entry.name;

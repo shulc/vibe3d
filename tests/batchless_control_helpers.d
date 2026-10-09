@@ -117,7 +117,7 @@ module batchless_control_helpers;
 /// one: re-base this control (the pool is empty — see above, the replacement is
 /// the M-DM test-only unbatched commit), re-point those two tests, AND
 /// re-measure `changeBus.hideDerivesDeferred`, because that batch is exactly
-/// what would make the hide-derive pair deletable. `source/command.d`'s
+/// what would make the hide-derive pair deletable. `packages/common/source/command.d`'s
 /// refusal comment says the same thing from the other end.
 enum string kBatchlessControlCommand = "mesh.paste";
 

@@ -232,7 +232,8 @@ private FileCount[] scanSourceTree(string root)
     if (!isDir(sourceDir)) return [];
 
     auto found = appender!(FileCount[]);
-    foreach (entry; dirEntries(sourceDir, SpanMode.depth))
+    foreach (scanSourceRoot; [sourceDir, buildPath(root, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth))
     {
         if (!entry.isFile || !entry.name.endsWith(".d")) continue;
         const text = readText(entry.name);
@@ -279,7 +280,7 @@ FIXTURE";
            "a path to a card under the tasks tree is the policy's pointer form");
     assert(censusOf("// tasks 0011 and 0012\n").citationLines == 1,
            "the plural spelling is a citation");
-    assert(toLedgerPath(`source\mesh.d`) == "source/mesh.d",
+    assert(toLedgerPath(`packages\common\source\mesh.d`) == "packages/common/source/mesh.d",
            "ledger paths must be normalised to `/`");
 }
 

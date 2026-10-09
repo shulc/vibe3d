@@ -37,7 +37,7 @@
 // the array bounds check, and the bounds check is what found the defect Cell
 // B-now exists to report: reverting a `FaceReindex`-disarmed replay of
 // `extrudeFacesByMask` writes PAST THE END of `vertLoop` in `Mesh.buildLoops`
-// (`source/mesh.d`, the `vertLoop[loops[idx].vert] = idx` seed pass — the faces
+// (`packages/common/source/mesh.d`, the `vertLoop[loops[idx].vert] = idx` seed pass — the faces
 // still reference the extruded vertices while `vertices` has been restored to
 // its pre-extrude length). Under `-release` that same run prints a tidy
 // "roundTrips NO" and reads as a merely LOSSY record. An instrument that hides

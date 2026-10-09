@@ -50,7 +50,7 @@
 //
 // MEASURED HERE: **the delivery channel is filtered by the SAME predicate.**
 // `Mesh.deliverPending`'s first line is `if (!deliverySubjectAccepted(&this))
-// return;`, the same `g_isDocumentMesh` the counter consults (`source/mesh.d`),
+// return;`, the same `g_isDocumentMesh` the counter consults (`packages/common/source/mesh.d`),
 // so `deliveryCount` is exactly as blind to a preview mesh as
 // `unbatchedGeometryCommits` is. A band on it would have been the same vacuous
 // zero in a different column.

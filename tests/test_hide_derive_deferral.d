@@ -45,7 +45,7 @@
 // command is one delivery whatever the operand — 387 commits, one delivery.
 //
 // MUTATION (measured 2026-08-28): drop `hideBatchMesh.beginHideDeriveBatch();`
-// and its `scope(exit)` in `source/command.d` →
+// and its `scope(exit)` in `packages/common/source/command.d` →
 //   "the hide-derive pair deferred 0 derives across a 386-point vertex-mode
 //    paste; the operand demands exactly 387"
 // because with the pair gone nothing arms `g_hideDeriveDepth` and every one of

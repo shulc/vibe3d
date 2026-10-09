@@ -418,7 +418,8 @@ unittest { // C-1: production wiring owns exactly these two routes
         && raw.canFind(`RouteSpec("/api/frames",               "GET",  Match.exact,  kFramesAnswered`));
 
     size_t files;
-    foreach (_; dirEntries(buildPath(root, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
+    foreach (_; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         ++files;
     assert(files >= 500, "6511 source census population fell below 500 modules");
 }

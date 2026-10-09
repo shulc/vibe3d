@@ -14,6 +14,9 @@ unittest {
     version (BoundaryUnittestWitness) enum onlyUnittest = true;
     else enum onlyUnittest = false;
     if (onlyProduction || onlyUnittest) {
+        auto common = execute(["dub", "build", "--root=" ~ buildPath(repoRoot, "packages/common"),
+            "--config=modeling-noai", "--compiler=dmd", "--force"]);
+        assert(common.status == 0, "common production boundary witness: " ~ common.output);
         string[] command = ["python3", buildPath(repoRoot, "tools", "check_standalone_boundary.py"),
             "--root", buildPath(repoRoot, "tests", "core"), "--config", "core", "--compiler", "dmd"];
         version (BoundaryProductionFirst) enum firstProduction = true;

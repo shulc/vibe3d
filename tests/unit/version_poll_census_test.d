@@ -261,7 +261,8 @@ package Site[] scanSource(string label, string src) {
 
 private Site[] scanTree() {
     auto sites = appender!(Site[]);
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         sites.put(scanSource(de.name[repoRoot.length + 1 .. $], readText(de.name)));
     return sites.data;
 }
@@ -592,7 +593,7 @@ unittest {
 /// 1906's recorded set-gate mutations still redden, now naming the symbol.
 ///   * 4-SET-a (table edited, code untouched): `Mesh.vertexAdjacencyCSR —
 ///     recorded 2, scanner found 1`.
-///   * 4-SET-b (an ARGUED new poll in source/snapshot.d): `mutation4056Poll —
+///   * 4-SET-b (an ARGUED new poll in packages/common/source/snapshot.d): `mutation4056Poll —
 ///     NOT RECORDED AT ALL`, with the MARKER gate above it green, which is
 ///     the half of 4-SET-b that this gate exists for.
 /// And the move it was costing is silent: `sameGpuUploadVersion` lifted into

@@ -195,7 +195,7 @@ unittest // K1-K9: whole-tree census
     size_t sourceFiles, testFiles;
     Scan renderer, editorApp;
     size_t rendererSeen, editorAppSeen;
-    foreach (root; ["source", "tests"]) {
+    foreach (root; ["source", "packages/common/source", "tests"]) {
         foreach (entry; dirEntries(buildPath(repoRoot, root), "*.d", SpanMode.depth)) {
             const rel = relativePath(entry.name, repoRoot).replace("\\", "/");
             if (root == "source") ++sourceFiles; else ++testFiles;

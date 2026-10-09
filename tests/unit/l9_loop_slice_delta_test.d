@@ -478,7 +478,9 @@ unittest
     assert(sourceDir.exists && sourceDir.isDir,
         "the L9 seam census cannot find source/ — it is measuring nothing");
 
-    foreach (de; dirEntries(sourceDir, "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [sourceDir, buildPath(repoRoot, "packages/common/source")])
+
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = relativePath(de.name, repoRoot);
         immutable raw  = readText(de.name);
         immutable code = blankNonCode(raw);

@@ -4,7 +4,7 @@ import tests.unit.census_symbols : blankNonCode, countOccurrences, isIdentChar,
     lineOf;
 
 import bindbc.opengl;
-import std.algorithm : canFind, sort;
+import std.algorithm : canFind, sort, startsWith;
 import std.array : join;
 import std.conv : to;
 import std.file : exists, readText, remove, tempDir;
@@ -135,7 +135,7 @@ private DependencyGraph readDependencyGraph(string path)
         if (importerField[$ - 1] == ')' && pathStart < importerField.length - 1)
         {
             const sourcePath = importerField[pathStart .. $ - 1];
-            if (sourcePath.length >= 7 && sourcePath[0 .. 7] == "source/")
+            if (sourcePath.startsWith("source/", "packages/common/source/"))
             {
                 result.ours[importer] = true;
                 result.sourcePath[importer] = sourcePath.idup;
@@ -382,7 +382,7 @@ set -o pipefail
 cd "$1"
 flags=$(dub describe --config=web \
   --data=import-paths,string-import-paths,versions,debug-versions 2>"$2")
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/common/source -name '*.d' -print)
 SH";
     const run = execute(["bash", "-c", compileGraph, "w16-ld-deps",
                          repoRoot, errPath, depsPath],

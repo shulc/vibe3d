@@ -556,7 +556,8 @@ unittest { // production census: one owner, live provider, no pointer-era path
     const flatPanel = collapseWhitespace(panel);
 
     size_t registrarBytes, registrarFiles;
-    foreach (entry; dirEntries(root.buildPath("source"),
+    foreach (scanSourceRoot; [root.buildPath("source"), root.buildPath("packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot,
             "*_registration.d", SpanMode.shallow)) {
         ++registrarFiles;
         registrarBytes += readText(entry.name).length;
@@ -573,7 +574,8 @@ unittest { // production census: one owner, live provider, no pointer-era path
 
     size_t sourceFiles;
     string allSource;
-    foreach (entry; dirEntries(root.buildPath("source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [root.buildPath("source"), root.buildPath("packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         allSource ~= blankNonCode(readText(entry.name));
     }

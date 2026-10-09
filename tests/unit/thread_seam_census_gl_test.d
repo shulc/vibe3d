@@ -91,7 +91,7 @@ cd "$1"
 flags=$(dub describe --config=tests \
     --data=import-paths,string-import-paths,versions,debug-versions \
     2>"$2") || { cat "$2"; exit 1; }
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c -version=web $(find source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c -version=web $(find source packages/common/source -name '*.d' -print)
 SH";
     const run = execute(["bash", "-c", compileWebGraph, "w15-a-web-deps",
                          repoRoot, describeErrorPath, depsPath],
@@ -135,7 +135,8 @@ SH";
     size_t glThreadGuardUses;
     size_t markMainThreadUses;
     size_t guardedCalls;
-    foreach (entry; dirEntries(sourceRoot, "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
     {
         ++filesScanned;
         if (baseName(entry.name) == "gl_thread_guard.d") continue;
@@ -145,7 +146,7 @@ SH";
         const markUsesHere = identifierCount(code, "markMainThread");
         if (importsHere || glUsesHere || markUsesHere)
         {
-            auto moduleName = relativePath(entry.name, sourceRoot)[0 .. $ - 2]
+            auto moduleName = relativePath(entry.name, scanSourceRoot)[0 .. $ - 2]
                 .replace("/", ".");
             subjects ~= moduleName;
         }

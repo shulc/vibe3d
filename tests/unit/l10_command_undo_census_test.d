@@ -65,14 +65,14 @@ private string repoRoot()
 /// would silently absorb a fourteenth command written later without anyone
 /// deciding it belongs to L10.
 private enum string[13] kL10Commands = [
-    "bridge.d", "collapse.d", "detriangulate.d", "edge_join.d", "merge.d",
-    "quadruple.d", "reduce.d", "sweep.d", "triple.d", "unify.d",
-    "vert_join.d", "vert_merge.d", "weld_vertex_pair.d",
+    "source/commands/mesh/bridge.d", "source/commands/mesh/collapse.d", "source/commands/mesh/detriangulate.d", "source/commands/mesh/edge_join.d", "source/commands/mesh/merge.d",
+    "source/commands/mesh/quadruple.d", "source/commands/mesh/reduce.d", "source/commands/mesh/sweep.d", "packages/common/source/commands/mesh/triple.d", "source/commands/mesh/unify.d",
+    "source/commands/mesh/vert_join.d", "source/commands/mesh/vert_merge.d", "source/commands/mesh/weld_vertex_pair.d",
 ];
 
 /// The one member that does NOT hold a `DenseSelectionUndo`, named rather than
 /// counted. See this file's header.
-private enum string kDenseSelectionUndoExempt = "vert_merge.d";
+private enum string kDenseSelectionUndoExempt = "source/commands/mesh/vert_merge.d";
 
 unittest // the thirteen are off the whole-mesh snapshot
 {
@@ -95,7 +95,7 @@ unittest // the thirteen are off the whole-mesh snapshot
     string[] denseFiles;
 
     foreach (name; kL10Commands) {
-        immutable path = buildPath(repoRoot(), "source", "commands", "mesh", name);
+        immutable path = buildPath(repoRoot(), name);
         // TERM 2 — every literal exists, asserted BEFORE any count. A count
         // over a file that is not there is not zero, it is nothing.
         assert(exists(path),

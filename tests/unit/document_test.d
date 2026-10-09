@@ -1,9 +1,9 @@
 // Module unittests for `document`. Task 0706 moved the first batch out of
-// source/document.d, 4061 the rest, and 4120 dissolved the `mixin template`
+// packages/common/source/document.d, 4061 the rest, and 4120 dissolved the `mixin template`
 // the second batch travelled in -- so every block here is now an ordinary
 // top-level `unittest` and no production module imports this one. The handful
 // that read module-private state reach it through the `version (unittest)`
-// seam at the tail of source/document.d; its own comment carries the law.
+// seam at the tail of packages/common/source/document.d; its own comment carries the law.
 module tests.unit.document_test;
 
 import mesh    : Mesh;
@@ -540,7 +540,7 @@ unittest {  // the quadratic-oracle regression. `foregroundLayersInto` used to
 // ===========================================================================
 // TASK 1906 STAGE 3 — `Layer` MINTS AN IDENTITY AND REGISTERS IT.
 //
-// `source/mesh_dirty.d`'s own ABA cell proves the LAW (a changed birth at an
+// `packages/common/source/mesh_dirty.d`'s own ABA cell proves the LAW (a changed birth at an
 // address advances every watcher for it). This proves the other half — that
 // the law is actually wired to the object whose address reuse is the hazard —
 // and it is a separate cell because the two fail for different reasons: the
@@ -916,11 +916,11 @@ unittest {  // Slot mutation: replace, clear, the null-target spelling, and the
 
 
 // ---------------------------------------------------------------------------
-// What used to be the tail of `source/document.d`. Task 4061 moved it here as
+// What used to be the tail of `packages/common/source/document.d`. Task 4061 moved it here as
 // a `mixin template` instantiated back inside `document`, because some of it
 // reads module-private state; task 4120 measured how much (four blocks and one
 // oracle, not 45) and replaced the arc with the `version (unittest)` seam at
-// the tail of `source/document.d`, which is what the `test*` calls below reach.
+// the tail of `packages/common/source/document.d`, which is what the `test*` calls below reach.
 // ---------------------------------------------------------------------------
 
 /// TEST-ONLY oracle for the in-module unit tests below. Every check here is

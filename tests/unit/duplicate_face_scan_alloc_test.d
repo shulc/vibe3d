@@ -105,7 +105,7 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// SECOND SITE — the weld/dedup tail of `arrayFacesGrid`, source/mesh.d.
+// SECOND SITE — the weld/dedup tail of `arrayFacesGrid`, packages/common/source/mesh.d.
 //
 // WHY A SEPARATE CELL. The fix landed in two places and the cell above drives
 // only one of them: with the array site reverted to its

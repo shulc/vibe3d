@@ -7,7 +7,7 @@
 // Stage B the delta's method counted 19 of its 26 heap arrays (six of the
 // missing seven belong to `Kind.FaceReindex`, the entries this task is about to
 // start emitting, so the bias grew with the work) and the snapshot had no
-// method at all. Both are now written to one rule — `source/plane_bytes.d` —
+// method at all. Both are now written to one rule — `packages/common/source/plane_bytes.d` —
 // and both are checked here two ways:
 //
 //   1. **MECHANICALLY, by field enumeration.** Every dynamic array (and every

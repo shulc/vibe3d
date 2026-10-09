@@ -87,6 +87,7 @@ SH";
     string[][string] importsByModule;
     string[string] sourcePathByModule;
     const sourcePrefix = buildPath(repoRoot, "source") ~ "/";
+    const commonPrefix = buildPath(repoRoot, "packages/common/source") ~ "/";
     foreach (line; readText(depsPath).splitLines)
     {
         const first = line.indexOf(" : ");
@@ -100,7 +101,7 @@ SH";
         if (!parseDepNode(tail[cast(size_t)secondRel + 3 .. $], imported)) continue;
         importsByModule[importer.moduleName] ~= imported.moduleName;
         foreach (node; [importer, imported])
-            if (node.path.startsWith(sourcePrefix) && node.path.endsWith(".d"))
+            if (node.path.startsWith(sourcePrefix, commonPrefix) && node.path.endsWith(".d"))
                 sourcePathByModule[node.moduleName] = node.path;
     }
     bool[string] reached;
@@ -224,7 +225,7 @@ SH";
 
     // The native runtime cell documents the long-domain contract, while this
     // wiring pin makes an inline cast-before-check regression visible on x86_64.
-    const nativeSource = readText(buildPath(repoRoot, "source", "io", "native.d"));
+    const nativeSource = readText(buildPath(repoRoot, "packages", "common", "source", "io", "native.d"));
     assert(nativeSource.count(
             "if (!morphVertexIndexInBounds(vidx, mesh.vertices.length))") == 1,
         "W16-W morph indices must be range-checked as long before size_t narrowing");

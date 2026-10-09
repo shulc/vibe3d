@@ -608,7 +608,7 @@ unittest { // Case C (task 0436, clamp_findings.md follow-up pass): two
 // face collapsed below 3 corners (Case C)`) used to TRUNCATE faceMaterial /
 // facePart / Subpatch from the front instead of gathering them by the
 // `faceRemap` it already builds — the verbatim twin of `Mesh.applyVertexRemap`
-// (source/mesh.d), closed the identical way (task 0921).
+// (packages/common/source/mesh.d), closed the identical way (task 0921).
 //
 // Reuses Case C's exact geometry (two disjoint top-face edges of a unit cube
 // at w=0.5, where the shared top-face quad vanishes ENTIRELY — not from the

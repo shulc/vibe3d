@@ -200,7 +200,8 @@ unittest { // V4a: a null binding is rejected
 
 unittest { // V5: the owner address is confined to ToolHostReadView
     string[] paths;
-    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d",
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                SpanMode.depth))
         paths ~= entry.name;
     paths.sort();

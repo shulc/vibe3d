@@ -220,7 +220,7 @@ unittest {
 //     anywhere in picking". That is also false. It is right about the pickers
 //     it grepped (`bvh_pick.d`, `gpu_select.d`) and wrong about the rest of the
 //     tree: the front-facing dot below is live in `Mesh.visibleVertices`
-//     (`source/mesh.d`, feeding snap via `source/snap.d`), is repeated verbatim
+//     (`packages/common/source/mesh.d`, feeding snap via `source/snap.d`), is repeated verbatim
 //     at `source/snap.d`'s own `faceVisible`, and again — twice — in the LASSO
 //     POLYGON branch of `source/app.d`.
 //

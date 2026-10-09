@@ -1,4 +1,4 @@
-// Module unittests for `argstring`, moved verbatim out of source/argstring.d by task 0706.
+// Module unittests for `argstring`, moved verbatim out of packages/common/source/argstring.d by task 0706.
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.argstring_test;

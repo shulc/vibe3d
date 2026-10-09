@@ -452,7 +452,7 @@ unittest {
 // The guard added (`source/mesh_ops/cleanup.d`, top of the two-parameter
 // `computeOrientationFlipMask` overload -- the only real implementation, the
 // one-parameter overload delegates to it) is `m.assertLoopsValid()`, which is
-// `structVersion`-keyed. MEASURED before writing it (`source/mesh.d`'s
+// `structVersion`-keyed. MEASURED before writing it (`packages/common/source/mesh.d`'s
 // `structVersion` doc comment): this closes a CRUDER class than the one 1909
 // demonstrated for the mutating twin -- a structural edit through a REAL
 // mutator (here, `rebuildEdgesFromFaces()`) that bumps `structVersion`

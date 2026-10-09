@@ -84,7 +84,8 @@ unittest { // the doors that read the table — and nothing else (a restore
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     size_t[string] uses, reclamps;
     size_t scanned;
-    foreach (de; dirEntries(buildPath(root, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const code = blankNonCode(readText(de.name));
         const rel = relativePath(de.name, buildPath(root, "source"));

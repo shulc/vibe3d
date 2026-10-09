@@ -1,4 +1,4 @@
-// Module unittests for `layer_params`, moved verbatim out of source/layer_params.d by task 0706.
+// Module unittests for `layer_params`, moved verbatim out of packages/common/source/layer_params.d by task 0706.
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.layer_params_test;

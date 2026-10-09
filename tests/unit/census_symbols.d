@@ -156,7 +156,8 @@ package(tests.unit) size_t registrationFamilyBytes(
     size_t bytes;
     files = 1;
     bytes += readText(buildPath(sourceDir, "registration.d")).length;
-    foreach (de; dirEntries(sourceDir, "*_registration.d", SpanMode.shallow)) {
+    foreach (scanSourceRoot; [sourceDir, buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*_registration.d", SpanMode.shallow)) {
         ++files;
         bytes += readText(de.name).length;
     }
@@ -171,7 +172,8 @@ package(tests.unit) string registrationFamilyText(string repoRoot) {
     const parentPath = buildPath(sourceDir, "registration.d");
     const parentCode = blankNonCode(readText(parentPath));
     string[] paths = [parentPath];
-    foreach (de; dirEntries(sourceDir, "*_registration.d", SpanMode.shallow))
+    foreach (scanSourceRoot; [sourceDir, buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*_registration.d", SpanMode.shallow))
         paths ~= de.name;
     sort(paths);
     assert(paths.length >= 4, "registration reader family population");
@@ -1330,7 +1332,7 @@ unittest {
     // GREEN FIRST, so the reddening cells below are read against a baseline
     // that is known to agree.
     LedgerHit[] exact = [
-        LedgerHit("Mesh.publishConfinedChange", "source/mesh.d", 10, "x"),
+        LedgerHit("Mesh.publishConfinedChange", "packages/common/source/mesh.d", 10, "x"),
         LedgerHit("XfrmApplyImpl.applyFold", "source/tools/x.d", 20, "y"),
     ];
     assert(reconcile(rows, exact) == "", reconcile(rows, exact));
@@ -1365,7 +1367,7 @@ unittest {
     //    migration is caught; see the header for the wholesale case, which
     //    is a stated and accepted residual rather than a covered one.
     LedgerHit[] split = [
-        LedgerHit("Mesh.publishConfinedChange", "source/mesh.d", 10, "x"),
+        LedgerHit("Mesh.publishConfinedChange", "packages/common/source/mesh.d", 10, "x"),
         LedgerHit("XfrmApplyImpl.applyFold", "source/tools/a.d", 20, "y"),
         LedgerHit("XfrmApplyImpl.applyFold", "source/tools/b.d", 30, "y"),
     ];
@@ -1474,7 +1476,8 @@ unittest {
 
     size_t nFiles = 0, nWithMembers = 0, nLines = 0;
     auto bad = appender!string;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++nFiles;
         auto syms = enclosingSymbols(
             blankUnittestBodies(blankNonCode(readText(de.name))));
@@ -1583,7 +1586,9 @@ unittest {
     mkdirRecurse(buildPath(root, "source"));
     scope(exit) rmdirRecurse(root);
     const directory = buildPath(root, "source");
-    const pilotPath = buildPath(directory, "pilot_command_registration.d");
+    const commonDirectory = buildPath(root, "packages/common/source");
+    mkdirRecurse(commonDirectory);
+    const pilotPath = buildPath(commonDirectory, "pilot_command_registration.d");
     const historyPath = buildPath(directory, "history_macro_registration.d");
     enum historySource = `void registerHistoryCommands(ref Registry reg) {
         registerHistoryNavigationCommands(reg, deps, history);

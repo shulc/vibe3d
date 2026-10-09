@@ -363,7 +363,7 @@ unittest { // both slice commands run every cut of the ladder inside ONE batch
 
     // (4) The batches closed cleanly, nobody stamped without publishing, and
     // no kernel opened one of its own. This family has NO intra-Mesh caller —
-    // `source/mesh.d` and the remaining `mesh_ops/*.d` mention its names only
+    // `packages/common/source/mesh.d` and the remaining `mesh_ops/*.d` mention its names only
     // in comments — so unlike D3's bridge it owes no transitional-batch debt,
     // and this delta is what says so.
     const long nested = a3["nestedBatchOpens"].integer

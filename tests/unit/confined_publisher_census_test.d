@@ -69,7 +69,7 @@
 //     prose mentions of every one of these names, including the paragraph you
 //     are reading, and a census that counted sentences would move whenever
 //     someone explained the mechanism;
-//   * `unittest` bodies are blanked — `source/mesh_dirty.d`'s own cell drives
+//   * `unittest` bodies are blanked — `packages/common/source/mesh_dirty.d`'s own cell drives
 //     `beginConfinedDelivery` / `endConfinedDelivery` five times by hand, and
 //     counting those would make this gate red every time that cell is edited
 //     while saying nothing about production;
@@ -217,7 +217,8 @@ package Hit[] scanConfinedSource(string label, string src) {
 
 private Hit[] scanTree() {
     auto hits = appender!(Hit[]);
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         hits.put(scanConfinedSource(de.name[repoRoot.length + 1 .. $],
                                     readText(de.name)));
     return hits.data;
@@ -262,7 +263,7 @@ PROBE";
 }
 
 /// A `unittest` body is not production; a `version (unittest)` block IS. The
-/// two are one character of context apart, and `source/mesh_dirty.d` contains
+/// two are one character of context apart, and `packages/common/source/mesh_dirty.d` contains
 /// both shapes today — its cell drives the marker by hand five times, and this
 /// census must not count any of them.
 unittest {

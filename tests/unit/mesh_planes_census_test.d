@@ -15,8 +15,8 @@
 //
 // The tree-scan gate is a SEPARATE concern living in this same file: it
 // proves no hand-rolled `faces = …` / `vertices = …` rewrite can land in
-// `source/mesh.d` / `source/mesh_ops/*.d` outside a named, reasoned
-// allowlist. `source/mesh_edit_delta.d` is excluded from the scan root
+// `packages/common/source/mesh.d` / `source/mesh_ops/*.d` outside a named, reasoned
+// allowlist. `packages/common/source/mesh_edit_delta.d` is excluded from the scan root
 // entirely (replay path, a distinct role — plan §6 Stage F).
 module tests.unit.mesh_planes_census_test;
 
@@ -141,7 +141,7 @@ unittest // L2: every face/vertex-shaped Mesh field is a carried plane or a docu
            format("field(s) %s are per-face/per-vertex-shaped (name prefix "
                 ~ "face/vertex/vert/edge, type has .length) but appear in "
                 ~ "NEITHER kFacePlanes/kVertPlanes/kEdgePlanes NOR kExemptPlanes (all in "
-                ~ "source/mesh_planes.d) — classify each: does rewriteFaces/"
+                ~ "packages/common/source/mesh_planes.d) — classify each: does rewriteFaces/"
                 ~ "rewriteVertices need to carry it, or is it exempt (and "
                 ~ "why)? If you just REMOVED this from kFacePlanes, that is "
                 ~ "the mutation — do not exempt it.", unclassified));
@@ -160,15 +160,15 @@ unittest // L2: every face/vertex-shaped Mesh field is a carried plane or a docu
 
 unittest // mesh_planes.d's own source text names none of the three allocating @property views
 {
-    immutable path = buildPath(repoRoot, "source", "mesh_planes.d");
-    assert(exists(path), "cannot find source/mesh_planes.d at " ~ path);
+    immutable path = buildPath(repoRoot, "packages", "common", "source", "mesh_planes.d");
+    assert(exists(path), "cannot find packages/common/source/mesh_planes.d at " ~ path);
     immutable src = readText(path);
 
     static immutable string[] forbidden =
         ["selectedFaces", "selectedVertices", "isSubpatch"];
     foreach (name; forbidden)
         assert(!hasSubstring(src, name),
-               "source/mesh_planes.d names `" ~ name ~ "` — the primitive's "
+               "packages/common/source/mesh_planes.d names `" ~ name ~ "` — the primitive's "
              ~ "generated carry must read the raw per-face/per-vertex arrays "
              ~ "directly and never call an allocating @property view inside "
              ~ "its loop (memory on2_traps_in_mesh)");
@@ -233,7 +233,7 @@ unittest // L1/L2 for MeshOpEntry: every kFacePlanes name maps to a real MeshOpE
         }
         assert(found,
                format("kFacePlaneToEntryField[\"%s\"] = \"%s\", but "
-                    ~ "MeshOpEntry (source/mesh_edit_delta.d) has no field "
+                    ~ "MeshOpEntry (packages/common/source/mesh_edit_delta.d) has no field "
                     ~ "of that name", facePlane, entryField));
     }
 
@@ -381,7 +381,7 @@ private bool swapArgsNamePlane(string args) {
 /// a separate decision.
 ///
 /// DECIDED: NOT SCANNED. An indexed write is not a rewrite; it is the ordinary
-/// spelling of a single in-place correction, and `source/mesh.d` +
+/// spelling of a single in-place correction, and `packages/common/source/mesh.d` +
 /// `source/mesh_ops/*.d` contain 35 of them (22 + 13, counted 2026-08-28).
 /// A trigger on `faces[<expr>] =` would therefore report 35 findings on code
 /// that is correct today, and nothing textual separates "one in-place fix" from
@@ -706,7 +706,7 @@ unittest // …and the shapes the two new arms must NOT flag, because a census t
 // task 4056 closes the FIRST of them outright, and the count is what still
 // closes the second: (a) a NEW copy-pasted line landing next to an
 // already-allowed one —
-// `"faces              = newFaces;"` in `source/mesh.d` is exact-text-
+// `"faces              = newFaces;"` in `packages/common/source/mesh.d` is exact-text-
 // identical across FOUR distinct production sites
 // (`applyVertexRemapAndRebuild`, `applyVertexRemap`, `dissolveVerticesByMask`,
 // `triangulateFacesByMask`), so membership alone stays satisfied whether one
@@ -770,7 +770,7 @@ private static immutable AllowEntry[] kAllow = [
       ~ "on this single line), not one per line", 2),
 
     // MOVED FILE, NOT MOVED CODE (task 3240, plan 2910 step 3): the
-    // edge-slice family left `struct Mesh` for `source/mesh_edge_slice.d`.
+    // edge-slice family left `struct Mesh` for `packages/common/source/mesh_edge_slice.d`.
     // Under the OLD path key that move cost an edit here — the entry had to
     // be retargeted, and the honest-looking alternative (delete it) would
     // have turned this census green by removing the code from its field of
@@ -857,7 +857,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_ops/*.d is in kAllow
 {
-    string[] targets = [buildPath(repoRoot, "source", "mesh.d")];
+    string[] targets = [buildPath(repoRoot, "packages", "common", "source", "mesh.d")];
     immutable opsDir = buildPath(repoRoot, "source", "mesh_ops");
     assert(exists(opsDir) && isDir(opsDir),
            "the gate cannot find source/mesh_ops/ at " ~ opsDir);

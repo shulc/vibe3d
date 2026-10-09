@@ -4,7 +4,7 @@
 // WHY THIS EXISTS INSTEAD OF A SANITIZER
 // -------------------------------------
 // The plan's cheapest phase was `--fsanitize=undefined`, whose named first
-// hit was `source/params.d:809` — `int iv = cast(int)_jsonFloat(*jp);`, where
+// hit was `packages/common/source/params.d:809` — `int iv = cast(int)_jsonFloat(*jp);`, where
 // a JSON `1e39` becomes `float.infinity` and the cast to `int` is undefined
 // behaviour. That phase has NO MECHANISM on this toolchain: measured on the
 // shipped LDC 1.42.0, `--fsanitize=` accepts address/thread/memory/leak/fuzzer

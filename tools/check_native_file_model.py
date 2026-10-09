@@ -28,7 +28,7 @@ def check(root, evidence):
     command = [compiler, '-c', '-i', '-v', '-deps=' + str(deps),
                '-of=' + str(evidence / 'native.o')]
     command += ['-I' + p for p in settings['importPaths']]
-    command += [str(root / 'source/io/native.d')]
+    command += [str(root / 'packages/common/source/io/native.d')]
     compiled = subprocess.run(command, cwd=root, env=env, text=True, capture_output=True)
     output = compiled.stdout + compiled.stderr
     (evidence / 'compiler.log').write_text(output)

@@ -1,7 +1,7 @@
 // Task 0614 Phase 7 — a GIZMO-authored item transform survives a `.v3d`
 // save -> reopen, through the real File > Save / File > Open command path.
 //
-// The codec itself is pinned inside `source/io/native.d` (a bit-exact
+// The codec itself is pinned inside `packages/common/source/io/native.d` (a bit-exact
 // twelve-channel save->load unittest, plus the non-mesh-item and parent-link
 // LOSSES); `tests/test_layer_xform_io.d` pins the hand-written-file
 // load->save direction. Neither one drives the path a user actually walks:

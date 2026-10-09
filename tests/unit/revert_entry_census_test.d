@@ -13,7 +13,7 @@
 //     header for why the fix was a second gate rather than a looser first one,
 //     and for the number the roster moved from and to.
 //
-// WHAT THIS GATE IS FOR. `source/command.d`'s doc comment used to claim the
+// WHAT THIS GATE IS FOR. `packages/common/source/command.d`'s doc comment used to claim the
 // two undo paths ("`/api/undo` / `navHistory` call `history.undo()` raw" vs.
 // "the registered `history.undo` command wraps it") differ in delivery
 // granularity. Task 1932 re-measured that claim by grep and found it FALSE:
@@ -60,7 +60,7 @@
 // correct one would, because either way the (file, function) pair the
 // scanner reports will not be in the recorded table.
 //
-// Before task 3694, three sites shared `source/command_history.d :: undo`:
+// Before task 3694, three sites shared `packages/common/source/command_history.d :: undo`:
 // ToolLifecycle, Case A and Case B. Strict lifecycle LIFO removed all three
 // branches and added one common-tail call in the same function. The table
 // below records that seven-site result and the gate still aggregates by
@@ -321,7 +321,8 @@ private struct ScanResult { RevertSite[] sites; size_t filesScanned; }
 private ScanResult scanTree() {
     auto sites = appender!(RevertSite[]);
     size_t n = 0;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++n;
         sites.put(scanRevertSites(de.name[repoRoot.length + 1 .. $], readText(de.name)));
     }
@@ -965,8 +966,8 @@ unittest
 // revert inside it".
 // ---------------------------------------------------------------------------
 unittest {
-    const string historySrc = readText(buildPath(repoRoot, "source/command_history.d"));
-    const string commandSrc = readText(buildPath(repoRoot, "source/command.d"));
+    const string historySrc = readText(buildPath(repoRoot, "packages/common/source/command_history.d"));
+    const string commandSrc = readText(buildPath(repoRoot, "packages/common/source/command.d"));
 
     const size_t nHistory = codeLevelCallCount(historySrc, "beginDeliveryBatchGlobal(");
     const size_t nCommand = codeLevelCallCount(commandSrc, "beginDeliveryBatchGlobal(");

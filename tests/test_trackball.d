@@ -1,8 +1,8 @@
 // Trackball viewport navigation (task 0573) — the END-TO-END half.
 //
 // The arithmetic is pinned in closed form by the module unittests in
-// `source/trackball.d` (the circle, the lift, the arc, the blend staircase over
-// two pane shapes) and `source/view.d` (the sign, the frame invariants, the
+// `packages/common/source/trackball.d` (the circle, the lift, the arc, the blend staircase over
+// two pane shapes) and `packages/common/source/view.d` (the sign, the frame invariants, the
 // pane-local conversion). Repeating any of that here would mean this file
 // recomputing the law it is supposed to be checking, which proves nothing.
 //
@@ -148,7 +148,7 @@ unittest { // (1) with the gesture OFF the orbit drag is untouched
     // Set explicitly rather than relying on the boot default: a worker runs
     // several test files against ONE app instance, so "still at its default"
     // is not something this file can assume. That the DEFAULT is off is a
-    // unit-level claim and is asserted in `source/trackball.d`.
+    // unit-level claim and is asserted in `packages/common/source/trackball.d`.
     cmd("pref.trackball global off");
     cmd("pref.trackball override off");
     auto p = livePane();

@@ -1,6 +1,6 @@
 // The `MarkView` lifetime-contract guard (task 0585, review SF-2).
 //
-// WHAT THE CONTRACT IS. `MarkView` (source/mesh.d) is a BORROWED slice of a
+// WHAT THE CONTRACT IS. `MarkView` (packages/common/source/mesh.d) is a BORROWED slice of a
 // mesh's live `vertexMarks`/`edgeMarks`/`faceMarks` array. Anything that
 // changes that array's length invalidates it, which every topological
 // operation does. So a `MarkView` is a one-draw-call value: it must never be
@@ -338,7 +338,8 @@ unittest {
 
     size_t filesScanned;
     string[] found;
-    foreach (entry; dirEntries(dir, SpanMode.depth)) {
+    foreach (scanSourceRoot; [dir, buildPath(guardRepoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile || entry.name.length < 2
             || entry.name[$ - 2 .. $] != ".d") continue;
         filesScanned++;
@@ -355,7 +356,7 @@ unittest {
 
     assert(found.length == 0,
            "a `MarkView` is being STORED, which the type's lifetime contract "
-           ~ "(source/mesh.d) forbids: it is a borrowed slice of the mesh's live "
+           ~ "(packages/common/source/mesh.d) forbids: it is a borrowed slice of the mesh's live "
            ~ "marks array and is invalidated by any change to that array's "
            ~ "length, so it may not outlive the draw call that took it. Read "
            ~ "the marks through `Mesh.is*Selected(i)` or re-take the view at "

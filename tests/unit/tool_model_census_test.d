@@ -112,7 +112,7 @@ private enum string[] kWriteWrappers = [
 private enum string kSessionPlan =
     "doc/tool_session_model_plan_2026-09-24.md (section 5.1 (d), slice M7)";
 private enum string[] kSessionModuleFiles =
-    ["source/command.d", "source/edit_session.d", "source/tool.d"];
+    ["packages/common/source/command.d", "source/edit_session.d", "source/tool.d"];
 /// Interfaces of those modules that are not session specials. Each must
 /// still be declared, so a stale entry cannot hide a new special.
 private enum string[] kNonSessionIfaces = ["InputBindable", "RunMergeable"];
@@ -330,7 +330,8 @@ private struct SrcFile { string path; string mod; string src; }
 /// modules here declare a name that is not their path).
 private SrcFile[] sourceFiles(out size_t withoutModuleLine) {
     SrcFile[] files;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const src = readText(de.name);
         const rel = de.name[repoRoot.length + 1 .. $];
         const mod = moduleName(blankNonCode(src));
@@ -616,7 +617,7 @@ package size_t[2] keyFieldCounts(string code) {
 /// Spellings of the key types that `keyFieldCounts` does NOT resolve: an
 /// `alias` naming `MeshCacheKey` / `SessionMeshKey` (either alias form), and a
 /// spelled-out `MeshKey!` instantiation carrying `MeshTermMutation` (which is
-/// what `MeshCacheKey` IS, `source/mesh.d`). Aliases are out of the scanner's
+/// what `MeshCacheKey` IS, `packages/common/source/mesh.d`). Aliases are out of the scanner's
 /// scope; the census pins this count at zero over `source/tools` instead.
 package size_t keySpellingEscapes(string code) {
     size_t n;

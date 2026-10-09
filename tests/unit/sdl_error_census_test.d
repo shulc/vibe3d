@@ -50,7 +50,8 @@ private Hit[] scanSource()
         "SDL_GetError census cannot find source/; an empty walk is not green");
 
     Hit[] hits;
-    foreach (entry; dirEntries(sourceRoot, "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         hits ~= scanText(entry.name[repoRoot.length + 1 .. $],
                          readText(entry.name));
     sort!((a, b) => a.file == b.file ? a.line < b.line : a.file < b.file)(hits);

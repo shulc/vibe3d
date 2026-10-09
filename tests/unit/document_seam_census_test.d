@@ -1,7 +1,7 @@
 // The document test-access seam has ONE caller file, and this closes it
 // (task 4120).
 //
-// `source/document.d` ends in a `version (unittest)` block of six readers that
+// `packages/common/source/document.d` ends in a `version (unittest)` block of six readers that
 // reach state which is `private` for a reason. They exist so that the document
 // unit tests can be ordinary top-level `unittest` blocks in an ordinary test
 // module instead of a `mixin template` the production module imports back —
@@ -58,7 +58,7 @@ import tests.unit.census_symbols : blankNonCode;
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 /// The file that DECLARES the seam, and the one file allowed to call it.
-private enum seamDecl = "source/document.d";
+private enum seamDecl = "packages/common/source/document.d";
 private enum seamCaller = "tests/unit/document_test.d";
 
 /// The six accessors. Data, deliberately: spelled as string literals so that
@@ -94,7 +94,7 @@ private size_t count(R)(R range)
 }
 
 /// The accessor names declared by the `version (unittest)` seam at the tail of
-/// `source/document.d`, read out of the file rather than trusted from a list.
+/// `packages/common/source/document.d`, read out of the file rather than trusted from a list.
 ///
 /// PARSED BY NAME CONVENTION, NOT BY RETURN TYPE, and that is the whole point
 /// of this function's second draft. The first matched `^    Ident\*? +name\(`,
@@ -140,7 +140,7 @@ private size_t count(R)(R range)
 ///     declaration ended up somewhere this parse does not read.
 private string[] declaredSeamReaders(string rawText)
 {
-    // Comments and string literals blanked first: `source/document.d` names
+    // Comments and string literals blanked first: `packages/common/source/document.d` names
     // this very header inside the prose above the seam, and a parse that read
     // raw text would locate the block in a paragraph about the block.
     const text = blankNonCode(rawText);
@@ -289,7 +289,7 @@ unittest
     // ---- (3) THE LAW. Nothing outside the declaring file and that one caller
     //          may name a seam reader.
     string[] strays;
-    foreach (root; ["source", "tests"])
+    foreach (root; ["source", "packages/common/source", "tests"])
     {
         const dir = buildPath(repoRoot, root);
         if (!isDir(dir)) continue;

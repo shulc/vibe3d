@@ -83,7 +83,7 @@ unittest { // Published sets are populated, exact and disjoint by observed data.
             "6250 set census: command is published in both commit and drop sets: "
             ~ entry.toString);
 
-    const commandSource = readText(buildPath(repoRoot, "source", "command.d"));
+    const commandSource = readText(buildPath(repoRoot, "packages", "common", "source", "command.d"));
     const policy = bodyAt(commandSource,
         "bool commitsActiveToolEditBeforeApply(const Command cmd)");
     assert(policy.count(`return cmd.name() == "mesh.subpatch_toggle";`) == 1,
@@ -91,7 +91,7 @@ unittest { // Published sets are populated, exact and disjoint by observed data.
 }
 
 unittest { // Production ordering: close before apply, finish from scope(exit).
-    const source = readText(buildPath(repoRoot, "source", "command_executor.d"));
+    const source = readText(buildPath(repoRoot, "packages", "common", "source", "command_executor.d"));
     const body = bodyAt(source,
         "bool applyOrRefire(Command cmd, RecordMode mode, string throwMsg)");
     const latch = body.indexOf("const bool reentrant = inPreApplyToolHandling_");
@@ -203,7 +203,8 @@ unittest { // The tools that close their operation their own way, exactly.
     string[] owners;
     auto commitRx = regex(r"override bool commitOperation\(\)");
     auto resumeRx = regex(r"override void resumeAfterClose\(bool rearm\)");
-    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const source = readText(entry.name);
         foreach (_; source.matchAll(commitRx)) { ++commits; owners ~= entry.name; }
         foreach (_; source.matchAll(resumeRx)) ++resumes;
@@ -236,7 +237,8 @@ unittest { // The production wiring names the close and its finish, once each.
     const app = readText(buildPath(repoRoot, "source", "app.d"));
     const binding = readText(buildPath(repoRoot, "source", "application_command_binding.d"));
     size_t commandCloses;
-    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         commandCloses += blankNonCode(readText(entry.name)).count("closeOperation(CloseReason.command");
     const es = blankNonCode(readText(buildPath(repoRoot, "source", "edit_session.d")));
     assert(commandCloses == 1 && es.count("closeOperation(CloseReason.command, d)") == 1

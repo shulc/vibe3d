@@ -901,7 +901,8 @@ unittest {
     import std.file : dirEntries, readText, SpanMode;
     string[] where;
     size_t files;
-    foreach (e; dirEntries("source", "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
         const n = workLiteralCount(readText(e.name));
         foreach (_; 0 .. n) where ~= e.name;

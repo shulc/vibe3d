@@ -128,7 +128,7 @@ private string sourceFile(string rel) {
 // ===========================================================================
 unittest
 {
-    const string code = sourceFile("source/mesh_edit_delta.d");
+    const string code = sourceFile("packages/common/source/mesh_edit_delta.d");
 
     // NON-VACUITY, FIRST. A stripper that lost its place eats the rest of the
     // file, and every count below then reads 0 and passes.
@@ -144,7 +144,7 @@ unittest
 
     const size_t raw = countOccurrences(code, "log_ ~=");
     assert(raw == 1, format(
-        "census: `log_ ~=` occurs %d times in source/mesh_edit_delta.d, "
+        "census: `log_ ~=` occurs %d times in packages/common/source/mesh_edit_delta.d, "
       ~ "expected exactly 1 (inside MeshEditTracker.append). A recorder that "
       ~ "appends DIRECTLY bypasses both adjacency latches, produces a "
       ~ "perfectly valid-looking delta, and nothing at runtime would notice. "
@@ -177,7 +177,7 @@ unittest
 // ===========================================================================
 unittest
 {
-    const string code = sourceFile("source/mesh_edit_delta.d");
+    const string code = sourceFile("packages/common/source/mesh_edit_delta.d");
     const size_t n = countOccurrences(code, "final switch");
     enum size_t kExpected = 10;   // 6 over Kind, 1 over SelDomain, 3 over the
                                   // MapValueDelta sub-enums
@@ -258,7 +258,9 @@ unittest
     size_t scannedFiles = 0, scannedBytes = 0;
     LedgerHit[] hits;
 
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const string code = codeView(readText(de.name));
         ++scannedFiles;
         scannedBytes += code.length;
@@ -492,7 +494,8 @@ unittest
     foreach (ref r; args) recorderSet[r.sym] = true;
     CallSite[][string] bySymbol;
     size_t scannedFiles;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const code = codeView(readText(de.name));
         ++scannedFiles;
         foreach (recorder; recorderSet.keys)

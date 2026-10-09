@@ -130,7 +130,7 @@ void assertUnorderedMatchVec(const(Vec3)[] got, const(Vec3)[] want, double tol, 
 }
 
 // ---------------------------------------------------------------------------
-// Cage geometry helpers. makeCube()'s own numbering (source/mesh.d): the
+// Cage geometry helpers. makeCube()'s own numbering (packages/common/source/mesh.d): the
 // fixture's `rig.creased_edge` (-0.5,0.5,0.5)-(0.5,0.5,0.5) is cage verts
 // 7-6 (== 6-7, edgeKey is order-independent); `rig.creased_loop` ("the four
 // edges of the +Y face") is face index 4 == addFace([3,7,6,2]), edges
@@ -574,7 +574,7 @@ unittest {
 
 // weight then topology edit: the crease map stays length-correct (no OOB,
 // no crash) across a topology edit. Values are EXPECTED to scramble (the
-// documented Point/Edge relocation gap, source/mesh.d — see the out-of-
+// documented Point/Edge relocation gap, packages/common/source/mesh.d — see the out-of-
 // scope gap row); this assertion is bounds, not identity.
 unittest {
     Mesh cage = makeCube();

@@ -134,43 +134,13 @@ def validate_runtime(output):
 
 
 def validate_settings(description, root):
-    targets = description['targets']
-    require(len(targets) == 1, 'independent target population must equal one')
-    settings = targets[0]['buildSettings']
-    sources = [Path(p).resolve() for p in settings.get('sourceFiles', [])]
-    require(sorted(p.name for p in sources) == sorted(CORE_ROOTS),
-            'explicit test-root population changed: ' + repr([p.name for p in sources]))
-    require(sources == [(root.parent / 'unit' / name).resolve() for name in CORE_ROOTS],
-            'explicit test roots must be existing tests/unit modules')
-    require(description['rootPackage'] == 'vibe3d-core-tests', 'unexpected independent root package')
-    active = [p for p in description['packages'] if p.get('active')]
-    require(len(active) == 1 and not active[0].get('dependencies'),
-            'core target must have no package dependencies')
-    for package in active:
-        for field in ('preGenerateCommands', 'postGenerateCommands', 'preBuildCommands',
-                      'postBuildCommands', 'preRunCommands', 'postRunCommands'):
-            require(not package.get(field), 'forbidden inherited build hook: ' + field)
-    for key in ('sourceFiles', 'injectSourceFiles', 'linkerFiles', 'libs', 'lflags',
-                'frameworks', 'extraDependencyFiles', 'copyFiles', 'dflags'):
-        for value in settings.get(key, []):
-            check_input(value)
-    # No native libraries are needed by this Mesh/Document stage. Treat a new
-    # computational link input as a finding rather than copying desktop flags.
-    require(not settings.get('libs') and not settings.get('linkerFiles')
-            and not settings.get('lflags') and not settings.get('frameworks'),
-            'unexpected core computational/native link input: PLAN-FINDING')
-    require(not any(p.startswith(('-L', '-l', '-Xcc', '-Xlinker')) or p.endswith('.o')
-                    for p in settings.get('dflags', [])),
-            'unexpected core dflags link input: PLAN-FINDING')
-    require(not settings.get('injectSourceFiles'), 'additional injected core source roots')
-    require(all(p.startswith('-') for p in settings.get('dflags', [])),
-            'additional positional core source roots in dflags')
-    require('-i' in settings.get('dflags', []), 'independent build must compile import closure with -i')
+    settings, sources, _ = validate_package_settings(description, root, False)
     return settings, sources
 
 
 def validate_invocations(invocations, with_tests, sources=None, native_inputs=()):
-    compiled = [row for row in invocations if '-c' in row['argv'] and '-i' in row['argv']]
+    compiled = [row for row in invocations if '-c' in row['argv'] and '-lib' not in row['argv']
+                and any(p.startswith('-of') for p in row['argv'])]
     require(len(compiled) == 1, 'fresh independent compilation population must equal one')
     require(('-unittest' in compiled[0]['argv']) == with_tests,
             'production/unittest compiler flags disagree with requested closure')
@@ -183,7 +153,7 @@ def validate_invocations(invocations, with_tests, sources=None, native_inputs=()
         require((len(extra) == 1 and next(iter(extra)).name == 'dub_test_root.d')
                 if with_tests else not extra,
                 'actual compiler source-root population differs from explicit roots plus DUB main')
-    outputs = {p[3:].removeprefix('=') for row in compiled for p in row['argv'] if p.startswith('-of')}
+    outputs = {p[3:].removeprefix('=') for row in invocations for p in row['argv'] if p.startswith('-of')}
     for row in invocations:
         for argument in row['argv']:
             check_input(argument, native_inputs=native_inputs)
@@ -213,46 +183,98 @@ STB_REVISION = 'a66f6917718ea128076a2c5660e37f362a785144'
 
 
 def validate_cli_settings(description, root):
-    require(description['rootPackage'] == 'vibe3d-cli', 'unexpected CLI root package')
+    return validate_package_settings(description, root, True)
+
+
+def validate_package_settings(description, root, cli):
+    owner = 'vibe3d-cli' if cli else 'vibe3d-core-tests'
+    require(description['rootPackage'] == owner, 'unexpected independent root package')
     active = {p['name']: p for p in description['packages'] if p.get('active')}
-    require(set(active) == {'vibe3d-cli', 'd-stb-image'}, 'CLI package population must be CLI plus pinned image codec')
-    require(active['vibe3d-cli'].get('dependencies') == ['d-stb-image']
-            and not active['d-stb-image'].get('dependencies'), 'CLI must not inherit desktop root dependency')
+    require(set(active) == {owner, 'vibe3d-common', 'd-stb-image'},
+            'independent package population must be consumer plus common plus pinned image')
+    require(active[owner].get('dependencies') == ['vibe3d-common']
+            and active['vibe3d-common'].get('dependencies') == ['d-stb-image']
+            and not active['d-stb-image'].get('dependencies'),
+            'independent resolved dependencies must be consumer -> common -> pinned image')
+    common = (root.parents[1] / 'packages/common').resolve()
+    require(Path(active[owner]['path']).resolve() == root
+            and Path(active['vibe3d-common']['path']).resolve() == common,
+            'resolved local package paths changed')
     manifest = json.loads((root / 'dub.json').read_text())
-    require(manifest.get('dependencies') == {'d-stb-image': {
+    shared = json.loads((common / 'dub.json').read_text())
+    require(manifest.get('dependencies') == {'vibe3d-common': {'path': '../../packages/common'}},
+            'consumer local common dependency changed')
+    require(manifest.get('sourcePaths') == (['source'] if cli else [])
+            and manifest.get('importPaths') == []
+            and manifest.get('dflags') == ([] if cli else ['-i'])
+            and manifest.get('subConfigurations') == {'vibe3d-common': 'modeling-noai'},
+            'consumer source/import roots or flags changed')
+    require(manifest.get('sourceFiles', []) == ([] if cli else ['../unit/' + n for n in CORE_ROOTS]),
+            'explicit test-root population changed')
+    require(shared.get('name') == 'vibe3d-common' and shared.get('targetType') == 'staticLibrary'
+            and shared.get('sourcePaths') == ['source'], 'common source root or target changed')
+    require(shared.get('dependencies') == {'d-stb-image': {
         'version': STB_REVISION, 'repository': 'git+https://github.com/shulc/D-StbImage.git'}},
-        'CLI image dependency must retain exact pinned revision')
-    require(manifest.get('sourcePaths') == ['source']
-            and manifest.get('importPaths') == ['../../source'], 'CLI source/import roots changed')
+        'common image dependency must retain exact pinned revision')
+    hooks = ('preGenerateCommands', 'postGenerateCommands', 'preBuildCommands',
+             'postBuildCommands', 'preRunCommands', 'postRunCommands')
+    empty = ('importPaths', 'sourceFiles', 'injectSourceFiles', 'linkerFiles', 'libs', 'lflags',
+             'frameworks', 'extraDependencyFiles', 'copyFiles', 'dflags', 'stringImportPaths')
+    for descriptor, fields in ((shared, empty + hooks), (manifest, hooks + empty[2:8] + ('stringImportPaths',))):
+        for key, value in descriptor.items():
+            if key.split('-')[0] in fields:
+                require(not value, 'forbidden explicit descriptor setting: ' + key)
+    require(shared.get('configurations') == [
+        {'name': 'modeling', 'versions': ['WithAI']},
+        {'name': 'modeling-noai', 'versions': []},
+        {'name': 'with-render', 'versions': ['WithRender', 'WithAI']},
+        {'name': 'web', 'versions': ['web']}], 'common configuration versions changed')
+    for config in manifest.get('configurations', []):
+        require(set(config) == {'name'}, 'consumer configuration injects settings')
     image = Path(active['d-stb-image']['path']).resolve()
     require(STB_REVISION in image.parts, 'resolved image package revision differs from pinned dependency')
-    native = {str(image / 'libd-stb-image.a'), str(image / 'build/libstb_image_c.a')}
+    native = {str(common / 'libvibe3d-common.a'), str(image / 'libd-stb-image.a'),
+              str(image / 'build/libstb_image_c.a')}
     targets = description['targets']
-    require(len(targets) == 2 and {t['rootPackage'] for t in targets} == set(active),
-            'CLI resolved target population changed')
-    root_target = next(t for t in targets if t['rootPackage'] == 'vibe3d-cli')
-    settings = root_target['buildSettings']
+    require(len(targets) == 3 and {t['rootPackage'] for t in targets} == set(active),
+            'independent target population must equal three')
+    settings = next(t['buildSettings'] for t in targets if t['rootPackage'] == owner)
     sources = [Path(p).resolve() for p in settings.get('sourceFiles', [])]
-    require(sources == [root / 'source/main.d'], 'CLI must compile actual CLI main as sole explicit root')
+    require(sources == ([root / 'source/main.d'] if cli else
+                        [(root.parent / 'unit' / name).resolve() for name in CORE_ROOTS]),
+            'explicit roots must be actual CLI main or existing tests/unit modules')
+    inventory = sorted(p.resolve() for p in (common / 'source').rglob('*.d'))
+    require(len(inventory) >= 71, 'common production source population below 71')
     for target in targets:
-        settings_ = target['buildSettings']
+        package = target['rootPackage']
+        current = target['buildSettings']
+        require(sorted(Path(p).resolve() for p in current.get('sourceFiles', [])) ==
+                (inventory if package == 'vibe3d-common' else
+                 [image / 'source/stb_image/c.d'] if package == 'd-stb-image' else sorted(sources)),
+                'resolved production source inventory changed: ' + package)
+        expected_imports = ([common / 'source', image / 'source'] if package != 'd-stb-image'
+                            else [image / 'source'])
+        require([Path(p).resolve() for p in current.get('importPaths', [])] == expected_imports,
+                'resolved import roots grant unavailable source: ' + package)
         for key in ('sourceFiles', 'injectSourceFiles', 'linkerFiles', 'libs', 'lflags',
                     'frameworks', 'extraDependencyFiles', 'copyFiles', 'dflags'):
-            for value in settings_.get(key, []):
+            for value in current.get(key, []):
                 check_input(value, native_inputs=native)
-        require(not settings_.get('injectSourceFiles') and not settings_.get('frameworks')
-                and not settings_.get('extraDependencyFiles') and not settings_.get('copyFiles'),
-                'unexpected CLI injected/native inputs: PLAN-FINDING')
-        require(set(settings_.get('libs', [])) == {'stb_image_c', 'm'}
-                and settings_.get('lflags', []) == ['-L' + str(image / 'build')],
-                'unexpected CLI computational/native link input: PLAN-FINDING')
-        require(settings_.get('linkerFiles', []) == ([str(image / 'libd-stb-image.a')]
-                if target['rootPackage'] == 'vibe3d-cli' else []), 'unexpected CLI archive input')
-        require(settings_.get('dflags', []) == (['-i'] if target['rootPackage'] == 'vibe3d-cli' else []),
-                'unexpected CLI compiler flags')
-    for field in ('preGenerateCommands', 'postGenerateCommands', 'preBuildCommands',
-                  'postBuildCommands', 'preRunCommands', 'postRunCommands'):
-        require(not active['vibe3d-cli'].get(field), 'forbidden CLI build hook: ' + field)
+        require(not current.get('injectSourceFiles') and not current.get('frameworks')
+                and not current.get('extraDependencyFiles') and not current.get('copyFiles')
+                and not current.get('stringImportPaths'), 'unexpected independent injected/native inputs')
+        require(set(current.get('libs', [])) == {'stb_image_c', 'm'}
+                and current.get('lflags', []) == ['-L' + str(image / 'build')],
+                'unexpected independent computational/native link input: PLAN-FINDING')
+        require(current.get('linkerFiles', []) ==
+                ([str(common / 'libvibe3d-common.a'), str(image / 'libd-stb-image.a')] if package == owner
+                 else [str(image / 'libd-stb-image.a')] if package == 'vibe3d-common' else []),
+                'unexpected independent archive input')
+        require(current.get('dflags', []) == (['-i'] if package == owner and not cli else []),
+                'unexpected independent compiler flags')
+    for package in (owner, 'vibe3d-common'):
+        for field in hooks:
+            require(not active[package].get(field), 'forbidden inherited build hook: ' + field)
     require(active['d-stb-image'].get('preBuildCommands') == [
         'cmake -B $PACKAGE_DIR/build -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $PACKAGE_DIR',
         'cmake --build $PACKAGE_DIR/build --config Release'], 'pinned image build recipe changed')
@@ -262,7 +284,8 @@ def validate_cli_settings(description, root):
 def produced_image_archive(invocations, description):
     package = next(p for p in description['packages'] if p['name'] == 'd-stb-image')
     image = Path(package['path']).resolve()
-    library = [row for row in invocations if '-lib' in row['argv']]
+    library = [row for row in invocations if '-lib' in row['argv']
+               and any('source/stb_image/c.d' in p for p in row['argv'])]
     require(len(library) == 1, 'fresh pinned image archive compilation population must equal one')
     row = library[0]
     roots = {(Path(row['cwd']) / p).resolve() for p in row['argv']
@@ -277,36 +300,6 @@ def produced_image_archive(invocations, description):
     require(output.is_file(), 'fresh pinned image archive output missing')
     return str(output)
 
-
-def source_census(files, project, with_tests):
-    # Reuse the existing libdparse span service for literal/comment/unittest
-    # boundaries. Compiler inputs remain the authority for active versions.
-    sys.path.insert(0, str(Path(__file__).resolve().parent / 'dspans'))
-    import dspans_client
-    rows = []
-    for name in sorted(files):
-        path = Path(name)
-        if not path.is_relative_to(project) or path.suffix != '.d':
-            continue
-        source = path.read_text()
-        spans = dspans_client.spans(source)
-        visible = list(source)
-        masks = spans.comments + spans.strings
-        if not with_tests:
-            masks += dspans_client.unittest_ranges(source, with_version=True)
-        for start, end in masks:
-            visible[start:end] = ' ' * (end - start)
-        visible = ''.join(visible)
-        for declaration in re.finditer(r'\bimport\s+([^;]+);', visible):
-            names = declaration.group(1).split(':', 1)[0]
-            for part in names.split(','):
-                module = part.split('=')[-1].strip()
-                if not re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*', module):
-                    raise BoundaryError('unparsed source import at ' + name + ':' + str(declaration.start()))
-                require(not banned_module(module), 'forbidden conservative source module: ' + module + ' (' + name + ')')
-                rows.append({'path': name, 'offset': declaration.start(), 'module': module})
-    require(len(rows) >= 20, 'source import census population below 20')
-    return rows
 
 
 def run(command, cwd, env, evidence, name, merge_stderr=True):
@@ -349,7 +342,7 @@ def main(argv=None):
     if cli:
         settings, sources, native_inputs = validate_cli_settings(description, root)
     else:
-        settings, sources = validate_settings(description, root)
+        settings, sources, native_inputs = validate_package_settings(description, root, False)
     deps = evidence / 'compiler.deps'
     deps.unlink(missing_ok=True)
     commands = evidence / 'compiler-commands.jsonl'
@@ -360,7 +353,7 @@ def main(argv=None):
             'args=[]\n'
             'for token in sys.argv[1:]:\n'
             ' args.extend(shlex.split(Path(token[1:]).read_text()) if token.startswith("@") else [token])\n'
-            'if "-c" in args and "-i" in args: args += ["-deps=' + str(deps) + '","-v"]\n'
+            'if "-c" in args or "-lib" in args: args += ["-deps=' + str(deps) + '","-v"]\n'
             'elif any(a.endswith(".o") for a in args): args += ["-v"]\n'
             'with open(' + repr(str(commands)) + ',"a") as out:\n'
             ' out.write(json.dumps({"cwd":os.getcwd(),"argv":args})+"\\n")\n'
@@ -378,9 +371,16 @@ def main(argv=None):
             command += ['-debug=' + p for p in settings.get('debugVersions', [])]
             command += settings.get('dflags', []) + list(map(str, sources))
         result = run(command, root, env, evidence, 'build-run')
+    require(result.returncode == 0, 'compiler/build/runtime failed: ' +
+            next((line for line in result.stdout.splitlines() if 'Error:' in line
+                  or 'AssertError@' in line), 'see build-run.log'))
     invocations = [json.loads(line) for line in commands.read_text().splitlines()]
-    if cli:
+    if cli or args.unittest:
         native_inputs.add(produced_image_archive(invocations, description))
+        for row in invocations:
+            if '-lib' in row['argv'] and any('/packages/common/source/' in p for p in row['argv']):
+                native_inputs.update(str(Path(p[3:].removeprefix('=' )).resolve())
+                                     for p in row['argv'] if p.startswith('-of'))
     object_outputs = {p[3:].removeprefix('=') for row in invocations if '-c' in row['argv']
                       for p in row['argv'] if p.startswith('-of')}
     modules, files = compiler_inputs(deps.read_text() if deps.is_file() else '', result.stdout, root)
@@ -388,8 +388,6 @@ def main(argv=None):
         {'modules': modules, 'files': sorted(files)}, indent=2) + '\n')
     validate_compiler(modules, files, sources, runtime_registry_inputs(result.stdout, compiler))
     require(deps.is_file(), 'NO-VERDICT: compiler did not emit dependencies')
-    census = source_census(files, root.parents[1], args.unittest)
-    (evidence / 'source-imports.json').write_text(json.dumps(census, indent=2) + '\n')
     if cli:
         require({'standalone_application', 'io.native', 'io.file_model', 'stb_image.c'} <= set(modules),
                 'missing standalone/native/compiler known roots')
@@ -416,7 +414,7 @@ def main(argv=None):
         source_digest.update(filename.encode())
         source_digest.update(Path(filename).read_bytes())
     witness = {'mode': mode, 'sha': sha, 'compiler': compiler, 'fileCount': len(files),
-               'sourceImportCount': len(census), 'nativeInputs': sorted(native_inputs),
+               'nativeInputs': sorted(native_inputs),
                'binarySha256': binary_hash, 'sourceInputSha256': source_digest.hexdigest(),
                'druntimeModules': total,
                'namedCells': list(CORE_CELLS) if args.unittest else [],

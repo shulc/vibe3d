@@ -152,3 +152,7 @@ scratch/*.lock
 # Standalone command runner artifacts
 tools/cli/vibe3d-cli
 tools/cli/.boundary/
+
+# Common package library artifacts.
+/packages/common/libvibe3d-common.a
+/packages/common/vibe3d-common.lib

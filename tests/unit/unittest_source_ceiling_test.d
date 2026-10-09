@@ -181,7 +181,8 @@ private FileCount[] scanSourceTree(string root)
     if (!isDir(sourceDir)) return [];
 
     auto found = appender!(FileCount[]);
-    foreach (entry; dirEntries(sourceDir, SpanMode.depth))
+    foreach (scanSourceRoot; [sourceDir, buildPath(root, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth))
     {
         if (!entry.isFile || !entry.name.endsWith(".d")) continue;
         const text = readText(entry.name);
@@ -230,7 +231,7 @@ unittest // comments and literals do not impersonate compiler-visible guards
     assert(toLedgerPath(`source\tools\transform\xfrm_transform.d`) ==
            "source/tools/transform/xfrm_transform.d",
            "ledger paths must be normalised to `/` or every row misses on Windows");
-    assert(toLedgerPath("source/mesh.d") == "source/mesh.d",
+    assert(toLedgerPath("packages/common/source/mesh.d") == "packages/common/source/mesh.d",
            "normalisation must leave a POSIX path alone");
 }
 

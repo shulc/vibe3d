@@ -202,7 +202,7 @@ unittest // a throw between open and close pops the frame and ticks batchLeaks
 // ===========================================================================
 // M-B3 — THE HIDE DERIVE IS THE ONE THING A BATCH MAY NOT DEFER.
 //
-// A PORT of task 1330's own REGIME-2 case (`source/mesh.d`, beside
+// A PORT of task 1330's own REGIME-2 case (`packages/common/source/mesh.d`, beside
 // `anyHideBitSet`), with `beginHideDeriveBatch`/`endHideDeriveBatch` replaced
 // by a `MeshEditBatch`. It already discriminates: the observer is
 // `selectVertex`, which REFUSES a vertex whose derived Hide bit is set, so a
@@ -543,7 +543,7 @@ unittest // setVertexPositions is the bulk form, and drops the no-op writes
 // Mutations, and DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT, so run
 // them one at a time:
 //   M-SP1: delete the `if (!recording)` arm in
-//          `MeshEditBatch.setVertexPositions` (`source/mesh.d`) so both paths
+//          `MeshEditBatch.setVertexPositions` (`packages/common/source/mesh.d`) so both paths
 //          build the arrays → "an unrecorded bulk write allocated 286720 B of
 //          bookkeeping no op-log can read".
 //   M-SP2: `f.rec.recordSetPosOwned(...)` → `f.rec.recordSetPos(...)`, i.e.
@@ -662,7 +662,7 @@ unittest // M-SP2 — a recorded bulk write allocates the entry's arrays ONCE
 // `meshPlanesJson` prints `%.9g`, which is `-0`.
 //
 // Mutation: `sameBits(b, to[k])` → `b == to[k]` in `MeshEditBatch`
-// (`source/mesh.d`) → the first assertion below reddens with
+// (`packages/common/source/mesh.d`) → the first assertion below reddens with
 // "setVertexPositions skipped a ±0 write: vertex 0 kept bits 80000000".
 // The two fixture assertions in front of it are the anti-vacuity half: without
 // a real negative zero in the mesh every later line is true on the broken code

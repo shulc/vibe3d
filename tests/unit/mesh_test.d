@@ -1,4 +1,4 @@
-// Module unittests for `mesh`, moved verbatim out of source/mesh.d by task 0706.
+// Module unittests for `mesh`, moved verbatim out of packages/common/source/mesh.d by task 0706.
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.mesh_test;
@@ -104,7 +104,7 @@ unittest // buildLoops: native parallel and browser serial runners are byte-iden
     assert(diffs.length == 0,
         format("6950 buildLoops parallel/serial mesh planes differ: %s", diffs));
 
-    const runnerSource = blankNonCode(readText("source/tsan_annotate.d"));
+    const runnerSource = blankNonCode(readText("packages/common/source/tsan_annotate.d"));
     const nativeParallelLoops = runnerSource.split("parallel(iota(count))").length - 1;
     assert(nativeParallelLoops == 2,
         format("6950 native runner must keep both parallel(iota(count)) arms; got %d",

@@ -132,7 +132,8 @@ unittest // the mark law, its captured colours and shapes
 unittest
 {
     string[2][] files;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         files ~= [de.name[repoRoot.length + 1 .. $],
                   blankUnittestBodies(blankNonCode(readText(de.name)))];
     assert(files.length >= 500, format("population floor: %s source files", files.length));

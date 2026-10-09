@@ -16,7 +16,7 @@ private string body(string code, string declaration) {
 }
 
 unittest {
-    auto owner = blankNonCode(file("source/standalone_application.d"));
+    auto owner = blankNonCode(file("packages/common/source/standalone_application.d"));
     auto ctor = body(owner, "this(Document loadedDocument)");
     assert(ctor.count("session_ = Session.create(loadedDocument);") == 1
         && ctor.count("registry_.bindSelTypeAuthority(() => session_.selTypeOrder.current());") == 1

@@ -176,7 +176,7 @@ unittest {
     import std.path : buildPath;
     import tests.unit.census_symbols : countOccurrences;
     // (a) the three former pairing sites read no pair table.
-    foreach (rel; ["source/commands/mesh/select.d", "source/symmetry_pick.d",
+    foreach (rel; ["packages/common/source/commands/mesh/select.d", "source/symmetry_pick.d",
                    "source/commands/mesh/transform.d"])
         assert(countOccurrences(codeOf(rel), "pairOf[") == 0,
                "(u4)(a) pairOf[ in " ~ rel ~ ": "
@@ -184,12 +184,13 @@ unittest {
     // (b) no command pairs (Symmetrize builds its own pair table).
     size_t n;
     bool sawElement, sawSelect;
-    foreach (de; dirEntries(buildPath(kRepoRoot, "source/commands"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source/commands"), buildPath(kRepoRoot, "packages/common/source/commands")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[kRepoRoot.length + 1 .. $];
         if (rel == "source/commands/mesh/symmetrize.d") continue;
         ++n;
         if (rel == "source/commands/select/element.d") sawElement = true;
-        if (rel == "source/commands/mesh/select.d") sawSelect = true;
+        if (rel == "packages/common/source/commands/mesh/select.d") sawSelect = true;
         const code = codeOf(rel);
         foreach (tok; ["mirrorElement(", "symmetricSelect", "pairOf["])
             assert(countOccurrences(code, tok) == 0, "(u4)(b) a command pairs: `" ~ tok ~ "` in " ~ rel);
@@ -198,7 +199,8 @@ unittest {
     // (c) `mirrorElement(` is called (outside its declaration) exactly in the
     // three pointer-gesture files — the set is EQUAL, not "at least".
     string[] callers;
-    foreach (de; dirEntries(buildPath(kRepoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[kRepoRoot.length + 1 .. $];
         const code = codeOf(rel);
         size_t c = countOccurrences(code, "mirrorElement(");
@@ -431,7 +433,8 @@ unittest {
         int[string] got;
         string[] needles = ["placeAuthoringBase(", "notePlacementAt(", "notePlacement()",
                             "placeActionCentreOnInstall("];
-        foreach (de; dirEntries(buildPath(kRepoRoot, "source"), "*.d", SpanMode.depth)) {
+        foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source")])
+        foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             const rel = de.name[kRepoRoot.length + 1 .. $];
             const code = codeOf(rel);
             ++files;
@@ -543,7 +546,7 @@ unittest {
     }
     // (d) copy and check carry A.
     {
-        const pk = bodyAfter(codeOf("source/toolpipe/packets.d"), "SymmetryPacket ownedDup()");
+        const pk = bodyAfter(codeOf("packages/common/source/toolpipe/packets.d"), "SymmetryPacket ownedDup()");
         assert(countOccurrences(pk, "authoringSide") == 2,   // `p.authoringSide = authoringSide;`
                "(u6)(d) ownedDup does not copy authoringSide");
         const xf = codeOf("source/tools/transform/xfrm_transform.d");

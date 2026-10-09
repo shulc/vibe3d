@@ -508,7 +508,7 @@ private size_t skipDelimited(const(char)[] s, size_t i) @safe pure nothrow @nogc
 /// are inside `source/` and therefore counted, even though the `tests`
 /// configuration does not compile them: the point is that a block cannot vanish
 /// unnoticed, and a block nobody compiles is the easiest kind to lose.
-immutable string[] censusRoots = ["source", "tests/unit"];
+immutable string[] censusRoots = ["source", "packages/common/source", "tests/unit"];
 
 /// One file's contribution, keyed by its repo-relative path with `/` separators.
 struct FileCensus

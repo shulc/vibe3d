@@ -196,7 +196,7 @@ private struct Found { string zone; string file; string symbol; string ident; si
 
 private Found[] scanDormant() {
     auto found = appender!(Found[]);
-    foreach (zone; ["source", "tests"]) {
+    foreach (zone; ["source", "packages/common/source", "tests"]) {
         foreach (de; dirEntries(buildPath(repoRoot, zone), "*.d", SpanMode.depth)) {
             const rel  = de.name[repoRoot.length + 1 .. $];
             const code = blankNonCode(readText(de.name));
@@ -245,7 +245,8 @@ unittest // GATE A anti-vacuity — the tree walk actually read the tree
     // cell fires first, in its own words. The floor is deliberately far below
     // the real counts so it never needs touching as the tree grows.
     size_t nSource = 0, nTests = 0;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         ++nSource;
     foreach (de; dirEntries(buildPath(repoRoot, "tests"), "*.d", SpanMode.depth))
         ++nTests;
@@ -296,7 +297,9 @@ unittest // GATE B — dense declarations and the absence of recorder calls
     size_t anchorCount;
     size_t filesRead;
 
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[repoRoot.length + 1 .. $];
         const raw = readText(de.name);
         const code = blankNonCode(raw);

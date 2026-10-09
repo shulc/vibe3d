@@ -189,7 +189,8 @@ D");
     string[][string] pathsByModule;
     string[string] codeByModule;
     size_t filesScanned;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++filesScanned;
         immutable raw = readText(de.name);
         immutable code = blankNonCode(raw);

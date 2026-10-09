@@ -24,7 +24,7 @@ module tests.unit.mesh_ops.revolve_seam_test;
 // document mesh" — so in the unit lane it never ticks and every `== 0` on it is
 // vacuous in both directions (its own declaration in change_bus.d says so).
 // This file installs the predicate against its own heap-allocated meshes,
-// exactly as the 1330/1333/1361 derive-count block in `source/mesh.d` does, and
+// exactly as the 1330/1333/1361 derive-count block in `packages/common/source/mesh.d` does, and
 // carries a POSITIVE CONTROL — a bare `addFace` on a second such mesh — that
 // makes the same counter move before anything asserts it did not.
 //

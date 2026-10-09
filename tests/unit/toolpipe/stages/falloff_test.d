@@ -148,7 +148,7 @@ unittest {
     // pure geometric-distance term alone already zeroes cube B (no gate
     // needed there); the UseConnectivity/Rigid cases below separately prove
     // the connectivity GATE zeroes it too, checked BEFORE any distance math
-    // runs (see elementWeight's gate-then-distance order in source/falloff.d).
+    // runs (see elementWeight's gate-then-distance order in packages/common/source/falloff.d).
     fs.pickedRadius = 1.2f;
 
     Viewport vpW;

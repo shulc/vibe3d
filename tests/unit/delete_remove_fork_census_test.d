@@ -85,7 +85,8 @@ unittest // W-3-c1: the undo-tracker fork is gone from delete.d and remove.d
     size_t scannedBytes, scannedFiles, targetLines;
     bool[string] targetClasses;
     string[] offenders;
-    foreach (de; dirEntries(buildPath(repoRoot(), "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot(), "source"), buildPath(repoRoot(), "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scannedFiles;
         const raw = readText(de.name);
         scannedBytes += raw.length;

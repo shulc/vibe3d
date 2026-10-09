@@ -220,7 +220,8 @@ unittest {
 
 unittest {
     string[string] code;
-    foreach (e; dirEntries("source", "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         code[e.name] = blankUnittestBodies(blankNonCode(readText(e.name)));
     foreach (f; ["source/drag.d", "source/tools/transform/move.d", "source/tools/create/box.d",
                  "source/tools/create/primitive_create_tool.d", "source/tools/create/create_common.d"])

@@ -154,7 +154,8 @@ unittest
         "active-tool pointer census cannot find source/; an empty walk is not green");
 
     string[] paths;
-    foreach (entry; dirEntries(sourceRoot, "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         paths ~= entry.name;
     paths.sort();
 

@@ -71,14 +71,14 @@ unittest {
 }
 
 unittest {
-    const lower = compactCode("source/io/file_model.d");
+    const lower = compactCode("packages/common/source/io/file_model.d");
     assert(lower.canFind("version(unittest){privateboolg_browserBackendForTest;"
         ~ "voidselectBrowserBackendForTest(boolenabled){g_browserBackendForTest=enabled;}"),
         "file model sole lower unittest storage and setter");
-    assert(countIdent(blankNonCode(readText(buildPath(root, "source/io/file_model.d"))),
+    assert(countIdent(blankNonCode(readText(buildPath(root, "packages/common/source/io/file_model.d"))),
                      "g_browserBackendForTest") == 3,
         "file model exactly one switch definition/write/read");
-    assert(sourceBody(blankNonCode(readText(buildPath(root, "source/io/file_model.d"))),
+    assert(sourceBody(blankNonCode(readText(buildPath(root, "packages/common/source/io/file_model.d"))),
         "bool", "browserFileModel", "") ==
         "{version(web){returntrue;}else{version(unittest){returng_browserBackendForTest;}else{returnfalse;}}}",
         "file model lower getter branch order and storage");
@@ -88,13 +88,14 @@ unittest {
         "file model chooser public compatibility aliases");
     foreach (call; ["Open", "Save"])
         requireChooser(blankNonCode(readText(buildPath(root, "source/io/file_dialog.d"))), call);
-    assert(compactCode("source/io/image_path.d").canFind("importio.file_model:browserFileModel;") &&
-           !compactCode("source/io/image_path.d").canFind("io.file_dialog"),
+    assert(compactCode("packages/common/source/io/image_path.d").canFind("importio.file_model:browserFileModel;") &&
+           !compactCode("packages/common/source/io/image_path.d").canFind("io.file_dialog"),
         "file model image paths import lower owner directly");
     size_t sourceFiles;
-    foreach (file; dirEntries(buildPath(root, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
+    foreach (file; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
-        if (file.name == buildPath(root, "source/io/file_model.d")) continue;
+        if (file.name == buildPath(root, "packages/common/source/io/file_model.d")) continue;
         const code = blankNonCode(readText(file.name));
         assert(countIdent(code, "g_browserBackendForTest") == 0,
             "file model switch has only its lower production owner: " ~ file.name);

@@ -20,7 +20,8 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 /// bodies blanked; whitespace runs collapsed), keyed by repo-relative path.
 private string[string] sourceCode() {
     string[string] code;
-    foreach (f; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         code[f.name[repoRoot.length + 1 .. $]] =
             blankUnittestBodies(blankNonCode(readText(f.name)))
                 .replaceAll(regex(`\s+`), " ");
@@ -34,8 +35,8 @@ unittest {
     assert(code.length > 400, format("falloff census: only %d source files", code.length));
 
     // Positive control for the blanking: the evaluator itself is code.
-    assert(countOccurrences(code["source/falloff.d"], "evaluateFalloffAt") == 4,
-           "falloff census: source/falloff.d no longer shows `evaluateFalloffAt`'s "
+    assert(countOccurrences(code["packages/common/source/falloff.d"], "evaluateFalloffAt") == 4,
+           "falloff census: packages/common/source/falloff.d no longer shows `evaluateFalloffAt`'s "
            ~ "definition + three calls (measured 4) — the scan is blind");
 
     // Negative needles: no retired copy beside a home's client.

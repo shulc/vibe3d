@@ -74,7 +74,7 @@ private string[] uniqSorted(string[] xs)
 /// The frame-published keys of `/api/changes`, derived from source.
 private string[] frameFlushedKeys()
 {
-    const bus = readText(buildPath(repoRoot, "source", "change_bus.d"));
+    const bus = readText(buildPath(repoRoot, "packages", "common", "source", "change_bus.d"));
     const flushBody = blankComments(bodyAfter(bus, "void flush(uint itemSelDomains"));
     assert(flushBody.length > 0, "9526 floor: ChangeBus.flush body not found");
     string[] written;

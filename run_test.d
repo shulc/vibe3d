@@ -1352,7 +1352,8 @@ string sourceDigest() {
     // of a test run does not (task 0685 T7).
     try {
         foreach (pattern; ["*.d", "*.c"])
-            foreach (e; dirEntries("source", pattern, SpanMode.depth))
+            foreach (scanSourceRoot; ["source", "packages/common/source"])
+            foreach (e; dirEntries(scanSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
     } catch (Exception e) {
         stderr.writeln(yellow("source scan interrupted (" ~ e.msg

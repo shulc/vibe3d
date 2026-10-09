@@ -927,7 +927,8 @@ unittest { // (4c)
     string[] raw;
     size_t scanned;
     bool sessionScanned;
-    foreach (e; dirEntries("source", "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const name = e.name;
         if (name == "source/edit_session.d") sessionScanned = true;
@@ -958,13 +959,13 @@ unittest { // (4c)
         "postmodeArmed_=ToolSession.recordBeginRow_:1",
         "postmodeArmed_=ToolSession.settleAfterNavigation_:1",
         "raw:source/commands/mesh/surface_attr.d:0/4/0",
-        "raw:source/create_tool_registration.d:0/1/0", "raw:source/document.d:0/1/0",
-        "raw:source/edit_tool_registration.d:0/1/0", "raw:source/http_json.d:2/0/0",
+        "raw:source/create_tool_registration.d:0/1/0", "raw:packages/common/source/document.d:0/1/0",
+        "raw:source/edit_tool_registration.d:0/1/0", "raw:packages/common/source/http_json.d:2/0/0",
         "raw:source/http_providers.d:1/0/0", "raw:source/http_server.d:4/1/0",
-        "raw:source/io/native.d:4/9/0", "raw:source/mesh.d:17/0/2",
-        "raw:source/mesh_edit_delta.d:1/2/0", "raw:source/mesh_planes.d:11/21/1",
-        "raw:source/perf_probe.d:0/5/0", "raw:source/prefs.d:17/0/0", "raw:source/snapshot.d:2/0/0",
-        "raw:source/toolpipe/packets.d:4/0/0", "raw:source/tools/alignment/radial_sweep_tool.d:0/4/0",
+        "raw:packages/common/source/io/native.d:4/9/0", "raw:packages/common/source/mesh.d:17/0/2",
+        "raw:packages/common/source/mesh_edit_delta.d:1/2/0", "raw:packages/common/source/mesh_planes.d:11/21/1",
+        "raw:packages/common/source/perf_probe.d:0/5/0", "raw:source/prefs.d:17/0/0", "raw:packages/common/source/snapshot.d:2/0/0",
+        "raw:packages/common/source/toolpipe/packets.d:4/0/0", "raw:source/tools/alignment/radial_sweep_tool.d:0/4/0",
         "raw:source/tools/edit/smooth_relax.d:0/0/1", "raw:source/tools/edit/topology_pen/tool.d:0/3/0",
         "raw:source/tools/transform/xfrm_transform.d:0/1/0", "raw:source/web_gl_loader.d:0/2/0",
         "topologyPendingAttrOnly_=<decl>:1", "topologyPendingAttrOnly_=ToolSession.stepBegins:1",
@@ -1043,7 +1044,8 @@ unittest { // (4c)
     // orchestrateParameterChange; the preview gate's link is set at the arm only;
     // the one tool reading the gate in S2b is Mirror's evaluate (S6: 12 sites).
     string[] mps;
-    foreach (e; dirEntries("source", "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         auto code = blankUnittestBodies(blankNonCode(readText(e.name)));
         foreach (site; identSites(code, "scriptedWriteEndsOperation", false))
             mps ~= e.name ~ ":" ~ site;
@@ -1206,7 +1208,8 @@ unittest { // (4e)
     // composing the topology-step client mixin» (task 9429; the pen keeps its own
     // block) — 12, the table's files.
     string[] model;
-    foreach (e; dirEntries("source", "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         if (blankNonCode(readText(e.name)).canFind("mixin TopologyStepClientBody!"))
             model ~= e.name;
     sort(model);
@@ -1687,7 +1690,8 @@ unittest { // (4k)
     // the datum, every word occurrence in `source` (form item 12: a rule, not a list)
     string[] datum;
     size_t scanned;
-    foreach (f; dirEntries("source", "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
                                   "redoPinsRefireImage", false))
@@ -2448,7 +2452,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
     auto edge = blankNonCode(readText("source/tools/edit/edge_extrude.d"));
     auto poly = blankNonCode(readText("source/tools/edit/poly_extrude.d"));
     auto tl = blankNonCode(readText("source/prepared_tool_transition.d"));
-    auto carrier = blankNonCode(readText("source/commands/mesh/session_edit.d"));
+    auto carrier = blankNonCode(readText("packages/common/source/commands/mesh/session_edit.d"));
     auto panelCode = blankNonCode(readText("source/property_panel.d"));
     auto panel = squeeze(panelCode);
     auto attr = squeeze(blankNonCode(readText("source/commands/tool/attr.d")));
@@ -2565,7 +2569,8 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
                       identSites(esU, "invalidateRedo", false)));
         string[] cuts;
         size_t files;
-        foreach (f; dirEntries("source", "*.d", SpanMode.depth)) {
+        foreach (scanSourceRoot; ["source", "packages/common/source"])
+        foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++files;
             foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
                                       "truncateRedo", false))
@@ -2573,7 +2578,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         }
         sort(cuts);
         assert(files > 300, format("S5 census: read %s source files", files));
-        assert(cuts == ["source/command_history.d <decl>:1",
+        assert(cuts == ["packages/common/source/command_history.d <decl>:1",
                         "source/edit_session.d ToolSession.cutRefireRedo_:1"],
                format("S5 needle: truncateRedo sites in source %s, expected its declaration "
                       ~ "and the law-3 cut", cuts));

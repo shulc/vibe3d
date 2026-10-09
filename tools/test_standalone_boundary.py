@@ -12,69 +12,85 @@ import check_standalone_boundary as boundary
 
 
 class BoundaryControls(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temporary = tempfile.TemporaryDirectory(prefix='boundary-settings-')
+        cls.project = Path(cls.temporary.name)
+        actual = Path(__file__).resolve().parents[1]
+        for relative in ('tools/cli/dub.json', 'tests/core/dub.json', 'packages/common/dub.json'):
+            path = cls.project / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(actual / relative, path)
+        for path in (actual / 'packages/common/source').rglob('*.d'):
+            target = cls.project / path.relative_to(actual)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(path.read_bytes())
+        cls.descriptions = {}
+        for relative in ('tests/core', 'tools/cli'):
+            result = subprocess.run(['dub', 'describe', '--root=' + str(actual / relative),
+                '--compiler=dmd', '--quiet'], text=True, capture_output=True, check=True)
+            cls.descriptions[relative] = json.loads(result.stdout.replace(str(actual), str(cls.project)))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temporary.cleanup()
+
     def settings(self):
-        root = Path('/fixture/tests/core')
-        description = {
-            'rootPackage': 'vibe3d-core-tests',
-            'targets': [{'buildSettings': {
-                'sourceFiles': ['/fixture/tests/unit/' + name for name in boundary.CORE_ROOTS],
-                'dflags': ['-i'], 'importPaths': ['/fixture/source', '/fixture'],
-            }}],
-            'packages': [{'active': True, 'dependencies': []}],
-        }
-        return root, description
+        return self.project / 'tests/core', copy.deepcopy(self.descriptions['tests/core'])
 
     def reject_settings(self, description, message):
         with self.assertRaisesRegex(boundary.BoundaryError, message):
-            boundary.validate_settings(description, Path('/fixture/tests/core'))
+            boundary.validate_settings(description, self.project / 'tests/core')
 
     def test_independent_settings(self):
         root, description = self.settings()
         settings, sources = boundary.validate_settings(description, root)
         self.assertEqual(len(sources), 5)
         self.assertEqual(settings['dflags'], ['-i'])
-        cases = [
-            ('targets', [], 'target population'),
-            ('rootPackage', 'vibe3d', 'root package'),
-            ('packages', [{'active': True, 'dependencies': ['vibe3d']}], 'no package dependencies'),
-            ('packages', [{'active': True}, {'active': True}], 'no package dependencies'),
-        ]
-        for field, value, error in cases:
+        for mutate, message in [
+            (lambda d: d.update(targets=[]), 'target population'),
+            (lambda d: d.update(rootPackage='vibe3d'), 'root package'),
+            (lambda d: d['packages'][0]['dependencies'].append('vibe3d'), 'resolved dependencies'),
+            (lambda d: d['packages'].pop(), 'package population'),
+            (lambda d: d['targets'][0]['buildSettings'].update(sourceFiles=[]), 'explicit roots'),
+            (lambda d: d['targets'][0]['buildSettings']['importPaths'].append(str(self.project / 'source')),
+                'resolved import roots'),
+            (lambda d: d['targets'][0]['buildSettings']['libs'].append('calculation'), 'computational/native'),
+            (lambda d: d['targets'][0]['buildSettings'].update(dflags=[]), 'compiler flags'),
+        ]:
             changed = copy.deepcopy(description)
-            changed[field] = value
-            self.reject_settings(changed, error)
+            mutate(changed)
+            self.reject_settings(changed, message)
         for field in ('preBuildCommands', 'postBuildCommands', 'preGenerateCommands',
                       'postGenerateCommands', 'preRunCommands', 'postRunCommands'):
             changed = copy.deepcopy(description)
             changed['packages'][0][field] = ['echo unsafe']
             self.reject_settings(changed, 'build hook')
-        for field in ('libs', 'linkerFiles', 'lflags', 'frameworks'):
-            changed = copy.deepcopy(description)
-            changed['targets'][0]['buildSettings'][field] = ['calculation']
-            self.reject_settings(changed, 'computational/native')
-        for source, message in [([], 'root population'),
-                                (['/fixture/source/' + name for name in boundary.CORE_ROOTS], 'existing tests/unit')]:
-            changed = copy.deepcopy(description)
-            changed['targets'][0]['buildSettings']['sourceFiles'] = source
-            self.reject_settings(changed, message)
-        for flag in ['-L/path/libplain.a', '-L/path/plain.o', '/path/plain.o', '-L-lcalculation']:
-            changed = copy.deepcopy(description)
-            changed['targets'][0]['buildSettings']['dflags'] = ['-i', flag]
-            self.reject_settings(changed, 'native archive|dflags link input')
-        for field, values in [('dflags', ['-i', '../../source/camera_stamp.d']),
-                              ('injectSourceFiles', ['../../source/camera_stamp.d'])]:
-            changed = copy.deepcopy(description)
-            changed['targets'][0]['buildSettings'][field] = values
-            self.reject_settings(changed, 'additional.*source roots')
-        changed = copy.deepcopy(description)
-        changed['targets'][0]['buildSettings']['dflags'] = []
-        self.reject_settings(changed, 'import closure')
+
+    def test_common_descriptor_grants(self):
+        root, description = self.settings()
+        path = self.project / 'packages/common/dub.json'
+        original = path.read_text()
+        try:
+            for key, value in [('importPaths', ['../../source']), ('dflags', ['-I../../source']),
+                               ('sourceFiles', ['../../source/registry.d']),
+                               ('preBuildCommands', ['echo unsafe']),
+                               ('libs-linux', ['calculation'])]:
+                changed = json.loads(original)
+                changed[key] = value
+                path.write_text(json.dumps(changed))
+                self.reject_settings(description, 'forbidden explicit descriptor setting')
+            changed = json.loads(original)
+            changed['dependencies']['vibe3d'] = {'path': '../..'}
+            path.write_text(json.dumps(changed))
+            self.reject_settings(description, 'exact pinned revision')
+        finally:
+            path.write_text(original)
 
     def test_all_resolved_input_fields(self):
         for field in ('sourceFiles', 'injectSourceFiles', 'linkerFiles', 'libs', 'lflags',
                       'frameworks', 'extraDependencyFiles', 'copyFiles', 'dflags'):
             root, description = self.settings()
-            # source roots also have their exact identity guard.
             if field == 'sourceFiles':
                 continue
             description['targets'][0]['buildSettings'][field] = ['libSDL2.a']
@@ -87,43 +103,23 @@ class BoundaryControls(unittest.TestCase):
         boundary.check_input('/std/core/sys/posix/pthread.d')
 
     def test_cli_resolved_settings(self):
-        with tempfile.TemporaryDirectory(prefix='cli-settings-') as temporary:
-            root = Path(temporary) / 'tools/cli'
-            root.mkdir(parents=True)
-            image = Path(temporary) / boundary.STB_REVISION / 'd-stb-image'
-            image.mkdir(parents=True)
-            (root / 'dub.json').write_text(json.dumps({
-                'sourcePaths': ['source'], 'importPaths': ['../../source'],
-                'dependencies': {'d-stb-image': {'version': boundary.STB_REVISION,
-                    'repository': 'git+https://github.com/shulc/D-StbImage.git'}}}))
-            def settings(main):
-                return {'sourceFiles': [str(root / 'source/main.d')] if main else [str(image / 'source/stb_image/c.d')],
-                    'dflags': ['-i'] if main else [], 'lflags': ['-L' + str(image / 'build')],
-                    'libs': ['stb_image_c', 'm'], 'linkerFiles': [str(image / 'libd-stb-image.a')] if main else []}
-            description = {'rootPackage': 'vibe3d-cli',
-                'targets': [{'rootPackage': 'vibe3d-cli', 'buildSettings': settings(True)},
-                            {'rootPackage': 'd-stb-image', 'buildSettings': settings(False)}],
-                'packages': [{'name': 'vibe3d-cli', 'active': True, 'dependencies': ['d-stb-image']},
-                    {'name': 'd-stb-image', 'active': True, 'path': str(image), 'dependencies': [],
-                     'preBuildCommands': [
-                         'cmake -B $PACKAGE_DIR/build -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $PACKAGE_DIR',
-                         'cmake --build $PACKAGE_DIR/build --config Release']}]}
-            _, roots, native = boundary.validate_cli_settings(description, root)
-            self.assertEqual(roots, [root / 'source/main.d'])
-            self.assertEqual(len(native), 2)
-            boundary.check_input(str(image / 'libd-stb-image.a'), native_inputs=native)
-            for mutate, message in [
-                (lambda d: d['packages'][0]['dependencies'].append('vibe3d'), 'desktop root'),
-                (lambda d: d['targets'][0]['buildSettings']['libs'].append('SDL2'), 'forbidden resolved'),
-                (lambda d: d['targets'][0]['buildSettings']['linkerFiles'].append('/x/libSDL2.a'), 'forbidden resolved'),
-                (lambda d: d['targets'][0]['buildSettings']['libs'].append('calculation'), 'computational/native'),
-                (lambda d: d['targets'][0]['buildSettings']['sourceFiles'].append('/x/extra.d'), 'sole explicit root')]:
-                changed = copy.deepcopy(description)
-                mutate(changed)
-                with self.assertRaisesRegex(boundary.BoundaryError, message):
-                    boundary.validate_cli_settings(changed, root)
-            with self.assertRaisesRegex(boundary.BoundaryError, 'unexpected resolved native archive'):
-                boundary.check_input('/x/other.a', native_inputs=native)
+        root = self.project / 'tools/cli'
+        description = copy.deepcopy(self.descriptions['tools/cli'])
+        _, roots, native = boundary.validate_cli_settings(description, root)
+        self.assertEqual(roots, [root / 'source/main.d'])
+        self.assertEqual(len(native), 3)
+        for mutate, message in [
+            (lambda d: d['packages'][0]['dependencies'].append('vibe3d'), 'resolved dependencies'),
+            (lambda d: d['targets'][0]['buildSettings']['libs'].append('SDL2'), 'forbidden resolved'),
+            (lambda d: d['targets'][0]['buildSettings']['linkerFiles'].append('/x/libSDL2.a'), 'forbidden resolved'),
+            (lambda d: d['targets'][0]['buildSettings']['libs'].append('calculation'), 'computational/native'),
+            (lambda d: d['targets'][0]['buildSettings']['sourceFiles'].append('/x/extra.d'), 'explicit roots')]:
+            changed = copy.deepcopy(description)
+            mutate(changed)
+            with self.assertRaisesRegex(boundary.BoundaryError, message):
+                boundary.validate_cli_settings(changed, root)
+        with self.assertRaisesRegex(boundary.BoundaryError, 'unexpected resolved native archive'):
+            boundary.check_input('/x/other.a', native_inputs=native)
 
     def compiler_fixture(self):
         files = {str(Path('/fixture/lower' + str(i) + '.d')) for i in range(20)}
@@ -239,7 +235,7 @@ class BoundaryControls(unittest.TestCase):
 
     def test_template_attributed_compiler_endpoints(self):
         deps = ('std.traits (/external/std/traits.d) : private : shader (/project/source/shader.d):member\n'
-                'root (/project/root.d) : public : mesh (/project/source/mesh.d):Mesh\n')
+                'root (/project/root.d) : public : mesh (/project/packages/common/source/mesh.d):Mesh\n')
         modules, files = boundary.compiler_inputs(deps, 'import static_helper (helper.d)\n', Path('/project'))
         self.assertEqual(set(modules), {'std.traits', 'shader', 'root', 'mesh', 'static_helper'})
         self.assertEqual(len(files), 5)
@@ -258,10 +254,10 @@ class BoundaryControls(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('no source files', result.stderr)
             description = json.loads(result.stdout)
-            with self.assertRaisesRegex(boundary.BoundaryError, 'target population'):
+            with self.assertRaisesRegex(boundary.BoundaryError, 'package population'):
                 boundary.validate_settings(description, root)
             self.assertEqual((root / 'describe.stderr.log').read_text(), result.stderr)
-            with self.assertRaisesRegex(boundary.BoundaryError, 'target population'):
+            with self.assertRaisesRegex(boundary.BoundaryError, 'package population'):
                 boundary.main(['--root', str(root), '--config', 'core', '--compiler', 'dmd'])
 
     def test_actual_explicit_root_population(self):
@@ -269,7 +265,7 @@ class BoundaryControls(unittest.TestCase):
         compile_ = {'cwd': str(root), 'argv': ['-c', '-i', 'root.d', '-of=root.o']}
         sources = [root / 'root.d']
         boundary.validate_invocations([compile_], False, sources)
-        for argv, with_tests in [(['-c', '-i', 'other.d'], False),
+        for argv, with_tests in [(['-c', '-i', 'other.d', '-of=other.o'], False),
                                   (compile_['argv'] + ['other.d'], False),
                                   (compile_['argv'] + ['foreign.c'], False),
                                   (compile_['argv'] + ['-unittest'], True),

@@ -689,8 +689,8 @@ private enum StripSignalRow[] kStripSignalLedger = [
     StripSignalRow("source/ui/retained_item.d", 0, 0, 0, 0, 0),
     StripSignalRow("source/ui/item_rename.d", 0, 0, 0, 0, 0),
     StripSignalRow("source/commands/image/commands.d", 14, 0, 0, 0, 0),
-    StripSignalRow("source/document.d", 4, 0, 0, 1, 0),
-    StripSignalRow("source/document_selection.d", 5, 0, 0, 1, 0),
+    StripSignalRow("packages/common/source/document.d", 4, 0, 0, 1, 0),
+    StripSignalRow("packages/common/source/document_selection.d", 5, 0, 0, 1, 0),
 ];
 
 private enum kStripSignalTokens =
@@ -760,7 +760,8 @@ unittest { // 6040 census: production binder, call sites, retired EditorApp path
         && panels.count("import ui.item_rename") == 0,
         "6040 retired panel path: ui.panels still defines or feeds the Images rename owner");
     size_t sourceFiles, oldSig;
-    foreach (entry; dirEntries(repoRoot.buildPath("source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         oldSig += blankNonCode(readText(entry.name)).count("drawImageListPanel(EditorApp");
     }
@@ -834,8 +835,8 @@ unittest { // 6530: read-role fence and strip-token signal
         "source/ui/retained_item.d",
         "source/ui/item_rename.d",
         "source/commands/image/commands.d",
-        "source/document.d",
-        "source/document_selection.d",
+        "packages/common/source/document.d",
+        "packages/common/source/document_selection.d",
     ];
     string[] rawSources;
     size_t sourceBytes;

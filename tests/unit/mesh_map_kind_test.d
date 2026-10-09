@@ -72,7 +72,7 @@ unittest {
     // final rebuildEdges()/buildLoops() would leave it) and drive the SAME
     // resize hook every topology mutator ends in
     // (`resizeEdgeSelection` -> `resizeMeshMaps(MapDomain.Edge)`,
-    // source/mesh.d). Not going through a specific command keeps this test
+    // packages/common/source/mesh.d). Not going through a specific command keeps this test
     // pinned to the hook itself rather than to any one mutator's call
     // sequence.
     m.edges ~= [cast(uint) 0, cast(uint) 100]; // a bogus extra edge for length only
@@ -92,7 +92,7 @@ unittest {
 // preview rebuild, no undo entry for nothing (task 1062 review, SHOULD-FIX
 // 3 — the commonest UI gesture is "open the dialog, press OK" with the
 // unchanged default, matching `setSubpatch`'s own no-op guard,
-// source/mesh.d `:5591-5603`). A DIFFERENT value still bumps. NaN-to-NaN is
+// packages/common/source/mesh.d `:5591-5603`). A DIFFERENT value still bumps. NaN-to-NaN is
 // ALSO a no-op (an identity comparison, not `==`, which is never true for
 // NaN even against itself). Mutation: replace `isIdentical(m.data[ei], w)`
 // with `m.data[ei] == w` -> the NaN-to-NaN leg reddens (verified

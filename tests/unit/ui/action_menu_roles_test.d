@@ -826,7 +826,8 @@ unittest { // C13: production boundary, wiring, and private-reachability census
     size_t sourceFiles;
     size_t oldDispatches;
     size_t oldActionSignatures;
-    foreach (entry; dirEntries(repoRoot.buildPath("source"), "*.d",
+    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                SpanMode.depth)) {
         ++sourceFiles;
         const source = blankNonCode(readText(entry.name));

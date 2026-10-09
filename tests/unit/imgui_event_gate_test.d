@@ -231,7 +231,8 @@ unittest {
 
     string[] callers;
     size_t scanned;
-    foreach (e; dirEntries(sourceDir, "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [sourceDir, buildPath(repoRoot, "packages/common/source")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (!e.isFile) continue;
         scanned++;
         if (readText(e.name).canFind(needle))

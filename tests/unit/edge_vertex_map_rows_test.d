@@ -42,14 +42,14 @@
 //
 // MUTATIONS THAT REDDEN IT (both run, and quoted in the task card with the
 // assert MESSAGE as the identity -- the line number is only a pointer):
-//   * `source/mesh.d`, `kindInfo(MapKind.creaseWeight)`: `MapDomain.Edge` ->
+//   * `packages/common/source/mesh.d`, `kindInfo(MapKind.creaseWeight)`: `MapDomain.Edge` ->
 //     `MapDomain.Point` => block B1 reddens naming the count;
-//   * `source/mesh.d`, `Mesh.edgeIndex`: pack the lookup key directed
+//   * `packages/common/source/mesh.d`, `Mesh.edgeIndex`: pack the lookup key directed
 //     (`a << 32 | b`) instead of calling the canonicalising `edgeKey`
 //     => block B2 reddens naming the two lookups that must agree.
 //
 // An earlier revision of this header named the second site as `edgeKey` in
-// `source/mesh_topo.d`. That is a DIFFERENT mutation and it was not the one
+// `packages/common/source/mesh_topo.d`. That is a DIFFERENT mutation and it was not the one
 // that ran. Both were run in the fix round, both redden this same assert, and
 // the printed values tell them apart -- which is worth knowing, because it
 // says the assert discriminates two failure MODES rather than one:

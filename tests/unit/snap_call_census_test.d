@@ -51,7 +51,8 @@ private void scanCalls(string file, string code, string id, string declType,
 
 private string[2][] productionSources() {
     string[2][] files;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         files ~= [de.name[repoRoot.length + 1 .. $], readText(de.name)];
     return files;
 }

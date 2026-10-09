@@ -1,6 +1,6 @@
 // Ownership-table ledger for tool activation (task 4053).
 //
-// `source/tool_activation_ownership.d` is the ONE place that says which door
+// `packages/common/source/tool_activation_ownership.d` is the ONE place that says which door
 // owns which transition. This module is its ledger: it pins the partition so a
 // row cannot be flipped in passing, and it pins the table against the TREE so
 // a transition cannot be invented with no call site, or a call site added
@@ -44,7 +44,8 @@ private enum size_t kLegacyDrops = 12;   // task 9402: + primaryMoveDrop; task 9
 
 private string[] productionSources() {
     string[] files;
-    foreach (e; dirEntries(repoRoot ~ "/source", "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [repoRoot ~ "/source", repoRoot ~ "/packages/common/source"])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         files ~= e.name;
     sort(files);
     return files;

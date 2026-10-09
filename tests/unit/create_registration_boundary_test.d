@@ -223,7 +223,8 @@ unittest {
 unittest {
     ModuleImports[string] modules;
     size_t sourceFiles, createSeen;
-    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         auto scanned = scanModule(readText(entry.name));
         if (!scanned.name.length) continue;

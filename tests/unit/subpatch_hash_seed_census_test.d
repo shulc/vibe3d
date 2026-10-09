@@ -51,7 +51,8 @@ unittest // every production array-plus-seed hash stays in the reviewed stencil 
 {
     auto hits = appender!(Hit[]);
     size_t sourceFiles;
-    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         const relative = entry.name[repoRoot.length + 1 .. $];
         hits.put(scanSeededHashes(relative, readText(entry.name)));

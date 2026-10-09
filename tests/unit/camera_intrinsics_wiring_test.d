@@ -22,7 +22,7 @@ unittest {
     assert(providers.indexOf("lens = cameraLensParam(p[")<providers.indexOf("targetCam.setOrientation(o);"),"LENS_HTTP_PREFLIGHT_BEFORE_POSE");
     assert(providers.canFind("targetCam.setFovY(lens);"),"LENS_HTTP_COMMIT_FUNNEL");
     auto frame=blankNonCode(readText(buildPath(root,"source/input_frame_state.d")));
-    auto subject=blankNonCode(readText(buildPath(root,"source/toolpipe/subject.d")));
+    auto subject=blankNonCode(readText(buildPath(root,"packages/common/source/toolpipe/subject.d")));
     auto tool=blankNonCode(readText(buildPath(root,"source/tool.d")));
     assert(frame.canFind("app.vpm.inputSnapshot()")&&subject.canFind("subj.viewport    = src.viewport;")&&
            input.canFind("app.activeTool.syncEventViewport(subj.viewport);")&&tool.canFind("cachedVp = vp;"),"HTTP_EVENT_VIEWPORT_SUBJECT_TRANSPORT");

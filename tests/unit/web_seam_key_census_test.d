@@ -51,7 +51,8 @@ unittest // the browser seam key is exactly one identifier, and the alternative 
 
     size_t files, webSites, wasmSites, wasmGuardSites;
     string[] offenders;
-    foreach (entry; dirEntries(buildPath(root, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
     {
         ++files;
         const text = readText(entry.name);

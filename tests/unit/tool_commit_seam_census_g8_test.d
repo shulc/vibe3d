@@ -232,7 +232,8 @@ private string[] sourceTree() {
     string[] r;
     immutable root = buildPath(repoRoot, "source");
     if (!exists(root)) return r;
-    foreach (e; dirEntries(root, "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [root, buildPath(repoRoot, "packages/common/source")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         r ~= relativePath(e.name, repoRoot);
     r.sort();
     return r;

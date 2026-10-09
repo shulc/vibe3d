@@ -127,7 +127,7 @@ unittest { // topology matrix: weld two unrelated vertices
 // ---------------------------------------------------------------------------
 // Mutation proof, run by substitution (not asserted here — see the fork
 // report): commenting out the `faceSetMask = keptSetMask;` line in
-// `Mesh.deleteFacesByMask` (source/mesh.d) reddens the first unittest above
+// `Mesh.deleteFacesByMask` (packages/common/source/mesh.d) reddens the first unittest above
 // — the survivor reads back with NO set membership, because the carry that
 // gathers `faceSetMask` in lock-step with `facePart`/`faceMaterial` never
 // ran.

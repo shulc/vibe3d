@@ -1,4 +1,4 @@
-// mesh_visibility_gate_test -- the by-value gate for `source/mesh_visibility.d`
+// mesh_visibility_gate_test -- the by-value gate for `packages/common/source/mesh_visibility.d`
 // (task 3230, plan 2910 step 2).
 //
 // The gate mixin lives HERE rather than inside `mesh_visibility.d` itself,

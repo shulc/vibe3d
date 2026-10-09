@@ -2,7 +2,7 @@
 // (task 1932, closing task 1906's item 4 at the LAW tier).
 //
 // THE QUESTION THIS FILE ANSWERS, AND ONLY THIS FILE CAN. The eviction cliff
-// `source/mesh_dirty.d` describes is produced by a CHAIN of two independent
+// `packages/common/source/mesh_dirty.d` describes is produced by a CHAIN of two independent
 // 32-slot tables — `MeshBirthTable.kSlots` (`B`) and `MeshDirtyEpochs.kSlots`
 // (`D`) — and today they happen to share the literal 32. An earlier draft of
 // this measurement wrote the cliff as `2*D`, which is correct ONLY while
@@ -326,7 +326,7 @@ unittest {
 // row.
 //
 // Mutation this is the red for: empty out `resetMeshDirtyStateForTest`'s
-// body in `source/mesh_dirty.d`. The premise assert fires on the SECOND
+// body in `packages/common/source/mesh_dirty.d`. The premise assert fires on the SECOND
 // call, reporting the corrupted N.
 // ---------------------------------------------------------------------------
 unittest {
@@ -380,14 +380,14 @@ unittest {
     import std.format  : format;
 
     enum string kRepoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    const src = readText(buildPath(kRepoRoot, "source", "mesh_dirty.d"));
+    const src = readText(buildPath(kRepoRoot, "packages", "common", "source", "mesh_dirty.d"));
 
     // STRUCTURAL, not textual — see `gsharedDeclsOfType` above and task 2007
     // finding #6 for the `alias Epochs = MeshDirtyEpochs;` escape this closes.
     string[] declared = gsharedDeclsOfType(src, "MeshDirtyEpochs");
     assert(declared.length >= 3, format(
         "PREMISE: the scan found %d `__gshared MeshDirtyEpochs` declarations in "
-      ~ "source/mesh_dirty.d; this module declares at least three (display / "
+      ~ "packages/common/source/mesh_dirty.d; this module declares at least three (display / "
       ~ "geometry / topology), so a smaller number means the scan broke, not "
       ~ "that the watchers went away", declared.length));
 
@@ -400,7 +400,7 @@ unittest {
     foreach (name; declared)
         assert(listing.canFind("&" ~ name), format(
             "task 1932: `__gshared MeshDirtyEpochs %s` is declared in "
-          ~ "source/mesh_dirty.d but `allWatchers()` does not carry it, so "
+          ~ "packages/common/source/mesh_dirty.d but `allWatchers()` does not carry it, so "
           ~ "`resetMeshDirtyStateForTest()` leaves it dirty and every cell that "
           ~ "resets between sweeps reads another module's leftovers. Add "
           ~ "`&%s` to allWatchers() in the same change that declares the "

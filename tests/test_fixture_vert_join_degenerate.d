@@ -24,7 +24,7 @@
 // mesh with no polygons at all, so an 8-face fan saved and came back with 6,
 // and the free-vertex document saved and would not open. Both are one-sided
 // reader drops (the writer emitted both correctly all along) and both are
-// fixed in `source/io/native.d`. Picking, undo/redo and the GPU upload needed
+// fixed in `packages/common/source/io/native.d`. Picking, undo/redo and the GPU upload needed
 // no change -- a 2-corner polygon contributes no triangle and no ray hit,
 // which is the right answer, not a fault.
 //

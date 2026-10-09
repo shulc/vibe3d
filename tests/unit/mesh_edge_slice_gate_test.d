@@ -1,9 +1,9 @@
-// mesh_edge_slice_gate_test -- the by-value gate for `source/mesh_edge_slice.d`
+// mesh_edge_slice_gate_test -- the by-value gate for `packages/common/source/mesh_edge_slice.d`
 // (task 3240, plan 2910 step 3).
 //
 // Same split as `mesh_edge_slice_gate_test`'s predecessor
 // `tests/unit/mesh_visibility_gate_test.d`, and for the same MEASURED reason
-// (task 3230's finding Н4): `source/mesh_edge_slice.d` carries only the anchor
+// (task 3230's finding Н4): `packages/common/source/mesh_edge_slice.d` carries only the anchor
 // (`version(unittest) private void byValueGateAnchor() {}`), because a module
 // under `source/` that imports anything under `tests/unit/` links clean under
 // `dub test --config=tests` and dies under `./run_test.d`, whose HTTP lane

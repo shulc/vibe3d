@@ -165,7 +165,8 @@ unittest // GATE S1 — no recorder call in sets.d
 {
     LedgerHit[] calls;
     size_t filesRead;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[repoRoot.length + 1 .. $];
         const code = blankNonCode(readText(de.name));
         const symbols = enclosingSymbols(code);
@@ -194,7 +195,8 @@ unittest // GATE S2 — the dense captures the declarations promise are still th
 {
     LedgerHit[] hits;
     size_t anchorCount;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const raw = readText(de.name);
         const code = blankNonCode(raw);
         const file = de.name[repoRoot.length + 1 .. $];

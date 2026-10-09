@@ -398,7 +398,8 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 unittest {
     size_t[string] sites;
     size_t files;
-    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
         const code = blankNonCode(readText(entry.name));
         enum needle = ".mark(GpuSeg.";
@@ -433,7 +434,8 @@ unittest {
     assert(body_.count("beginFrame(gpuTimingArmed_, g_gpuTimerPerfMode)") == 1,
         "(h) draw must pass g_gpuTimerPerfMode as beginFrame's waitWhenFull");
     size_t writes;
-    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         writes += blankNonCode(readText(entry.name)).count("g_gpuTimerPerfMode = ");
     const app = readText(buildPath(repoRoot, "source", "app.d"));   // raw: the arm key is a string literal
     const perfArm = app.indexOf(`args[i] == "--perf")`);

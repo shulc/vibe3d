@@ -39,9 +39,9 @@ private struct RoleRow {
 }
 
 private enum RoleRow[] kExpectedRoles = [
-    RoleRow("source/mesh_dirty.d",
+    RoleRow("packages/common/source/mesh_dirty.d",
             importsPolicy | usesPolicy | definesAlias | usesAlias),
-    RoleRow("source/mesh_edit_delta.d", definesPolicy | usesPolicy),
+    RoleRow("packages/common/source/mesh_edit_delta.d", definesPolicy | usesPolicy),
     RoleRow("source/render/render_mvp.d", importsAlias | usesAlias),
 ];
 
@@ -231,7 +231,9 @@ unittest // the reviewed role roster is identical to production discovery
     size_t policyDefinitions;
     size_t aliasDefinitions;
 
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const relative = relativePath(de.name, repoRoot).replace("\\", "/");
         ++sourceFiles;
         if (relative.startsWith("source/render/")) ++renderSourceFiles;

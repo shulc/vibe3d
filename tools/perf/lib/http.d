@@ -379,7 +379,7 @@ long fetchSelectedFaceCount() {
 // SAVE/RESTORE IS NOT LOSSLESS, and a caller that uses this to put a camera
 // BACK (`run.d`'s per-case `Case.elevation`, task 1350) should know exactly
 // what it restores (review note, task 1357). The camera's rotational truth is
-// a 3x3 `Orientation`, not three angles (`source/view.d`); `View.elevation`'s
+// a 3x3 `Orientation`, not three angles (`packages/common/source/view.d`); `View.elevation`'s
 // setter reads (azimuth, elevation, roll) out of that matrix and rebuilds it
 // from (azimuth, NEW elevation, roll). So a read-then-write round trip:
 //   * costs float dust (~1e-7) on the two angles it did not mean to touch;

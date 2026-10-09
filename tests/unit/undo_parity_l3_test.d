@@ -475,7 +475,7 @@ ParityCell[] l3Cells()
 /// The normalisation: `faceSelectionOrder` on a face that is NOT selected.
 ///
 /// WHY IT IS A NORMALISATION AND NOT A LOSS, and the argument is not this
-/// file's — it is written at `source/snapshot.d`'s
+/// file's — it is written at `packages/common/source/snapshot.d`'s
 /// `SelectionSnapshot.restore`, lines that re-zero the order entry of every
 /// element the bulk setter did not end up selecting. That re-zero was added by
 /// task 0613's S3 code review for a stated reason: a wholesale order-array

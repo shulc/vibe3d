@@ -2,7 +2,7 @@
 // `Tool.setGestureBindings`, and the silent drop it exists to make impossible.
 //
 // WHAT WAS LATENT. Task 1905's seam requires an undo carrier to implement
-// `GesturePayload` (`source/commands/mesh/gesture_payload.d`). Re-measured on
+// `GesturePayload` (`packages/common/source/commands/mesh/gesture_payload.d`). Re-measured on
 // this branch by walking `EditorApp`'s factory table
 // (`X delegate() <name>;` in source/editor_app.d) and the two inline factories
 // at their binding sites:

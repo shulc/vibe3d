@@ -103,7 +103,7 @@ private size_t occurrences(string source, string needle) {
 unittest {
     auto binding = repoFile("source/application_command_binding.d");
     auto controller = repoFile("source/guarded_action_controller.d");
-    auto executor = repoFile("source/command_executor.d");
+    auto executor = repoFile("packages/common/source/command_executor.d");
     auto http = repoFile("source/http_providers.d");
     auto httpCommand = repoFile("source/http_command_adapter.d");
     auto app = repoFile("source/app.d");

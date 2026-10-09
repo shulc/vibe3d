@@ -65,7 +65,8 @@ unittest { // clause 4 (inside its own tolerance -> win) is an early-out only fo
 unittest { // production-text census
     size_t files;
     string[] cmpDefs, electSites;
-    foreach (f; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
         const rel = f.name[repoRoot.length + 1 .. $];
         const code = blankUnittestBodies(blankNonCode(readText(f.name)));
@@ -238,7 +239,7 @@ unittest {
 unittest {
     const app = blankNonCode(readText(buildPath(repoRoot, "source/app.d")));
     const input = blankNonCode(readText(buildPath(repoRoot, "source/input_frame_state.d")));
-    const subject = blankNonCode(readText(buildPath(repoRoot, "source/toolpipe/subject.d")));
+    const subject = blankNonCode(readText(buildPath(repoRoot, "packages/common/source/toolpipe/subject.d")));
     const pen = blankNonCode(readText(buildPath(repoRoot, "source/tools/edit/topology_pen/tool.d")));
     assert(app.indexOf("toolPressSourcesResolver =") >= 0 && app.indexOf("document.foreground(layer)") >= 0,
            "press-wiring: application installs foreground query population");

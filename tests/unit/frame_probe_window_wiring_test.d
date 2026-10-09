@@ -86,7 +86,8 @@ unittest { // 6511: FrameProbe service is the second pre-probe owner boundary
     size_t allHits;
     size_t appHits;
     size_t serverHits;
-    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d",
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                SpanMode.depth)) {
         ++files;
         immutable code = blankNonCode(readText(entry.name));
@@ -136,7 +137,8 @@ unittest { // 6357: frame-count service is the unique pre-probe owner boundary
     size_t allHits;
     size_t appHits;
     size_t serverHits;
-    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d",
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                SpanMode.depth)) {
         ++files;
         immutable code = blankNonCode(readText(entry.name));

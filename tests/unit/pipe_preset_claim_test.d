@@ -96,13 +96,14 @@ private string writerLedger(string pattern) {
     const sourceRoot = buildPath(repoRoot, "source");
     size_t[string] hits;
     auto compiled = regex(pattern);
-    foreach (entry; dirEntries(sourceRoot, SpanMode.depth)) {
+    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile || !entry.name.endsWith(".d")) continue;
         const source = commentsBlanked(readText(entry.name));
         size_t count;
         foreach (_; source.matchAll(compiled)) ++count;
         if (count)
-            hits[entry.name[sourceRoot.length + 1 .. $]] = count;
+            hits[entry.name[scanSourceRoot.length + 1 .. $]] = count;
     }
 
     auto paths = hits.keys.array;

@@ -233,7 +233,8 @@ bool instantiates(string code, string name) {
 private ClassScan scanCommandsTree(string root) {
     ClassScan all;
     string[] files;
-    foreach (de; dirEntries(buildPath(root, "source", "commands"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(root, "source", "commands"), buildPath(root, "packages/common/source", "commands")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         files ~= de.name;
     sort(files);
     foreach (f; files) {
@@ -337,6 +338,7 @@ unittest { // the tree walk aggregates decls, unread and sites per file (task 81
     const root = buildPath(tempDir, format("crc8130-%d", thisProcessID));
     scope (exit) if (exists(root)) rmdirRecurse(root);
     mkdirRecurse(buildPath(root, "source", "commands", "b"));
+    mkdirRecurse(buildPath(root, "packages/common/source/commands"));
     write(buildPath(root, "source", "commands", "a.d"),
           "class U(T) if (is(T == int)) : Command {}\nclass V : Command {}\n");
     write(buildPath(root, "source", "commands", "b", "c.d"), "\nclass W : .Command {}\n");
@@ -477,7 +479,8 @@ unittest {
     foreach (ref row; kBuiltElsewhere)
         builderRegexes ~= instantiationRegex(row.name);
     LedgerHit[] builderHits;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const code = blankUnittestBodies(blankNonCode(readText(de.name)));
         const symbols = enclosingSymbols(code);
         foreach (li, line; code.splitLines) foreach (ri, ref row; kBuiltElsewhere) {
@@ -523,11 +526,11 @@ unittest {
     // this test exists for under a "the scanner is broken" message that was
     // not true.
     {
-        const sampleFile = buildPath(repoRoot, "source", "commands", "history", "redo.d");
+        const sampleFile = buildPath(repoRoot, "packages", "common", "source", "commands", "history", "redo.d");
         const sampleText = readText(sampleFile);
         size_t unregisteredIn(string text) {
             size_t n;
-            foreach (ref d; commandDerived(scanClassDecls(text, "source/commands/history/redo.d")))
+            foreach (ref d; commandDerived(scanClassDecls(text, "packages/common/source/commands/history/redo.d")))
                 if (!d.isAbstract && !instantiates(regCode, d.name)) n++;
             return n;
         }
@@ -548,7 +551,7 @@ unittest {
                  ~ "unregistered count from %d to %d; the scanner saw %d",
                    base, base + 1, withSplit));
         size_t unreadIn(string text) {
-            return scanClasses(text, "source/commands/history/redo.d").unread.length;
+            return scanClasses(text, "packages/common/source/commands/history/redo.d").unread.length;
         }
         const unreadBase = unreadIn(sampleText);
         const withUnread = unreadIn(sampleText

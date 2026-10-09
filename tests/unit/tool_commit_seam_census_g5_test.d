@@ -368,7 +368,8 @@ unittest {
     LedgerHit[] unrecorded;
     LedgerHit[] recording;
     size_t filesRead;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[repoRoot.length + 1 .. $];
         const src = stripCommentsAndStrings(readText(de.name));
         foreach (h; symbolTokenHits(src, rel, "MeshEditBatch.unrecorded(", "unrecorded"))

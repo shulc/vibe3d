@@ -612,7 +612,7 @@ unittest // census: every unittest module that listens on a chosen port is pinne
 
     string[] offenders;
     size_t population, listeners;
-    foreach (root; ["tests/unit", "source"])
+    foreach (root; ["tests/unit", "source", "packages/common/source"])
         foreach (e; dirEntries(buildPath(repoRoot, root), SpanMode.depth)
                     .filter!(e => e.isFile && e.name.extension == ".d"))
         {

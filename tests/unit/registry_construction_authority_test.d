@@ -316,7 +316,7 @@ unittest {
     size_t registryTuple;
     size_t mixes;
     size_t privateNames;
-    foreach (root; ["source", "tests"]) {
+    foreach (root; ["source", "packages/common/source", "tests"]) {
         foreach (de; dirEntries(buildPath(repoRoot, root), "*.d", SpanMode.depth)) {
             const relative = buildNormalizedPath(de.name[repoRoot.length + 1 .. $]);
             const raw = readText(de.name);
@@ -324,7 +324,7 @@ unittest {
             codeBytes += code.length;
             registryTuple += code.count("Registry.tupleof");
             if (relative != "source/registry.d"
-                    && relative != "source/command_registry.d"
+                    && relative != "packages/common/source/command_registry.d"
                     && relative != "tests/unit/registry_construction_authority_test.d")
                 if (hasIdentifier(code, "commandFactories_")
                         || hasIdentifier(code, "toolFactories_")) ++privateNames;
@@ -396,7 +396,8 @@ unittest {
 // half using a real family and binding.
 unittest {
     string[] registrarNames;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"),
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot,
                             "*_registration.d", SpanMode.shallow))
         registrarNames ~= baseName(de.name);
     registrarNames.sort;
@@ -414,7 +415,7 @@ unittest {
 
 // The lower behavior probe is complemented by actual desktop attachment wiring.
 version (AccessRuntimeOnly) {} else unittest {
-    const lower = blankNonCode(readText(buildPath(repoRoot, "source", "command_registry.d")));
+    const lower = blankNonCode(readText(buildPath(repoRoot, "packages", "common", "source", "command_registry.d")));
     const desktop = blankNonCode(readText(buildPath(repoRoot, "source", "registry.d")));
     const factory = symbolTokenHits(desktop, "source/registry.d",
         "new CommandInvocationService(commandRegistry_, executor, history,");
@@ -422,7 +423,7 @@ version (AccessRuntimeOnly) {} else unittest {
         "1D owner factory must borrow the embedded lower owner");
     assert(desktop.count("ref CommandRegistry") == 0 && desktop.count("CommandRegistry*") == 0,
         "1D owner must not export a named ref or pointer");
-    const attached = symbolTokenHits(lower, "source/command_registry.d",
+    const attached = symbolTokenHits(lower, "packages/common/source/command_registry.d",
         "command.setSelTypeProvider(selTypeAuthority_)");
     assert(attached.length == 1 && attached[0].key == "CommandRegistry.makeCommand",
         "1C lower makeCommand must attach the live selection provider");

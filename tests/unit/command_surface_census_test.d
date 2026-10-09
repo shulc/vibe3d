@@ -167,7 +167,7 @@ private string[] registeredCommandIds()
     foreach (m; matchAll(registration, registeredIdRe))
         seen[m[1].idup] = true;
     const pilot = pilotRegistrationIds(readText(
-        buildPath(repoRoot, "source", "pilot_command_registration.d")));
+        buildPath(repoRoot, "packages", "common", "source", "pilot_command_registration.d")));
     foreach (id; pilot) seen[id] = true;
     foreach (m; matchAll(registration, aliasIdRe))
         seen[m[1].idup] = true;

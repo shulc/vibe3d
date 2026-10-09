@@ -19,22 +19,39 @@ version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
 # no file may hold more than its own row.
+block packages/common/source/argstring.d 38
+block packages/common/source/command.d 2
+block packages/common/source/command_history.d 14
+block packages/common/source/command_registry.d 1
+block packages/common/source/commands/mesh/session_edit.d 1
+block packages/common/source/io/image_decode.d 5
+block packages/common/source/io/native.d 14
+block packages/common/source/json_num.d 3
+block packages/common/source/log.d 4
+block packages/common/source/math.d 19
+block packages/common/source/mesh.d 20
+block packages/common/source/mesh_corner_maps.d 1
+block packages/common/source/mesh_dirty.d 9
+block packages/common/source/mesh_edit_delta.d 11
+block packages/common/source/mesh_planes.d 4
+block packages/common/source/mesh_topo.d 2
+block packages/common/source/plane_bytes.d 5
+block packages/common/source/record_observer_hub.d 1
+block packages/common/source/screen_buckets.d 1
+block packages/common/source/toolpipe/pipeline.d 6
+block packages/common/source/trackball.d 4
+block packages/common/source/view.d 26
 block source/ai/exploration.d 6
 block source/ai3d/event_queue.d 4
 block source/ai3d/worker_manager.d 9
-block source/argstring.d 38
 block source/bg_gpu_cache.d 2
 block source/bvh_pick.d 2
-block source/command.d 2
-block source/command_history.d 14
-block source/command_registry.d 1
 block source/commands/image/commands.d 11
 block source/commands/layer/commands.d 13
 block source/commands/layer/xform_edit.d 3
 block source/commands/mesh/edge_crease.d 6
 block source/commands/mesh/morph.d 2
 block source/commands/mesh/remove.d 1
-block source/commands/mesh/session_edit.d 1
 block source/commands/mesh/symmetrize.d 3
 block source/commands/mesh/vertex_set.d 4
 block source/commands/select/boundary.d 7
@@ -60,27 +77,15 @@ block source/http_server.d 3
 block source/image_plane.d 11
 block source/input_frame_state.d 1
 block source/io/file_dialog.d 1
-block source/io/image_decode.d 5
 block source/io/lwo_import.d 5
-block source/io/native.d 14
 block source/io/scene_import.d 2
 block source/io/scene_ir.d 7
-block source/json_num.d 3
-block source/log.d 4
-block source/math.d 19
-block source/mesh.d 20
-block source/mesh_corner_maps.d 1
-block source/mesh_dirty.d 9
-block source/mesh_edit_delta.d 11
 block source/mesh_gpu.d 4
 block source/mesh_ops/cut.d 2
 block source/mesh_ops/extrude.d 18
 block source/mesh_ops/loop_slice.d 1
 block source/mesh_ops/poly_bevel.d 6
-block source/mesh_planes.d 4
-block source/mesh_topo.d 2
 block source/overlay_space.d 7
-block source/plane_bytes.d 5
 block source/prefs.d 16
 block source/prepared_bridge_activation.d 1
 block source/prepared_command_wrapper_activation.d 1
@@ -120,12 +125,10 @@ block source/prepared_vertex_bevel_activation.d 1
 block source/prepared_vertex_extrude_activation.d 1
 block source/prepared_vertex_merge_activation.d 1
 block source/prepared_xfrm_activation_session.d 1
-block source/record_observer_hub.d 1
 block source/registry.d 8
 block source/remesh/region_stitch.d 3
 block source/remesh/remesh_job.d 10
 block source/render/render_mvp.d 1
-block source/screen_buckets.d 1
 block source/selection_product.d 4
 block source/snap.d 10
 block source/snap_render.d 6
@@ -135,7 +138,6 @@ block source/tool_disarm.d 4
 block source/tool_input.d 6
 block source/tool_presets.d 1
 block source/toolpipe/obbox.d 13
-block source/toolpipe/pipeline.d 6
 block source/toolpipe/stages/actcenter.d 7
 block source/toolpipe/stages/axis.d 4
 block source/toolpipe/stages/constrain.d 2
@@ -164,20 +166,18 @@ block source/tools/transform/relocate_plane_test.d 6
 block source/tools/transform/rotate.d 1
 block source/tools/transform/transform.d 1
 block source/tools/transform/xfrm_transform.d 6
-block source/trackball.d 4
 block source/ui/availability.d 1
 block source/ui/image_rows.d 1
 block source/ui/item_rows.d 2
 block source/ui/viewport_render.d 1
-block source/view.d 26
 block source/viewgrid.d 2
 block source/weightmap_view.d 1
 
 # Files above the per-file version(unittest) ceiling of 10. This list may
 # only shrink, and each number is EXACT: shed a guard and lower the row.
-allow-version source/mesh.d 17
+allow-version packages/common/source/mesh.d 17
+allow-version packages/common/source/mesh_visibility.d 13
 allow-version source/mesh_gpu.d 44
-allow-version source/mesh_visibility.d 13
 allow-version source/prepared_record_context.d 115
 allow-version source/tools/alignment/radial_sweep_tool.d 19
 allow-version source/tools/edit/edge_extend.d 13

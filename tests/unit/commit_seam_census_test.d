@@ -59,16 +59,16 @@ private string readCode(string path)
 
 unittest
 {
-    const meshPath = buildPath(repoRoot, "source", "mesh.d");
-    const commandPath = buildPath(repoRoot, "source", "command.d");
+    const meshPath = buildPath(repoRoot, "packages", "common", "source", "mesh.d");
+    const commandPath = buildPath(repoRoot, "packages", "common", "source", "command.d");
     const meshCode = readCode(meshPath);
     const commandCode = readCode(commandPath);
     assert(meshCode.canFind("struct Mesh {")
         && !meshCode.canFind("class Command {"),
-        "readCode memo returned empty or foreign code for source/mesh.d");
+        "readCode memo returned empty or foreign code for packages/common/source/mesh.d");
     assert(commandCode.canFind("class Command {")
         && !commandCode.canFind("struct Mesh {"),
-        "readCode memo returned empty or foreign code for source/command.d");
+        "readCode memo returned empty or foreign code for packages/common/source/command.d");
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ unittest
 // (`r"…"`, where a backslash is literal, so this scanner's escape rule runs
 // past the closing quote) and character literals (`'"'`, which opens a string
 // here) can DESYNC it: from that point on, code reads as string and strings
-// read as code. `source/mesh.d` contains neither today. The guard against a
+// read as code. `packages/common/source/mesh.d` contains neither today. The guard against a
 // silent desync is not a promise, it is the non-vacuity floor below — a
 // scanner that has lost its place eats the rest of the file, and
 // `commitChange(` then falls from dozens to near zero and reddens with a
@@ -105,7 +105,7 @@ private size_t countOccurrences(string haystack, string needle) {
 // The `commitStamps` caller census.
 //
 // `commitStamps` is the ONLY writer of `mutationVersion` on an edited mesh.
-// Because the handle lives inside `source/mesh.d` (plan §2.2 B1) the method is
+// Because the handle lives inside `packages/common/source/mesh.d` (plan §2.2 B1) the method is
 // genuinely `private`, so this claim is machine-checkable rather than an
 // allowlist sentence: nothing outside that file can name it at all, and inside
 // it the callers are counted here BY NAME.
@@ -289,25 +289,25 @@ unittest // the §5.7 position-write predicate discriminates
 
 unittest // commitStamps has exactly one definition and three named callers
 {
-    immutable path = buildPath(repoRoot, "source", "mesh.d");
-    assert(exists(path), "cannot find source/mesh.d at " ~ path);
+    immutable path = buildPath(repoRoot, "packages", "common", "source", "mesh.d");
+    assert(exists(path), "cannot find packages/common/source/mesh.d at " ~ path);
     immutable src = readCode(path);
 
     // Non-vacuity floor: if the stripper ever regressed to eating everything,
     // every count below would be 0 and this file would pass by saying nothing.
     assert(countOccurrences(src, "commitChange(") >= 20,
         "the comment stripper ate the file — `commitChange(` should appear "
-      ~ "dozens of times in source/mesh.d");
+      ~ "dozens of times in packages/common/source/mesh.d");
 
     const size_t total = countOccurrences(src, "commitStamps(");
     const size_t defs  = countOccurrences(src, "private void commitStamps(uint flags)");
     assert(defs == 1,
-        format("source/mesh.d declares `commitStamps` %d times; expected "
+        format("packages/common/source/mesh.d declares `commitStamps` %d times; expected "
              ~ "exactly 1, and `private` — if it stopped being private, the "
              ~ "seam's one-writer claim is no longer machine-checkable", defs));
 
     assert(total == 4,
-        format("`commitStamps(` appears %d times in source/mesh.d; expected 4 "
+        format("`commitStamps(` appears %d times in packages/common/source/mesh.d; expected 4 "
              ~ "— its definition plus exactly three callers: commitChange (the "
              ~ "unbatched path), commitRestored (whole-state restoration) and "
              ~ "closeEditFrame (every batch close). A fourth caller is a new "
@@ -323,7 +323,7 @@ unittest // commitStamps has exactly one definition and three named callers
     ];
     foreach (sig; kCallers)
         assert(countOccurrences(src, sig) == 1,
-            format("source/mesh.d no longer declares `%s` — the commitStamps "
+            format("packages/common/source/mesh.d no longer declares `%s` — the commitStamps "
                  ~ "caller census names the three functions allowed to stamp, "
                  ~ "so a rename must update this list and say why", sig));
 }
@@ -331,7 +331,7 @@ unittest // commitStamps has exactly one definition and three named callers
 // ---------------------------------------------------------------------------
 // The batch state is MODULE-LEVEL, not a field of `Mesh`.
 //
-// `source/mesh.d` already states the reason twice, for `g_hideDeriveDepth` and
+// `packages/common/source/mesh.d` already states the reason twice, for `g_hideDeriveDepth` and
 // for `g_deliveryDepth`: a kernel of the form `*mesh = subdivide(...)` resets
 // an in-struct counter mid-batch, and the close then finds depth 0, skips its
 // stamp, and the edit never publishes. This is that rule for the third
@@ -343,11 +343,11 @@ unittest // commitStamps has exactly one definition and three named callers
 
 unittest // no batch state on struct Mesh
 {
-    immutable path = buildPath(repoRoot, "source", "mesh.d");
+    immutable path = buildPath(repoRoot, "packages", "common", "source", "mesh.d");
     immutable src  = readCode(path);
 
     assert(countOccurrences(src, "private EditBatchFrame[] g_editBatchStack;") == 1,
-        "source/mesh.d no longer declares the module-level `g_editBatchStack`. "
+        "packages/common/source/mesh.d no longer declares the module-level `g_editBatchStack`. "
       ~ "It must stay module scope, keyed by `Mesh*`: a kernel that replaces "
       ~ "the whole struct (`*mesh = subdivide(...)`) would reset an in-struct "
       ~ "counter mid-batch, the close would find depth 0, and the edit would "
@@ -359,7 +359,7 @@ unittest // no batch state on struct Mesh
     ];
     foreach (name; kForbiddenFields)
         assert(countOccurrences(src, name) == 0,
-            "source/mesh.d names `" ~ name ~ "` — the batch state must not "
+            "packages/common/source/mesh.d names `" ~ name ~ "` — the batch state must not "
           ~ "become a field of `Mesh` again (task 1903 §2.2a).");
 
     // `editRecorder_` survives as an ACCESSOR over the stack, never as a
@@ -415,9 +415,9 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
     immutable srcRoot = buildPath(repoRoot, "source");
     assert(exists(srcRoot), "cannot find source/ at " ~ srcRoot);
 
-    // `source/mesh.d` DEFINES both `beginEditBatch` and `abortEditBatch`; it
+    // `packages/common/source/mesh.d` DEFINES both `beginEditBatch` and `abortEditBatch`; it
     // is the only exemption, and it is one name, not a family.
-    immutable meshPath = buildPath(srcRoot, "mesh.d");
+    immutable meshPath = buildPath(repoRoot, "packages/common/source/mesh.d");
 
     // The spelling the four sites use, and the one this census requires. A
     // different receiver name is a real decision — it means the batch is no
@@ -426,7 +426,8 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
     enum kGuard = "scope(failure) mesh.abortEditBatch();";
 
     string[] callers;
-    foreach (e; dirEntries(srcRoot, "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (e.name == meshPath) continue;
         immutable src = readCode(e.name);
         const size_t opens = countOccurrences(src, "beginEditBatch(");
@@ -504,7 +505,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
 // ---------------------------------------------------------------------------
 // THE MIXIN CENSUS (plan §4.5) — the track-1 conversion's only gate.
 //
-// `grep -c 'mixin Mesh*Ops' source/mesh.d` was 13 before Stage C and must
+// `grep -c 'mixin Mesh*Ops' packages/common/source/mesh.d` was 13 before Stage C and must
 // reach 0. This block holds the running count and, more importantly, names the
 // families already converted, because the count alone is a weak check: a stage
 // that converted one family while someone re-added a mixin for another would
@@ -578,14 +579,14 @@ unittest // the mixin count is falling, and the converted families stay converte
     import std.algorithm : canFind;
     import std.regex     : ctRegex, matchAll;
 
-    immutable path = buildPath(repoRoot, "source", "mesh.d");
+    immutable path = buildPath(repoRoot, "packages", "common", "source", "mesh.d");
     immutable src  = readCode(path);
 
     // Non-vacuity floor. The stripper eating the file, or a bad path, would
     // otherwise read as "every family is converted" — the strongest possible
     // green from the weakest possible evidence.
     assert(countOccurrences(src, "struct Mesh {") == 1,
-        "the comment stripper ate source/mesh.d — `struct Mesh {` is gone, so "
+        "the comment stripper ate packages/common/source/mesh.d — `struct Mesh {` is gone, so "
       ~ "a zero mixin count below would mean nothing");
 
     auto re = ctRegex!(`mixin\s+(Mesh[A-Za-z]*Ops)\s*;`);
@@ -605,7 +606,7 @@ unittest // the mixin count is falling, and the converted families stay converte
     // last one, and the floor this comment predicted reaches 0 here.
     enum size_t kExpected = 0;
     assert(live.length == kExpected,
-        format("source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
+        format("packages/common/source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
              ~ "gate expects %d. Track 1 started at %d and every conversion "
              ~ "stage deletes its own line in its own commit, so a HIGHER count "
              ~ "is a reinstated mixin and a LOWER one is a stage that landed "
@@ -1859,7 +1860,8 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
         immutable srcRoot2 = buildPath(repoRoot, "source");
         string[] qualified;
         size_t scanned2 = 0;
-        foreach (e; dirEntries(srcRoot2, "*.d", SpanMode.depth)) {
+        foreach (scanSourceRoot; [srcRoot2, buildPath(repoRoot, "packages/common/source")])
+        foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned2;
             immutable src2 = readCode(e.name);
             if (countOccurrences(src2, "Mesh.capShellCycles(") >= 1)
@@ -2198,7 +2200,8 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
         immutable srcRootF2 = buildPath(repoRoot, "source");
         string[] qualifiedF2;
         size_t scannedF2 = 0;
-        foreach (e; dirEntries(srcRootF2, "*.d", SpanMode.depth)) {
+        foreach (scanSourceRoot; [srcRootF2, buildPath(repoRoot, "packages/common/source")])
+        foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scannedF2;
             immutable srcF2 = readCode(e.name);
             if (countOccurrences(srcF2, "Mesh.boundaryContourInset(") >= 1)
@@ -2516,14 +2519,14 @@ unittest // Stage G — the manifold edge bevel family
     // would be green whatever the readers did) — and the tripwire at the foot
     // of edge_bevel.d deliberately does NOT list them, because for these three
     // `__traits(hasMember, Mesh, …)` answers `true` and always will.
-    immutable meshPath = buildPath(repoRoot, "source", "mesh.d");
+    immutable meshPath = buildPath(repoRoot, "packages", "common", "source", "mesh.d");
     immutable meshSrc  = readCode(meshPath);
     static immutable string[3] kParityDecls = ["uint[] bevelPinnedOrphans_;",
                                                "Vec3[] bevelCapCoincidentPos_;",
                                                "Vec3[] bevelCapOrphanPos_;"];
     foreach (decl; kParityDecls)
         assert(countOccurrences(meshSrc, decl) == 1,
-            format("source/mesh.d no longer declares `%s` exactly once. "
+            format("packages/common/source/mesh.d no longer declares `%s` exactly once. "
                  ~ "`mixin MeshEdgeBevelOps;` used to INJECT this field into "
                  ~ "`struct Mesh`; a free function cannot inject a field, so "
                  ~ "Stage G moved the DECLARATION into the struct that already "
@@ -2616,7 +2619,8 @@ unittest // Stage G — the manifold edge bevel family
         import std.file : dirEntries, SpanMode;
         size_t scanned = 0;
         string[] offenders;
-        foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+        foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned;
             immutable t = readCode(de.name);
             if (countOccurrences(t, "Mesh.bevelEdgesByMask(") > 0)
@@ -2875,7 +2879,8 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
         import std.file : dirEntries, SpanMode;
         size_t scanned = 0;
         string[][string] offenders;
-        foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+        foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned;
             immutable t = readCode(de.name);
             foreach (n; kFamily)
@@ -2993,8 +2998,8 @@ unittest // every §2.6 widening this stage made still has the caller it names
         LedgerRow[] callerSymbols; // every non-declarer declaration using scanNeedle
         string   why;
         // NO `declFile`. Until task 4100's review this struct carried one —
-        // a literal `"source/mesh.d"` default plus three
-        // `"source/mesh_edge_slice.d"` overrides — and it was the last
+        // a literal `"packages/common/source/mesh.d"` default plus three
+        // `"packages/common/source/mesh_edge_slice.d"` overrides — and it was the last
         // path-shaped KEY in this file: move a declaration and four literals
         // have to move with it, which is the fragility the rest of this
         // census was rekeyed to remove. The declaring file is DERIVED below
@@ -3051,7 +3056,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                ~ "exactly ONE: `isConcaveFace` has a single call site) and the "
                ~ "clipped chord-crossing lookup — all of them after a "
                ~ "buildLoops(). TASK 3240: the declaration moved to "
-               ~ "source/mesh_edge_slice.d with the rest of the edge-slice "
+               ~ "packages/common/source/mesh_edge_slice.d with the rest of the edge-slice "
                ~ "family and gained a `ref Mesh` receiver; the widening and "
                ~ "its caller are otherwise unchanged."),
         Widening("Mesh.insertEdgePoint",
@@ -3065,7 +3070,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                ~ "every face winding incident on a straddled edge, which is what "
                ~ "makes the cut T-junction-free. cut.d is its only caller "
                ~ "outside the declaring file. TASK 3240: that file is now "
-               ~ "source/mesh_edge_slice.d."),
+               ~ "packages/common/source/mesh_edge_slice.d."),
         Widening("Mesh.rebuildFacesWithChordSplits",
                  "private size_t rebuildFacesWithChordSplits(",
                  "size_t rebuildFacesWithChordSplits(ref Mesh m,",
@@ -3077,7 +3082,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                ~ "chord-split face, carrying faceMaterial / the whole faceMarks "
                ~ "word / faceSelectionOrder onto both halves. cut.d is its only "
                ~ "caller outside the declaring file. TASK 3240: that file is "
-               ~ "now source/mesh_edge_slice.d."),
+               ~ "now packages/common/source/mesh_edge_slice.d."),
         // --- Stage E4's two, and BOTH have callers that are still MIXINS ---
         // This is the first pair of rows whose `callerFiles` names a file the
         // conversion has NOT reached. `extrude.d` (Stage H) and `edge_bevel.d`
@@ -3256,7 +3261,9 @@ unittest // every §2.6 widening this stage made still has the caller it names
         import std.path : relativePath;
         import std.string : replace;
 
-        foreach (e; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+
+        foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
             ++declFilesScanned;
             immutable src = readCode(e.name);
@@ -3299,7 +3306,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         immutable string declFile = declFileOf[w.name];
         immutable string dsrc     = declSrcOf[w.name];
         assert(countOccurrences(dsrc, w.privateDecl) == 0,
-            format("`%s` is `private` again in source/mesh.d. It is %s Task 1903 "
+            format("`%s` is `private` again in packages/common/source/mesh.d. It is %s Task 1903 "
                  ~ "widened it — in the track-1 stage that converted its caller, "
                  ~ "which is the rule §2.6 settled on after the Stage A review "
                  ~ "reverted ten widenings that had no caller yet (D3 for "
@@ -3358,7 +3365,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                    w.name, w.opsFile));
         assert(countOccurrences(opsSrc[w.opsFile], w.callSite) >= 1,
             format("%s no longer contains `%s`, so the "
-                 ~ "widening of `%s` in source/mesh.d now holds a `private` door "
+                 ~ "widening of `%s` in packages/common/source/mesh.d now holds a `private` door "
                  ~ "open for NOBODY. That is exactly the state the Stage A review "
                  ~ "reverted ten widenings for (plan §2.6, review S3): narrow it "
                  ~ "back to `private` in the same change that removed the call, "
@@ -3370,7 +3377,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
     // each row the set of files that contain its receiver-agnostic needle.
     // Each row's OWN declaring file — derived above, never spelled — is
     // skipped for that row: the declarer's internal calls are not the
-    // question §2.6 asks. There is no longer a blanket `source/mesh.d` skip
+    // question §2.6 asks. There is no longer a blanket `packages/common/source/mesh.d` skip
     // on top of that. It was redundant for the eight rows mesh.d declares
     // (their per-row skip already covers it) and WRONG in principle for the
     // three task 3240 moved out, where mesh.d is an ordinary third-party
@@ -3385,14 +3392,15 @@ unittest // every §2.6 widening this stage made still has the caller it names
         import std.string : replace;
 
         immutable srcRoot = buildPath(repoRoot, "source");
-        foreach (e; dirEntries(srcRoot, "*.d", SpanMode.depth)) {
+        foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source")])
+        foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
             ++filesScanned;
             immutable src = readCode(e.name);
             foreach (w; kWidenings)
                 // Skip the row's OWN declaring file: its internal calls are
                 // not what §2.6 asks about. For the three rows task 3240
-                // moved to `source/mesh_edge_slice.d` that is that file,
+                // moved to `packages/common/source/mesh_edge_slice.d` that is that file,
                 // whose `edgeIndexOf` wrapper and
                 // `edgeSliceEx`/`splitFaceByVertices` bodies call two of the
                 // three among themselves.
@@ -3643,7 +3651,8 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
     size_t zoneTotal = 0;
     size_t rosterTotal = 0;
     string[] offenders;
-    foreach (e; dirEntries(zone, "*.d", SpanMode.shallow)) {
+    foreach (scanSourceRoot; [zone, buildPath(repoRoot, "packages/common/source", "commands", "mesh")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.shallow)) {
         ++scanned;
         immutable src = readCode(e.name);
         string hit;
@@ -3966,7 +3975,8 @@ unittest // L0-b — the recorder pins, one per command
     ];
     LedgerHit[] hits;
     size_t filesRead;
-    foreach (e; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = e.name[repoRoot.length + 1 .. $];
         const src = readCode(e.name);
         foreach (h; symbolTokenHits(src, rel, "recordPositionDiff(", "record"))
@@ -4005,12 +4015,13 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
     immutable srcRoot = buildPath(repoRoot, "source");
     size_t scanned = 0;
     string[] sites;
-    foreach (e; dirEntries(srcRoot, "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         immutable src = readCode(e.name);
         immutable size_t n = countOccurrences(src, "recordPositionDiff(");
         if (n > 0)
-            sites ~= format("%s:%d", relativePath(e.name, srcRoot), n);
+            sites ~= format("%s:%d", relativePath(e.name, scanSourceRoot), n);
     }
     // A mis-rooted walk reports 0 files, 0 sites, and passes.
     assert(scanned >= 100,
@@ -4036,11 +4047,11 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
 }
 
 // ---------------------------------------------------------------------------
-// TASK 2310 — THE FIFTH ZONE: `source/mesh.d` ITSELF
+// TASK 2310 — THE FIFTH ZONE: `packages/common/source/mesh.d` ITSELF
 //
 // WHY IT IS HERE AT ALL. `countRawPositionWrites` scans `source/mesh_ops/*.d`,
 // `source/commands/mesh/*.d`, `source/symmetry.d` and `source/deform_magnet.d`
-// — never `source/mesh.d`. Four raw position writes on the LIVE subject mesh
+// — never `packages/common/source/mesh.d`. Four raw position writes on the LIVE subject mesh
 // were sitting in that hole: `collapseVerticesByMask`'s `vertices[i] = target`,
 // `weldVerticesByMask`'s average arm, `weldVertexPair`'s snap, and (in the
 // scanned command zone, but unclassified) `edge_join.d`'s averaged pair. All
@@ -4049,7 +4060,7 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
 // left the coordinates at their post-collapse values.
 //
 // AND THE ROW IS A `kAllow` TOTAL, NOT A ZERO, which is the honest shape for
-// this file and has to be said plainly. `source/mesh.d` is the mesh's own
+// this file and has to be said plainly. `packages/common/source/mesh.d` is the mesh's own
 // module: it holds the position DOORS themselves (`setVertexPositions`,
 // `addVertex`), the whole-array installs that follow a rebuild
 // (`vertices = newVerts`), every factory and duplicator that fills a mesh it
@@ -4078,19 +4089,19 @@ private enum string[2] kL10Replacements = [
     "setVertexPositions(avgIdx, avgTo);",               // weldVerticesByMask, average arm
 ];
 
-unittest // task 2310 — source/mesh.d, the zone the write census never scanned
+unittest // task 2310 — packages/common/source/mesh.d, the zone the write census never scanned
 {
     import std.algorithm : sort, uniq;
     import std.array     : array;
 
-    immutable path = buildPath(repoRoot, "source", "mesh.d");
-    assert(exists(path), "cannot find source/mesh.d at " ~ path);
+    immutable path = buildPath(repoRoot, "packages", "common", "source", "mesh.d");
+    assert(exists(path), "cannot find packages/common/source/mesh.d at " ~ path);
     immutable src = readCode(path);
 
     // Non-vacuity floor, per the `deform_magnet.d` row: a stripper that ate the
     // file reports 0 raw writes and passes by saying nothing.
     assert(countOccurrences(src, "void setVertexPositions(") == 2,
-        format("source/mesh.d declares `setVertexPositions` %d time(s), expected "
+        format("packages/common/source/mesh.d declares `setVertexPositions` %d time(s), expected "
              ~ "2 — `Mesh`'s bulk position door and `MeshEditBatch`'s one-line "
              ~ "forwarder onto it. This is the non-vacuity floor: a stripper that "
              ~ "ate the file reports 0 raw writes below and passes by saying "
@@ -4116,7 +4127,7 @@ unittest // task 2310 — source/mesh.d, the zone the write census never scanned
     // TERM 2 — the two-sided half. Retired ABSENT, replacement PRESENT.
     foreach (lit; kL10RetiredRawWrites)
         assert(countOccurrences(src, lit) == 0,
-            format("source/mesh.d spells the retired raw position write `%s` "
+            format("packages/common/source/mesh.d spells the retired raw position write `%s` "
                  ~ "again (%d occurrence(s)). It writes the LIVE subject mesh, "
                  ~ "so inside a recording batch it produces no op-log entry and "
                  ~ "a delta-backed undo of the weld family restores the topology "
@@ -4125,7 +4136,7 @@ unittest // task 2310 — source/mesh.d, the zone the write census never scanned
                    lit, countOccurrences(src, lit)));
     foreach (lit; kL10Replacements)
         assert(countOccurrences(src, lit) == 1,
-            format("source/mesh.d no longer spells `%s` exactly once (%d). This "
+            format("packages/common/source/mesh.d no longer spells `%s` exactly once (%d). This "
                  ~ "is the half that stops `retire the row by deleting the line` "
                  ~ "being a way to go green: with the call gone the three rows "
                  ~ "above are all still 0 and the weld silently stops recording "
@@ -4137,7 +4148,7 @@ unittest // task 2310 — source/mesh.d, the zone the write census never scanned
     string firstHit;
     immutable size_t raw = countRawPositionWrites(src, firstHit);
     assert(raw == 32,
-        format("source/mesh.d holds %d raw position write(s) under §5.7's "
+        format("packages/common/source/mesh.d holds %d raw position write(s) under §5.7's "
              ~ "predicate, expected 32. First hit: `%s`.\n"
              ~ "  THIS IS A `kAllow` TOTAL, NOT A CLEAN ZERO, and the file is "
              ~ "the one place where that is right: the 46 are the position "
@@ -4370,7 +4381,8 @@ unittest // Stage M - the closing MeshSnapshot declaration census
 {
     LedgerHit[] hits;
     size_t filesRead;
-    foreach (e; dirEntries(buildPath(repoRoot, "source", "commands"), "*.d",
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source", "commands"), buildPath(repoRoot, "packages/common/source", "commands")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d",
                            SpanMode.depth)) {
         ++filesRead;
         const file = e.name[repoRoot.length + 1 .. $];

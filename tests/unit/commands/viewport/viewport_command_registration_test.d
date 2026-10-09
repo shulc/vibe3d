@@ -414,7 +414,8 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
 
     string[] vpmWriteSites;
     size_t sourceFiles;
-    foreach (entry; dirEntries(buildPath(repoRoot, "source"), "*.d",
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                SpanMode.depth)) {
         ++sourceFiles;
         const code = blankUnittestBodies(blankNonCode(readText(entry.name)));

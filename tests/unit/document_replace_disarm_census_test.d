@@ -181,7 +181,8 @@ private Hit[] scanComments(string file, string src) {
 
 private Hit[] scanTree(bool comments) {
     auto hits = appender!(Hit[]);
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const file = de.name[repoRoot.length + 1 .. $];
         const src = readText(de.name);
         hits.put(comments ? scanComments(file, src) : scanCode(file, src));

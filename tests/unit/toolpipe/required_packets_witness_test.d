@@ -1,5 +1,5 @@
 // Task 1904 Stage 6 (doc/subject_stage_plan.md §7) — a witness for
-// `Pipeline.checkRequiredPackets` (source/toolpipe/pipeline.d). The
+// `Pipeline.checkRequiredPackets` (packages/common/source/toolpipe/pipeline.d). The
 // enforcement itself landed earlier, in `246720c4` (2026-05-31, an
 // earlier task); only this witness is Stage 6 (2026-08-25). The
 // enforcement already fires `logWarnOnce("toolpipe", ...)` before every
@@ -18,7 +18,7 @@
 // de-spam gate in `checkRequiredPackets` is keyed by
 // `typeid(op).name ~ "|" ~ kind.to!string` in a PROCESS-WIDE `bool[string]`
 // (`log.g_seenOnce`), reset only by the test-only `resetLogForTest()`
-// (source/log.d — made non-private for this Stage, still compiled only
+// (packages/common/source/log.d — made non-private for this Stage, still compiled only
 // under `version (unittest)`). Reusing one class across cases would let a
 // later case silently ride an earlier case's already-consumed key and pass
 // for the wrong reason — the shape CLAUDE.md's "a check that cannot come
@@ -57,7 +57,7 @@ unittest {
     // This case deliberately provokes the WARNING `checkRequiredPackets`
     // logs — expected, asserted on below via `snapshot()`. Raise the
     // stderr floor so it doesn't also echo to the test-run console
-    // (precedent: source/log.d's own unittests, e.g. around line 228).
+    // (precedent: packages/common/source/log.d's own unittests, e.g. around line 228).
     auto savedLevel = g_stderrMinLevel;
     g_stderrMinLevel = LogLevel.Error;
     scope(exit) g_stderrMinLevel = savedLevel;

@@ -5,7 +5,7 @@ module tests.unit.toolchain_floor_test;
 //
 // THE FAILURE THIS TASK CLOSED. This project's `ref`-local declarations
 // (`const ref <type> <name> = <expr>;`, six files: source/drag.d,
-// source/math.d, source/tools/create/box.d,
+// packages/common/source/math.d, source/tools/create/box.d,
 // source/tools/transform/{move,transform}.d, source/ui/image_rows.d) were
 // stabilized at D frontend 2.111 (ldc 1.41.0 -- LDC's own minor version is
 // NOT the frontend version it implements; ldc 1.40.0 is frontend 2.110).

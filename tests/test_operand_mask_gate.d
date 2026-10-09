@@ -180,7 +180,7 @@ shared static this() {
     //   preview child, not an operand set. Its hide handling landed in S4.
     //   Lived in app.d's lasso close until task 0781 moved the mouse-up
     //   handler into InputRouter; the code is unchanged, only its home.
-    ALLOWED_COUNT["source/mesh.d"] = 1;
+    ALLOWED_COUNT["packages/common/source/mesh.d"] = 1;
     // ^ :10141 `vertFanOrdered_[] = true` — a per-vertex fan-ordered FLAG,
     //   reset to all-true before the loops pass clears it per non-manifold
     //   edge. Not an operand set at all; it is the exact false positive the

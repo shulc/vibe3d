@@ -5,7 +5,7 @@
 // WHERE THAT ORDER LIVES (review S3 moved it). It used to be a declaration
 // order in `Command.apply`: two `scope(exit)` closes, LIFO, delivery pair
 // declared first so it closed last. That convention was invisible at the six
-// OTHER `beginHideDeriveBatch` call sites in `source/mesh.d`, which opened no
+// OTHER `beginHideDeriveBatch` call sites in `packages/common/source/mesh.d`, which opened no
 // delivery batch at all. It is now one function's statement order —
 // `Mesh.endHideDeriveBatch` runs `flushHideDerivePending()` and THEN
 // `endDeliveryBatch()`, having opened that batch in `beginHideDeriveBatch` —

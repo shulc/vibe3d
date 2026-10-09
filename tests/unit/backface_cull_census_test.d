@@ -57,7 +57,8 @@ private string glslRegion(string src, string head) {
 
 private string[] sourceFiles() {
     string[] o;
-    foreach (e; dirEntries(buildPath(root, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         o ~= relativePath(e.name, buildPath(root, "source")).replace("\\", "/");
     o.sort();
     return o;

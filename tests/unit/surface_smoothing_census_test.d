@@ -22,7 +22,8 @@ private string codeText(string src) { return blankUnittestBodies(blankNonCode(sr
 /// Every `source/**/*.d` file: relative path → code text.
 private string[string] sourceCode() {
     string[string] out_;
-    foreach (e; dirEntries(buildPath(root, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         out_[relativePath(e.name, buildPath(root, "source"))] = codeText(readText(e.name));
     return out_;
 }

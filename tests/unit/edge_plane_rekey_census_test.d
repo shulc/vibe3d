@@ -38,7 +38,7 @@
 //     `edgeSetMask`, and `mesh_wire_compact_undo_test` is where that reddens.
 //
 // (B) THE LIVE-PATH MITIGATION — the reason (A) is not yet urgent. Every
-//     vertex-renumbering declaration in `source/mesh.d` calls
+//     vertex-renumbering declaration in `packages/common/source/mesh.d` calls
 //     `clearEdgeSelectionResize()` in its own body, so a stale Select bit
 //     cannot outlive the renumbering on the live path. This was ASSERTED
 //     rather than assumed because the card carried it as an estimate: the
@@ -177,7 +177,8 @@ package LedgerHit[] scanEdgeSeamSource(string label, string src) {
 
 private LedgerHit[] scanTree() {
     auto hits = appender!(LedgerHit[]);
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         hits.put(scanEdgeSeamSource(de.name[repoRoot.length + 1 .. $],
                                     readText(de.name)));
     return hits.data;

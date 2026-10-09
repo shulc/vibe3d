@@ -67,10 +67,6 @@
 			"repository": "git+https://github.com/shulc/D-BVH.git"
 		},
 		"bindbc-sdl": "~>1.5.2",
-		"d-stb-image": {
-			"version": "a66f6917718ea128076a2c5660e37f362a785144",
-			"repository": "git+https://github.com/shulc/D-StbImage.git"
-		},
 		"bindbc-loader": "~>1.1.5",
 		"dyaml": {
 			"version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
@@ -83,6 +79,9 @@
 		"lwo2-writer": {
 			"version": "6d35b70a2a23c16c5b6cc19ea3e2d05a99eb0061",
 			"repository": "git+https://github.com/shulc/D-Lwo2Writer.git"
+		},
+		"vibe3d-common": {
+			"path": "packages/common"
 		}
 	},
 	"_comment-onnx-per-config": "d-onnxruntime (AI candidate ranker backend) is NOT a base dependency — it is added per-configuration alongside the `WithAI` version so the `modeling-noai` build can omit it entirely. onnxruntime.dll statically imports api-ms-win-core-path (Windows 8+), so dropping it is what makes a Windows 7-capable build possible. Only source/ai/onnx_backend.d touches the binding; all of it is gated by version(WithAI).",
@@ -204,10 +203,20 @@
 			]
 		},
 		"sanitize-unit": {
-		    "_comment": "AddressSanitizer for the MODULE-UNITTEST binary -- `sanitize` plus the two differences that make it runnable there, both taken from `check-unit`'s measurements rather than by analogy. (1) `unittests` is ADDED because `--build=<name>` REPLACES dub's built-in `unittest` buildType wholesale, so without it `dub test --config=tests` compiles with no -unittest and fails outright. (2) `--checkaction=C` is DROPPED because ten sites under tests/unit/ assert that an assert raises a CATCHABLE AssertError; under -C the binary SIGABRTs at the first of them and the whole lane dies at once, which reads like a sanitizer catastrophe rather than a build-flag mistake. Everything else is `sanitize` verbatim, including --fsanitize-address-use-after-return=never, which is a CORRECTNESS requirement and not a speed choice: the shipped LDC druntime is built without version=SupportSanitizers, so with it on the conservative GC loses stack roots ASan moved to a fake stack. Pair at RUN time with ASAN_OPTIONS=detect_stack_use_after_return=0:detect_leaks=0. Honest limit, unchanged from `sanitize` and decisive for how a clean run must be read: the C/C++ dependencies, druntime and phobos link PREBUILT and uninstrumented, so a green run rules out an overrun in OUR code and says NOTHING about one inside theirs.",
-		    "buildOptions": ["unittests", "debugMode", "debugInfo"],
-		    "dflags-ldc": ["--fsanitize=address", "--fsanitize-address-use-after-return=never", "--frame-pointer=all"],
-		    "versions": ["SanitizerSelfTest"]
+			"_comment": "AddressSanitizer for the MODULE-UNITTEST binary -- `sanitize` plus the two differences that make it runnable there, both taken from `check-unit`'s measurements rather than by analogy. (1) `unittests` is ADDED because `--build=<name>` REPLACES dub's built-in `unittest` buildType wholesale, so without it `dub test --config=tests` compiles with no -unittest and fails outright. (2) `--checkaction=C` is DROPPED because ten sites under tests/unit/ assert that an assert raises a CATCHABLE AssertError; under -C the binary SIGABRTs at the first of them and the whole lane dies at once, which reads like a sanitizer catastrophe rather than a build-flag mistake. Everything else is `sanitize` verbatim, including --fsanitize-address-use-after-return=never, which is a CORRECTNESS requirement and not a speed choice: the shipped LDC druntime is built without version=SupportSanitizers, so with it on the conservative GC loses stack roots ASan moved to a fake stack. Pair at RUN time with ASAN_OPTIONS=detect_stack_use_after_return=0:detect_leaks=0. Honest limit, unchanged from `sanitize` and decisive for how a clean run must be read: the C/C++ dependencies, druntime and phobos link PREBUILT and uninstrumented, so a green run rules out an overrun in OUR code and says NOTHING about one inside theirs.",
+			"buildOptions": [
+				"unittests",
+				"debugMode",
+				"debugInfo"
+			],
+			"dflags-ldc": [
+				"--fsanitize=address",
+				"--fsanitize-address-use-after-return=never",
+				"--frame-pointer=all"
+			],
+			"versions": [
+				"SanitizerSelfTest"
+			]
 		},
 		"tsan": {
 			"_comment": "ThreadSanitizer. Three parts of this are load-bearing and none is symmetry with `sanitize`. (1) version=SanitizerThreadPreinit pulls in source/tsan_preinit.d, WITHOUT WHICH THE BINARY DOES NOT REACH main: compiler-rt's tsan_preinit.cpp.o is never pulled out of libldc_rt.tsan.a (its only symbol is local), so the binary has no .preinit_array, so libcap.so.2's ELF constructor calls prctl() during _dl_init through a still-null REAL(prctl) and SIGSEGVs. Read out of a coredump under gdb; see that module's header. (2) --enable-asserts=false, AND NO --checkaction=C, and this pair is FORCED rather than chosen. The lane must run under --DRT-gcopt=gc:manual (see below). ManualGC.reserveArrayCapacity() returns 0 unconditionally (shipped source, manual/gc.d:283-286), and druntime's own _d_arraysetcapacity does `curCapacity = gc_reserveArrayCapacity(...); assert(curCapacity);` (capacity.d:181-182) -- so with asserts compiled in, ANY array.reserve() ABORTS THE PROCESS. The editor hit it during startup (_d_arraysetcapacity!(Param)) and never reached /api/registry. Measured four ways on a five-line program: debug + gc:manual dies with AssertError at capacity.d:182; -release + gc:manual and --enable-asserts=false + gc:manual both run and report capacity 0; debug + the ordinary collector reports capacity 1019. --enable-asserts=false is the surgical half of -release: bounds checks and debugInfo stay. --checkaction=C is then DROPPED rather than carried for symmetry, because with no asserts left to action it is inert and its presence would imply otherwise. The cost is stated rather than hidden: this lane cannot exercise ANY assert oracle, the validity asserts included -- that is `check`'s job, which is why it is a different buildType. A second cost follows from the same stub: reserve() silently yields capacity 0, so every append reallocates. (3) --boundscheck=on is deliberately NOT carried: it is measurably inert in a debugMode build (1410, M4), and symmetry with `check` is worth less than not implying a check that does nothing. RUN-TIME half, which lives in tools/sanitizer/lane.d's BuildTypeSpec and not in a workflow: the instance MUST run with --DRT-gcopt=gc:manual. Measured -- with the ordinary conservative GC, TSan deadlocks the process outright at >=2 allocating threads (thread_suspendAll parks in sem_wait while the other threads spin in an UNinstrumented SpinLock.lock(), so the stop-the-world signal is never acknowledged), and short of that it emits ~124 reports a minute, all of them GC memory REUSE that TSan cannot see freed. TSAN_OPTIONS must carry history_size=7 (without it reports arrive with no stack frames at all) and must NOT carry symbolize=0 (it silently disables suppression matching, which is by symbol NAME).",
@@ -245,7 +254,10 @@
 					"repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
 				}
 			},
-			"_comment": "Default. Modeling-only build — no IPR, no Cycles/RPR runtime, no D-Cycles/D-RadeonProRender dependencies. Fast compile, no extra system libs needed. All code under source/render/* and source/material/* is excluded from the build (gated by `version (WithRender)`). Includes the AI candidate ranker (version WithAI + d-onnxruntime)."
+			"_comment": "Default. Modeling-only build — no IPR, no Cycles/RPR runtime, no D-Cycles/D-RadeonProRender dependencies. Fast compile, no extra system libs needed. All code under source/render/* and source/material/* is excluded from the build (gated by `version (WithRender)`). Includes the AI candidate ranker (version WithAI + d-onnxruntime).",
+			"subConfigurations": {
+				"vibe3d-common": "modeling"
+			}
 		},
 		{
 			"name": "modeling-noai",
@@ -258,7 +270,10 @@
 					"repository": "git+https://github.com/shulc/bindbc-assimp6.git"
 				}
 			},
-			"_comment": "AI-less modeling build (Windows 7 target). Same as `modeling` but WithAI is undefined and d-onnxruntime is NOT pulled in, so source/ai/onnx_backend.d compiles to an empty module and the statusline AI button renders as a disabled placeholder. The pure-D AI heuristics still compile but are unreachable (master switch stays off). Rationale: onnxruntime.dll statically imports api-ms-win-core-path-l1-1-0.dll (Windows 8+) — omitting it is the prerequisite for a binary that can load on Windows 7. CI's Win7 zip pairs this config with app-local UCRT + VC++ runtime DLLs."
+			"_comment": "AI-less modeling build (Windows 7 target). Same as `modeling` but WithAI is undefined and d-onnxruntime is NOT pulled in, so source/ai/onnx_backend.d compiles to an empty module and the statusline AI button renders as a disabled placeholder. The pure-D AI heuristics still compile but are unreachable (master switch stays off). Rationale: onnxruntime.dll statically imports api-ms-win-core-path-l1-1-0.dll (Windows 8+) — omitting it is the prerequisite for a binary that can load on Windows 7. CI's Win7 zip pairs this config with app-local UCRT + VC++ runtime DLLs.",
+			"subConfigurations": {
+				"vibe3d-common": "modeling-noai"
+			}
 		},
 		{
 			"name": "with-render",
@@ -287,7 +302,10 @@
 					"repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
 				}
 			},
-			"_comment": "Opt-in build with two render backends (Cycles via D-Cycles, RPR via D-RadeonProRender) plus the AI ranker. The default `modeling` config never references the render repos so `dub build` works on machines that have neither. Git dependencies are pinned to commit SHAs so CI can reuse the persistent dub cache instead of re-cloning heavyweight repositories. For active backend development, register a local override once: `dub add-local ~/Code/D-RadeonProRender && dub add-local ~/Code/D-Cycles`. D-Cycles builds its C shim via CMake (Blender LFS submodule + optional CUDA/OptiX); D-RadeonProRender is dynamic-loaded bindbc. See doc/shader_framework_plan.md."
+			"_comment": "Opt-in build with two render backends (Cycles via D-Cycles, RPR via D-RadeonProRender) plus the AI ranker. The default `modeling` config never references the render repos so `dub build` works on machines that have neither. Git dependencies are pinned to commit SHAs so CI can reuse the persistent dub cache instead of re-cloning heavyweight repositories. For active backend development, register a local override once: `dub add-local ~/Code/D-RadeonProRender && dub add-local ~/Code/D-Cycles`. D-Cycles builds its C shim via CMake (Blender LFS submodule + optional CUDA/OptiX); D-RadeonProRender is dynamic-loaded bindbc. See doc/shader_framework_plan.md.",
+			"subConfigurations": {
+				"vibe3d-common": "with-render"
+			}
 		},
 		{
 			"name": "tests",
@@ -309,6 +327,7 @@
 			},
 			"sourcePaths": [
 				"source",
+				"packages/common/source",
 				"tests/unit"
 			],
 			"sourceFiles": [
@@ -323,7 +342,8 @@
 			"_comment-protocol-census": "THE PREPARED-PROTOCOL CENSUS IS NOT GONE -- IT MOVED, and re-adding it here re-creates the cost it was moved out of. It used to be `preBuildCommands: [\"python3 tools/check_prepared_protocol.py\"]` on THIS configuration, put there by P1.0a's review for a real reason: without a caller, its whole-tree properties -- statement ORDER inside function bodies, caller sets across files nothing imports, occurrence counts, body digests -- could all drift under a green lane. The reason it could not stay: dub runs preBuildCommands on every build that actually builds, so every `dub test --config=tests` after any source edit paid the whole scan. Measured on the gate host 2026-09-02: 38.4 s wall / 243 MiB peak RSS for the scanner alone (the 3691 card's ~10 s had grown with it), against a `dub test` that is otherwise ~51 s. Task 4052 then found that 21.6 s of that was 72 compiler launches over `tests/compile_fail/`, deleted those fixtures in favour of `static assert(!__traits(isCopyable, T))` in tests/unit/prepared_tool_transition_test.d -- which THIS configuration pays for, and which is the right place for a property a compiler can state -- and the scanner alone now measures 19.5 s. Its caller is still `run_test.d`, the OTHER routine gate, as a barrier beside the test-liveness one, before anything is built: one payment per suite run instead of one per test build, and CI reaches it through `run_all.d --only unit`, which fans out to a FULL `./run_test.d`. `./run_test.d --check-protocol` runs it alone. If you are about to delete that call, read its comment there first.",
 			"importPaths": [
 				"source",
-				"tools/perf"
+				"tools/perf",
+				"packages/common/source"
 			],
 			"_comment-perf-portpolicy": "Task 9220. tools/perf/lib/portpolicy.d decides which port the perf harness may clear and launch on (refuses a run_test.d worker window, derived from tools/harness/runslots.d, which rdmd reaches through the tracked symlink tools/perf/tools/harness/runslots.d). lib/lifecycle.d is compiled here only so tests/unit/perf_port_policy_test.d can pin, by type, that its kill and launch seams take an admitted PerfPort. Test-only, like the other tools/perf entries.",
 			"_comment-hostspace": "Task 5630. tools/harness/hostspace.d is the one owner of scratch-root and available-space policy for the standalone test runner and sanitizer lane. Both scripts import module tools.harness.hostspace; rdmd gives lane.d only tools/sanitizer as its import root, so the tracked file symlink under that root preserves absolute-script invocation from a foreign cwd. The real file is listed explicitly in sourceFiles, which keeps it test-only: modeling and with-render do not compile harness policy. importPaths still repeats source because declaring this array replaces dub's derived default.",
@@ -332,13 +352,19 @@
 			"_comment": "The module-unittest gate (task 0706): `dub test --config=tests`. It exists so unittest blocks have somewhere to live OTHER than source/ -- measured by audit 4, 25% of source/ was test code and the god-files were 48-96% tests, with no lever to shrink them while the only source path was `source`. See tests/unit/README.md for what may move there.",
 			"_comment-name": "The name is `tests` and NOT `unittest`, and that is load-bearing. dub gives a configuration literally named `unittest` a special branch: it uses that configuration VERBATIM and skips its own test-main injection. Measured here on dub 1.41 -- with the name `unittest`, `dub test` printed `Linking vibe3d` / `Running vibe3d`: it built the EDITOR with -unittest, overwrote ./vibe3d (the binary `run_test.d --no-build` reuses), ran the unittest blocks, and then whether it terminated at all depended on druntime returning runMain=false. Under any other name dub injects dub_test_root.d, builds a separate `vibe3d-test-<config>` binary, leaves ./vibe3d alone, and -- the part that matters most for this task -- `static import`s EVERY module of the target, which is what guarantees a tests/unit/ module that nothing imports still registers its ModuleInfo and actually runs. Cost of not using the magic name: a bare `dub test` falls back to the default configuration (`modeling`) and silently omits tests/unit/. That is why every caller passes --config=tests explicitly; a wrong one is visible in the run's own output as `Running vibe3d-test-modeling` and a lower `N modules passed unittests`.",
 			"_comment-sourcepaths": "`tests/unit` MUST NOT be added to `modeling`/`with-render` or to the root: dub merges configuration build settings ON TOP of the root ones, so a root-level entry would compile test code into the shipped binary. `source` is repeated here only for readability -- dub de-duplicates source files, so the effective set is source/ + tests/unit/ either way.",
-			"_comment-duplication": "`WithAI` + d-onnxruntime are copied from `modeling` rather than hoisted to the root ON PURPOSE: `modeling-noai` deliberately omits both (Windows 7 target -- onnxruntime.dll needs Win8+ APIs), so hoisting them would silently un-do that build. Keep this block in sync with `modeling` by hand; there are only two lines of it."
+			"_comment-duplication": "`WithAI` + d-onnxruntime are copied from `modeling` rather than hoisted to the root ON PURPOSE: `modeling-noai` deliberately omits both (Windows 7 target -- onnxruntime.dll needs Win8+ APIs), so hoisting them would silently un-do that build. Keep this block in sync with `modeling` by hand; there are only two lines of it.",
+			"subConfigurations": {
+				"vibe3d-common": "modeling"
+			}
 		},
 		{
 			"name": "web",
-			"versions": ["web"],
+			"versions": [
+				"web"
+			],
 			"subConfigurations": {
-				"bindbc-sdl": "static"
+				"bindbc-sdl": "static",
+				"vibe3d-common": "web"
 			},
 			"libs-wasm": [
 				"dbvh_c",

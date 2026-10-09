@@ -135,7 +135,8 @@ private size_t occurrences(string haystack, string needle) {
 
 private Scan scanTree() {
     Scan result;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const src = blankUnittestBodies(blankNonCode(readText(de.name)));
         auto mm = src.matchFirst(regex(`(?m)^\s*module\s+([A-Za-z0-9_.]+)\s*;`));
         const moduleName = mm.empty ? "<missing-module>" : mm[1];

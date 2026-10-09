@@ -21,7 +21,8 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 private size_t countInSource(string needle) {
     size_t hits;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const code = blankUnittestBodies(blankNonCode(readText(de.name)));
         hits += code.count(needle);
     }
@@ -93,7 +94,8 @@ unittest {
             "prepared CommandWrapper adapter lost " ~ name);
 
     size_t sourceFiles;
-    foreach (_; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (_; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         ++sourceFiles;
     assert(sourceFiles > 400, format(
         "command-wrapper result census walked only %d source files", sourceFiles));

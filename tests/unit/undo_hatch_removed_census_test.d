@@ -60,7 +60,7 @@ private static immutable string[] kTokens = [
 /// The roots the census walks. Enumerated per-root rather than swept from the
 /// repo top, so a root that stops existing is a red rather than a silently
 /// smaller scan.
-private static immutable string[] kDirRoots = ["source", "tests"];
+private static immutable string[] kDirRoots = ["source", "packages/common/source", "tests"];
 private static immutable string[] kFileRoots = ["run_all.d", "run_test.d"];
 
 private size_t countIn(string hay, string needle) {

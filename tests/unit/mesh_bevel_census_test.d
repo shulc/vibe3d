@@ -4,7 +4,7 @@ module tests.unit.mesh_bevel_census_test;
 // meshes, not just the cube every existing bevel test runs on.
 //
 // WHY THIS FILE EXISTS. Across tests/test_edge_bevel*.d and the unittest
-// blocks next to bevelEdgesByMask in source/mesh.d, `makeCube()` supplies
+// blocks next to bevelEdgesByMask in packages/common/source/mesh.d, `makeCube()` supplies
 // the mesh 128 times, `cubeMinusBottom` 8, a synthetic propeller 2 — and
 // NOTHING else. A cube has only valence-3 vertices, so a whole class of
 // topology (a free end at valence>3, ordinary on any subdivided or
@@ -29,7 +29,7 @@ module tests.unit.mesh_bevel_census_test;
 // are actively working on that function. This module only *measures* it
 // through its existing public contract (mask in, processed-count out).
 // Where a needed mesh primitive (UV sphere / cylinder / torus) doesn't
-// exist in source/mesh.d, it is built HERE, test-only, rather than added
+// exist in packages/common/source/mesh.d, it is built HERE, test-only, rather than added
 // to the production primitive-factory set.
 //
 // WHERE THIS RUNS. Plain `unittest {}` blocks under tests/unit/ (task 4066
@@ -106,7 +106,7 @@ private size_t bevelEdgesOnce(ref Mesh m, const bool[] mask, float width,
 
 // ===========================================================================
 // Test-only mesh primitives (sphere / cylinder / torus) — NOT present in
-// source/mesh.d's factory set (makeCube / makeOctahedron / makeGridPlane /
+// packages/common/source/mesh.d's factory set (makeCube / makeOctahedron / makeGridPlane /
 // subdivideCube / ...). Winding is outward-CCW, verified by hand (cross-
 // product sign check against the expected outward direction) for each
 // face-family below, and cross-checked at runtime by the manifold
@@ -304,7 +304,7 @@ private Mesh cloneMeshForTrial(const ref Mesh src) {
 
 // ===========================================================================
 // Refusal classification. READ-ONLY mirrors of bevelEdgesByMask's own
-// preflight guards (source/mesh.d, `bevelEdgesByMask`, roughly lines
+// preflight guards (packages/common/source/mesh.d, `bevelEdgesByMask`, roughly lines
 // 8526-9070 as of task 0445):
 //   - the 3+-incident-faces refusal (task 0438's guard),
 //   - the per-vertex "keep V" partial-fan notch refusal (task 0439's
@@ -656,7 +656,7 @@ unittest {
 //   - no NEW boundary appearing on a mesh that started closed.
 //
 // The coincident-vertex threshold reuses `weldCoincidentVertices`'s own
-// default `epsSq = 1e-12` (source/mesh.d) rather than inventing a new
+// default `epsSq = 1e-12` (packages/common/source/mesh.d) rather than inventing a new
 // tolerance — this is the kernel's OWN definition of "the same point".
 //
 // The boundary check is intentionally NOT "boundary count == 0" for every
@@ -1521,7 +1521,7 @@ private bool[][] disjointClusterMasks(const ref Mesh m) {
 /// ring at one of the mesh's valence-3 vertices, unioned with a disjoint
 /// free end. Finds its anchor by scanning for a valence-3 vertex rather
 /// than assuming an index — `subdivideCube`'s vertex order after its OSD
-/// preview rebuild (source/mesh.d) is not part of this module's contract,
+/// preview rebuild (packages/common/source/mesh.d) is not part of this module's contract,
 /// so an index assumption would be fragile in a way a topological search
 /// is not.
 private bool[] cornerHubPlusFreeEndMask(const ref Mesh m) {

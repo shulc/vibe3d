@@ -11,14 +11,15 @@
     "../unit/command_registry_test.d",
     "../unit/standalone_application_test.d"
   ],
-  "importPaths": [
-    "../../source",
-    "../.."
-  ],
+  "importPaths": [],
   "dflags": [
     "-i"
   ],
-  "dependencies": {},
+  "dependencies": {
+    "vibe3d-common": {
+      "path": "../../packages/common"
+    }
+  },
   "toolchainRequirements": {
     "dmd": ">=2.111.0"
   },
@@ -26,5 +27,8 @@
     {
       "name": "core"
     }
-  ]
+  ],
+  "subConfigurations": {
+    "vibe3d-common": "modeling-noai"
+  }
 }

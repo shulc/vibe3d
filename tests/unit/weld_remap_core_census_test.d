@@ -35,7 +35,7 @@ private string[] declsOf(string src, string needle) {
     return outp;
 }
 
-private string meshSrc() { return readText(buildPath(repoRoot, "source", "mesh.d")); }
+private string meshSrc() { return readText(buildPath(repoRoot, "packages", "common", "source", "mesh.d")); }
 
 unittest { // scanner control: a call and an address are seen; prose is not
     enum probe = "struct M {\n"
@@ -55,7 +55,7 @@ unittest { // both twins, and only they, reach the two cores
     static foreach (needle; ["collapseFacesThroughRemap", "rekeyEdgeSetsThroughRemap"]) {{
         const got = declsOf(src, needle);
         // Floor: the declaration line plus one call per twin.
-        assert(got.length == 3, format("`%s`: expected 3 occurrences in source/mesh.d "
+        assert(got.length == 3, format("`%s`: expected 3 occurrences in packages/common/source/mesh.d "
             ~ "(its declaration + one call in each weld remap), found %d: %s",
             needle, got.length, got));
         // A declaration line belongs to its enclosing scope, `Mesh`.

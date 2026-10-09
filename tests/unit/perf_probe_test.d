@@ -1,6 +1,6 @@
 // Focused: dmd -unittest -version=PerfProbe -i -I. -Isource -Itests/unit
 //          -of=<out> tests/unit/perf_probe_test.d <main.d>
-// Module unittests for `perf_probe`, moved verbatim out of source/perf_probe.d by task 0706.
+// Module unittests for `perf_probe`, moved verbatim out of packages/common/source/perf_probe.d by task 0706.
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.perf_probe_test;
@@ -622,7 +622,7 @@ unittest { // 6511 REVIEW FIX: constructor and strict warmup guard census
 
     enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     immutable source = blankNonCode(readText(
-        buildPath(repoRoot, "source", "perf_probe.d")));
+        buildPath(repoRoot, "packages", "common", "source", "perf_probe.d")));
     size_t ctorHits;
     foreach (_; source.matchAll(regex(
         `return\s+FrameProbeSnapshot\s*\(\s*ring\[0\s*\.\.\s*ringLen\]\.dup\s*,` ~

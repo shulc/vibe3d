@@ -1029,7 +1029,7 @@ private struct ItemStripSignalRow {
 private enum ItemStripSignalRow[] kItemStripSignalLedger = [
     ItemStripSignalRow("source/ui/layer_list_panel.d", 7, 0, 0, 0, 0),
     ItemStripSignalRow("source/ui/item_rows.d", 0, 0, 0, 0, 0),
-    ItemStripSignalRow("source/layer_params.d", 0, 0, 0, 0, 0),
+    ItemStripSignalRow("packages/common/source/layer_params.d", 0, 0, 0, 0, 0),
 ];
 
 private enum kItemStripSignalTokens =
@@ -1089,7 +1089,8 @@ unittest { // production binder, call sites and the retired EditorApp path
 
     size_t sourceFiles;
     size_t oldSignatures;
-    foreach (entry; dirEntries(repoRoot.buildPath("source"), "*.d",
+    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                SpanMode.depth)) {
         ++sourceFiles;
         oldSignatures += blankNonCode(readText(entry.name))
@@ -1157,7 +1158,7 @@ unittest { // 6502 census: ownership regions, file totals and strip signal
     const rawLayer = readText(repoRoot.buildPath(
         "source", "ui", "layer_list_panel.d"));
     const rawRows = readText(repoRoot.buildPath("source", "ui", "item_rows.d"));
-    const rawParams = readText(repoRoot.buildPath("source", "layer_params.d"));
+    const rawParams = readText(repoRoot.buildPath("packages", "common", "source", "layer_params.d"));
     const layer = blankNonCode(rawLayer);
 
     string[] actualPaths;
@@ -1176,7 +1177,7 @@ unittest { // 6502 census: ownership regions, file totals and strip signal
 
     auto sortedActual = actualPaths.dup;
     sortedActual.sort;
-    auto expectedPaths = ["source/layer_params.d", "source/ui/item_rows.d",
+    auto expectedPaths = ["packages/common/source/layer_params.d", "source/ui/item_rows.d",
                           "source/ui/layer_list_panel.d"];
     expectedPaths.sort;
     assert(sortedActual == expectedPaths,

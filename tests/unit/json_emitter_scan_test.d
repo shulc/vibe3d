@@ -365,19 +365,19 @@ private enum gateRepoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 /// carries the canary). Adding an endpoint to a NEW file is the acknowledged
 /// hole in this gate's scope — see the module header.
 private immutable string[] kScanned = [
-    "source/json_num.d",
-    "source/http_json.d",
+    "packages/common/source/json_num.d",
+    "packages/common/source/http_json.d",
     "source/http_providers.d",
     "source/http_server.d",
     "source/http_transport.d",
-    "source/view.d",
+    "packages/common/source/view.d",
     // TASK 4062 — `scalarArgToString` moved from http_providers.d to
     // command_args.d with the argument-binding law, and its
     // `json-num-exempt:` marker went with it. The file is scanned so the
     // marker stays under the gate: it is exempt because it spells a value into
     // an ARGSTRING, and an argstring is not a JSON body — but "not a JSON
     // body" is a claim that has to keep being checked at its new address.
-    "source/command_args.d",
+    "packages/common/source/command_args.d",
 ];
 
 private static immutable LedgerRow[] kExemptionLedger = [
@@ -430,13 +430,13 @@ unittest {
     // kScanned.length lets one listed file silently replace another; the
     // contract is that these exact seven source paths were read (task 6740).
     immutable expectedFiles = [
-        "source/json_num.d",
-        "source/http_json.d",
+        "packages/common/source/json_num.d",
+        "packages/common/source/http_json.d",
         "source/http_providers.d",
         "source/http_server.d",
         "source/http_transport.d",
-        "source/view.d",
-        "source/command_args.d",
+        "packages/common/source/view.d",
+        "packages/common/source/command_args.d",
     ];
     assert(filesRead == expectedFiles,
         format("the JSON emitter gate must read exactly %s, it read %s",
@@ -446,19 +446,19 @@ unittest {
       ~ "of them — the reader, the masker or the matcher has stopped working, "
       ~ "and a gate that is clean over an empty input is not a gate");
 
-    // --- positive control: the canary in source/json_num.d -----------------
+    // --- positive control: the canary in packages/common/source/json_num.d -----------------
     // Its LINE is read out of the file, not hard-coded, so moving the canary
     // is free and deleting it is the failure this control exists to catch.
     assert(canaryLine > 0,
-        "source/json_num.d no longer declares `jsonNumScannerCanary`. That "
+        "packages/common/source/json_num.d no longer declares `jsonNumScannerCanary`. That "
       ~ "enum is this gate's proof that it reads REAL FILES rather than its "
       ~ "own test strings; without it, every assertion below could be passing "
       ~ "over an empty scan.");
     assert(violations.length == 1
-           && violations[0].canFind("source/json_num.d:"
+           && violations[0].canFind("packages/common/source/json_num.d:"
                                     ~ canaryLine.to!string),
         format("the ONLY unguarded emitter in the scanned files must be the "
-             ~ "canary at source/json_num.d:%d.\n"
+             ~ "canary at packages/common/source/json_num.d:%d.\n"
              ~ "A float specifier in a format literal in one of these files "
              ~ "makes the endpoint's body unparseable the moment its value "
              ~ "goes non-finite (task 1550). Route it through "
@@ -561,7 +561,7 @@ unittest {
             "path query"),
     ];
 
-    // `source/json_num.d` is deliberately NOT censused. It is scanned by the
+    // `packages/common/source/json_num.d` is deliberately NOT censused. It is scanned by the
     // gate above (for the canary, and so an unguarded emitter cannot hide in
     // the helper itself), but its `jsonNum(x, "%.3f")` occurrences are the
     // helper's own unittests, not wire sites — freezing them would make every

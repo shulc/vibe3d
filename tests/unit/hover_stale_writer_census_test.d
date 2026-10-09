@@ -42,7 +42,8 @@ unittest {
     immutable press = ["TackTool.onMouseButtonDown", "MagnetTool.onMouseButtonDown",
         "LoopSliceTool.onMouseButtonDown", "EdgeSliceTool.onMouseButtonDown",
         "XfrmTransformTool.tryPickElement"];
-    foreach (f; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
         const rel = f.name[repoRoot.length + 1 .. $];
         const code = blankUnittestBodies(blankNonCode(readText(f.name)));

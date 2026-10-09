@@ -1349,7 +1349,7 @@ string[string] dumpMeshPlanes(ref Mesh m)
     // not to the table below — the diff then keeps answering "the planes
     // agree" about a plane it never read. 24 is the 23 state planes plus
     // `filled`. Precedent for the shape of this guard: `MeshMap.dup`'s own
-    // field-count assert (`source/mesh.d`) and the two in `source/snapshot.d`.
+    // field-count assert (`packages/common/source/mesh.d`) and the two in `packages/common/source/snapshot.d`.
     static assert(MeshSnapshot.tupleof.length == 24,
         "MeshSnapshot gained or lost a field — add the plane to "
       ~ "dumpMeshPlanes below, or write here why it is not restorable state, "
@@ -1423,7 +1423,7 @@ string[string] dumpMeshPlanes(ref Mesh m)
         // revert that dropped the presence channel outright yields a legal,
         // WRONG map — not garbage, not a crash — and a values-only dump reads
         // it as identical. That is the same trap `MeshMap.dup` guards with its
-        // own field-count assert (`source/mesh.d`).
+        // own field-count assert (`packages/common/source/mesh.d`).
         string s = format("dim=%d dom=%s kind=%s present=%s len=%d:",
                           mm.dim, mm.domain, mm.kind, mm.present,
                           mm.data.length);

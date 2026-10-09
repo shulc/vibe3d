@@ -1,4 +1,4 @@
-// Module unittests for `operator`, moved verbatim out of source/operator.d by task 0706.
+// Module unittests for `operator`, moved verbatim out of packages/common/source/operator.d by task 0706.
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.operator_test;

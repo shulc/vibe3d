@@ -92,7 +92,7 @@ private enum string kField = "selSubs";
 
 /// The file the method itself is declared in — excluded from the scan, same
 /// as the plan's premise P1 (`grep … | grep -v change_bus.d`).
-private enum string kOwnFile = "source/change_bus.d";
+private enum string kOwnFile = "packages/common/source/change_bus.d";
 
 /// The marker every recorded site must carry above it: a reference to this
 /// task, so a reader who finds a NEW registration under someone else's note
@@ -171,7 +171,8 @@ private Site[] scanSource(string label, string src) {
 private Site[] scanTree() {
     auto sites = appender!(Site[]);
     size_t scanned = 0;
-    foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const string label = de.name[repoRoot.length + 1 .. $];
         if (label == kOwnFile) continue;

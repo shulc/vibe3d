@@ -18,7 +18,8 @@ unittest {
     assert(has(capability, "tool !is null && tool.modelPreview(candidate)"),
            "production queries final Tool operation");
     size_t files, adopters;
-    foreach (entry; dirEntries(buildPath(root, "source"), SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile || !entry.name.endsWith(".d")) continue;
         ++files;
         auto code = blankNonCode(readText(entry.name));

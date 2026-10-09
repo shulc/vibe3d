@@ -42,7 +42,8 @@ private struct Src { string rel, raw, code; }
 /// Every `source/**/*.d`; `production` drops the in-source `*_test.d` modules.
 private Src[] sources(bool production) {
     Src[] r;
-    foreach (e; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (production && e.name.endsWith("_test.d")) continue;
         auto raw = readText(e.name);
         r ~= Src(e.name[repoRoot.length + 1 .. $], raw,

@@ -1,4 +1,4 @@
-// Module unittests for `toolpipe.packets`, moved verbatim out of source/toolpipe/packets.d by task 0706.
+// Module unittests for `toolpipe.packets`, moved verbatim out of packages/common/source/toolpipe/packets.d by task 0706.
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.toolpipe.packets_test;

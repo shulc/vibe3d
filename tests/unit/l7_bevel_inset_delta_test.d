@@ -81,7 +81,7 @@ private void selectFaces(Mesh* m, const size_t[] fis)
 //     `setFaceWindings` call finds every winding already installed and writes
 //     nothing. The forward is byte-identical; the revert becomes
 //
-//       core.exception.ArrayIndexError@source/mesh.d(15188): index [16] is out
+//       core.exception.ArrayIndexError@packages/common/source/mesh.d(15188): index [16] is out
 //       of bounds for array of length 16
 //         ... Mesh.buildLoops <- mesh_edit_delta.finalize <- MeshEditDelta.revert
 //
@@ -106,7 +106,7 @@ private void selectFaces(Mesh* m, const size_t[] fis)
 // `faceMaterial`, `facePart` and both set masks byte-identical and leaves only
 // the WINDINGS wrong." Measured: `setFaceWindings` carries an ALWAYS-ON guard,
 // so an unordered list is LOUD at the door —
-// `AssertError@source/mesh.d(3417): Mesh.setFaceWindings: `idx` must be
+// `AssertError@packages/common/source/mesh.d(3417): Mesh.setFaceWindings: `idx` must be
 // strictly ascending — the per-corner payload pairs by a single ordered sweep`
 // — and a MISSING publisher is loud too, as the throw in (1). The silent
 // failure is one layer down and it loses the per-corner plane, not the
@@ -281,7 +281,7 @@ private bool indexOfSub(string hay, string needle)
 // instead of the accumulator — so the forward is byte-identical and only the
 // publisher is gone. Its red, verbatim:
 //
-//   core.exception.ArrayIndexError@source/mesh.d(15188): index [23] is out of
+//   core.exception.ArrayIndexError@packages/common/source/mesh.d(15188): index [23] is out of
 //   bounds for array of length 16   ... Mesh.buildLoops <- mesh_edit_delta.finalize
 //
 // i.e. the revert THROWS. So in THIS group the missing publisher is LOUD, and

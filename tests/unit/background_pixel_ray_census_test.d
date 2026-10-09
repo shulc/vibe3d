@@ -124,7 +124,8 @@ private size_t consIdFinders(string code, string raw) {
 
 private string[] sourceFiles() {
     string[] o;
-    foreach (e; dirEntries(buildPath(root, "source"), "*.d", SpanMode.depth))
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         o ~= relativePath(e.name, buildPath(root, "source")).replace("\\", "/");
     o.sort();
     return o;
@@ -299,7 +300,7 @@ unittest { // (c) a FREE point reads the surface, a primitive's PRESS point does
         "census floor: the event builder reads the input viewport exactly once");
     assert(matchAll(frame, regex(`app\.vpm\.inputSnapshot\s*\(\s*\)`)).array.length == 1,
         "event SubjectSource must carry the input owner's viewport");
-    immutable op = blankNonCode(readText(buildPath(root, "source", "operator.d")));
+    immutable op = blankNonCode(readText(buildPath(root, "packages", "common", "source", "operator.d")));
     assert(matchAll(op, regex(`if\s*\(auto s = vts\.get!SubjectPacket\(\)\) return s\.viewport;`)).array.length == 1,
         "viewportOf must read the event SubjectPacket");
     immutable cons = blankNonCode(readText(buildPath(root, "source", "toolpipe", "stages", "constrain.d")));

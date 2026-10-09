@@ -47,7 +47,8 @@ static assert([__traits(allMembers, Handler)].canFind("onKeyDown"));
 
 unittest {
     string[] files;
-    foreach (e; dirEntries("source", "*.d", SpanMode.depth)) files ~= e.name;
+    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) files ~= e.name;
     string[string] code;
     foreach (f; files) code[f] = blankNonCode(readText(f));
     // Population floor: the walk saw the anchor modules at all.

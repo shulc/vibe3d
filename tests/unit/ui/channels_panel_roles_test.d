@@ -1270,7 +1270,8 @@ unittest { // M6a-d and the retired EditorApp path: production source census
     size_t sourceFiles;
     size_t oldSignatures;
     size_t toolGetterAssignments;
-    foreach (entry; dirEntries(repoRoot.buildPath("source"), "*.d",
+    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source")])
+    foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                SpanMode.depth)) {
         ++sourceFiles;
         const code = blankNonCode(readText(entry.name));
