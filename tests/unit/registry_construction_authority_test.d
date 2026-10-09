@@ -445,7 +445,7 @@ version (AccessRuntimeOnly) {} else unittest {
 unittest { // Construct before first registration: empty AA storage cannot mask a copy.
     import command_executor : CommandExecutor;
     import command_history : CommandHistory;
-    import command_invocation : CommandInvocationOutcome;
+    import command_invocation : CommandInvocationOutcome, CommandInvocationResult;
     auto rig = new LiveRegistrationRig;
     Registry owner;
     assert(owner.commandIds().length == 0, "1D factory requires fresh empty owner");
@@ -455,8 +455,14 @@ unittest { // Construct before first registration: empty AA storage cannot mask 
     auto service = owner.createCommandInvocationService(executor, history,
         (Command command, string id) => true);
     owner.registerCommand("k.factory", () => cast(Command)new OriginalProbeCommand("k.factory"));
-    auto first = service.invokeLine("k.factory", "",
-        CommandInvocationContext(CommandOrigin.script, false));
+    CommandInvocationResult first;
+    bool registered;
+    try {
+        first = service.invokeLine("k.factory", "",
+            CommandInvocationContext(CommandOrigin.script, false));
+        registered = true;
+    } catch (Exception) {}
+    assert(registered, "1D owner factory must see registration after construction");
     auto original = cast(OriginalProbeCommand)first.command;
     assert(first.outcome == CommandInvocationOutcome.applied && original !is null,
         "1D owner factory must see registration after construction");
@@ -537,4 +543,35 @@ unittest { // The desktop receiver instantiates the same operation-only helpers.
     assert(service.invokeLine("history.redo", "", context).applied && b.faces.length == 7,
         "pilot redo must navigate same history");
 
+}
+
+private final class FactoryHookProbe : ProbeCommand {
+    this(bool query) { super("k.hooks"); if (query) markQuery(); }
+    override bool acceptsQuery() const { return true; }
+    protected override bool applyImpl() { return false; }
+}
+
+unittest {
+    import command_executor : CommandExecutor;
+    import command_history : CommandHistory, RecordMode;
+    import command_invocation : CommandInvocationOutcome;
+    Registry owner;
+    auto history = new CommandHistory;
+    auto executor = new CommandExecutor(history, () => false, (transition) {});
+    size_t refires, uiCalls, configurations, notices;
+    bool query;
+    owner.registerCommand("k.hooks", () => cast(Command)new FactoryHookProbe(query));
+    auto service = owner.createCommandInvocationService(executor, history,
+        (Command c, string id) { ++refires; return false; },
+        (Command c, RecordMode mode, string id) { ++uiCalls; return CommandInvocationOutcome.deferred; },
+        (Command c, bool interactive) { ++configurations; },
+        (Command c) { ++notices; });
+    auto deferred = service.invokeLine("k.hooks", "", CommandInvocationContext(CommandOrigin.ui, true));
+    assert(deferred.outcome == CommandInvocationOutcome.deferred && refires == 1
+        && uiCalls == 1 && configurations == 1 && notices == 0,
+        "1D owner factory must forward refire UI and interactive hooks");
+    query = true;
+    auto refused = service.invokeLine("k.hooks", "", CommandInvocationContext(CommandOrigin.ui, false));
+    assert(refused.outcome == CommandInvocationOutcome.refused && notices == 1,
+        "1D owner factory must forward query refusal notice");
 }
