@@ -365,6 +365,13 @@ unittest {
     auto root = buildPath("/var/tmp", "vibe3d-cli-test-" ~ thisProcessID.to!string);
     mkdirRecurse(root); scope(exit) rmdirRecurse(root);
     auto doc = fixture(root);
+    auto undoOnly = differential(root, doc, [
+        `{"id":"mesh.select","params":{"mode":"polygons","indices":[0]}}`,
+        `{"id":"mesh.triple"}`, `{"id":"history.undo"}`],
+        true, ["applied", "applied", "applied"]);
+    assert(cleanPlanes(undoOnly.states[3]["state"]["planes"])
+        == cleanPlanes(undoOnly.states[1]["state"]["planes"]),
+        "CLI undo: exact whole-plane restore before redo");
     auto quad = differential(root, doc, [
         `{"id":"mesh.select","params":{"mode":"vertices","indices":[4,6]}}`,
         `{"id":"mesh.select","params":{"mode":"edges","indices":[2]}}`,
