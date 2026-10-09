@@ -126,6 +126,16 @@ unittest {
     assert(refusal.outcome == CommandInvocationOutcome.refused && notices == 1
         && last.applies == 1 && refireCalls == 2 && uiCalls == 1 && interactiveCalls == 3,
         "invocation UI query refusal must notice without dispatching");
+    context.interactive = false;
+    auto discreteQueryRefusal = service.invokeLine("probe", "", context);
+    assert(discreteQueryRefusal.outcome == CommandInvocationOutcome.refused
+        && !last.configured && interactiveCalls == 3 && notices == 2,
+        "invocation noninteractive context must not configure interactive policy");
+    auto scriptQueryRefusal = service.invokeLine("probe", "",
+        CommandInvocationContext(CommandOrigin.script, false));
+    assert(scriptQueryRefusal.outcome == CommandInvocationOutcome.refused
+        && notices == 2 && interactiveCalls == 3 && refireCalls == 2 && uiCalls == 1,
+        "invocation script query refusal must not invoke UI notice");
     auto noUi = new CommandInvocationService(registry, executor(h), h);
     bool required;
     try noUi.invokeLine("probe", "", context);
@@ -206,4 +216,18 @@ unittest {
     assert(service.invokeLine("history.redo", "", context).applied && b.faces.length == 7,
         "pilot redo must navigate same history");
     writeln("CORE-CELL passed=pilot-live");
+}
+
+
+unittest { // Required collaborators are rejected at lower service construction.
+    import core.exception : AssertError;
+    CommandRegistry registry;
+    auto history = new CommandHistory;
+    bool executorRequired, historyRequired;
+    try new CommandInvocationService(registry, null, history);
+    catch (AssertError error) executorRequired = true;
+    assert(executorRequired, "invocation lower constructor requires executor");
+    try new CommandInvocationService(registry, executor(history), null);
+    catch (AssertError error) historyRequired = true;
+    assert(historyRequired, "invocation lower constructor requires history");
 }
