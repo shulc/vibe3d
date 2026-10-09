@@ -11,6 +11,7 @@ import mesh_edit_delta : MeshEditScope;
 import snapshot : MeshSnapshot, SelectionSnapshot;
 import editmode : EditMode;
 import std.algorithm : sort, canFind;
+import std.conv : to;
 import std.json : JSONValue;
 import standalone_application : StandaloneApplication;
 import std.stdio : writeln;
@@ -228,6 +229,7 @@ unittest {
     }
     // The same registered factories must resolve a replacement document and mode.
     host.document = Document.bootstrap(makeCube());
+    seedSelection(host);
     host.session.promoteGeometryType(EditMode.Edges);
     assert(host.invoke("select.element", `{"type":"edge","action":"set","indices":[9,2]}`).applied
         && ordered(host.activeMesh.selectedEdges, host.activeMesh.edgeSelectionOrder) == [9u,2u]
@@ -235,6 +237,27 @@ unittest {
     assert(host.invoke("select.element", `{"type":"polygon","action":"set","indices":[4,1]}`).applied
         && ordered(host.activeMesh.selectedFaces, host.activeMesh.faceSelectionOrder) == [4u,1u],
         "element: polygon domain wiring");
+    assert(ordered(host.activeMesh.selectedVertices, host.activeMesh.vertexSelectionOrder) == [6u,1u]
+        && ordered(host.activeMesh.selectedEdges, host.activeMesh.edgeSelectionOrder) == [9u,2u],
+        "element: domain sets preserve populated dormant orders");
+    foreach (domain; ["edge", "polygon"]) {
+        const added = domain == "edge" ? 11 : 5;
+        assert(host.invoke("select.element", `{"type":"` ~ domain ~ `","action":"add","indices":[`
+                ~ added.to!string ~ `]}`).applied, "element: component add accepted");
+        assert(domain == "edge" ? host.activeMesh.isEdgeSelected(added) : host.activeMesh.isFaceSelected(added),
+            "element: component add writes its domain");
+        assert(host.invoke("select.element", `{"type":"` ~ domain ~ `","action":"remove","indices":[`
+                ~ added.to!string ~ `]}`).applied, "element: component remove accepted");
+        assert(domain == "edge" ? !host.activeMesh.isEdgeSelected(added) : !host.activeMesh.isFaceSelected(added),
+            "element: component remove writes its domain");
+        assert(host.invoke("select.element", `{"type":"` ~ domain ~ `","action":"toggle","indices":[`
+                ~ added.to!string ~ `,` ~ added.to!string ~ `]}`).applied, "element: component repeated toggle accepted");
+        auto selected = domain == "edge" ? host.activeMesh.selectedEdges : host.activeMesh.selectedFaces;
+        auto ranks = domain == "edge" ? host.activeMesh.edgeSelectionOrder : host.activeMesh.faceSelectionOrder;
+        const counter = domain == "edge" ? host.activeMesh.edgeSelectionOrderCounter : host.activeMesh.faceSelectionOrderCounter;
+        assert(ordered(selected, ranks) == (domain == "edge" ? [9u,2u] : [4u,1u]) && counter == 4,
+            "element: edge/polygon action callbacks preserve exact ordered membership");
+    }
     writeln("CORE-CELL passed=standalone-select-element");
 }
 
