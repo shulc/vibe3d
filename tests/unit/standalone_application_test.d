@@ -1,0 +1,107 @@
+module tests.unit.standalone_application_test;
+
+import active_mesh_resolver : activeMeshResolver;
+import change_bus : changeBus;
+import command : g_editTargetResolver;
+import command_invocation : CommandInvocationOutcome;
+import document : Document, primaryModelSpaceResolver;
+import mesh : Mesh, makeCube, g_isDocumentMesh;
+import mesh_dirty : allWatchers, MeshDirtyEpochs, g_geomEpochs, g_topoEpochs, noteMeshChange;
+import mesh_edit_delta : MeshEditScope;
+import snapshot : MeshSnapshot;
+import standalone_application : StandaloneApplication;
+import std.stdio : writeln;
+
+unittest {
+    const beforeTarget = g_editTargetResolver;
+    const beforeActive = activeMeshResolver;
+    const beforeSpace = primaryModelSpaceResolver;
+    const beforeFilter = g_isDocumentMesh;
+    auto beforeBus = changeBus;
+    auto watchers = allWatchers();
+    MeshDirtyEpochs[] epochs;
+    foreach (watcher; watchers) epochs ~= *watcher;
+    scope(exit) foreach (i, watcher; watchers) *watcher = epochs[i];
+    auto first = Document.bootstrap(makeCube());
+    auto second = Document.bootstrap(makeCube());
+    assert(first.primary !is second.primary, "standalone-lifetime: two distinct documents");
+    auto firstMesh = &first.activeMeshRef();
+    auto secondMesh = &second.activeMeshRef();
+    auto host = new StandaloneApplication(first);
+    scope(exit) host.close();
+    assert(activeMeshResolver() is firstMesh && g_editTargetResolver(),
+        "standalone-lifetime: current mesh identity and target");
+    g_geomEpochs.reset(); g_topoEpochs.reset();
+    noteMeshChange(cast(size_t)firstMesh, MeshEditScope.Geometry);
+    noteMeshChange(cast(size_t)secondMesh, MeshEditScope.Geometry);
+    const epoch = g_geomEpochs.epochFor(cast(size_t)firstMesh);
+    const otherEpoch = g_geomEpochs.epochFor(cast(size_t)secondMesh);
+    auto selected = host.invoke("mesh.select", `{"mode":"polygons","indices":[0]}`);
+    assert(selected.outcome == CommandInvocationOutcome.applied,
+        "standalone-roundtrip: shared selection applies");
+    auto before = MeshSnapshot.capture(host.activeMesh);
+    const revision = changeBus.docRevision();
+    const deliveries = changeBus.deliveryCount;
+    assert(host.invoke("mesh.triple").outcome == CommandInvocationOutcome.applied,
+        "standalone-roundtrip: shared triple applies");
+    auto after = MeshSnapshot.capture(host.activeMesh);
+    assert(!before.matches(host.activeMesh) && host.activeMesh.faces.length == 7
+        && host.activeMesh.vertices.length == 8,
+        "standalone-roundtrip: populated forward differs with seven faces");
+    assert(changeBus.deliveryCount == deliveries + 1
+        && changeBus.lastDeliverySubject == cast(size_t)firstMesh,
+        "standalone-delivery: synchronous real subject after command scopes close");
+    assert(g_geomEpochs.epochFor(cast(size_t)firstMesh) > epoch
+        && g_topoEpochs.epochFor(cast(size_t)firstMesh) > epoch
+        && g_geomEpochs.epochFor(cast(size_t)secondMesh) == otherEpoch,
+        "standalone-delivery: model consumer advances only delivered mesh epochs");
+    assert(changeBus.docRevision() > revision,
+        "standalone-delivery: document revision advances");
+    assert(host.history.undoEntriesVisible().length == 2
+        && host.history.redoEntriesVisible().length == 0,
+        "standalone-roundtrip: selection plus topology exact history");
+    const observationDeliveries = changeBus.deliveryCount;
+    auto state = host.state();
+    assert(state["planes"]["counts"]["faces"].integer == 7
+        && changeBus.deliveryCount == observationDeliveries,
+        "standalone-observer: full planes read without delivering");
+    assert(host.invoke("history.undo").outcome == CommandInvocationOutcome.applied
+        && before.matches(host.activeMesh),
+        "standalone-roundtrip: undo restores all planes");
+    assert(host.invoke("history.redo").outcome == CommandInvocationOutcome.applied
+        && after.matches(host.activeMesh),
+        "standalone-roundtrip: redo restores all planes");
+    host.close(); host.close();
+    assert(g_editTargetResolver == beforeTarget && activeMeshResolver == beforeActive
+        && primaryModelSpaceResolver == beforeSpace && g_isDocumentMesh == beforeFilter
+        && changeBus.deliveryCount == beforeBus.deliveryCount,
+        "standalone-lifetime: owner restores all borrowed globals");
+    auto next = new StandaloneApplication(second);
+    scope(exit) next.close();
+    assert(activeMeshResolver() is secondMesh && activeMeshResolver() !is firstMesh
+        && next.history.undoEntriesVisible().length == 0,
+        "standalone-lifetime: second owner has no alias/history from first document");
+    assert(next.invoke("mesh.select", `{"mode":"polygons","indices":[1]}`).applied
+        && next.invoke("mesh.triple").applied && secondMesh.faces.length == 7
+        && firstMesh.faces.length == 7,
+        "standalone-lifetime: second owner's live factories edit second document");
+    writeln("CORE-CELL passed=standalone-owner");
+}
+
+unittest {
+    auto doc = Document.bootstrap(makeCube());
+    doc.clearItemSelection();
+    // Clear the primary target explicitly; selection emptiness can retain it.
+    doc.layers = null; doc.noteLayerListChanged();
+    assert(!doc.hasEditTarget() && doc.primary is null,
+        "standalone-no-target: absent primary asserted");
+    auto host = new StandaloneApplication(doc);
+    scope(exit) host.close();
+    auto before = host.state();
+    auto result = host.invoke("mesh.triple");
+    assert(result.outcome == CommandInvocationOutcome.refused,
+        "standalone-no-target: script refusal");
+    assert(host.state() == before,
+        "standalone-no-target: complete planes/history/delivery preserved");
+    writeln("CORE-CELL passed=standalone-no-target");
+}

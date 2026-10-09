@@ -31,7 +31,7 @@ class BoundaryControls(unittest.TestCase):
     def test_independent_settings(self):
         root, description = self.settings()
         settings, sources = boundary.validate_settings(description, root)
-        self.assertEqual(len(sources), 4)
+        self.assertEqual(len(sources), 5)
         self.assertEqual(settings['dflags'], ['-i'])
         cases = [
             ('targets', [], 'target population'),

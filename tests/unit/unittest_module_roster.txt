@@ -502,6 +502,8 @@ tests.unit.snap_test
 tests.unit.snap_visibility_corpus_test
 tests.unit.snapshot_test
 tests.unit.spin_edge_cost_test
+tests.unit.standalone_application_test
+tests.unit.standalone_wiring_test
 tests.unit.stat_predicate_law_test
 tests.unit.step_trace_test
 tests.unit.subpatch_display_fold_census_test
