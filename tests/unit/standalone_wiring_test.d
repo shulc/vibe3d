@@ -35,7 +35,9 @@ unittest {
         && body(owner, "ref View liveView()").count("return view_;") == 1
         && ctor.count("deps.activeMesh = &liveMesh;") == 1
         && ctor.count("deps.view = &liveView;") == 1
-        && ctor.count("noteMeshChange(address, flags);") == 1,
+        && ctor.count("noteMeshChange(address, flags);") == 1
+        && ctor.count("session_.editMesh().syncSelection();") == 1
+        && ctor.count("session_.editMesh().publishChange(MeshChangeAll);") == 1,
         "standalone-wiring: live factories and actual model subscriber");
     auto invoke = body(owner, "CommandInvocationResult invoke(");
     assert(invoke.count("return service_.invokeLine(id, paramsJson,") == 1

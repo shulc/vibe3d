@@ -1,7 +1,7 @@
 module standalone_application;
 
 import active_mesh_resolver : activeMeshResolver;
-import change_bus : changeBus, ChangeBus;
+import change_bus : changeBus, ChangeBus, MeshChangeAll;
 import command : CommandOrigin, g_editTargetResolver;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, HistoryEntry;
@@ -71,6 +71,10 @@ public:
         executor_ = new CommandExecutor(history_, () => false,
             (transition) { throw new Exception("standalone host has no tools to drop"); });
         service_ = new CommandInvocationService(registry_, executor_, history_);
+        if (session_.document.hasEditTarget()) {
+            session_.editMesh().syncSelection();
+            session_.editMesh().publishChange(MeshChangeAll);
+        }
     }
 
     void close() {
