@@ -354,8 +354,18 @@ unittest {
                 assert(ordered(first, ranks) == expected, "invert: first complement enumeration order");
                 assert(ordered(second, reranks) == (domain == EditMode.Vertices ? [1u,6u]
                     : domain == EditMode.Edges ? [3u,5u] : [0u,1u]), "invert: repeat enumeration order");
-            } else assert(first == original && second == original && ranks == originalRanks && reranks == originalRanks,
-                "invert: dormant ordered domain preserved");
+            } else {
+                assert(first == original && second == original && ranks == originalRanks && reranks == originalRanks,
+                    "invert: dormant ordered domain preserved");
+                const originalCounter = domain == EditMode.Vertices ? before.vertexSelectionOrderCounter
+                    : domain == EditMode.Edges ? before.edgeSelectionOrderCounter : before.faceSelectionOrderCounter;
+                const firstCounter = domain == EditMode.Vertices ? after.vertexSelectionOrderCounter
+                    : domain == EditMode.Edges ? after.edgeSelectionOrderCounter : after.faceSelectionOrderCounter;
+                const secondCounter = domain == EditMode.Vertices ? repeated.vertexSelectionOrderCounter
+                    : domain == EditMode.Edges ? repeated.edgeSelectionOrderCounter : repeated.faceSelectionOrderCounter;
+                assert(firstCounter == originalCounter, "invert: first forward preserves original dormant counter");
+                assert(secondCounter == originalCounter, "invert: second forward preserves original dormant counter");
+            }
         }
         assert(host.session.editMode == mode && host.state()["history"]["modelDepth"].uinteger == 2,
             "invert: unchanged mode and two Model rows");
