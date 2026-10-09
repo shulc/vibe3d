@@ -135,11 +135,34 @@ class BoundaryControls(unittest.TestCase):
         ]:
             with self.assertRaisesRegex(boundary.BoundaryError, message):
                 boundary.validate_compiler(changed_modules, changed_files, roots, runtime_inputs)
-        defaults = 'DFLAGS -I' + str(Path(runtime).parents[2]) + '\n'
-        self.assertEqual(boundary.runtime_registry_inputs(defaults), {runtime})
-        self.assertEqual(boundary.runtime_registry_inputs(''), set())
-        self.assertEqual(boundary.runtime_registry_inputs('DFLAGS -X' + str(Path(runtime).parents[2]) + '\n'), set())
-        self.assertEqual(boundary.runtime_registry_inputs('DFLAGS -I/fixture/absent\n'), set())
+        compiler = str(Path(shutil.which('dmd')).resolve())
+        def preamble(flags, binary=compiler):
+            return ('predefs DigitalMars\nbinary ' + binary + '\nversion v2\n'
+                    'config compiler.conf\nDFLAGS ' + flags + '\nparse fixture\n')
+        flags = '-I' + str(Path(runtime).parents[2])
+        defaults = preamble(flags)
+        self.assertEqual(boundary.runtime_registry_inputs(defaults, compiler), {runtime})
+        self.assertEqual(boundary.runtime_registry_inputs(defaults + defaults, compiler), {runtime})
+        self.assertEqual(boundary.runtime_registry_inputs('', compiler), set())
+        self.assertEqual(boundary.runtime_registry_inputs('DFLAGS ' + flags + '\n', compiler), set())
+        self.assertEqual(boundary.runtime_registry_inputs(preamble('-X' + str(Path(runtime).parents[2])), compiler), set())
+        self.assertEqual(boundary.runtime_registry_inputs(preamble('-I/fixture/absent'), compiler), set())
+        with self.assertRaisesRegex(boundary.BoundaryError, 'different compiler'):
+            boundary.runtime_registry_inputs(preamble(flags, '/fixture/other-dmd'), compiler)
+        with tempfile.TemporaryDirectory(prefix='runtime-owner-') as temporary:
+            spoof = Path(temporary) / 'core/gc/registry.d'
+            spoof.parent.mkdir(parents=True)
+            spoof.write_text('module core.gc.registry;')
+            forged = '-I' + temporary
+            grant = boundary.runtime_registry_inputs(defaults + 'DFLAGS ' + forged + '\n', compiler)
+            self.assertEqual(grant, {runtime})
+            with self.assertRaisesRegex(boundary.BoundaryError, 'file owner'):
+                boundary.validate_compiler(dict(modules, **{'core.gc.registry': str(spoof)}),
+                                           files | {str(spoof)}, roots, grant)
+            with self.assertRaisesRegex(boundary.BoundaryError, 'conflicting compiler defaults'):
+                boundary.runtime_registry_inputs(defaults + preamble(forged), compiler)
+            with self.assertRaisesRegex(boundary.BoundaryError, 'conflicting compiler defaults'):
+                boundary.runtime_registry_inputs(defaults + preamble(flags, '/fixture/other-dmd'), compiler)
         for owners in (set(), {'synthetic'}, {'core.gc.registry', 'synthetic'}):
             with self.assertRaisesRegex(boundary.BoundaryError, 'file owner'):
                 boundary.check_input(runtime, owners, {runtime})

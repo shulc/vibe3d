@@ -87,12 +87,23 @@ def compiler_inputs(deps, verbose, cwd):
     return modules, files
 
 
-def runtime_registry_inputs(verbose):
-    # DMD's own default DFLAGS identify its runtime import owner. Explicit -I
-    # arguments are search paths, not an ownership grant to a project file.
-    defaults = re.findall(r'^DFLAGS\s+(.*)$', verbose, re.M)
+def runtime_registry_inputs(verbose, compiler):
+    # Only the selected compiler's initial defaults preamble grants runtime
+    # ownership. Later pragma/runtime output and explicit -I paths cannot.
+    preambles = re.findall(
+        r'^predefs[^\n]*\nbinary[ \t]+([^\n]+)\nversion[^\n]*\n'
+        r'config[^\n]*\nDFLAGS[ \t]+([^\n]*)\nparse[ \t]+', verbose, re.M)
+    if not preambles:
+        return set()
+    binary, defaults = preambles[0]
+    require(Path(binary.strip()).resolve() == Path(compiler).resolve(),
+            'runtime defaults belong to a different compiler')
+    for binary, repeated in preambles[1:]:
+        require(Path(binary.strip()).resolve() == Path(compiler).resolve()
+                and shlex.split(repeated) == shlex.split(defaults),
+                'conflicting compiler defaults preamble')
     return {str((Path(flag[2:]) / 'core/gc/registry.d').resolve())
-            for row in defaults for flag in shlex.split(row)
+            for flag in shlex.split(defaults)
             if flag.startswith('-I') and (Path(flag[2:]) / 'core/gc/registry.d').is_file()}
 
 
@@ -263,7 +274,7 @@ def main(argv=None):
     modules, files = compiler_inputs(deps.read_text() if deps.is_file() else '', result.stdout, root)
     (evidence / 'compiler-inputs.json').write_text(json.dumps(
         {'modules': modules, 'files': sorted(files)}, indent=2) + '\n')
-    validate_compiler(modules, files, sources, runtime_registry_inputs(result.stdout))
+    validate_compiler(modules, files, sources, runtime_registry_inputs(result.stdout, compiler))
     require(deps.is_file(), 'NO-VERDICT: compiler did not emit dependencies')
     validate_link_output(result.stdout, object_outputs)
     require(result.returncode == 0, 'compiler/build/runtime failed (see build-run.log)')

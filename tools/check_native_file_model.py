@@ -24,6 +24,7 @@ def check(root, evidence):
     require(described.returncode == 0, 'native production import-path resolution failed')
     settings = json.loads(described.stdout)['targets'][0]['buildSettings']
     deps = evidence / 'compiler.deps'
+    deps.unlink(missing_ok=True)
     command = [compiler, '-c', '-i', '-v', '-deps=' + str(deps),
                '-of=' + str(evidence / 'native.o')]
     command += ['-I' + p for p in settings['importPaths']]
@@ -35,7 +36,7 @@ def check(root, evidence):
     modules, files = compiler_inputs(deps.read_text() if deps.is_file() else '', output, root)
     (evidence / 'compiler-inputs.json').write_text(json.dumps(
         {'modules': modules, 'files': sorted(files)}, indent=2) + '\n')
-    validate(modules, files, compiled.returncode, deps.is_file(), runtime_registry_inputs(output))
+    validate(modules, files, compiled.returncode, deps.is_file(), runtime_registry_inputs(output, compiler))
     print('NATIVE-BOUNDARY mode=production files=' + str(len(files)))
     print('NATIVE-BOUNDARY-VERDICT=GREEN')
 
