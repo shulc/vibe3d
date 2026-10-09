@@ -1,14 +1,13 @@
 module tests.unit.application_boundary_checker_test;
 
 import std.path : buildPath, dirName;
+import std.array : replace;
 import std.process : execute;
 import std.stdio : writeln;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest {
-    auto tests = execute(["python3", buildPath(repoRoot, "tools", "test_standalone_boundary.py")]);
-    assert(tests.status == 0, "boundary checker controls: " ~ tests.output);
     version (BoundaryProductionWitness) enum onlyProduction = true;
     else enum onlyProduction = false;
     version (BoundaryUnittestWitness) enum onlyUnittest = true;
@@ -16,7 +15,7 @@ unittest {
     if (onlyProduction || onlyUnittest) {
         auto common = execute(["dub", "build", "--root=" ~ buildPath(repoRoot, "packages/common"),
             "--config=modeling-noai", "--compiler=dmd", "--force"]);
-        assert(common.status == 0, "common production boundary witness: " ~ common.output);
+        assert(common.status == 0, "common production boundary witness: " ~ common.output.replace("\n", " | "));
         string[] command = ["python3", buildPath(repoRoot, "tools", "check_standalone_boundary.py"),
             "--root", buildPath(repoRoot, "tests", "core"), "--config", "core", "--compiler", "dmd"];
         version (BoundaryProductionFirst) enum firstProduction = true;
@@ -37,4 +36,6 @@ unittest {
             assert(cli.status == 0, "CLI production independent boundary witness: " ~ cli.output);
         }
     }
+    auto tests = execute(["python3", buildPath(repoRoot, "tools", "test_standalone_boundary.py")]);
+    assert(tests.status == 0, "boundary checker controls: " ~ tests.output);
 }
