@@ -31,7 +31,7 @@ class BoundaryControls(unittest.TestCase):
     def test_independent_settings(self):
         root, description = self.settings()
         settings, sources = boundary.validate_settings(description, root)
-        self.assertEqual(len(sources), 3)
+        self.assertEqual(len(sources), 4)
         self.assertEqual(settings['dflags'], ['-i'])
         cases = [
             ('targets', [], 'target population'),
@@ -89,6 +89,10 @@ class BoundaryControls(unittest.TestCase):
     def compiler_fixture(self):
         files = {str(Path('/fixture/lower' + str(i) + '.d')) for i in range(20)}
         modules = {name: '/fixture/' + name.replace('.', '/') + '.d' for name in boundary.KNOWN_MODULES}
+        # These two requirements have independent fixtures, so deleting their
+        # metadata entries cannot also delete the negative controls.
+        for name in ('command_invocation', 'pilot_command_registration'):
+            modules[name] = '/fixture/' + name + '.d'
         files.update(modules.values())
         roots = [Path('/fixture/root.d')]
         files.add(str(roots[0]))
@@ -105,6 +109,11 @@ class BoundaryControls(unittest.TestCase):
         ]:
             with self.assertRaisesRegex(boundary.BoundaryError, message):
                 boundary.validate_compiler(changed_modules, changed_files, changed_roots)
+        for name in ('command_invocation', 'pilot_command_registration'):
+            without = dict(modules)
+            del without[name]
+            with self.assertRaisesRegex(boundary.BoundaryError, 'Mesh/Document'):
+                boundary.validate_compiler(without, files, roots)
         for module in ['shader', 'tool', 'registry', 'ui.panel', 'bindbc.sdl', 'http_server']:
             with self.assertRaisesRegex(boundary.BoundaryError, 'compiler module'):
                 boundary.validate_compiler(dict(modules, **{module: '/outside/renamed.d'}), files, roots)
