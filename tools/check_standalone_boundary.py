@@ -161,7 +161,7 @@ def main(argv=None):
                'outputSha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'druntimeModules': total,
                'namedCells': list(CORE_CELLS) if args.unittest else [], 'command': command, 'describeCommand': describe}
     (evidence / 'witness.json').write_text(json.dumps(witness, indent=2) + '\n')
-    print('BOUNDARY package=' + owner + ' mode=' + mode + ' roots=' + str(len(roots)) + ' sha=' + sha
+    print('BOUNDARY package=' + owner + ' mode=' + mode + ' described-roots=' + str(len(roots)) + ' sha=' + sha
           + (' modules=' + str(total) + ' cells=' + str(len(CORE_CELLS)) if args.unittest else ''))
     print('BOUNDARY-VERDICT=GREEN')
     return 0
