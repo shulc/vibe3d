@@ -15,6 +15,31 @@ private string body(string code, string declaration) {
     return balancedSpan(code, cast(size_t)offset + cast(size_t)open, '{', '}');
 }
 
+private string rawBody(string source, string declaration) {
+    const code = blankNonCode(source);
+    const span = body(code, declaration);
+    const offset = code.indexOf(declaration);
+    const begin = cast(size_t)offset + cast(size_t)code[offset .. $].indexOf('{');
+    return source[begin .. begin + span.length];
+}
+
+unittest {
+    const runner = file("run_test.d");
+    const digest = rawBody(runner, "string sourceDigest()");
+    assert(digest.count("foreach (scanSourceRoot; [\"source\", \"packages/common/source\"])") == 1
+        && digest.count("dirEntries(scanSourceRoot, pattern, SpanMode.depth)") == 1,
+        "standalone-wiring: freshness scans desktop and common source roots");
+    const library = rawBody(runner, "string buildProjectLib(string scratch)");
+    assert(library.count("foreach (root; [\"\", \" --root=packages/common\"])") == 1
+        && library.count("executeShell(\"dub describe\" ~ root") == 1
+        && library.count(" --config=modeling --data=source-files --data-list") == 1,
+        "standalone-wiring: test library describes desktop and common modeling inputs");
+    assert(library.count("s !in seen") == 1 && library.count("seen[s] = true;") == 1
+        && library.count("srcs ~= s;") == 1
+        && library.count("sourceCompileFlags(), srcs.join(\" \"), lib") == 1,
+        "standalone-wiring: test library compiles unique described source identities");
+}
+
 unittest {
     auto owner = blankNonCode(file("packages/common/source/standalone_application.d"));
     auto ctor = body(owner, "this(Document loadedDocument)");
