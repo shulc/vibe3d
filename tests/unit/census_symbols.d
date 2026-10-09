@@ -1635,7 +1635,8 @@ unittest {
         ~ "registerHistoryNavigationCommands(reg, deps, history); }) {}", "supported desktop reg receiver");
     refused("void registerHistoryCommands(ref Registry reg, void delegate() callback = () { "
         ~ "registerHistoryNavigationCommands(reg, deps, history); }", "balanced parameter group");
-    refused("void registerHistoryCommands(ref Registry reg)", "immediate production body");
+    refused("registerHistoryNavigationCommands(reg, deps, history); "
+        ~ "void registerHistoryCommands(ref Registry reg)", "immediate production body");
 
     foreach (head; ["otherregisterHistoryNavigationCommands", "other.registerHistoryNavigationCommands",
             "other . registerHistoryNavigationCommands", "other /* owner */ . /* callee */ registerHistoryNavigationCommands"]) {
