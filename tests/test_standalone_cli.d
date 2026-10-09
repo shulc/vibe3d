@@ -23,7 +23,7 @@ private enum repo = dirName(dirName(__FILE_FULL_PATH__));
 private string binaryHash;
 private string sourcePin;
 
-private string digest(string path) { return read(path).sha256Of.toHexString; }
+private string digest(string path) { return read(path).sha256Of.toHexString.idup; }
 private JSONValue[] jsonRows(string text) {
     JSONValue[] rows;
     foreach (line; text.split("\n")) if (line.strip.length) rows ~= parseJSON(line);
@@ -82,17 +82,22 @@ private JSONValue desktopState() {
         projectedChanges[key] = changes[key];
     state["changes"] = projectedChanges;
     // The selection endpoint is an independent reader of the same marks.
-    foreach (pair; [["selectedVertices", "vertexMarks"], ["selectedEdges", "edgeMarks"],
+    foreach (pair; [["selectedVertices", "vertexMarks"], ["selectedEdges", "edgePlanes"],
                    ["selectedFaces", "faceMarks"]]) {
         size_t count;
-        foreach (mark; planes[pair[1]].array) if ((mark.integer & 1) != 0) ++count;
+        foreach (raw; planes[pair[1]].array) {
+            auto mark = pair[1] == "edgePlanes" ? raw["marks"] : raw;
+            if ((mark.integer & 1) != 0) ++count;
+        }
         assert(selection[pair[0]].array.length == count,
             "CLI differential: desktop selection reader disagrees with planes " ~ pair[0]);
     }
     return state;
 }
 private void parity(JSONValue cli, JSONValue desktop, JSONValue previousCli, JSONValue previousDesktop) {
-    assert(cli.object.length == 7, "CLI state: exact seven-key schema");
+    assert(cli.object.length == 6, "CLI state: exact six-key schema");
+    foreach (key; ["hasEditTarget", "selType", "editMode", "planes", "history", "changes"])
+        assert(key in cli.object, "CLI state: required schema key " ~ key);
     assert(cleanPlanes(cli["planes"]) == desktop["planes"],
         "CLI differential: complete plane mismatch");
     foreach (key; ["hasEditTarget", "selType", "editMode", "history"])
@@ -119,7 +124,13 @@ private Run runCli(string root, string input, string script, string output, stri
     foreach (key; ["DISPLAY", "WAYLAND_DISPLAY", "SDL_VIDEODRIVER"]) env.remove(key);
     auto pid = spawnProcess(argv, stdin, outFile, errFile, env, Config.newEnv, repo);
     bool reaped;
-    scope(exit) if (!reaped) { try kill(pid, SIGKILL); catch (Exception) {} try wait(pid); catch (Exception) {} }
+    void stopOwned() {
+        if (!reaped) {
+            try { kill(pid, SIGKILL); } catch (Exception) {}
+            try { wait(pid); } catch (Exception) {}
+        }
+    }
+    scope(exit) stopOwned();
     if (observeProcess) {
         auto proc = "/proc/" ~ pid.processID.to!string;
         assert(readLink(proc ~ "/exe") == argv[0], "CLI process: actual executable is current checkout");
