@@ -532,14 +532,22 @@ unittest {
         && read(input) == existingInput && read(output) == existingOutput,
         "CLI diagnostics: actual write failure preserves native files before commands/save");
     errorSchema(diagnosticWrite, "diagnostics");
-    foreach (flags; [["run"], ["bad"], ["run", "--other", "file"],
-        ["run", "--input"], ["run", "--input", ""], ["run", "--input", input, "--input", input]]) {
+    foreach (flags; [cast(string[])[], ["run"], ["bad"], ["run", "--other", "file"],
+        ["run", "--input"], ["run", "--input", ""], ["run", "--input", input, "--input", input, "--commands", script, "--output", output]]) {
         auto badArguments = execute([buildPath(repo, "tools/cli/vibe3d-cli")] ~ flags);
         Run bad; bad.status = badArguments.status; bad.error = badArguments.output;
         errorSchema(bad, "arguments");
         assert(read(input) == existingInput && read(output) == existingOutput,
             "CLI arguments: errors preserve native files");
     }
+    auto renameFailure = runCli(root, input, script, buildPath(root, "sub"), buildPath(root, "state.jsonl"));
+    assert(renameFailure.states.length == 2 && renameFailure.outcomes.length == 0
+        && renameFailure.states[1]["phase"].str == "pre-save"
+        && renameFailure.states[0]["state"] == renameFailure.states[1]["state"]
+        && read(input) == existingInput && read(output) == existingOutput,
+        "CLI rename failure: retained pre-save and preserved existing files");
+    errorSchema(renameFailure, "save");
+    noOrphan(root);
     auto missing = runCli(root, buildPath(root, "missing.v3d"), script, output, buildPath(root, "empty-state.jsonl"));
     auto loadError = jsonRows(missing.error);
     assert(loadError.length == 1 && loadError[0]["stage"].str == "load"
