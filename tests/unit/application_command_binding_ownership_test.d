@@ -483,4 +483,3 @@ unittest { // K3 Bridge refusal through ordinary UI and repeated dispatch.
         && history.undoEntriesVisible().length == 0 && notices == 2,
         "K3 ordinary script refusal does not add UI notice or history");
 }
-
