@@ -398,7 +398,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 unittest {
     size_t[string] sites;
     size_t files;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
         const code = blankNonCode(readText(entry.name));
@@ -434,7 +434,7 @@ unittest {
     assert(body_.count("beginFrame(gpuTimingArmed_, g_gpuTimerPerfMode)") == 1,
         "(h) draw must pass g_gpuTimerPerfMode as beginFrame's waitWhenFull");
     size_t writes;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         writes += blankNonCode(readText(entry.name)).count("g_gpuTimerPerfMode = ");
     const app = readText(buildPath(repoRoot, "source", "app.d"));   // raw: the arm key is a string literal

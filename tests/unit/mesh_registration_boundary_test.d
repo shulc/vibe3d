@@ -224,7 +224,7 @@ unittest {
 unittest {
     ModuleImports[string] modules;
     size_t sourceFiles, meshSeen;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         auto scanned = scanModule(readText(entry.name));
@@ -262,8 +262,8 @@ unittest {
     // Task 20261900: the common pilot registrar imports the three shared
     // commands.select element/drop/invert modules (+3).
     assert(meshClosure.queue.length == 200,
-        format("6509 import scanner closure=%d/200",
-            meshClosure.queue.length));
+        format("6509 import scanner closure=%d/200 members=%s",
+            meshClosure.queue.length, meshClosure.queue));
     assert("editor_app" in positive.reached,
         "6509 positive control: registration does not reach editor_app");
 }

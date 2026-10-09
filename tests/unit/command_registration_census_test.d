@@ -479,7 +479,7 @@ unittest {
     foreach (ref row; kBuiltElsewhere)
         builderRegexes ~= instantiationRegex(row.name);
     LedgerHit[] builderHits;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const code = blankUnittestBodies(blankNonCode(readText(de.name)));
         const symbols = enclosingSymbols(code);

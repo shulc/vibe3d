@@ -124,7 +124,7 @@ private size_t consIdFinders(string code, string raw) {
 
 private string[] sourceFiles() {
     string[] o;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         o ~= relativePath(e.name, buildPath(root, "source")).replace("\\", "/");
     o.sort();

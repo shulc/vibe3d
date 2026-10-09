@@ -156,3 +156,9 @@ tools/cli/.boundary/
 # Common package library artifacts.
 /packages/common/libvibe3d-common.a
 /packages/common/vibe3d-common.lib
+
+# Standalone application-layer package library artifacts.
+/packages/mesh-ops/libvibe3d-mesh-ops.a
+/packages/mesh-ops/vibe3d-mesh-ops.lib
+/packages/interchange/libvibe3d-interchange.a
+/packages/interchange/vibe3d-interchange.lib

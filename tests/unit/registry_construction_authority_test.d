@@ -316,7 +316,7 @@ unittest {
     size_t registryTuple;
     size_t mixes;
     size_t privateNames;
-    foreach (root; ["source", "packages/common/source", "tests"]) {
+    foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source"]) {
         foreach (de; dirEntries(buildPath(repoRoot, root), "*.d", SpanMode.depth)) {
             const relative = buildNormalizedPath(de.name[repoRoot.length + 1 .. $]);
             const raw = readText(de.name);

@@ -165,7 +165,7 @@ shared static this() {
     // ^ mesh.hide's own "empty selection ⇒ hide everything" (measured, C6).
     //   This is the one place the fallback must NOT subtract hidden geometry:
     //   it is the writer OF that geometry.
-    ALLOWED_COUNT["source/mesh_ops/decimate.d"] = 1;
+    ALLOWED_COUNT["packages/mesh-ops/source/mesh_ops/decimate.d"] = 1;
     // ^ :509 is an unconditional internal finalisation mask (coincide-then-weld
     //   every cluster member), not a selection fallback — and it goes through
     //   weldVerticesByMask, so the §3.3 backstop covers it anyway. Was 5 until
@@ -203,13 +203,15 @@ shared static this() {
     //     exemption list shrank from 29 lines to 6 — the gate got tighter, not
     //     looser. The two entries left are blocks that could not leave source/
     //     (they read private members).
-    ALLOWED_COUNT["source/mesh_ops/extrude.d"]        = 1;
+    ALLOWED_COUNT["packages/mesh-ops/source/mesh_ops/extrude.d"]        = 1;
     ALLOWED_COUNT["source/remesh/remesh_job.d"]       = 1;
 }
 
 unittest {
     auto hits = scanTree("source");
     hits ~= scanTree("packages/common/source");
+    hits ~= scanTree("packages/mesh-ops/source");
+    hits ~= scanTree("packages/interchange/source");
 
     size_t[string] byFile;
     foreach (h; hits) byFile[h.file] = byFile.get(h.file, 0) + 1;

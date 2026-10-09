@@ -196,7 +196,7 @@ private struct Found { string zone; string file; string symbol; string ident; si
 
 private Found[] scanDormant() {
     auto found = appender!(Found[]);
-    foreach (zone; ["source", "packages/common/source", "tests"]) {
+    foreach (zone; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source"]) {
         foreach (de; dirEntries(buildPath(repoRoot, zone), "*.d", SpanMode.depth)) {
             const rel  = de.name[repoRoot.length + 1 .. $];
             const code = blankNonCode(readText(de.name));
@@ -245,7 +245,7 @@ unittest // GATE A anti-vacuity — the tree walk actually read the tree
     // cell fires first, in its own words. The floor is deliberately far below
     // the real counts so it never needs touching as the tree grows.
     size_t nSource = 0, nTests = 0;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         ++nSource;
     foreach (de; dirEntries(buildPath(repoRoot, "tests"), "*.d", SpanMode.depth))
@@ -297,7 +297,7 @@ unittest // GATE B — dense declarations and the absence of recorder calls
     size_t anchorCount;
     size_t filesRead;
 
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[repoRoot.length + 1 .. $];

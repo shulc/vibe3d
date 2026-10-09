@@ -407,6 +407,7 @@ subpatch_worker
 subpatch_worker_web
 symmetry
 symmetry_pick
+symmetry_plane
 tool
 tool_activation_ownership
 tool_attr_bounds

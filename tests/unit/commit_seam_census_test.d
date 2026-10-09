@@ -167,7 +167,7 @@ private size_t countOccurrences(string haystack, string needle) {
 // The widening lets alternative 2 accept one `word.` qualifier. What it costs
 // and what it buys, both measured on this tree at Stage D3 (comment-stripped):
 //
-//   source/mesh_ops/   3 -> 8   (+4 `m.vertices = [` unittest fixtures in
+//   packages/mesh-ops/source/mesh_ops/   3 -> 8   (+4 `m.vertices = [` unittest fixtures in
 //                                extrude.d, +1 in loop_slice.d; decimate.d and
 //                                bridge.d stay at 0, which is what the two live
 //                                rows below assert)
@@ -426,7 +426,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
     enum kGuard = "scope(failure) mesh.abortEditBatch();";
 
     string[] callers;
-    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (e.name == meshPath) continue;
         immutable src = readCode(e.name);
@@ -631,7 +631,7 @@ unittest // the mixin count is falling, and the converted families stay converte
     foreach (name; kConverted)
         assert(!live.canFind(name),
             format("`mixin %s;` is back in struct Mesh. That family is free "
-                 ~ "functions in source/mesh_ops/ now, and a member BEATS a "
+                 ~ "functions in packages/mesh-ops/source/mesh_ops/ now, and a member BEATS a "
                  ~ "same-name UFCS free function — so the mixin does not "
                  ~ "conflict with them, it SHADOWS them: every call site binds "
                  ~ "to the mixed-in body again, the free functions go "
@@ -647,11 +647,11 @@ unittest // Stage C + D1 — the two pure-query families keep their receivers
     // mixin template any more either. Deleting the instantiation while leaving
     // `mixin template MeshSelectLoopOps()` in place would leave a template
     // nothing instantiates — dead code that reads as the live implementation.
-    immutable opsPath = buildPath(repoRoot, "source", "mesh_ops", "select_loop.d");
-    assert(exists(opsPath), "cannot find source/mesh_ops/select_loop.d at " ~ opsPath);
+    immutable opsPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "select_loop.d");
+    assert(exists(opsPath), "cannot find packages/mesh-ops/source/mesh_ops/select_loop.d at " ~ opsPath);
     immutable ops = readCode(opsPath);
     assert(countOccurrences(ops, "mixin template MeshSelectLoopOps") == 0,
-        "source/mesh_ops/select_loop.d still declares `mixin template "
+        "packages/mesh-ops/source/mesh_ops/select_loop.d still declares `mixin template "
       ~ "MeshSelectLoopOps` — Stage C converted this family to free functions "
       ~ "over `ref const(Mesh)`; a surviving template is either dead or a "
       ~ "second implementation (task 1903 Stage C).");
@@ -663,7 +663,7 @@ unittest // Stage C + D1 — the two pure-query families keep their receivers
     // declarations takes a second parameter, so `,` is the delimiter that is
     // actually there; a nullary receiver would need `)` instead.
     assert(countOccurrences(ops, "selectLoopEdges(ref const(Mesh) m,") == 1,
-        "source/mesh_ops/select_loop.d no longer declares `selectLoopEdges` as "
+        "packages/mesh-ops/source/mesh_ops/select_loop.d no longer declares `selectLoopEdges` as "
       ~ "a free function over `ref const(Mesh)` — if the receiver changed, say "
       ~ "why here: `ref const(Mesh)` is what keeps `mesh.selectLoopEdges(seed)` "
       ~ "compiling verbatim at ~40 call sites (task 1903 §4.1).");
@@ -671,11 +671,11 @@ unittest // Stage C + D1 — the two pure-query families keep their receivers
     // Stage D1, the same two claims for the connected-mask family — written out
     // rather than folded into a loop, because the RECEIVER assertion below is
     // family-specific and its message is the whole point of having it.
-    immutable cmPath = buildPath(repoRoot, "source", "mesh_ops", "connected_mask.d");
-    assert(exists(cmPath), "cannot find source/mesh_ops/connected_mask.d at " ~ cmPath);
+    immutable cmPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "connected_mask.d");
+    assert(exists(cmPath), "cannot find packages/mesh-ops/source/mesh_ops/connected_mask.d at " ~ cmPath);
     immutable cm = readCode(cmPath);
     assert(countOccurrences(cm, "mixin template MeshConnectedMaskOps") == 0,
-        "source/mesh_ops/connected_mask.d still declares `mixin template "
+        "packages/mesh-ops/source/mesh_ops/connected_mask.d still declares `mixin template "
       ~ "MeshConnectedMaskOps` — Stage D1 converted this family to free "
       ~ "functions; a surviving template is either dead or a second "
       ~ "implementation (task 1903 Stage D1).");
@@ -689,7 +689,7 @@ unittest // Stage C + D1 — the two pure-query families keep their receivers
     // later stage widens `connectedComponentMask` to a batch receiver, that is
     // a decision to argue for here, not a mechanical follow-on.
     assert(countOccurrences(cm, "connectedComponentMask(ref Mesh m,") == 1,
-        "source/mesh_ops/connected_mask.d no longer declares "
+        "packages/mesh-ops/source/mesh_ops/connected_mask.d no longer declares "
       ~ "`connectedComponentMask` over `ref Mesh` — if it became "
       ~ "`ref const(Mesh)` it cannot compile (`vertexAdjacencyCSR` memoizes and "
       ~ "is non-const), and if it became `ref MeshEditBatch` then a read-only "
@@ -700,7 +700,7 @@ unittest // Stage C + D1 — the two pure-query families keep their receivers
       ~ "casting const away to reach the memoizing `vertexAdjacencyCSR` — that is the "
       ~ "receiver this family refused, not a second convenience (task 1903 Stage D1).");
     assert(countOccurrences(cm, "edgeCentroid(ref const(Mesh) m,") == 1,
-        "source/mesh_ops/connected_mask.d no longer declares `edgeCentroid` "
+        "packages/mesh-ops/source/mesh_ops/connected_mask.d no longer declares `edgeCentroid` "
       ~ "over `ref const(Mesh)` — it reads two vertices and nothing else, so "
       ~ "the const receiver is what states that, and it is what keeps "
       ~ "`mesh.edgeCentroid(ei)` compiling verbatim in xfrm_transform.d "
@@ -715,11 +715,11 @@ unittest // Stage D2 — the decimation family, the first mutating receiver
     // memo-touching query;
     // `reduceToTarget` is the first kernel whose receiver is the edit batch
     // itself, so these three lines are the ones D3…H are measured against.
-    immutable dcPath = buildPath(repoRoot, "source", "mesh_ops", "decimate.d");
-    assert(exists(dcPath), "cannot find source/mesh_ops/decimate.d at " ~ dcPath);
+    immutable dcPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "decimate.d");
+    assert(exists(dcPath), "cannot find packages/mesh-ops/source/mesh_ops/decimate.d at " ~ dcPath);
     immutable dc = readCode(dcPath);
     assert(countOccurrences(dc, "mixin template MeshDecimateOps") == 0,
-        "source/mesh_ops/decimate.d still declares `mixin template "
+        "packages/mesh-ops/source/mesh_ops/decimate.d still declares `mixin template "
       ~ "MeshDecimateOps` — Stage D2 converted this family to a free function; "
       ~ "a surviving template is either dead or a second implementation "
       ~ "(task 1903 Stage D2).");
@@ -730,7 +730,7 @@ unittest // Stage D2 — the decimation family, the first mutating receiver
     // used to capture `this` — rename it per file and every nested body needs
     // threading instead of a prefix.
     assert(countOccurrences(dc, "reduceToTarget(ref MeshEditBatch ed,") == 1,
-        "source/mesh_ops/decimate.d no longer declares `reduceToTarget` over "
+        "packages/mesh-ops/source/mesh_ops/decimate.d no longer declares `reduceToTarget` over "
       ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, not the "
       ~ "style: it is what makes a batchless call a COMPILE error, so one "
       ~ "reduce stamps, derives and delivers once at close() instead of once "
@@ -760,7 +760,7 @@ unittest // Stage D2 — the decimation family, the first mutating receiver
     // full position-write scanner (a later stage builds that over all of
     // source/mesh_ops and source/commands); it is this ONE file's count.
     assert(countOccurrences(dc, "ed.setVertexPositions(") == 1,
-        "source/mesh_ops/decimate.d no longer calls `setVertexPositions` — the "
+        "packages/mesh-ops/source/mesh_ops/decimate.d no longer calls `setVertexPositions` — the "
       ~ "finalise that coincides every cluster member onto its representative "
       ~ "is the raw `vertices[i] = …` write again, and a raw write inside a "
       ~ "recording batch produces NO op-log entry: a delta undo would restore "
@@ -779,7 +779,7 @@ unittest // Stage D2 — the decimation family, the first mutating receiver
         string firstHit;
         immutable size_t rawWrites = countRawPositionWrites(dc, firstHit);
         assert(rawWrites == 0,
-            format("source/mesh_ops/decimate.d: %d raw position write(s) under "
+            format("packages/mesh-ops/source/mesh_ops/decimate.d: %d raw position write(s) under "
                  ~ "§5.7's predicate, expected 0 — this entry was retired at "
                  ~ "Stage D2. First hit: `%s`. `alias mesh this` means "
                  ~ "`ed.vertices[i] = p` COMPILES inside a recording batch and "
@@ -800,11 +800,11 @@ unittest // Stage D3 — the bridge family, both receivers in one file
     // regression is a mutating kernel drifting to the const receiver (it cannot
     // compile) or a read-only one drifting to the batch (it can, and it would
     // publish a change for a lookup that changes nothing).
-    immutable brPath = buildPath(repoRoot, "source", "mesh_ops", "bridge.d");
-    assert(exists(brPath), "cannot find source/mesh_ops/bridge.d at " ~ brPath);
+    immutable brPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "bridge.d");
+    assert(exists(brPath), "cannot find packages/mesh-ops/source/mesh_ops/bridge.d at " ~ brPath);
     immutable br = readCode(brPath);
     assert(countOccurrences(br, "mixin template MeshBridgeOps") == 0,
-        "source/mesh_ops/bridge.d still declares `mixin template MeshBridgeOps` "
+        "packages/mesh-ops/source/mesh_ops/bridge.d still declares `mixin template MeshBridgeOps` "
       ~ "— Stage D3 converted this family to free functions; a surviving "
       ~ "template is either dead or a second implementation (task 1903 Stage D3).");
 
@@ -813,7 +813,7 @@ unittest // Stage D3 — the bridge family, both receivers in one file
     // RECEIVER AT ALL — `ceilDivHalfDown` here, and its class in later stages —
     // cannot have a receiver row, because there is no `(ref X y,` to pin. Those
     // names are held by the `static assert(!__traits(hasMember, Mesh, n))`
-    // tripwire at the foot of `source/mesh_ops/bridge.d`, which lists EVERY
+    // tripwire at the foot of `packages/mesh-ops/source/mesh_ops/bridge.d`, which lists EVERY
     // family name including the receiver-less ones and fires at `dub build`
     // time. So: absent from this roster is not unguarded — it means "guarded
     // over there". A later stage must add its receiver-less helpers to that
@@ -835,7 +835,7 @@ unittest // Stage D3 — the bridge family, both receivers in one file
     ];
     foreach (name; kBatchKernels)
         assert(countOccurrences(br, name ~ "(ref MeshEditBatch ed,") == 1,
-            format("source/mesh_ops/bridge.d no longer declares `%s` over "
+            format("packages/mesh-ops/source/mesh_ops/bridge.d no longer declares `%s` over "
                  ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
                  ~ "not the style: it is what makes a batchless call a COMPILE "
                  ~ "error, so one bridge stamps, derives and delivers once at "
@@ -874,7 +874,7 @@ unittest // Stage D3 — the bridge family, both receivers in one file
     ];
     foreach (name; kConstHelpers) {
         assert(countOccurrences(br, name ~ "(ref const(Mesh) m,") == 1,
-            format("source/mesh_ops/bridge.d no longer declares `%s` over "
+            format("packages/mesh-ops/source/mesh_ops/bridge.d no longer declares `%s` over "
                  ~ "`ref const(Mesh) m`. These four only READ positions to "
                  ~ "decide a pairing or a lookup; the const receiver is what "
                  ~ "states that, and for `facesBoundedByLoop` it is also what "
@@ -893,7 +893,7 @@ unittest // Stage D3 — the bridge family, both receivers in one file
     // an `enum` in the ops module after conversion"). Three test sites spelled
     // it `Mesh.maxBridgeSpans` and moved in the same commit.
     assert(countOccurrences(br, "enum size_t maxBridgeSpans = 512;") == 1,
-        "source/mesh_ops/bridge.d no longer declares `maxBridgeSpans` at module "
+        "packages/mesh-ops/source/mesh_ops/bridge.d no longer declares `maxBridgeSpans` at module "
       ~ "scope — it is the KERNEL layer of this family's two-layer DoS clamp "
       ~ "(the Param's `.min`/`.max` are UI hints and do not clamp the headless "
       ~ "path), and the mixin used to inject it into `Mesh` (task 1903 Stage D3, "
@@ -910,7 +910,7 @@ unittest // Stage D3 — the bridge family, both receivers in one file
         string firstHit;
         immutable size_t rawWrites = countRawPositionWrites(br, firstHit);
         assert(rawWrites == 0,
-            format("source/mesh_ops/bridge.d: %d raw position write(s) under "
+            format("packages/mesh-ops/source/mesh_ops/bridge.d: %d raw position write(s) under "
                  ~ "§5.7's predicate, expected 0 — this family had none before "
                  ~ "the conversion and must gain none through it. First hit: "
                  ~ "`%s`. `alias mesh this` means `ed.vertices[i] = p` COMPILES "
@@ -941,11 +941,11 @@ unittest // Stage E1 — the mesh-hygiene / orientation-repair family
     // names. (D3's own drill M-W2 added a fake `orientFaceConsistent(` call to
     // THIS file to prove the caller-set scan below reddens; the scan walks
     // `source/**`, so it still would.)
-    immutable clPath = buildPath(repoRoot, "source", "mesh_ops", "cleanup.d");
-    assert(exists(clPath), "cannot find source/mesh_ops/cleanup.d at " ~ clPath);
+    immutable clPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "cleanup.d");
+    assert(exists(clPath), "cannot find packages/mesh-ops/source/mesh_ops/cleanup.d at " ~ clPath);
     immutable cl = readCode(clPath);
     assert(countOccurrences(cl, "mixin template MeshCleanupOps") == 0,
-        "source/mesh_ops/cleanup.d still declares `mixin template "
+        "packages/mesh-ops/source/mesh_ops/cleanup.d still declares `mixin template "
       ~ "MeshCleanupOps` — Stage E1 converted this family to free functions; "
       ~ "a surviving template is either dead or a second implementation "
       ~ "(task 1903 Stage E1).");
@@ -960,7 +960,7 @@ unittest // Stage E1 — the mesh-hygiene / orientation-repair family
     ];
     foreach (name; kNullaryBatchKernels)
         assert(countOccurrences(cl, name ~ "(ref MeshEditBatch ed)") == 1,
-            format("source/mesh_ops/cleanup.d no longer declares `%s` over "
+            format("packages/mesh-ops/source/mesh_ops/cleanup.d no longer declares `%s` over "
                  ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
                  ~ "not the style: it is what makes a batchless call a COMPILE "
                  ~ "error, so one hygiene sweep stamps, derives and delivers "
@@ -969,7 +969,7 @@ unittest // Stage E1 — the mesh-hygiene / orientation-repair family
                  ~ "(task 1903 §4.1, §5.2 E1).", name));
     assert(countOccurrences(cl,
             "cleanupMesh(ref MeshEditBatch ed, CleanupOptions o") == 1,
-        "source/mesh_ops/cleanup.d no longer declares `cleanupMesh` over "
+        "packages/mesh-ops/source/mesh_ops/cleanup.d no longer declares `cleanupMesh` over "
       ~ "`ref MeshEditBatch ed` with its CleanupOptions second parameter. That "
       ~ "receiver is the enforcement, not the style, and this is the caller "
       ~ "with the most to gain: a default sweep runs six committing stages "
@@ -1000,7 +1000,7 @@ unittest // Stage E1 — the mesh-hygiene / orientation-repair family
     // private helpers take a second parameter and use `,`.
     foreach (name; ["computeDuplicateFaceMask", "computeOrientationFlipMask"])
         assert(countOccurrences(cl, name ~ "(ref const(Mesh) m)") == 1,
-            format("source/mesh_ops/cleanup.d no longer declares `%s` over "
+            format("packages/mesh-ops/source/mesh_ops/cleanup.d no longer declares `%s` over "
                  ~ "`ref const(Mesh) m` in its receiver-only form. These are "
                  ~ "the detectors source/mesh_analysis.d shares with the "
                  ~ "mutating fixes, and it holds a `const ref Mesh`: a batch "
@@ -1009,7 +1009,7 @@ unittest // Stage E1 — the mesh-hygiene / orientation-repair family
     foreach (name; ["isFaceDegenerate", "computeCollapsedFace_",
                     "faceAreaApprox_"])
         assert(countOccurrences(cl, name ~ "(ref const(Mesh) m,") == 1,
-            format("source/mesh_ops/cleanup.d no longer declares `%s` over "
+            format("packages/mesh-ops/source/mesh_ops/cleanup.d no longer declares `%s` over "
                  ~ "`ref const(Mesh) m`. It only READS faces and positions to "
                  ~ "decide; the const receiver is what states that, and it is "
                  ~ "now ENFORCED at the seam rather than by a keyword the "
@@ -1017,7 +1017,7 @@ unittest // Stage E1 — the mesh-hygiene / orientation-repair family
                  ~ "(task 1903 Stage E1).", name));
     assert(countOccurrences(cl,
             "computeOrientationFlipMask(ref const(Mesh) m, bool restrictToSelection)") == 1,
-        "source/mesh_ops/cleanup.d no longer declares the two-argument "
+        "packages/mesh-ops/source/mesh_ops/cleanup.d no longer declares the two-argument "
       ~ "`computeOrientationFlipMask` overload over `ref const(Mesh) m` — that "
       ~ "is the one `mesh_analysis.inconsistentWindingFaces` calls with "
       ~ "`false` so an analyze under an active selection still reports winding "
@@ -1041,7 +1041,7 @@ unittest // Stage E1 — the mesh-hygiene / orientation-repair family
     // enum independently — is in tests/unit/mesh_ops/cleanup_test.d's
     // recording block; this row only pins that there is one of it.
     assert(countOccurrences(cl, "enum uint kCleanupEditScope =") == 1,
-        "source/mesh_ops/cleanup.d no longer declares `kCleanupEditScope` at "
+        "packages/mesh-ops/source/mesh_ops/cleanup.d no longer declares `kCleanupEditScope` at "
       ~ "module scope — the three commands and every test batch pass it, and a "
       ~ "per-call-site literal is the drift this constant exists to prevent "
       ~ "(task 1903 Stage E1).");
@@ -1058,7 +1058,7 @@ unittest // Stage E1 — the mesh-hygiene / orientation-repair family
         string firstHit;
         immutable size_t rawWrites = countRawPositionWrites(cl, firstHit);
         assert(rawWrites == 0,
-            format("source/mesh_ops/cleanup.d: %d raw position write(s) under "
+            format("packages/mesh-ops/source/mesh_ops/cleanup.d: %d raw position write(s) under "
                  ~ "§5.7's predicate, expected 0 — this family had none before "
                  ~ "the conversion and must gain none through it. First hit: "
                  ~ "`%s`. `alias mesh this` means `ed.vertices[i] = p` COMPILES "
@@ -1080,11 +1080,11 @@ unittest // Stage E2 — the radial sweep / revolve + path-follow family
     // (compiles, publishes a change for a call that changes nothing), and a
     // pure predicate back to a `static` member of `Mesh` (which the tripwire
     // at the foot of revolve.d catches, not this roster).
-    immutable rvPath = buildPath(repoRoot, "source", "mesh_ops", "revolve.d");
-    assert(exists(rvPath), "cannot find source/mesh_ops/revolve.d at " ~ rvPath);
+    immutable rvPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "revolve.d");
+    assert(exists(rvPath), "cannot find packages/mesh-ops/source/mesh_ops/revolve.d at " ~ rvPath);
     immutable rv = readCode(rvPath);
     assert(countOccurrences(rv, "mixin template MeshRevolveOps") == 0,
-        "source/mesh_ops/revolve.d still declares `mixin template "
+        "packages/mesh-ops/source/mesh_ops/revolve.d still declares `mixin template "
       ~ "MeshRevolveOps` — Stage E2 converted this family to free functions; a "
       ~ "surviving template is either dead or a second implementation "
       ~ "(task 1903 Stage E2).");
@@ -1099,7 +1099,7 @@ unittest // Stage E2 — the radial sweep / revolve + path-follow family
     ];
     foreach (name; kBatchKernelsE2)
         assert(countOccurrences(rv, name ~ "(ref MeshEditBatch ed,") == 1,
-            format("source/mesh_ops/revolve.d no longer declares `%s` over "
+            format("packages/mesh-ops/source/mesh_ops/revolve.d no longer declares `%s` over "
                  ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
                  ~ "not the style: it is what makes a batchless call a COMPILE "
                  ~ "error — and on THIS family it is also what let the "
@@ -1136,7 +1136,7 @@ unittest // Stage E2 — the radial sweep / revolve + path-follow family
     // keyword. The const receiver here is therefore a widening of what the code
     // already did, now ENFORCED at the seam.
     assert(countOccurrences(rv, "maskVertexCentroid_(ref const(Mesh) m,") == 1,
-        "source/mesh_ops/revolve.d no longer declares `maskVertexCentroid_` "
+        "packages/mesh-ops/source/mesh_ops/revolve.d no longer declares `maskVertexCentroid_` "
       ~ "over `ref const(Mesh) m`. It only READS faces and positions to average "
       ~ "a pivot; the const receiver is what states that, and it is the half of "
       ~ "§4.1 that a family with no const members would otherwise never grow "
@@ -1156,7 +1156,7 @@ unittest // Stage E2 — the radial sweep / revolve + path-follow family
     foreach (name; ["revolveSweepClosed(float angle)",
                     "revolveSweepClosedWithOffset(float angle, float offset)"])
         assert(countOccurrences(rv, "bool " ~ name) == 1,
-            format("source/mesh_ops/revolve.d no longer declares `%s` as a "
+            format("packages/mesh-ops/source/mesh_ops/revolve.d no longer declares `%s` as a "
                  ~ "plain module function. These two read no mesh state — they "
                  ~ "answer a question about an angle and an offset — and they "
                  ~ "are the single source of truth the tool layer's Count "
@@ -1170,7 +1170,7 @@ unittest // Stage E2 — the radial sweep / revolve + path-follow family
     // `static assert(!__traits(hasMember, Mesh, "RevolveParams"))` at the foot
     // of revolve.d is what refuses an `alias` putting it back on the struct.
     assert(countOccurrences(rv, "\nstruct RevolveParams {") == 1,
-        "source/mesh_ops/revolve.d no longer declares `struct RevolveParams` at "
+        "packages/mesh-ops/source/mesh_ops/revolve.d no longer declares `struct RevolveParams` at "
       ~ "MODULE scope (column 0). The mixin used to inject it into `Mesh`, and "
       ~ "`tools/alignment/radial_sweep_tool.d` plus two tests spelled it "
       ~ "`Mesh.RevolveParams`; those call sites moved with this commit "
@@ -1185,7 +1185,7 @@ unittest // Stage E2 — the radial sweep / revolve + path-follow family
     // and `tests/test_mesh_sweep.d`'s delta is the suite half of that. This row
     // is the text half: the string must not appear in this file at all.
     assert(countOccurrences(rv, "MeshEditBatch.unrecorded(") == 0,
-        "source/mesh_ops/revolve.d opens a `MeshEditBatch` of its own again. A "
+        "packages/mesh-ops/source/mesh_ops/revolve.d opens a `MeshEditBatch` of its own again. A "
       ~ "KERNEL never opens a batch — the command or the tool does (plan §4.1, "
       ~ "§2.3 rule 2). Stage D3 had to break that rule here, because "
       ~ "`revolveProfileEx` called the already-converted `bridgeLoopsPaired` "
@@ -1205,7 +1205,7 @@ unittest // Stage E2 — the radial sweep / revolve + path-follow family
     // tests/unit/mesh_ops/revolve_test.d's recording block; this row only pins
     // that there is one of it.
     assert(countOccurrences(rv, "enum uint kRevolveEditScope =") == 1,
-        "source/mesh_ops/revolve.d no longer declares `kRevolveEditScope` at "
+        "packages/mesh-ops/source/mesh_ops/revolve.d no longer declares `kRevolveEditScope` at "
       ~ "module scope — six production call sites and two test helpers pass it, "
       ~ "and a per-call-site literal is the drift this constant exists to "
       ~ "prevent (task 1903 Stage E2).");
@@ -1222,7 +1222,7 @@ unittest // Stage E2 — the radial sweep / revolve + path-follow family
         string firstHit;
         immutable size_t rawWrites = countRawPositionWrites(rv, firstHit);
         assert(rawWrites == 0,
-            format("source/mesh_ops/revolve.d: %d raw position write(s) under "
+            format("packages/mesh-ops/source/mesh_ops/revolve.d: %d raw position write(s) under "
                  ~ "§5.7's predicate, expected 0 — this family had none before "
                  ~ "the conversion and must gain none through it. First hit: "
                  ~ "`%s`. `alias mesh this` means `ed.vertices[i] = p` COMPILES "
@@ -1241,11 +1241,11 @@ unittest // Stage E3 — the plane-cut family, first raw position write across t
     // is a wrapper fan over one core), a nested type that moved to module scope
     // WITHOUT an in-struct alias, and a `setVertexPositions` call that replaced
     // two writes §5.7's own predicate could not see until this stage widened it.
-    immutable ctPath = buildPath(repoRoot, "source", "mesh_ops", "cut.d");
-    assert(exists(ctPath), "cannot find source/mesh_ops/cut.d at " ~ ctPath);
+    immutable ctPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "cut.d");
+    assert(exists(ctPath), "cannot find packages/mesh-ops/source/mesh_ops/cut.d at " ~ ctPath);
     immutable ct = readCode(ctPath);
     assert(countOccurrences(ct, "mixin template MeshCutOps") == 0,
-        "source/mesh_ops/cut.d still declares `mixin template MeshCutOps` — "
+        "packages/mesh-ops/source/mesh_ops/cut.d still declares `mixin template MeshCutOps` — "
       ~ "Stage E3 converted this family to free functions; a surviving template "
       ~ "is either dead or a second implementation (task 1903 Stage E3).");
 
@@ -1261,7 +1261,7 @@ unittest // Stage E3 — the plane-cut family, first raw position write across t
     ];
     foreach (name; kBatchKernelsE3)
         assert(countOccurrences(ct, name ~ "(ref MeshEditBatch ed,") == 1,
-            format("source/mesh_ops/cut.d no longer declares `%s` over "
+            format("packages/mesh-ops/source/mesh_ops/cut.d no longer declares `%s` over "
                  ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
                  ~ "not the style: it is what makes a batchless call a COMPILE "
                  ~ "error, so one plane cut stamps, derives and delivers once at "
@@ -1299,7 +1299,7 @@ unittest // Stage E3 — the plane-cut family, first raw position write across t
     // which is why they are the two entries that must NOT drift to the batch.
     foreach (name; ["isConcaveFace", "extractCutLoops"]) {
         assert(countOccurrences(ct, name ~ "(ref const(Mesh) m,") == 1,
-            format("source/mesh_ops/cut.d no longer declares `%s` over "
+            format("packages/mesh-ops/source/mesh_ops/cut.d no longer declares `%s` over "
                  ~ "`ref const(Mesh) m`. `isConcaveFace` only walks one winding "
                  ~ "to look for a reflex corner and `extractCutLoops` only walks "
                  ~ "`edges` against a cut mask; the const receiver is what "
@@ -1326,7 +1326,7 @@ unittest // Stage E3 — the plane-cut family, first raw position write across t
     // makes `hasMember` answer `true`, so the alias and the tripwire cannot both
     // stand.
     assert(countOccurrences(ct, "\nstruct PlaneCutLoops {") == 1,
-        "source/mesh_ops/cut.d no longer declares `struct PlaneCutLoops` at "
+        "packages/mesh-ops/source/mesh_ops/cut.d no longer declares `struct PlaneCutLoops` at "
       ~ "MODULE scope (column 0). The mixin used to inject it into `Mesh`, and "
       ~ "`tools/slice/slice_tool.d` plus two test modules spelled it "
       ~ "`Mesh.PlaneCutLoops`; those call sites moved with this commit "
@@ -1341,34 +1341,21 @@ unittest // Stage E3 — the plane-cut family, first raw position write across t
     // tests/unit/mesh_ops/cut_test.d's recording block; this row only pins that
     // there is one of it.
     assert(countOccurrences(ct, "enum uint kCutEditScope =") == 1,
-        "source/mesh_ops/cut.d no longer declares `kCutEditScope` at module "
+        "packages/mesh-ops/source/mesh_ops/cut.d no longer declares `kCutEditScope` at module "
       ~ "scope — seven production call sites pass it, and a per-call-site "
       ~ "literal is the drift this constant exists to prevent "
       ~ "(task 1903 Stage E3).");
 
-    // A KERNEL NEVER OPENS A BATCH (§4.1, §2.3 rule 2) — the absence pin, and
-    // this file cannot use revolve.d's `== 0` spelling because cut.d keeps TWO
-    // module unittests that legitimately open one. So the pin is two-sided: the
-    // TOTAL must be 2, and BOTH must be the unittest spelling. A kernel that
-    // opened its own would take the total to 3; one that replaced a unittest's
-    // would keep the total and drop the shaped count.
-    assert(countOccurrences(ct, "MeshEditBatch.unrecorded(") == 2,
-        format("source/mesh_ops/cut.d opens %d `MeshEditBatch`(es); expected "
-             ~ "exactly 2, both in the module unittests at the foot of the file. "
-             ~ "A KERNEL never opens a batch — the command or the tool does "
-             ~ "(plan §4.1, §2.3 rule 2). If a new intra-kernel batch is "
-             ~ "genuinely needed, §4.4a says what it costs: a TRANSITIONAL "
-             ~ "label, a named removing stage, and a per-command "
-             ~ "nestedBatchOpens DELTA assert in that command's own suite test "
-             ~ "(task 1903 Stage E3).",
-               countOccurrences(ct, "MeshEditBatch.unrecorded(")));
-    assert(countOccurrences(ct,
+    // Task 20261960: the two public-API regressions live in the desktop
+    // carrier; production keeps no batch opening. Preserve both fixture opens.
+    const gap = readCode(buildPath(repoRoot, "tests/unit/mesh_ops/cut_gap_regression_test.d"));
+    assert(countOccurrences(ct, "MeshEditBatch.unrecorded(") == 0,
+        "cut production kernel must not open a batch");
+    assert(countOccurrences(gap, "MeshEditBatch.unrecorded(") == 2,
+        "cut gap carrier must retain both regression batch opens");
+    assert(countOccurrences(gap,
             "auto ed = MeshEditBatch.unrecorded(m, kCutEditScope);") == 2,
-        "the two `MeshEditBatch.unrecorded` opens in source/mesh_ops/cut.d are "
-      ~ "no longer the two module unittests' — they are the only opens this "
-      ~ "file is allowed, and the row above only counts them. One of them now "
-      ~ "has a different subject or a different scope, which means a KERNEL is "
-      ~ "opening it (task 1903 Stage E3).");
+        "cut gap carrier must retain both original subject/scope fixture opens");
 
     // §5.7 over this file — and unlike decimate / bridge / cleanup / revolve,
     // this 0 is a RETIREMENT, not a statement that the family never had one.
@@ -1378,7 +1365,7 @@ unittest // Stage E3 — the plane-cut family, first raw position write across t
     // comment and its two new positive controls). Both writes are one
     // `ed.setVertexPositions` now.
     assert(countOccurrences(ct, "ed.setVertexPositions(") == 1,
-        "source/mesh_ops/cut.d no longer calls `setVertexPositions` — the Gap "
+        "packages/mesh-ops/source/mesh_ops/cut.d no longer calls `setVertexPositions` — the Gap "
       ~ "option's seam separation is the raw `vertices[pr[0]] = …` write again, "
       ~ "and a raw write inside a recording batch produces NO op-log entry: a "
       ~ "delta undo would restore the topology and leave both halves of every "
@@ -1387,7 +1374,7 @@ unittest // Stage E3 — the plane-cut family, first raw position write across t
         string firstHit;
         immutable size_t rawWrites = countRawPositionWrites(ct, firstHit);
         assert(rawWrites == 0,
-            format("source/mesh_ops/cut.d: %d raw position write(s) under "
+            format("packages/mesh-ops/source/mesh_ops/cut.d: %d raw position write(s) under "
                  ~ "§5.7's predicate, expected 0 — this entry was retired at "
                  ~ "Stage E3. First hit: `%s`. `alias mesh this` means "
                  ~ "`ed.vertices[i] = p` COMPILES inside a recording batch and "
@@ -1416,20 +1403,20 @@ unittest // Stage E4 — the two bevel families, one commit
     //   * two §2.6 widenings whose caller sets include files that are STILL
     //     mixins (extrude.d, edge_bevel.d) — see the widenings block below.
     // ---------------------------------------------------------------------
-    immutable bfPath = buildPath(repoRoot, "source", "mesh_ops", "bevel_fin.d");
-    assert(exists(bfPath), "cannot find source/mesh_ops/bevel_fin.d at " ~ bfPath);
+    immutable bfPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "bevel_fin.d");
+    assert(exists(bfPath), "cannot find packages/mesh-ops/source/mesh_ops/bevel_fin.d at " ~ bfPath);
     immutable bf = readCode(bfPath);
     assert(countOccurrences(bf, "mixin template MeshBevelFinOps") == 0,
-        "source/mesh_ops/bevel_fin.d still declares `mixin template "
+        "packages/mesh-ops/source/mesh_ops/bevel_fin.d still declares `mixin template "
       ~ "MeshBevelFinOps` — Stage E4 converted this family to free functions; a "
       ~ "surviving template is either dead or a second implementation "
       ~ "(task 1903 Stage E4).");
 
-    immutable bvPath = buildPath(repoRoot, "source", "mesh_ops", "bevel_vertex.d");
-    assert(exists(bvPath), "cannot find source/mesh_ops/bevel_vertex.d at " ~ bvPath);
+    immutable bvPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "bevel_vertex.d");
+    assert(exists(bvPath), "cannot find packages/mesh-ops/source/mesh_ops/bevel_vertex.d at " ~ bvPath);
     immutable bv = readCode(bvPath);
     assert(countOccurrences(bv, "mixin template MeshBevelVertexOps") == 0,
-        "source/mesh_ops/bevel_vertex.d still declares `mixin template "
+        "packages/mesh-ops/source/mesh_ops/bevel_vertex.d still declares `mixin template "
       ~ "MeshBevelVertexOps` — Stage E4 converted this family to free "
       ~ "functions; a surviving template is either dead or a second "
       ~ "implementation (task 1903 Stage E4).");
@@ -1440,12 +1427,12 @@ unittest // Stage E4 — the two bevel families, one commit
     // is NOT a prefix of its sibling, so unlike the plane-cut rows these three
     // are independent by their names alone.
     static immutable string[2][] kBatchKernelsE4 = [
-        ["source/mesh_ops/bevel_fin.d",    "bevelIsolatedFinBundleSpine"],
-        ["source/mesh_ops/bevel_fin.d",    "bevelFinBundleSpineMultiEdge"],
-        ["source/mesh_ops/bevel_vertex.d", "bevelVerticesByMask"],
+        ["packages/mesh-ops/source/mesh_ops/bevel_fin.d",    "bevelIsolatedFinBundleSpine"],
+        ["packages/mesh-ops/source/mesh_ops/bevel_fin.d",    "bevelFinBundleSpineMultiEdge"],
+        ["packages/mesh-ops/source/mesh_ops/bevel_vertex.d", "bevelVerticesByMask"],
     ];
     foreach (row; kBatchKernelsE4) {
-        immutable src4 = (row[0] == "source/mesh_ops/bevel_fin.d") ? bf : bv;
+        immutable src4 = (row[0] == "packages/mesh-ops/source/mesh_ops/bevel_fin.d") ? bf : bv;
         assert(countOccurrences(src4, row[1] ~ "(ref MeshEditBatch ed,") == 1,
             format("%s no longer declares `%s` over `ref MeshEditBatch ed`. That "
                  ~ "receiver is the enforcement, not the style: it is what makes "
@@ -1473,8 +1460,8 @@ unittest // Stage E4 — the two bevel families, one commit
     // later stage splits a const helper out of one of these kernels it must add
     // its own receiver pin here rather than let an unpinned `ref const(Mesh)`
     // appear. (§4.1 cell two is simply absent from this stage.)
-    foreach (row; [["source/mesh_ops/bevel_fin.d", bf],
-                   ["source/mesh_ops/bevel_vertex.d", bv]])
+    foreach (row; [["packages/mesh-ops/source/mesh_ops/bevel_fin.d", bf],
+                   ["packages/mesh-ops/source/mesh_ops/bevel_vertex.d", bv]])
         assert(countOccurrences(row[1], "(ref const(Mesh) m,") == 0,
             format("%s now declares a `ref const(Mesh) m,` receiver. Stage E4 "
                  ~ "converted these two families with ONE receiver each because "
@@ -1493,7 +1480,7 @@ unittest // Stage E4 — the two bevel families, one commit
     // `__traits(hasMember, Mesh, "VertexBevelCorner")` answer `true`, so the
     // alias and the tripwire cannot both stand.
     assert(countOccurrences(bv, "\nstruct VertexBevelCorner {") == 1,
-        "source/mesh_ops/bevel_vertex.d no longer declares `struct "
+        "packages/mesh-ops/source/mesh_ops/bevel_vertex.d no longer declares `struct "
       ~ "VertexBevelCorner` at MODULE scope (column 0). The mixin used to inject "
       ~ "it into `Mesh`; Stage E4 moved it out, and an in-struct alias putting "
       ~ "the name back is what that file's tripwire refuses "
@@ -1517,7 +1504,7 @@ unittest // Stage E4 — the two bevel families, one commit
     // independently — is in each family's recording block; this row only pins
     // that there is one of it.
     assert(countOccurrences(bf, "enum uint kBevelFinEditScope =") == 1,
-        "source/mesh_ops/bevel_fin.d no longer declares `kBevelFinEditScope` at "
+        "packages/mesh-ops/source/mesh_ops/bevel_fin.d no longer declares `kBevelFinEditScope` at "
       ~ "module scope. It has had NO production caller since Stage G removed "
       ~ "edge_bevel.d's two transitional batches — the fin kernels run inside "
       ~ "the edge bevel caller's batch now — but it is still the one written "
@@ -1525,7 +1512,7 @@ unittest // Stage E4 — the two bevel families, one commit
       ~ "recording block asserts and which Stage L7 will pass again "
       ~ "(task 1903 Stage E4, re-anchored at Stage G).");
     assert(countOccurrences(bv, "enum uint kBevelVertexEditScope =") == 1,
-        "source/mesh_ops/bevel_vertex.d no longer declares "
+        "packages/mesh-ops/source/mesh_ops/bevel_vertex.d no longer declares "
       ~ "`kBevelVertexEditScope` at module scope — the vertex-bevel command and "
       ~ "the tool's two entry points pass it (task 1903 Stage E4).");
 
@@ -1534,8 +1521,8 @@ unittest // Stage E4 — the two bevel families, one commit
     // revolve.d uses — and on THIS stage it is the sharper half of the
     // transitional-debt argument: the debt is allowed to live at the CALLER
     // (edge_bevel.d, pinned below), never inside the kernel.
-    foreach (row; [["source/mesh_ops/bevel_fin.d", bf],
-                   ["source/mesh_ops/bevel_vertex.d", bv]])
+    foreach (row; [["packages/mesh-ops/source/mesh_ops/bevel_fin.d", bf],
+                   ["packages/mesh-ops/source/mesh_ops/bevel_vertex.d", bv]])
         assert(countOccurrences(row[1], "MeshEditBatch(") == 0
             && countOccurrences(row[1], "MeshEditBatch.unrecorded(") == 0,
             format("%s opens a `MeshEditBatch`. A KERNEL never opens one — the "
@@ -1576,8 +1563,8 @@ unittest // Stage E4 — the two bevel families, one commit
     // `ed.vertices[railA[0]] = …` written beside the good `addVertex` call —
     // an INDEXED whole-vertex assign, the predicate's first alternative and
     // its oldest positive control.
-    foreach (row; [["source/mesh_ops/bevel_fin.d", bf],
-                   ["source/mesh_ops/bevel_vertex.d", bv]]) {
+    foreach (row; [["packages/mesh-ops/source/mesh_ops/bevel_fin.d", bf],
+                   ["packages/mesh-ops/source/mesh_ops/bevel_vertex.d", bv]]) {
         string firstHit4;
         immutable size_t rawWrites4 = countRawPositionWrites(row[1], firstHit4);
         assert(rawWrites4 == 0,
@@ -1627,11 +1614,11 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
     //   * the §5.7 row is a RETIREMENT OF FOUR that does NOT land on zero.
     //     This file keeps one allowed write, and the row says which.
     // ---------------------------------------------------------------------
-    immutable lsPath = buildPath(repoRoot, "source", "mesh_ops", "loop_slice.d");
-    assert(exists(lsPath), "cannot find source/mesh_ops/loop_slice.d at " ~ lsPath);
+    immutable lsPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "loop_slice.d");
+    assert(exists(lsPath), "cannot find packages/mesh-ops/source/mesh_ops/loop_slice.d at " ~ lsPath);
     immutable ls = readCode(lsPath);
     assert(countOccurrences(ls, "mixin template MeshLoopSliceOps") == 0,
-        "source/mesh_ops/loop_slice.d still declares `mixin template "
+        "packages/mesh-ops/source/mesh_ops/loop_slice.d still declares `mixin template "
       ~ "MeshLoopSliceOps` — Stage F1 converted this family to free functions; "
       ~ "a surviving template is either dead or a second implementation "
       ~ "(task 1903 Stage F1).");
@@ -1646,7 +1633,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
     // the needle carries `(` — without it the two rows would not be
     // independent.
     assert(countOccurrences(ls, "insertEdgeLoops(ref MeshEditBatch ed,") == 2,
-        format("source/mesh_ops/loop_slice.d declares %d `insertEdgeLoops` "
+        format("packages/mesh-ops/source/mesh_ops/loop_slice.d declares %d `insertEdgeLoops` "
              ~ "overload(s) over `ref MeshEditBatch ed,`; expected exactly 2 "
              ~ "(the 2-arg forwarder and the 3-arg entry that reports the new "
              ~ "face indices). That receiver is the enforcement, not the "
@@ -1662,7 +1649,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
              ~ "delivers from INSIDE the edit batch.",
                countOccurrences(ls, "insertEdgeLoops(ref MeshEditBatch ed,")));
     assert(countOccurrences(ls, "insertEdgeLoopsMulti(ref MeshEditBatch ed,") == 1,
-        "source/mesh_ops/loop_slice.d no longer declares `insertEdgeLoopsMulti` "
+        "packages/mesh-ops/source/mesh_ops/loop_slice.d no longer declares `insertEdgeLoopsMulti` "
       ~ "over `ref MeshEditBatch ed`. It is the ONE kernel of this family — "
       ~ "both `insertEdgeLoops` overloads forward to it — so its receiver is "
       ~ "the whole seam for the Loop Slice tool, the two slice commands and "
@@ -1701,7 +1688,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
     foreach (name; ["railContinuation", "walkRingSide", "loopSliceRingEdges",
                     "collectEdgeRing"]) {
         assert(countOccurrences(ls, name ~ "(ref const(Mesh) m,") == 1,
-            format("source/mesh_ops/loop_slice.d no longer declares `%s` over "
+            format("packages/mesh-ops/source/mesh_ops/loop_slice.d no longer declares `%s` over "
                  ~ "`ref const(Mesh) m`. Every one of these four only WALKS "
                  ~ "the ring — no vertex is added, no winding rewritten — and "
                  ~ "the const receiver is what states that, now enforced at "
@@ -1739,7 +1726,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
     // (measured at E2 and repeated at E3/E4) would make `hasMember` answer
     // `true` and blind the tripwire.
     assert(countOccurrences(ls, "\nprivate struct EdgeRingEntry {") == 1,
-        "source/mesh_ops/loop_slice.d no longer declares `private struct "
+        "packages/mesh-ops/source/mesh_ops/loop_slice.d no longer declares `private struct "
       ~ "EdgeRingEntry` at MODULE scope (column 0). The mixin used to inject "
       ~ "it into `Mesh`; Stage F1 moved it out and kept it `private` because "
       ~ "the four outside callers take it through `auto` and read only "
@@ -1758,7 +1745,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
     // enum independently — is in loop_slice_test.d's recording block; this row
     // only pins that there is one of it.
     assert(countOccurrences(ls, "enum uint kLoopSliceEditScope =") == 1,
-        "source/mesh_ops/loop_slice.d no longer declares `kLoopSliceEditScope` "
+        "packages/mesh-ops/source/mesh_ops/loop_slice.d no longer declares `kLoopSliceEditScope` "
       ~ "at module scope — five production call sites pass it, and a "
       ~ "per-call-site literal is the drift this constant exists to prevent "
       ~ "(task 1903 Stage F1).");
@@ -1773,7 +1760,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
     // and drop the shaped count.
     assert(countOccurrences(ls, "MeshEditBatch.unrecorded(") == 1
         && countOccurrences(ls, "MeshEditBatch(") == 0,
-        format("source/mesh_ops/loop_slice.d opens %d unrecorded "
+        format("packages/mesh-ops/source/mesh_ops/loop_slice.d opens %d unrecorded "
              ~ "`MeshEditBatch`(es) and %d RECORDING one(s); expected exactly "
              ~ "1 and 0 — the one is the `sliceOnce` helper the two module "
              ~ "unittests at the foot of the file share, and a recording open "
@@ -1788,7 +1775,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
                countOccurrences(ls, "MeshEditBatch(")));
     assert(countOccurrences(ls,
             "auto ed = MeshEditBatch.unrecorded(m, kLoopSliceEditScope);") == 1,
-        "the one `MeshEditBatch.unrecorded` open in source/mesh_ops/loop_slice.d "
+        "the one `MeshEditBatch.unrecorded` open in packages/mesh-ops/source/mesh_ops/loop_slice.d "
       ~ "is no longer the module unittests' `sliceOnce` helper — it is the only "
       ~ "open this file is allowed, and the row above only counts them. It now "
       ~ "has a different subject or a different scope, which means a KERNEL is "
@@ -1813,7 +1800,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
     // well as by the count, so "retire it by deleting the fixture" is not a
     // way to make this row green.
     assert(countOccurrences(ls, "ed.setVertexPositions(") == 2,
-        "source/mesh_ops/loop_slice.d no longer makes TWO `setVertexPositions` "
+        "packages/mesh-ops/source/mesh_ops/loop_slice.d no longer makes TWO `setVertexPositions` "
       ~ "calls — the Gap option's seam separation and the Profile cutter's "
       ~ "normal displacement are the raw `vertices[pr[0]] = …` / "
       ~ "`vertices[r.midsVa[i]] = …` writes again, and a raw write inside a "
@@ -1824,7 +1811,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
         string firstHitLs;
         immutable size_t rawWritesLs = countRawPositionWrites(ls, firstHitLs);
         assert(rawWritesLs == 1,
-            format("source/mesh_ops/loop_slice.d: %d raw position write(s) "
+            format("packages/mesh-ops/source/mesh_ops/loop_slice.d: %d raw position write(s) "
                  ~ "under §5.7's predicate, expected exactly 1 — Stage F1 "
                  ~ "retired FOUR (the Gap pair and the Profile pair, all four "
                  ~ "nested-index writes) and the survivor is "
@@ -1835,7 +1822,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
                  ~ "census and not a type (task 1903 §5.7, M-V1).",
                    rawWritesLs, firstHitLs));
         assert(countOccurrences(ls, "m.vertices = [") == 1,
-            "source/mesh_ops/loop_slice.d's ONE allowed raw position write is "
+            "packages/mesh-ops/source/mesh_ops/loop_slice.d's ONE allowed raw position write is "
           ~ "no longer `makeTwoDisjointCubes`'s `m.vertices = [ … ]`. The "
           ~ "count row above would still read 1 if a production write had "
           ~ "replaced the fixture one, so this is the half that says WHICH "
@@ -1860,7 +1847,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
         immutable srcRoot2 = buildPath(repoRoot, "source");
         string[] qualified;
         size_t scanned2 = 0;
-        foreach (scanSourceRoot; [srcRoot2, buildPath(repoRoot, "packages/common/source")])
+        foreach (scanSourceRoot; [srcRoot2, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned2;
             immutable src2 = readCode(e.name);
@@ -1882,9 +1869,9 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
                  ~ "calls are BARE (%d file(s) scanned) "
                  ~ "(task 1903 Stage F1, §2.7).", qualified, scanned2));
         immutable ct2 = readCode(buildPath(repoRoot,
-                            "source", "mesh_ops", "cut.d"));
+                            "packages/mesh-ops/source", "mesh_ops", "cut.d"));
         assert(countOccurrences(ct2, "capShellCycles(ed.faces,") == 2,
-            "source/mesh_ops/cut.d no longer makes its two BARE "
+            "packages/mesh-ops/source/mesh_ops/cut.d no longer makes its two BARE "
           ~ "`capShellCycles(ed.faces, …)` calls. Those two sites are the "
           ~ "other half of Stage F1's §2.7 move: the Slice tool's Cap Sections "
           ~ "option and Loop Slice's share this geometry, and the sharing is "
@@ -1942,11 +1929,11 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     //     the disarmed one (памятка 12/21). Counting the installs is what
     //     makes a FIFTH one visible to the stage that owns the remedy.
     // ---------------------------------------------------------------------
-    immutable pbPath = buildPath(repoRoot, "source", "mesh_ops", "poly_bevel.d");
-    assert(exists(pbPath), "cannot find source/mesh_ops/poly_bevel.d at " ~ pbPath);
+    immutable pbPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "poly_bevel.d");
+    assert(exists(pbPath), "cannot find packages/mesh-ops/source/mesh_ops/poly_bevel.d at " ~ pbPath);
     immutable pb = readCode(pbPath);
     assert(countOccurrences(pb, "mixin template MeshPolyBevelOps") == 0,
-        "source/mesh_ops/poly_bevel.d still declares `mixin template "
+        "packages/mesh-ops/source/mesh_ops/poly_bevel.d still declares `mixin template "
       ~ "MeshPolyBevelOps` — Stage F2 converted this family to free functions; "
       ~ "a surviving template is either dead or a second implementation "
       ~ "(task 1903 Stage F2).");
@@ -1958,7 +1945,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
                                            "spikeFacesByMask"];
     foreach (name; kEntries) {
         assert(countOccurrences(pb, name ~ "(ref MeshEditBatch ed,") == 1,
-            format("source/mesh_ops/poly_bevel.d no longer declares `%s` over "
+            format("packages/mesh-ops/source/mesh_ops/poly_bevel.d no longer declares `%s` over "
                  ~ "`ref MeshEditBatch ed,`. That receiver is the enforcement, "
                  ~ "not the style: it is what makes a batchless call a COMPILE "
                  ~ "error, so one inset / bevel / spike STAMPS AND DERIVES once "
@@ -1991,7 +1978,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     // `bevelFacesByMask` as `f(ed.mesh, …)` — the spelling Stage E1 settled on.
     foreach (name; ["cornerNormalAt", "findGroupBoundaryContour"]) {
         assert(countOccurrences(pb, name ~ "(ref const(Mesh) m,") == 1,
-            format("source/mesh_ops/poly_bevel.d no longer declares `%s` over "
+            format("packages/mesh-ops/source/mesh_ops/poly_bevel.d no longer declares `%s` over "
                  ~ "`ref const(Mesh) m`. Both of these only READ — the corner "
                  ~ "cross-product normal and the group-boundary contour walk — "
                  ~ "and the const receiver is what states that, now enforced at "
@@ -2025,7 +2012,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
         "\nprivate bool boundaryContourInset("];
     foreach (needle; kPrivateHelpers)
         assert(countOccurrences(pb, needle) == 1,
-            format("source/mesh_ops/poly_bevel.d no longer declares `%s` at "
+            format("packages/mesh-ops/source/mesh_ops/poly_bevel.d no longer declares `%s` at "
                  ~ "MODULE scope (column 0) with `private`. All seven helpers "
                  ~ "of this family are module-private BY DECISION, not by "
                  ~ "accident: `mesh.d` re-exports this module's PUBLIC names to "
@@ -2043,7 +2030,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     foreach (needle; ["private static Vec3 aveNormal(",
                       "private static bool boundaryContourInset("])
         assert(countOccurrences(pb, needle) == 0,
-            format("source/mesh_ops/poly_bevel.d still spells `%s`. Both were "
+            format("packages/mesh-ops/source/mesh_ops/poly_bevel.d still spells `%s`. Both were "
                  ~ "`private static` MEMBERS of `Mesh`; at module scope the "
                  ~ "keyword is noise that reads as if a struct were still "
                  ~ "involved (task 1903 Stage F2).", needle));
@@ -2053,7 +2040,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     // three declare the same class (measured: `scope_` reads 0xe on a recording
     // batch around each). SEVEN production call sites pass it.
     assert(countOccurrences(pb, "enum uint kPolyBevelEditScope =") == 1,
-        "source/mesh_ops/poly_bevel.d no longer declares `kPolyBevelEditScope` "
+        "packages/mesh-ops/source/mesh_ops/poly_bevel.d no longer declares `kPolyBevelEditScope` "
       ~ "at module scope — SEVEN production call sites pass it (three commands, "
       ~ "the two tools' commit paths and their two per-frame previews), and a "
       ~ "per-call-site literal is the drift this constant exists to prevent "
@@ -2071,7 +2058,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     // spelling.
     assert(countOccurrences(pb,
             "ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)") == 3,
-        "source/mesh_ops/poly_bevel.d: the three kernels' own "
+        "packages/mesh-ops/source/mesh_ops/poly_bevel.d: the three kernels' own "
       ~ "`ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)` tail "
       ~ "calls no longer number exactly 3 (one per entry) with this exact "
       ~ "spelling — `kPolyBevelEditScope` above is what a RECORDING batch "
@@ -2089,7 +2076,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     // the helper's would keep the total and drop the shaped count.
     assert(countOccurrences(pb, "MeshEditBatch.unrecorded(") == 1
         && countOccurrences(pb, "MeshEditBatch(") == 0,
-        format("source/mesh_ops/poly_bevel.d opens %d unrecorded "
+        format("packages/mesh-ops/source/mesh_ops/poly_bevel.d opens %d unrecorded "
              ~ "`MeshEditBatch`(es) and %d RECORDING one(s); expected exactly "
              ~ "1 and 0 — the one is the `bevelOnce` helper the five MUTATING "
              ~ "module unittests share, and a recording open anywhere in this "
@@ -2103,7 +2090,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
                countOccurrences(pb, "MeshEditBatch(")));
     assert(countOccurrences(pb,
             "auto ed = MeshEditBatch.unrecorded(m, kPolyBevelEditScope);") == 1,
-        "the one `MeshEditBatch.unrecorded` open in source/mesh_ops/poly_bevel.d "
+        "the one `MeshEditBatch.unrecorded` open in packages/mesh-ops/source/mesh_ops/poly_bevel.d "
       ~ "is no longer the module unittests' `bevelOnce` helper — it is the only "
       ~ "open this file is allowed, and the row above only counts them. It now "
       ~ "has a different subject or a different scope, which means a KERNEL is "
@@ -2121,7 +2108,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
         string firstHitPb;
         immutable size_t rawWritesPb = countRawPositionWrites(pb, firstHitPb);
         assert(rawWritesPb == 0,
-            format("source/mesh_ops/poly_bevel.d: %d raw position write(s) "
+            format("packages/mesh-ops/source/mesh_ops/poly_bevel.d: %d raw position write(s) "
                  ~ "under §5.7's predicate, expected 0. First hit: `%s`. "
                  ~ "`alias mesh this` means `ed.vertices[i] = p` COMPILES "
                  ~ "inside a recording batch and records nothing, which is why "
@@ -2161,7 +2148,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     // it.
     assert(countOccurrences(pb, "rewriteFaces") == 0
         && countOccurrences(pb, "rewriteVertices") == 0,
-        "source/mesh_ops/poly_bevel.d now calls `rewriteFaces`/"
+        "packages/mesh-ops/source/mesh_ops/poly_bevel.d now calls `rewriteFaces`/"
       ~ "`rewriteVertices`. It did not when Stage F2 measured this family, and "
       ~ "that ABSENCE is the whole diagnosis: the op-log named no face change "
       ~ "because the primitive was never reached, not because its publisher "
@@ -2171,7 +2158,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
       ~ "recording block's op-log expectations have to be re-measured "
       ~ "(task 1903 §5.3, Stage F2 -> L7-P2).");
     assert(countOccurrences(pb, "ed.faces[fi] = ") == 0,
-        format("source/mesh_ops/poly_bevel.d makes %d indexed `ed.faces[fi] = "
+        format("packages/mesh-ops/source/mesh_ops/poly_bevel.d makes %d indexed `ed.faces[fi] = "
              ~ "…` install(s); expected 0. Stage F2 measured FOUR, Stage L2-f "
              ~ "closed the spike's and Stage L7-P2 closed the remaining three "
              ~ "(the inset ring, the bevel cap, the square splice into the "
@@ -2200,7 +2187,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
         immutable srcRootF2 = buildPath(repoRoot, "source");
         string[] qualifiedF2;
         size_t scannedF2 = 0;
-        foreach (scanSourceRoot; [srcRootF2, buildPath(repoRoot, "packages/common/source")])
+        foreach (scanSourceRoot; [srcRootF2, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scannedF2;
             immutable srcF2 = readCode(e.name);
@@ -2223,7 +2210,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
                    qualifiedF2, scannedF2));
         assert(countOccurrences(pb, "assert(boundaryContourInset(") == 1
             && countOccurrences(pb, "assert(!boundaryContourInset(") == 2,
-            format("source/mesh_ops/poly_bevel.d's degeneracy-gate unittest no "
+            format("packages/mesh-ops/source/mesh_ops/poly_bevel.d's degeneracy-gate unittest no "
                  ~ "longer makes its three BARE `boundaryContourInset(…)` "
                  ~ "calls (%d positive, %d negated; expected 1 and 2). Those "
                  ~ "three are the other half of the qualifier removal: they "
@@ -2245,7 +2232,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     // close if someone removed a block and added an unrelated one elsewhere in
     // the same lane.
     assert(countOccurrences(pb, "\nunittest {") == 6,
-        format("source/mesh_ops/poly_bevel.d holds %d module `unittest` "
+        format("packages/mesh-ops/source/mesh_ops/poly_bevel.d holds %d module `unittest` "
              ~ "block(s) at column 0; Stage F2 moved SIX out of the template "
              ~ "body (the `boundaryContourInset` degeneracy gate, the three "
              ~ "GROUP-accumulator findings G1/G2/G3, the WARPED isolated-face "
@@ -2301,11 +2288,11 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
 // ---------------------------------------------------------------------------
 unittest // Stage G — the manifold edge bevel family
 {
-    immutable ebPath = buildPath(repoRoot, "source", "mesh_ops", "edge_bevel.d");
-    assert(exists(ebPath), "cannot find source/mesh_ops/edge_bevel.d at " ~ ebPath);
+    immutable ebPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "edge_bevel.d");
+    assert(exists(ebPath), "cannot find packages/mesh-ops/source/mesh_ops/edge_bevel.d at " ~ ebPath);
     immutable eb = readCode(ebPath);
     assert(countOccurrences(eb, "mixin template MeshEdgeBevelOps") == 0,
-        "source/mesh_ops/edge_bevel.d still declares `mixin template "
+        "packages/mesh-ops/source/mesh_ops/edge_bevel.d still declares `mixin template "
       ~ "MeshEdgeBevelOps` — Stage G converted this family to a free function "
       ~ "over `ref MeshEditBatch`; a surviving template is either dead or a "
       ~ "second implementation (task 1903 Stage G).");
@@ -2315,7 +2302,7 @@ unittest // Stage G — the manifold edge bevel family
     // renaming the receiver `ed` -> `edb` would leave this pin green while the
     // name the pin exists to hold had changed.
     assert(countOccurrences(eb, "bevelEdgesByMask(ref MeshEditBatch ed,") == 1,
-        "source/mesh_ops/edge_bevel.d no longer declares `bevelEdgesByMask` "
+        "packages/mesh-ops/source/mesh_ops/edge_bevel.d no longer declares `bevelEdgesByMask` "
       ~ "over `ref MeshEditBatch ed,`. That receiver is the enforcement, not "
       ~ "the style: it is what makes a batchless call a COMPILE error, so one "
       ~ "edge bevel STAMPS AND DERIVES once at close() instead of once per "
@@ -2340,7 +2327,7 @@ unittest // Stage G — the manifold edge bevel family
     // family names, and nothing was watching the catcher. Pre-existing across
     // all eight converted families; G is where it stops.
     assert(countOccurrences(eb, "static assert(!__traits(hasMember, Mesh, n)") == 1,
-        "source/mesh_ops/edge_bevel.d no longer carries its "
+        "packages/mesh-ops/source/mesh_ops/edge_bevel.d no longer carries its "
       ~ "`static assert(!__traits(hasMember, Mesh, n), ...)` tripwire exactly "
       ~ "once. That block is the ONLY thing that fails the build when someone "
       ~ "hand-writes `Mesh.bevelEdgesByMask` or an in-struct alias of it — a "
@@ -2360,7 +2347,7 @@ unittest // Stage G — the manifold edge bevel family
     // `MeshEditBatch.unrecorded(` and vice versa.
     assert(countOccurrences(eb, "MeshEditBatch(") == 0
         && countOccurrences(eb, "MeshEditBatch.unrecorded(") == 0,
-        "source/mesh_ops/edge_bevel.d opens a `MeshEditBatch`. A KERNEL never "
+        "packages/mesh-ops/source/mesh_ops/edge_bevel.d opens a `MeshEditBatch`. A KERNEL never "
       ~ "opens one — the command, the tool, or (transitionally, §4.4a) a "
       ~ "still-mixin caller does. Until Stage G this file held exactly TWO such "
       ~ "opens, at the fin-bundle early returns, because it was itself a mixin "
@@ -2373,7 +2360,7 @@ unittest // Stage G — the manifold edge bevel family
     // …and the two fin-bundle hand-offs are PLAIN CALLS, in tail position.
     assert(countOccurrences(eb, "return ed.bevelIsolatedFinBundleSpine(") == 1
         && countOccurrences(eb, "return ed.bevelFinBundleSpineMultiEdge(") == 1,
-        "source/mesh_ops/edge_bevel.d no longer hands a fin bundle straight to "
+        "packages/mesh-ops/source/mesh_ops/edge_bevel.d no longer hands a fin bundle straight to "
       ~ "`bevel_fin.d`'s two kernels inside the CALLER's batch. Stage E4 had to "
       ~ "wrap each in an `unrecorded` batch of its own because this body was a "
       ~ "mixin; Stage G's whole change to these two arms is that the wrapper is "
@@ -2386,7 +2373,7 @@ unittest // Stage G — the manifold edge bevel family
     // edge arm, the tool's commit, the tool's per-frame preview) plus three
     // test helpers, so it has room to drift.
     assert(countOccurrences(eb, "enum uint kEdgeBevelEditScope =") == 1,
-        "source/mesh_ops/edge_bevel.d no longer declares `kEdgeBevelEditScope` "
+        "packages/mesh-ops/source/mesh_ops/edge_bevel.d no longer declares `kEdgeBevelEditScope` "
       ~ "at module scope — three production call sites and three test helpers "
       ~ "pass it, and a per-call-site literal is the drift this constant exists "
       ~ "to prevent (task 1903 Stage G).");
@@ -2402,10 +2389,10 @@ unittest // Stage G — the manifold edge bevel family
         LedgerRow("edgeBevelOffsetOnly|corner", 1, "zero-width rewrite handle"),
     ];
     LedgerHit[] edgeHits;
-    edgeHits ~= symbolTokenHits(eb, "source/mesh_ops/edge_bevel.d",
+    edgeHits ~= symbolTokenHits(eb, "packages/mesh-ops/source/mesh_ops/edge_bevel.d",
         "ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)", "tail");
-    edgeHits ~= symbolTokenHits(eb, "source/mesh_ops/edge_bevel.d", "rewriteFaces(ed,", "rewrite");
-    edgeHits ~= symbolTokenHits(eb, "source/mesh_ops/edge_bevel.d", "ed.beginCornerRewrite()", "corner");
+    edgeHits ~= symbolTokenHits(eb, "packages/mesh-ops/source/mesh_ops/edge_bevel.d", "rewriteFaces(ed,", "rewrite");
+    edgeHits ~= symbolTokenHits(eb, "packages/mesh-ops/source/mesh_ops/edge_bevel.d", "ed.beginCornerRewrite()", "corner");
     assert(edgeHits.length == 7, "edge bevel consumer seam population must be seven");
     const edgeProblems = reconcile(edgePins, edgeHits);
     assert(edgeProblems.length == 0, "edge bevel consumer seams changed: " ~ edgeProblems);
@@ -2431,7 +2418,7 @@ unittest // Stage G — the manifold edge bevel family
         size_t installs = 0;
         foreach (_; matchAll(eb, ctRegex!(`ed\.faces\s*\[[^\]]*\]\s*=[^=]`))) ++installs;
         assert(installs == 0,
-            format("source/mesh_ops/edge_bevel.d makes %d indexed "
+            format("packages/mesh-ops/source/mesh_ops/edge_bevel.d makes %d indexed "
                  ~ "`ed.faces[…] = …` install(s); Stage G measured ZERO. Every "
                  ~ "winding this family writes goes through "
                  ~ "`mesh_planes.rewriteFaces`, and that is exactly why its "
@@ -2452,7 +2439,7 @@ unittest // Stage G — the manifold edge bevel family
     assert(countOccurrences(eb, "Mesh.faceAttrOr(") == 2
         && countOccurrences(eb, "Mesh.combineFaceMarksWords(") == 1
         && countOccurrences(eb, "Mesh.rebuildFaceWithVertexSubs(") == 1,
-        format("source/mesh_ops/edge_bevel.d spells `Mesh.faceAttrOr(` %d "
+        format("packages/mesh-ops/source/mesh_ops/edge_bevel.d spells `Mesh.faceAttrOr(` %d "
              ~ "time(s), `Mesh.combineFaceMarksWords(` %d and "
              ~ "`Mesh.rebuildFaceWithVertexSubs(` %d; Stage G measured 2 / 1 / "
              ~ "1. All three are `static` MEMBERS of `Mesh`, so a bare call "
@@ -2466,7 +2453,7 @@ unittest // Stage G — the manifold edge bevel family
     // …and the two nested TYPES the mixin body used to reach unqualified.
     assert(countOccurrences(eb, "Mesh.VertSub") == 6
         && countOccurrences(eb, "Mesh.Marks.Select") == 2,
-        format("source/mesh_ops/edge_bevel.d spells `Mesh.VertSub` %d time(s) "
+        format("packages/mesh-ops/source/mesh_ops/edge_bevel.d spells `Mesh.VertSub` %d time(s) "
              ~ "and `Mesh.Marks.Select` %d; Stage G measured 6 and 2. Both are "
              ~ "NESTED TYPES of `Mesh` that a mixin body saw unqualified "
              ~ "(plan §4.3 step 4). A bare spelling does not compile from a "
@@ -2482,7 +2469,7 @@ unittest // Stage G — the manifold edge bevel family
     // module-level import — and it must stay in THIS file rather than migrate
     // to mesh.d, which is what the column-0 needle says.
     assert(countOccurrences(eb, "\nimport mesh_ops.bevel_curves;") == 1,
-        "source/mesh_ops/edge_bevel.d no longer imports `mesh_ops.bevel_curves` "
+        "packages/mesh-ops/source/mesh_ops/edge_bevel.d no longer imports `mesh_ops.bevel_curves` "
       ~ "at MODULE scope (column 0). It was a SCOPED import inside the mixin "
       ~ "template body — the shape a mixin forces — and Stage G's conversion is "
       ~ "what made an ordinary import possible. Moving it to mesh.d instead "
@@ -2497,7 +2484,7 @@ unittest // Stage G — the manifold edge bevel family
     string ebFirstHit;
     immutable size_t ebRaw = countRawPositionWrites(eb, ebFirstHit);
     assert(ebRaw == 0,
-        format("source/mesh_ops/edge_bevel.d: %d raw position write(s) under "
+        format("packages/mesh-ops/source/mesh_ops/edge_bevel.d: %d raw position write(s) under "
              ~ "§5.7's predicate, expected 0. First hit: `%s`. This family has "
              ~ "never moved an EXISTING vertex — every rail, miter, hub and cap "
              ~ "coordinate is an `ed.addVertex` argument — which is the same "
@@ -2538,7 +2525,7 @@ unittest // Stage G — the manifold edge bevel family
     assert(countOccurrences(eb, "bevelPinnedOrphans_") >= 1
         && countOccurrences(eb, "bevelCapCoincidentPos_") >= 1
         && countOccurrences(eb, "bevelCapOrphanPos_") >= 1,
-        "source/mesh_ops/edge_bevel.d no longer WRITES the three parity fields "
+        "packages/mesh-ops/source/mesh_ops/edge_bevel.d no longer WRITES the three parity fields "
       ~ "it owns. They are `Mesh` state kept for ONE reader — the free-end cap "
       ~ "census — and a declaration with no writer is three public fields open "
       ~ "for nobody (task 1903 Stage G).");
@@ -2619,7 +2606,7 @@ unittest // Stage G — the manifold edge bevel family
         import std.file : dirEntries, SpanMode;
         size_t scanned = 0;
         string[] offenders;
-        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned;
             immutable t = readCode(de.name);
@@ -2641,11 +2628,11 @@ unittest // Stage G — the manifold edge bevel family
 
 unittest // Stage H — the extrude/extend family (five kernels, the only tracker traffic)
 {
-    immutable exPath = buildPath(repoRoot, "source", "mesh_ops", "extrude.d");
-    assert(exists(exPath), "cannot find source/mesh_ops/extrude.d at " ~ exPath);
+    immutable exPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "extrude.d");
+    assert(exists(exPath), "cannot find packages/mesh-ops/source/mesh_ops/extrude.d at " ~ exPath);
     immutable ex = readCode(exPath);
     assert(countOccurrences(ex, "mixin template MeshExtrudeOps") == 0,
-        "source/mesh_ops/extrude.d still declares `mixin template "
+        "packages/mesh-ops/source/mesh_ops/extrude.d still declares `mixin template "
       ~ "MeshExtrudeOps` — Stage H converted this family to five free "
       ~ "functions over `ref MeshEditBatch`; a surviving template is either "
       ~ "dead or a second implementation (task 1903 Stage H).");
@@ -2663,7 +2650,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     ];
     foreach (r; kReceivers)
         assert(countOccurrences(ex, r) == 1,
-            format("source/mesh_ops/extrude.d no longer declares `%s` "
+            format("packages/mesh-ops/source/mesh_ops/extrude.d no longer declares `%s` "
                  ~ "exactly once. That receiver is the enforcement, not the "
                  ~ "style: it is what makes a batchless call a COMPILE error "
                  ~ "(task 1903 §4.1, §5.2 H).", r));
@@ -2674,7 +2661,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     ];
     foreach (r; kBareReceivers)
         assert(countOccurrences(ex, r) == 0,
-            format("source/mesh_ops/extrude.d declares `%s` — a `ref Mesh` "
+            format("packages/mesh-ops/source/mesh_ops/extrude.d declares `%s` — a `ref Mesh` "
                  ~ "overload compiles and silently drops the batch, exactly "
                  ~ "the REJECTED overload plan §4.4a names by name: nothing "
                  ~ "in either lane can see it, because the geometry is "
@@ -2686,7 +2673,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     // review found this block absent from every earlier family's OWN census
     // coverage; Stage H's row closes it for this family from the start.
     assert(countOccurrences(ex, "static assert(!__traits(hasMember, Mesh, n)") == 1,
-        "source/mesh_ops/extrude.d no longer carries its `static "
+        "packages/mesh-ops/source/mesh_ops/extrude.d no longer carries its `static "
       ~ "assert(!__traits(hasMember, Mesh, n), ...)` tripwire exactly once. "
       ~ "That block is the ONLY thing that fails the build when someone "
       ~ "hand-writes `Mesh.extrudeEdgesByMask` (or any of the other four) or "
@@ -2705,14 +2692,14 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     immutable exRaw = readText(exPath);
     foreach (n; kFamily)
         assert(countOccurrences(exRaw, "\"" ~ n ~ "\"") >= 1,
-            format("source/mesh_ops/extrude.d's tripwire no longer names "
+            format("packages/mesh-ops/source/mesh_ops/extrude.d's tripwire no longer names "
                  ~ "`%s` in its `static foreach` list — a member of that ONE "
                  ~ "name could come back with nothing refusing it (task 1903 "
                  ~ "Stage H).", n));
 
     // THE FAMILY'S DECLARED SCOPE, ONE HOME.
     assert(countOccurrences(ex, "enum uint kExtrudeEditScope =") == 1,
-        "source/mesh_ops/extrude.d no longer declares `kExtrudeEditScope` at "
+        "packages/mesh-ops/source/mesh_ops/extrude.d no longer declares `kExtrudeEditScope` at "
       ~ "module scope — every command and tool in the family, plus this "
       ~ "file's own `extendOnce` test helper, passes it (task 1903 Stage H).");
 
@@ -2724,14 +2711,14 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     // (`extrudeVerticesByMask`, `extrudeFacesByMask`,
     // `smoothShiftFacesByMask`) commit Geometry|Marks.
     assert(countOccurrences(ex, "ed.commitChange(MeshEditScope.Geometry)") == 2,
-        format("source/mesh_ops/extrude.d spells `ed.commitChange"
+        format("packages/mesh-ops/source/mesh_ops/extrude.d spells `ed.commitChange"
              ~ "(MeshEditScope.Geometry)` %d time(s); Stage H measured "
              ~ "exactly 2 (extrudeEdgesByMask, extendEdgesByMask) (task 1903 "
              ~ "Stage H, Stage F2 review MINOR-2).",
                countOccurrences(ex, "ed.commitChange(MeshEditScope.Geometry)")));
     assert(countOccurrences(ex,
             "ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)") == 3,
-        format("source/mesh_ops/extrude.d spells `ed.commitChange"
+        format("packages/mesh-ops/source/mesh_ops/extrude.d spells `ed.commitChange"
              ~ "(MeshEditScope.Geometry | MeshEditScope.Marks)` %d time(s); "
              ~ "Stage H measured exactly 3 (extrudeVerticesByMask, "
              ~ "extrudeFacesByMask, smoothShiftFacesByMask) (task 1903 Stage "
@@ -2746,7 +2733,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     // this body was a mixin instantiated in mesh.d's scope; the module-level
     // import below is what makes them resolve now.
     assert(countOccurrences(ex, "\nimport std.math : sqrt;") == 1,
-        "source/mesh_ops/extrude.d no longer imports `std.math : sqrt` at "
+        "packages/mesh-ops/source/mesh_ops/extrude.d no longer imports `std.math : sqrt` at "
       ~ "MODULE scope (column 0) — the two `sqrt(...)` call sites in "
       ~ "extrudeFacesByMask/smoothShiftFacesByMask resolved through mesh.d's "
       ~ "own import while this body was a mixin instantiated there (task "
@@ -2757,12 +2744,12 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     // `rebuildFaceWithVertexSubs` at one. Both `static`, so UFCS through the
     // batch handle cannot reach them.
     assert(countOccurrences(ex, "Mesh.faceAttrOr(") == 10,
-        format("source/mesh_ops/extrude.d spells `Mesh.faceAttrOr(` %d "
+        format("packages/mesh-ops/source/mesh_ops/extrude.d spells `Mesh.faceAttrOr(` %d "
              ~ "time(s); Stage H measured 10 — the largest single-file count "
              ~ "of the eleven §2.6 widenings (task 1903 Stage H, §2.6).",
                countOccurrences(ex, "Mesh.faceAttrOr(")));
     assert(countOccurrences(ex, "Mesh.rebuildFaceWithVertexSubs(") == 1,
-        format("source/mesh_ops/extrude.d spells "
+        format("packages/mesh-ops/source/mesh_ops/extrude.d spells "
              ~ "`Mesh.rebuildFaceWithVertexSubs(` %d time(s); Stage H "
              ~ "measured 1 (task 1903 Stage H, §2.6).",
                countOccurrences(ex, "Mesh.rebuildFaceWithVertexSubs(")));
@@ -2771,7 +2758,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     // `ed.`-prefixed call, not a qualified one — its spelling changed, not
     // its file, exactly as the widenings block below already predicted.
     assert(countOccurrences(ex, "ed.finalizeTopologyEdit(") == 3,
-        format("source/mesh_ops/extrude.d spells `ed.finalizeTopologyEdit(` "
+        format("packages/mesh-ops/source/mesh_ops/extrude.d spells `ed.finalizeTopologyEdit(` "
              ~ "%d time(s); Stage H measured 3 (task 1903 Stage H, §2.6).",
                countOccurrences(ex, "ed.finalizeTopologyEdit(")));
 
@@ -2782,20 +2769,20 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     // nine `.record*` calls are `ed.rec().recordXxx(...)` and the two
     // `!is null` guards are `ed.recording()`.
     assert(countOccurrences(ex, "editRecorder_") == 0,
-        "source/mesh_ops/extrude.d still spells `editRecorder_` — task 1903 "
+        "packages/mesh-ops/source/mesh_ops/extrude.d still spells `editRecorder_` — task 1903 "
       ~ "Stage H routes every tracker access through `MeshEditBatch.rec()` / "
       ~ "`.recording()` instead (plan §2.6's row for `Mesh.editRecorder_`: "
       ~ "\"NOT published\"), and a surviving bare `editRecorder_` cannot "
       ~ "compile from a free function — its presence here means this file "
       ~ "did not actually convert (task 1903 Stage H).");
     assert(countOccurrences(ex, "ed.recording()") == 2,
-        format("source/mesh_ops/extrude.d spells `ed.recording()` %d "
+        format("packages/mesh-ops/source/mesh_ops/extrude.d spells `ed.recording()` %d "
              ~ "time(s); Stage H measured exactly 2 — the two "
              ~ "`editRecorder_ !is null` guards in extrudeEdgesByMask and "
              ~ "extendEdgesByMask (task 1903 Stage H).",
                countOccurrences(ex, "ed.recording()")));
     assert(countOccurrences(ex, "ed.rec().record") == 9,
-        format("source/mesh_ops/extrude.d spells `ed.rec().record` %d "
+        format("packages/mesh-ops/source/mesh_ops/extrude.d spells `ed.rec().record` %d "
              ~ "time(s); Stage H measured exactly 9 — the nine "
              ~ "`editRecorder_.record*` calls (task 1903 Stage H, the op-log "
              ~ "identity measurement in this stage's card).",
@@ -2807,13 +2794,13 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     // target. `rw` is `extrudeFacesByMask`'s OWN `beginCornerRewrite()`
     // handle — a local, not a member — so it needs no qualifier.
     assert(countOccurrences(ex, "rewriteFaces(ed, newFaces, FaceSource(oldOfNew), &rw,") == 1,
-        "source/mesh_ops/extrude.d no longer passes `&rw` to its "
+        "packages/mesh-ops/source/mesh_ops/extrude.d no longer passes `&rw` to its "
       ~ "`rewriteFaces` call in extrudeFacesByMask — this is the `&rw` site "
       ~ "plan §5.3's K-audit names (\"yes, after Stage J\"); the shape must "
       ~ "survive this conversion unarmed, ready for Stage K/J (task 1903 "
       ~ "Stage H, plan §5.3).");
     assert(countOccurrences(ex, "rewriteFaces(ed,") == 4,
-        format("source/mesh_ops/extrude.d calls `rewriteFaces(ed, …)` %d "
+        format("packages/mesh-ops/source/mesh_ops/extrude.d calls `rewriteFaces(ed, …)` %d "
              ~ "time(s); Stage H measured exactly 4 (extrudeVerticesByMask, "
              ~ "extendEdgesByMask x2, extrudeFacesByMask's &rw site) (task "
              ~ "1903 Stage H).", countOccurrences(ex, "rewriteFaces(ed,")));
@@ -2830,7 +2817,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     // `loop_slice.d`'s survivors carry — a local fixture mesh has no batch
     // and needs none.
     assert(countOccurrences(ex, "ed.setVertexPos(vi, ed.vertices[vi] + n * (shift + width));") == 1,
-        "source/mesh_ops/extrude.d no longer spells the migrated apex-shift "
+        "packages/mesh-ops/source/mesh_ops/extrude.d no longer spells the migrated apex-shift "
       ~ "write exactly this way — `extrudeVerticesByMask`'s raw "
       ~ "`vertices[vi] = vertices[vi] + n * (shift + width);` (formerly "
       ~ "extrude.d:2341) must be `ed.setVertexPos(vi, …)`, bit-exact (task "
@@ -2839,7 +2826,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
         string exFirstHit;
         immutable size_t exRawCount = countRawPositionWrites(ex, exFirstHit);
         assert(exRawCount == 4,
-            format("source/mesh_ops/extrude.d: %d raw position write(s) "
+            format("packages/mesh-ops/source/mesh_ops/extrude.d: %d raw position write(s) "
                  ~ "under §5.7's predicate, expected exactly 4 — Stage H "
                  ~ "migrated the fifth (the production apex-shift write) to "
                  ~ "`ed.setVertexPos`; the survivors are the four unittest "
@@ -2847,7 +2834,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
                  ~ "First hit: `%s` (task 1903 Stage H, plan §5.7, M-V1).",
                    exRawCount, exFirstHit));
         assert(countOccurrences(ex, "m.vertices = [") == 4,
-            "source/mesh_ops/extrude.d's four allowed raw position writes "
+            "packages/mesh-ops/source/mesh_ops/extrude.d's four allowed raw position writes "
           ~ "no longer read `m.vertices = [` exactly four times — these are "
           ~ "the fixture-only kAllow entries, pinned by TEXT as well as by "
           ~ "count so \"retire it by deleting the fixture\" cannot make this "
@@ -2860,7 +2847,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     // other four kernels are not called from this file's module unittests).
     assert(countOccurrences(ex, "MeshEditBatch.unrecorded(m, kExtrudeEditScope)") == 1
         && countOccurrences(ex, "MeshEditBatch(") == 0,
-        format("source/mesh_ops/extrude.d opens %d unrecorded `MeshEditBatch`"
+        format("packages/mesh-ops/source/mesh_ops/extrude.d opens %d unrecorded `MeshEditBatch`"
              ~ "(es) with the `extendOnce` helper's exact spelling and %d "
              ~ "RECORDING one(s); expected exactly 1 and 0. A kernel never "
              ~ "opens a batch — the command, the tool, or (here) a test "
@@ -2879,7 +2866,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
         import std.file : dirEntries, SpanMode;
         size_t scanned = 0;
         string[][string] offenders;
-        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned;
             immutable t = readCode(de.name);
@@ -2904,7 +2891,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
 
 // Stage I's hand-written 13-public-import roster evolved with R5 task 4600.
 // `mesh_ops_import_boundary_test.d` now derives the complete module roster
-// from source/mesh_ops/*.d declarations, separates the explicit boundary, and
+// from packages/mesh-ops/source/mesh_ops/*.d declarations, separates the explicit boundary, and
 // pins the total number of remaining public edges.
 
 // ---------------------------------------------------------------------------
@@ -2934,7 +2921,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
 // which is blind in the direction §2.6 actually asks about: a widened name is
 // public to the WHOLE tree, and a stage that inherits one must say who else
 // uses it. Measured: adding `orientFaceConsistent(idx, ef);` to a new method in
-// `source/mesh_ops/cleanup.d` left this block green. So each row also declares
+// `packages/mesh-ops/source/mesh_ops/cleanup.d` left this block green. So each row also declares
 // `callerFiles`, and the block walks `source/**` (comment-stripped) for a
 // RECEIVER-AGNOSTIC needle and asserts the SET of caller files EQUALS the row.
 // That reddens in both directions — a caller the row does not name, and a file
@@ -2947,41 +2934,41 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
 // M-D3-WIDEN-B: delete bridge.d's `orientFaceConsistent` calls → this block
 //   reddens naming the widening as now caller-less.
 // M-W2 (under-declared): add a second caller of `orientFaceConsistent` in
-//   `source/mesh_ops/cleanup.d` → the set assert reddens naming that file.
+//   `packages/mesh-ops/source/mesh_ops/cleanup.d` → the set assert reddens naming that file.
 // M-W3 (over-declared): add a file to a row's `callerFiles` that contains no
 //   call → the same assert reddens from the other side.
 // ---------------------------------------------------------------------------
 unittest // every §2.6 widening this stage made still has the caller it names
 {
-    immutable brPath = buildPath(repoRoot, "source", "mesh_ops", "bridge.d");
-    assert(exists(brPath), "cannot find source/mesh_ops/bridge.d at " ~ brPath);
+    immutable brPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "bridge.d");
+    assert(exists(brPath), "cannot find packages/mesh-ops/source/mesh_ops/bridge.d at " ~ brPath);
     immutable br = readCode(brPath);
-    immutable ctPath = buildPath(repoRoot, "source", "mesh_ops", "cut.d");
-    assert(exists(ctPath), "cannot find source/mesh_ops/cut.d at " ~ ctPath);
+    immutable ctPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "cut.d");
+    assert(exists(ctPath), "cannot find packages/mesh-ops/source/mesh_ops/cut.d at " ~ ctPath);
     immutable ct = readCode(ctPath);
-    immutable bfPath2 = buildPath(repoRoot, "source", "mesh_ops", "bevel_fin.d");
-    assert(exists(bfPath2), "cannot find source/mesh_ops/bevel_fin.d at " ~ bfPath2);
+    immutable bfPath2 = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "bevel_fin.d");
+    assert(exists(bfPath2), "cannot find packages/mesh-ops/source/mesh_ops/bevel_fin.d at " ~ bfPath2);
     immutable bf2 = readCode(bfPath2);
-    immutable bvPath2 = buildPath(repoRoot, "source", "mesh_ops", "bevel_vertex.d");
-    assert(exists(bvPath2), "cannot find source/mesh_ops/bevel_vertex.d at " ~ bvPath2);
+    immutable bvPath2 = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "bevel_vertex.d");
+    assert(exists(bvPath2), "cannot find packages/mesh-ops/source/mesh_ops/bevel_vertex.d at " ~ bvPath2);
     immutable bv2 = readCode(bvPath2);
-    immutable lsPath2 = buildPath(repoRoot, "source", "mesh_ops", "loop_slice.d");
-    assert(exists(lsPath2), "cannot find source/mesh_ops/loop_slice.d at " ~ lsPath2);
+    immutable lsPath2 = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "loop_slice.d");
+    assert(exists(lsPath2), "cannot find packages/mesh-ops/source/mesh_ops/loop_slice.d at " ~ lsPath2);
     immutable ls2 = readCode(lsPath2);
-    immutable pbPath2 = buildPath(repoRoot, "source", "mesh_ops", "poly_bevel.d");
-    assert(exists(pbPath2), "cannot find source/mesh_ops/poly_bevel.d at " ~ pbPath2);
+    immutable pbPath2 = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "poly_bevel.d");
+    assert(exists(pbPath2), "cannot find packages/mesh-ops/source/mesh_ops/poly_bevel.d at " ~ pbPath2);
     immutable pb2 = readCode(pbPath2);
 
     // The file each row's `callSite` is looked for in. D3's three rows are all
     // bridge.d's; E3 added three that are cut.d's, so the row carries its own
     // ops file rather than the block assuming one (task 1903 Stage E3). E4 adds
     // the two bevel files.
-    immutable string[string] opsSrc = ["source/mesh_ops/bridge.d":       br,
-                                       "source/mesh_ops/cut.d":          ct,
-                                       "source/mesh_ops/bevel_fin.d":    bf2,
-                                       "source/mesh_ops/bevel_vertex.d": bv2,
-                                       "source/mesh_ops/loop_slice.d":   ls2,
-                                       "source/mesh_ops/poly_bevel.d":   pb2];
+    immutable string[string] opsSrc = ["packages/mesh-ops/source/mesh_ops/bridge.d":       br,
+                                       "packages/mesh-ops/source/mesh_ops/cut.d":          ct,
+                                       "packages/mesh-ops/source/mesh_ops/bevel_fin.d":    bf2,
+                                       "packages/mesh-ops/source/mesh_ops/bevel_vertex.d": bv2,
+                                       "packages/mesh-ops/source/mesh_ops/loop_slice.d":   ls2,
+                                       "packages/mesh-ops/source/mesh_ops/poly_bevel.d":   pb2];
 
     // name, the `private` declaration that must be GONE from mesh.d, the
     // declaration that must be THERE, the call in the ops file that justifies it,
@@ -3009,7 +2996,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("mesh.smoothstep01",
                  "private float smoothstep01(",
                  "float smoothstep01(float t)",
-                 "source/mesh_ops/bridge.d",
+                 "packages/mesh-ops/source/mesh_ops/bridge.d",
                  "smoothstep01(t)",
                  "smoothstep01(",
                  [LedgerRow("bridgeTwistedVertex", 1, "only converted caller")],
@@ -3020,7 +3007,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("Mesh.orientFaceConsistent",
                  "private void orientFaceConsistent(",
                  "void orientFaceConsistent(uint[] idx",
-                 "source/mesh_ops/bridge.d",
+                 "packages/mesh-ops/source/mesh_ops/bridge.d",
                  "ed.orientFaceConsistent(",
                  "orientFaceConsistent(",
                  [LedgerRow("emitBridgeQuad", 1, "shared strip/patch quad emitter"),
@@ -3031,7 +3018,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("Mesh.registerNewFaceEdges",
                  "private void registerNewFaceEdges(",
                  "void registerNewFaceEdges(ref int[2][ulong] liveEdgeFaces",
-                 "source/mesh_ops/bridge.d",
+                 "packages/mesh-ops/source/mesh_ops/bridge.d",
                  "ed.registerNewFaceEdges(",
                  "registerNewFaceEdges(",
                  [LedgerRow("emitBridgeQuad", 1, "shared strip/patch quad emitter"),
@@ -3043,7 +3030,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("Mesh.edgeIndexOfVerts",
                  "private uint edgeIndexOfVerts(",
                  "uint edgeIndexOfVerts(ref Mesh m, uint a, uint b)",
-                 "source/mesh_ops/cut.d",
+                 "packages/mesh-ops/source/mesh_ops/cut.d",
                  "ed.edgeIndexOfVerts(",
                  "edgeIndexOfVerts(",
                  [LedgerRow("planeCutCore", 3, "three raw edge lookups")],
@@ -3062,7 +3049,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("Mesh.insertEdgePoint",
                  "private uint insertEdgePoint(",
                  "uint insertEdgePoint(ref Mesh m, uint ei, float t, ref bool[] isCutVert",
-                 "source/mesh_ops/cut.d",
+                 "packages/mesh-ops/source/mesh_ops/cut.d",
                  "ed.insertEdgePoint(",
                  "insertEdgePoint(",
                  [LedgerRow("planeCutCore", 1, "plane crossing insertion")],
@@ -3074,7 +3061,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("Mesh.rebuildFacesWithChordSplits",
                  "private size_t rebuildFacesWithChordSplits(",
                  "size_t rebuildFacesWithChordSplits(ref Mesh m,",
-                 "source/mesh_ops/cut.d",
+                 "packages/mesh-ops/source/mesh_ops/cut.d",
                  "ed.rebuildFacesWithChordSplits(",
                  "rebuildFacesWithChordSplits(",
                  [LedgerRow("planeCutCore", 1, "chord-split rebuild")],
@@ -3095,7 +3082,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("Mesh.finalizeTopologyEdit",
                  "private void finalizeTopologyEdit(",
                  "void finalizeTopologyEdit()",
-                 "source/mesh_ops/bevel_fin.d",
+                 "packages/mesh-ops/source/mesh_ops/bevel_fin.d",
                  "ed.finalizeTopologyEdit(",
                  "finalizeTopologyEdit(",
                  [LedgerRow("bevelIsolatedFinBundleSpine", 1, "isolated fin"),
@@ -3113,7 +3100,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("Mesh.rebuildFaceWithVertexSubs",
                  "private static uint[] rebuildFaceWithVertexSubs(",
                  "static uint[] rebuildFaceWithVertexSubs(",
-                 "source/mesh_ops/bevel_vertex.d",
+                 "packages/mesh-ops/source/mesh_ops/bevel_vertex.d",
                  "Mesh.rebuildFaceWithVertexSubs(",
                  "rebuildFaceWithVertexSubs(",
                  [LedgerRow("bevelVerticesByMask", 1, "vertex bevel"),
@@ -3149,7 +3136,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("Mesh.faceAttrOr",
                  "private static T faceAttrOr(",
                  "static T faceAttrOr(T)(in T[] attr, size_t fi)",
-                 "source/mesh_ops/loop_slice.d",
+                 "packages/mesh-ops/source/mesh_ops/loop_slice.d",
                  "Mesh.faceAttrOr(",
                  "faceAttrOr(",
                  [LedgerRow("bevelEdgesByMask", 2, "two host-face reads"),
@@ -3174,7 +3161,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("Mesh.combineFaceMarksWords",
                  "private static uint combineFaceMarksWords(",
                  "static uint combineFaceMarksWords(uint a, uint b)",
-                 "source/mesh_ops/loop_slice.d",
+                 "packages/mesh-ops/source/mesh_ops/loop_slice.d",
                  "Mesh.combineFaceMarksWords(",
                  "combineFaceMarksWords(",
                  [LedgerRow("bevelEdgesByMask", 1, "edge bevel fold"),
@@ -3206,7 +3193,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("mesh.buildRawMesh",
                  "version (unittest) private Mesh buildRawMesh(",
                  "version (unittest) Mesh buildRawMesh(Vec3[] verts, uint[][] faceList)",
-                 "source/mesh_ops/poly_bevel.d",
+                 "packages/mesh-ops/source/mesh_ops/poly_bevel.d",
                  "buildRawMesh(",
                  "buildRawMesh(",
                  [LedgerRow("(module scope)", 5, "five module unittest fixtures")],
@@ -3261,7 +3248,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         import std.path : relativePath;
         import std.string : replace;
 
-        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
 
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
@@ -3313,7 +3300,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  ~ "bridge.d's three, E3 for cut.d's three, E4 for the two bevel "
                  ~ "files'). A mixin body is instantiated in mesh.d's scope and "
                  ~ "sees a private name for free; a free function in "
-                 ~ "`source/mesh_ops/` does not (plan §2.6, §4.3).",
+                 ~ "`packages/mesh-ops/source/mesh_ops/` does not (plan §2.6, §4.3).",
                    w.name, w.why));
         // TASK 3280 — THE SAME QUESTION, ASKED SO IT CANNOT BE DODGED. The
         // row above is one SPELLING of "private again", and a spelling is a
@@ -3343,7 +3330,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
                     format("`%s` is declared in %s with the attribute chain "
                          ~ "%s, which NARROWS its visibility below public. It "
                          ~ "is %s Task 1903 §2.6 widened it for a caller in "
-                         ~ "`source/mesh_ops/`: a mixin body is instantiated "
+                         ~ "`packages/mesh-ops/source/mesh_ops/`: a mixin body is instantiated "
                          ~ "in mesh.d's scope and sees a private name for "
                          ~ "free, a free function does not.",
                            bare, declFile, ch, w.why));
@@ -3392,7 +3379,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         import std.string : replace;
 
         immutable srcRoot = buildPath(repoRoot, "source");
-        foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source")])
+        foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
             ++filesScanned;
@@ -3733,7 +3720,7 @@ unittest // L0-d — the hole a zone boundary leaves: deform_magnet.d
     // THAT ZERO IS WORTHLESS ON ITS OWN: magnet's forward writer was never in
     // that file. `applyMagnet` writes `mesh.vertices[i] = attractToPoint(...)`
     // in source/deform_magnet.d, which is under neither census zone
-    // (`source/mesh_ops/**` + `source/commands/**`), and its signature is Stage
+    // (`packages/mesh-ops/source/mesh_ops/**` + `source/commands/**`), and its signature is Stage
     // M / task 1905's — `source/tools/deform/magnet.d` is its other caller.
     // So L0-d does not touch it; it brings it INTO the census instead.
     immutable path = buildPath(repoRoot, "source", "deform_magnet.d");
@@ -3807,7 +3794,7 @@ unittest // L0-d — the hole a zone boundary leaves: deform_magnet.d
 // WHY THIS IS A SEPARATE BLOCK FROM L0-d'S AND NOT TWO MORE LITERALS IN ITS
 // ROSTER. Both commands' forward position writes happen in
 // `source/symmetry.d` — `applySymmetryMirror` and `applySymmetryMirrorDelta` —
-// a module NEITHER census zone scans (`source/mesh_ops/**` +
+// a module NEITHER census zone scans (`packages/mesh-ops/source/mesh_ops/**` +
 // `source/commands/**`) and whose signature belongs to Stage M / task 1905
 // (`source/tools/transform/**` are its other callers). `symmetrize` has ZERO
 // forward position writes of its own: its entire forward is one call.
@@ -3975,7 +3962,7 @@ unittest // L0-b — the recorder pins, one per command
     ];
     LedgerHit[] hits;
     size_t filesRead;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = e.name[repoRoot.length + 1 .. $];
         const src = readCode(e.name);
@@ -4015,7 +4002,7 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
     immutable srcRoot = buildPath(repoRoot, "source");
     size_t scanned = 0;
     string[] sites;
-    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         immutable src = readCode(e.name);
@@ -4049,7 +4036,7 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
 // ---------------------------------------------------------------------------
 // TASK 2310 — THE FIFTH ZONE: `packages/common/source/mesh.d` ITSELF
 //
-// WHY IT IS HERE AT ALL. `countRawPositionWrites` scans `source/mesh_ops/*.d`,
+// WHY IT IS HERE AT ALL. `countRawPositionWrites` scans `packages/mesh-ops/source/mesh_ops/*.d`,
 // `source/commands/mesh/*.d`, `source/symmetry.d` and `source/deform_magnet.d`
 // — never `packages/common/source/mesh.d`. Four raw position writes on the LIVE subject mesh
 // were sitting in that hole: `collapseVerticesByMask`'s `vertices[i] = target`,

@@ -508,7 +508,7 @@ private size_t skipDelimited(const(char)[] s, size_t i) @safe pure nothrow @nogc
 /// are inside `source/` and therefore counted, even though the `tests`
 /// configuration does not compile them: the point is that a block cannot vanish
 /// unnoticed, and a block nobody compiles is the easiest kind to lose.
-immutable string[] censusRoots = ["source", "packages/common/source", "tests/unit"];
+immutable string[] censusRoots = ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "tests/unit", "packages/mesh-ops/tests/source", "packages/interchange/tests/source"];
 
 /// One file's contribution, keyed by its repo-relative path with `/` separators.
 struct FileCensus
@@ -1586,6 +1586,24 @@ unittest
     foreach (part; split) after += scanD(part);
     assert(before.blocks  == after.blocks);
     assert(before.asserts == after.asserts);
+
+    // Task 20261960: exercise the shipped walker over every new owner.
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+    const sandbox = buildPath(tempDir(), format("vibe3d-census-wave4-%d", thisProcessID));
+    collectException(rmdirRecurse(sandbox));
+    scope(exit) collectException(rmdirRecurse(sandbox));
+    foreach (owner; ["packages/mesh-ops/source", "packages/interchange/source",
+                    "packages/mesh-ops/tests/source", "packages/interchange/tests/source"])
+    {
+        mkdirRecurse(buildPath(sandbox, owner));
+        write(buildPath(sandbox, owner, "probe.d"),
+            "unittest { assert(1); assert(2); }\n");
+    }
+    const owners = scanWorkingTree(sandbox);
+    assert(owners.length == 4, "Wave4 census observes all four new ownership roots");
+    const ownershipTotal = total(owners);
+    assert(ownershipTotal.blocks == 4 && ownershipTotal.asserts == 8,
+        "Wave4 census preserves each owner's nonzero block/assert contribution");
 }
 
 unittest

@@ -73,9 +73,11 @@ case " $flags " in *" -version=web "*) ;; *)
 esac
 mapfile -t files < <(dub describe --config=web --data=source-files --data-list \
     2>>"$2" | sed '/^$/d' | grep '\.d$')
-mapfile -t common_files < <(dub describe --root=packages/common --config=web \
-    --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
-files+=("${common_files[@]}")
+for package in common mesh-ops interchange; do
+    mapfile -t package_files < <(dub describe --root="packages/$package" --config=web \
+        --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
+    files+=("${package_files[@]}")
+done
 # Every file is explicit. This is required by the nine command modules whose declared
 # names end in `_` while their paths do not; import lookup alone cannot resolve them.
 python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c "${files[@]}"
@@ -91,6 +93,8 @@ SH";
     string[string] sourcePathByModule;
     const sourcePrefix = buildPath(repoRoot, "source") ~ "/";
     const commonPrefix = buildPath(repoRoot, "packages/common/source") ~ "/";
+    const meshPrefix = buildPath(repoRoot, "packages/mesh-ops/source") ~ "/";
+    const interchangePrefix = buildPath(repoRoot, "packages/interchange/source") ~ "/";
     foreach (line; readText(depsPath).splitLines)
     {
         const first = line.indexOf(" : ");
@@ -104,7 +108,7 @@ SH";
         if (!parseDepNode(tail[cast(size_t)secondRel + 3 .. $], imported)) continue;
         importsByModule[importer.moduleName] ~= imported.moduleName;
         foreach (node; [importer, imported])
-            if (node.path.startsWith(sourcePrefix, commonPrefix) && node.path.endsWith(".d"))
+            if (node.path.startsWith(sourcePrefix, commonPrefix, meshPrefix, interchangePrefix) && node.path.endsWith(".d"))
                 sourcePathByModule[node.moduleName] = node.path;
     }
     bool[string] reached;
@@ -140,18 +144,18 @@ SH";
     write(buildPath(tempDir(), stem ~ ".modules"), selectedModules.join("\n") ~ "\n");
     const baseline = readText(buildPath(repoRoot, "tests", "unit",
         "web_width32_baseline_modules.txt")).strip.splitLines;
-    assert(baseline.length == 550, "web compiler baseline manifest population");
+    assert(baseline.length == 551, "web compiler baseline manifest population");
     string[] added, removed;
     foreach (name; selectedModules) if (!baseline.canFind(name)) added ~= name;
     foreach (name; baseline) if (!selectedModules.canFind(name)) removed ~= name;
     assert(added.length == 0 && removed.length == 0,
-        format("web compiler selected-set delta: added=%s removed=%s", added, removed));
+        format("web compiler selected-set delta: added=%s removed=%s members=%s", added, removed, selectedModules));
     // Measured on the current W16 LD+B12 stack at
     // b777bc26e50e45da10f70889fed2d1ada5891237. This is the population floor:
     // successful dmd over fewer (or zero) files must not masquerade as a clean width pass.
     // Task 20261660: the compiler-selected web closure adds model_preview (+1).
     // Task 20261720: three literal-preserving lower-owner modules join the closure.
-    enum expectedWebModules = 550; // +1 task 9504 evaluated_move_weld; +1 task 9449 tools.edit.haul_axis_latch; -1 task 9525 tools.edit.drag_weld; +1 task 9492 tool_attr_bounds; -5 wave-2 PRM2: five more param-update owner modules folded; +1 task 9429 tools.topology_step; -10 wave-2 PRM1: eleven param-update owner modules became one; +1 pen S1 tools.create.pen_geometry; +4: remesh job, stitch, command and modal state; +1 M5 toolpipe.attr_cache; +1 viewport_probe_sampling; +3 retopology S4 light_rig, retopology_line_shade, retopology_dot_cull; +1 retopology S5 retopology_order; +1 viewport shading S1a vertex_normals; +1 viewport shading SP gpu_pass_timer; +1 viewport shading S2b viewport_composite; +1 viewport shading S1e commands.mesh.surface_attr; +1 viewport shading S4b viewport_env
+    enum expectedWebModules = 551; // +1 task 9504 evaluated_move_weld; +1 task 9449 tools.edit.haul_axis_latch; -1 task 9525 tools.edit.drag_weld; +1 task 9492 tool_attr_bounds; -5 wave-2 PRM2: five more param-update owner modules folded; +1 task 9429 tools.topology_step; -10 wave-2 PRM1: eleven param-update owner modules became one; +1 pen S1 tools.create.pen_geometry; +4: remesh job, stitch, command and modal state; +1 M5 toolpipe.attr_cache; +1 viewport_probe_sampling; +3 retopology S4 light_rig, retopology_line_shade, retopology_dot_cull; +1 retopology S5 retopology_order; +1 viewport shading S1a vertex_normals; +1 viewport shading SP gpu_pass_timer; +1 viewport shading S2b viewport_composite; +1 viewport shading S1e commands.mesh.surface_attr; +1 viewport shading S4b viewport_env
     assert(closurePaths.length == expectedWebModules,
         format("W16-W web closure population changed: expected %d source modules to reach "
              ~ "the 32-bit compiler, got %d", expectedWebModules, closurePaths.length));

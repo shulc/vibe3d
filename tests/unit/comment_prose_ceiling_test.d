@@ -232,7 +232,7 @@ private FileCount[] scanSourceTree(string root)
     if (!isDir(sourceDir)) return [];
 
     auto found = appender!(FileCount[]);
-    foreach (scanSourceRoot; [sourceDir, buildPath(root, "packages/common/source")])
+    foreach (scanSourceRoot; [sourceDir, buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source")])
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth))
     {
         if (!entry.isFile || !entry.name.endsWith(".d")) continue;

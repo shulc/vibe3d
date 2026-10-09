@@ -33,7 +33,7 @@ private enum Client[] kComposition = [
 /// Every `source/**.d` file, relative path -> blanked code.
 private string[string] sourceCode() {
     string[string] code;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         code[relativePath(e.name, repoRoot)] = blankNonCode(readText(e.name));
     return code;

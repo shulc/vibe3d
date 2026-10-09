@@ -513,7 +513,7 @@ unittest {
     LedgerHit[] evalHits;            // assertion (b)
     LedgerHit[] workplaneHits;       // assertion (c)
 
-    foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/common/source"), buildPath(censusRepoRoot, "packages/mesh-ops/source"), buildPath(censusRepoRoot, "packages/interchange/source")])
 
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile || entry.name.length < 2

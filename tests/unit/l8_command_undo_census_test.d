@@ -278,11 +278,11 @@ unittest // half 2 — the TWO declines still hold their snapshot, and say why
         // The kernel-side half of the same decision. If this vanished, the
         // reason above would still read as true while the thing it describes
         // was gone.
-        immutable string kernel = buildPath(repoRoot(), "source", "mesh_ops",
+        immutable string kernel = buildPath(repoRoot(), "packages/mesh-ops/source", "mesh_ops",
                                             "extrude.d");
         immutable kcode = codeOnly(readText(kernel));
         assert(countOf(kcode, "CornerDrop.SweptSurfaceNoLaw") >= 2,
-            "source/mesh_ops/extrude.d no longer makes its stated per-corner "
+            "packages/mesh-ops/source/mesh_ops/extrude.d no longer makes its stated per-corner "
           ~ "drops. THAT IS GOOD NEWS and it retires stage L8-d: re-measure "
           ~ "`tests/unit/l8_extrude_delta_test.d`'s block 4 and migrate the "
           ~ "two declined commands, deleting the reason recorded at each "

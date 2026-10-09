@@ -414,7 +414,7 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
 
     string[] vpmWriteSites;
     size_t sourceFiles;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                SpanMode.depth)) {
         ++sourceFiles;

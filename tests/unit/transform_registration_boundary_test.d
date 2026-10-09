@@ -155,7 +155,7 @@ private void pinClosure(string seed, const ref Closure closure, size_t baselineC
     foreach (name; actual) if (!baseline.canFind(name)) added ~= name;
     foreach (name; baseline) if (!actual.canFind(name)) removed ~= name;
     assert(added.length == 0 && removed.length == 0,
-        format("%s exact closure delta: added=%s removed=%s", seed, added, removed));
+        format("%s exact closure delta: added=%s removed=%s members=%s", seed, added, removed, actual));
 }
 
 unittest {
@@ -179,7 +179,7 @@ unittest {
 unittest {
     ModuleImports[string] modules;
     size_t sourceFiles, transformSeen;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         auto scanned = scanModule(readText(entry.name));
@@ -253,12 +253,12 @@ unittest {
     // Task 9490: the radial ring start reads `workplane_fit` (+1; registration held it).
     // Task 9525: `tools.edit.drag_weld` deleted (-1 each).
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
-    // Task 20261660: Tool reaches the detached model_preview view (+1 each).
-    pinClosure("transform_tool_registration", transform, 261);
-    pinClosure("registration", positive, 530);
-    assert(transform.queue.length == 261 && positive.queue.length == 530,
-        format("6506 import closure census changed: transform=%d/261 "
-            ~ "registration=%d/530", transform.queue.length,
+    // Task 20260660: Tool reaches the detached model_preview view (+1 each).
+    pinClosure("transform_tool_registration", transform, 260);
+    pinClosure("registration", positive, 531);
+    assert(transform.queue.length == 260 && positive.queue.length == 531,
+        format("6506 import closure census changed: transform=%d/260 "
+            ~ "registration=%d/531", transform.queue.length,
             positive.queue.length));
 }
 

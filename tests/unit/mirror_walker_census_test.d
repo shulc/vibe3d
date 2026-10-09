@@ -51,7 +51,7 @@ private string[] filesWith(string needle, out size_t scanned) {
     import std.file : dirEntries, SpanMode;
     import std.path : buildPath;
     string[] hits;
-    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const rel = de.name[kRepoRoot.length + 1 .. $];
@@ -98,9 +98,23 @@ unittest { // (c1) ONE mirror walker
 unittest { // (c2) ONE side test
     size_t scanned;
     const users = filesWith("symmetrySide(", scanned);
-    assert(users == ["source/mesh_ops/extrude.d", "source/symmetry.d",
+    assert(users == ["packages/common/source/symmetry_plane.d",
+                     "packages/mesh-ops/source/mesh_ops/extrude.d", "source/symmetry.d",
                      "source/toolpipe/stages/symmetry.d", "source/tools/edit/edge_extend.d"],
            "(c2) symmetrySide( users: " ~ users.to!string);
+    const lower = codeOf("packages/common/source/symmetry_plane.d");
+    const desktop = codeOf("source/symmetry.d");
+    assert(countOccurrences(lower,
+        "int symmetrySide(Vec3 planePoint, Vec3 planeNormal, Vec3 p, float eps) pure nothrow @nogc @safe") == 1,
+        "(c2) lower side formula keeps its original signature and attributes");
+    const formula = bodyAfter(lower, "int symmetrySide(");
+    assert(formula == "{\n    immutable float d = dot(p - planePoint, planeNormal);\n    return abs(d) <= eps ? 0 : (d > 0 ? 1 : -1);\n}",
+        "(c2) lower side formula retains its original complete body");
+    assert(countOccurrences(desktop, "public import symmetry_plane : symmetrySide;") == 1
+        && countOccurrences(desktop, "int symmetrySide(") == 1
+        && countOccurrences(bodyAfter(desktop, "int symmetrySide("),
+            "return symmetrySide(sp.planePoint, sp.planeNormal, p, eps);") == 1,
+        "(c2) desktop reexports the one formula and packet overload delegates");
     // Edge Extend: the handle base and the ring offset read the side test, and
     // keep no `dot(` of their own beyond the offset's two normal components.
     const ee = codeOf("source/tools/edit/edge_extend.d");
@@ -111,7 +125,7 @@ unittest { // (c2) ONE side test
     }
     assert(countOccurrences(bodyAfter(ee, "Vec3 extendHandleBase("), "symmetrySide(") == 1,
            "(c2) extendHandleBase does not read symmetrySide(");
-    const ring = bodyAfter(codeOf("source/mesh_ops/extrude.d"), "Vec3 ringOffset(uint v)");
+    const ring = bodyAfter(codeOf("packages/mesh-ops/source/mesh_ops/extrude.d"), "Vec3 ringOffset(uint v)");
     assert(ring.length > 40, "(c2) ringOffset body not found");
     assert(countOccurrences(ring, "symmetrySide(") == 1, "(c2) ringOffset does not read symmetrySide(");
     assert(countOccurrences(ring, "dot(") == 2 && countOccurrences(ring, "dot(offset, n)") == 2,

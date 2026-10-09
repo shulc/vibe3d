@@ -134,7 +134,7 @@ unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneRe
     const root = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..", "..", "..", "..");
     size_t loops, retiredIdent;
     string[] sites;
-    foreach (scanSourceRoot; [buildNormalizedPath(root, "source"), buildNormalizedPath(root, "packages/common/source")])
+    foreach (scanSourceRoot; [buildNormalizedPath(root, "source"), buildNormalizedPath(root, "packages/common/source"), buildNormalizedPath(root, "packages/mesh-ops/source"), buildNormalizedPath(root, "packages/interchange/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (de.name.endsWith("_test.d")) continue;
         const code = blankNonCode(readText(de.name));

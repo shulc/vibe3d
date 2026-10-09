@@ -36,7 +36,7 @@ unittest { // F4e: the removed node-level undock guard cannot creep back
     size_t scanned;
     string[] noUndockingHits;
     string[] localFlagHits;
-    foreach (scanSourceRoot; [sourceRoot, buildPath(gateRepoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [sourceRoot, buildPath(gateRepoRoot, "packages/common/source"), buildPath(gateRepoRoot, "packages/mesh-ops/source"), buildPath(gateRepoRoot, "packages/interchange/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (!entry.isFile) continue;
         ++scanned;

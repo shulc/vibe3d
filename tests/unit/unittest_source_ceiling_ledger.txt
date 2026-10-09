@@ -13,8 +13,8 @@
 # Counts are compiler-aware: comments and string/character literals are
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
-source-files 591
-unittest-blocks 669
+source-files 592
+unittest-blocks 667
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -42,6 +42,12 @@ block packages/common/source/screen_buckets.d 1
 block packages/common/source/toolpipe/pipeline.d 6
 block packages/common/source/trackball.d 4
 block packages/common/source/view.d 26
+block packages/interchange/source/io/lwo_import.d 5
+block packages/interchange/source/io/scene_import.d 2
+block packages/interchange/source/io/scene_ir.d 7
+block packages/mesh-ops/source/mesh_ops/extrude.d 18
+block packages/mesh-ops/source/mesh_ops/loop_slice.d 1
+block packages/mesh-ops/source/mesh_ops/poly_bevel.d 6
 block source/ai/exploration.d 6
 block source/ai3d/event_queue.d 4
 block source/ai3d/worker_manager.d 9
@@ -77,14 +83,7 @@ block source/http_server.d 3
 block source/image_plane.d 11
 block source/input_frame_state.d 1
 block source/io/file_dialog.d 1
-block source/io/lwo_import.d 5
-block source/io/scene_import.d 2
-block source/io/scene_ir.d 7
 block source/mesh_gpu.d 4
-block source/mesh_ops/cut.d 2
-block source/mesh_ops/extrude.d 18
-block source/mesh_ops/loop_slice.d 1
-block source/mesh_ops/poly_bevel.d 6
 block source/overlay_space.d 7
 block source/prefs.d 16
 block source/prepared_bridge_activation.d 1

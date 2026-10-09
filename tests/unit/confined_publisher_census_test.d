@@ -217,7 +217,7 @@ package Hit[] scanConfinedSource(string label, string src) {
 
 private Hit[] scanTree() {
     auto hits = appender!(Hit[]);
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         hits.put(scanConfinedSource(de.name[repoRoot.length + 1 .. $],
                                     readText(de.name)));

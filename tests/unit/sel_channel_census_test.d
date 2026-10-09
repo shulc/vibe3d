@@ -171,7 +171,7 @@ private Site[] scanSource(string label, string src) {
 private Site[] scanTree() {
     auto sites = appender!(Site[]);
     size_t scanned = 0;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const string label = de.name[repoRoot.length + 1 .. $];

@@ -321,7 +321,7 @@ private struct ScanResult { RevertSite[] sites; size_t filesScanned; }
 private ScanResult scanTree() {
     auto sites = appender!(RevertSite[]);
     size_t n = 0;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++n;
         sites.put(scanRevertSites(de.name[repoRoot.length + 1 .. $], readText(de.name)));

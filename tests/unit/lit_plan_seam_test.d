@@ -210,7 +210,7 @@ unittest { // raw-text census of the spellings that bypass private: names, getMe
     size_t scanned, litFiles;
     string[] named;          // files outside shader.d naming a plan-uniform location
     string[string] reflect;  // LitShader-mentioning files with a bypass spelling -> counts
-    foreach (scanSourceRoot; [src, buildPath(root, "packages/common/source")])
+    foreach (scanSourceRoot; [src, buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = de.name[src.length + 1 .. $].replace("\\", "/");
         if (rel == "shader.d") continue;

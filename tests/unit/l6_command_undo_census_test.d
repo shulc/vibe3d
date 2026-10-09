@@ -258,7 +258,7 @@ unittest
 
     // (a) the vertex chamfer IS armed, at its single rewrite.
     immutable bv = codeOnly(readText(
-        buildPath(root, "source", "mesh_ops", "bevel_vertex.d")));
+        buildPath(root, "packages/mesh-ops/source", "mesh_ops", "bevel_vertex.d")));
     assert(countOf(bv, "faceReindexScope()") == 1,
         format("mesh_ops/bevel_vertex.d names `faceReindexScope()` %d time(s), "
              ~ "expected exactly 1. Zero means stage L7-d's arming is gone and "

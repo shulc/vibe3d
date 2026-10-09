@@ -189,7 +189,7 @@ D");
     string[][string] pathsByModule;
     string[string] codeByModule;
     size_t filesScanned;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++filesScanned;
         immutable raw = readText(de.name);
@@ -200,7 +200,7 @@ D");
             if (mod !in codeByModule) codeByModule[mod] = code;
         }
     }
-    foreach (de; dirEntries(buildPath(repoRoot, "source", "mesh_ops"),
+    foreach (de; dirEntries(buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops"),
                             "*.d", SpanMode.shallow)) {
         immutable raw = readText(de.name);
         immutable code = blankNonCode(raw);
@@ -221,7 +221,7 @@ D");
                pathsByModule.get("mesh", []).length,
                pathsByModule.get("mesh", [])));
     assert(operationModules.length == 17,
-        format("expected 17 D modules declared under source/mesh_ops/*.d; "
+        format("expected 17 D modules declared under packages/mesh-ops/source/mesh_ops/*.d; "
              ~ "discovered %d", operationModules.length));
     size_t explicitCount;
     foreach (ref op; operationModules) {
@@ -256,7 +256,7 @@ D");
     foreach (hit; meshImports) if (hit.isPublic && hit.target.startsWith("mesh_ops.")) {
         assert(hit.target in operationNames,
             format("mesh publicly imports `%s`, which is not declared by a direct "
-                 ~ "source/mesh_ops/*.d module", hit.target));
+                 ~ "packages/mesh-ops/source/mesh_ops/*.d module", hit.target));
         ++publicOperationEdges;
     }
 
@@ -284,6 +284,6 @@ D");
 
     assert(publicOperationEdges == 0,
         format("mesh declares %d direct public import edge(s) to modules under "
-             ~ "source/mesh_ops/*.d; task 4602 requires exactly 0 after "
+             ~ "packages/mesh-ops/source/mesh_ops/*.d; task 4602 requires exactly 0 after "
              ~ "the bridge family migration", publicOperationEdges));
 }

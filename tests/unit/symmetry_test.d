@@ -199,7 +199,7 @@ unittest {
     // (c) `mirrorElement(` is called (outside its declaration) exactly in the
     // three pointer-gesture files — the set is EQUAL, not "at least".
     string[] callers;
-    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[kRepoRoot.length + 1 .. $];
         const code = codeOf(rel);
@@ -433,7 +433,7 @@ unittest {
         int[string] got;
         string[] needles = ["placeAuthoringBase(", "notePlacementAt(", "notePlacement()",
                             "placeActionCentreOnInstall("];
-        foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source")])
+        foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source")])
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             const rel = de.name[kRepoRoot.length + 1 .. $];
             const code = codeOf(rel);

@@ -15,7 +15,7 @@
 //
 // The tree-scan gate is a SEPARATE concern living in this same file: it
 // proves no hand-rolled `faces = …` / `vertices = …` rewrite can land in
-// `packages/common/source/mesh.d` / `source/mesh_ops/*.d` outside a named, reasoned
+// `packages/common/source/mesh.d` / `packages/mesh-ops/source/mesh_ops/*.d` outside a named, reasoned
 // allowlist. `packages/common/source/mesh_edit_delta.d` is excluded from the scan root
 // entirely (replay path, a distinct role — plan §6 Stage F).
 module tests.unit.mesh_planes_census_test;
@@ -382,7 +382,7 @@ private bool swapArgsNamePlane(string args) {
 ///
 /// DECIDED: NOT SCANNED. An indexed write is not a rewrite; it is the ordinary
 /// spelling of a single in-place correction, and `packages/common/source/mesh.d` +
-/// `source/mesh_ops/*.d` contain 35 of them (22 + 13, counted 2026-08-28).
+/// `packages/mesh-ops/source/mesh_ops/*.d` contain 35 of them (22 + 13, counted 2026-08-28).
 /// A trigger on `faces[<expr>] =` would therefore report 35 findings on code
 /// that is correct today, and nothing textual separates "one in-place fix" from
 /// "a loop that rebuilds the array" — the loop bound is a runtime value. A
@@ -858,9 +858,9 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_ops/*.d is in kAllow
 {
     string[] targets = [buildPath(repoRoot, "packages", "common", "source", "mesh.d")];
-    immutable opsDir = buildPath(repoRoot, "source", "mesh_ops");
+    immutable opsDir = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops");
     assert(exists(opsDir) && isDir(opsDir),
-           "the gate cannot find source/mesh_ops/ at " ~ opsDir);
+           "the gate cannot find packages/mesh-ops/source/mesh_ops/ at " ~ opsDir);
 
     // THE SATELLITES THAT GREW OUT OF `struct Mesh` ARE SCANNED TOO
     // (task 3240). Plan 2910 is moving families out of the struct into
@@ -890,7 +890,7 @@ unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_
     }
     assert(filesScanned >= 10,
            format("only %d file(s) scanned — the walk is not reaching the "
-                ~ "tree it claims to guard (source/mesh_ops/ has 15 files "
+                ~ "tree it claims to guard (packages/mesh-ops/source/mesh_ops/ has 15 files "
                 ~ "as of this writing)", filesScanned));
 
     Violation[] hits;

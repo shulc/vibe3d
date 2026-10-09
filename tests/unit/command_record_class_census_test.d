@@ -613,7 +613,7 @@ package:
     immutable sourceRoot = buildPath(repoRoot, "source");
     assert(exists(sourceRoot),
         "command-record class census: source population root is missing");
-    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         population ~= relativePath(e.name, repoRoot);
     population.sort();

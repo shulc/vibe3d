@@ -20,7 +20,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 /// "file:count" for every source file whose code text contains `needle`.
 private string[] roster(string needle) {
     string[] r;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const n = blankNonCode(readText(e.name)).count(needle);
         if (n) r ~= format("%s:%d", relativePath(e.name, buildPath(repoRoot, "source")), n);

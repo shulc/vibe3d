@@ -51,7 +51,7 @@ unittest // the browser seam key is exactly one identifier, and the alternative 
 
     size_t files, webSites, wasmSites, wasmGuardSites;
     string[] offenders;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
     {
         ++files;

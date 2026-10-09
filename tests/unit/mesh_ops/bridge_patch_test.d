@@ -184,9 +184,9 @@ unittest
         tiny.addVertex(p);
     tiny.addFace([0u, 1u, 2u]);
     assert(tiny.faceNormal(0) == Vec3(0, 1, 0), "tiny fallback");
-    assert(readText("source/mesh_ops/bridge_patch.d")
+    assert(readText("packages/mesh-ops/source/mesh_ops/bridge_patch.d")
             .indexOf("m.faceNormal(owner)") >= 0, "production normal seam census");
-    assert(noSpace(readText("source/mesh_ops/bridge.d"))
+    assert(noSpace(readText("packages/mesh-ops/source/mesh_ops/bridge.d"))
             .indexOf("smoothSourceDirections(ed.mesh,groups,i,chord,adjusted)") >= 0,
             "production Smooth wiring census");
 }
@@ -316,9 +316,9 @@ unittest
     auto directions = curveSourceDirections(m, gs);
     close(directions[0], Vec3d(-.36859759092330935, 0, -.4392768099904061),
             "captured Curve centroid direction");
-    assert(noSpace(readText("source/mesh_ops/bridge.d")).indexOf("curveSourceDirections(ed.mesh,groups)") >= 0,
+    assert(noSpace(readText("packages/mesh-ops/source/mesh_ops/bridge.d")).indexOf("curveSourceDirections(ed.mesh,groups)") >= 0,
             "production Curve direction wiring census");
-    assert(noSpace(readText("source/mesh_ops/bridge.d")).indexOf("i,chord,adjusted):curveDirections;") >= 0,
+    assert(noSpace(readText("packages/mesh-ops/source/mesh_ops/bridge.d")).indexOf("i,chord,adjusted):curveDirections;") >= 0,
             "production Curve centroid consumer wiring census");
 }
 

@@ -927,7 +927,7 @@ unittest { // (4c)
     string[] raw;
     size_t scanned;
     bool sessionScanned;
-    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const name = e.name;
@@ -1061,7 +1061,7 @@ unittest { // (4c)
     // orchestrateParameterChange; the preview gate's link is set at the arm only;
     // the one tool reading the gate in S2b is Mirror's evaluate (S6: 12 sites).
     string[] mps;
-    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         auto code = blankUnittestBodies(blankNonCode(readText(e.name)));
         foreach (site; identSites(code, "scriptedWriteEndsOperation", false))
@@ -1225,7 +1225,7 @@ unittest { // (4e)
     // composing the topology-step client mixin» (task 9429; the pen keeps its own
     // block) — 12, the table's files.
     string[] model;
-    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         if (blankNonCode(readText(e.name)).canFind("mixin TopologyStepClientBody!"))
             model ~= e.name;
@@ -1707,7 +1707,7 @@ unittest { // (4k)
     // the datum, every word occurrence in `source` (form item 12: a rule, not a list)
     string[] datum;
     size_t scanned;
-    foreach (scanSourceRoot; ["source", "packages/common/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source"])
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
@@ -2586,7 +2586,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
                       identSites(esU, "invalidateRedo", false)));
         string[] cuts;
         size_t files;
-        foreach (scanSourceRoot; ["source", "packages/common/source"])
+        foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source"])
         foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++files;
             foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),

@@ -1179,21 +1179,21 @@ private static immutable string[] kArmedSites = [
     // from L7-P3 (task 2330) — so the loss is gone and the rule permits the
     // arm. RE-MEASURED before arming, three operands, EXACT residual both
     // ways: the `bevelVerticesByMask` cell in block 2 is that row.
-    "source/mesh_ops/bevel_vertex.d:bevelVerticesByMask",
-    "source/mesh_ops/cleanup.d:cleanDegenerateFaces",
-    "source/mesh_ops/extrude.d:extrudeFacesByMask",
-    "source/mesh_ops/extrude.d:extrudeVerticesByMask",
-    "source/mesh_ops/extrude.d:smoothShiftFacesByMask",
-    "source/mesh_ops/loop_slice.d:insertEdgeLoopsMulti",
-    "source/mesh_ops/revolve.d:extrudePathStep_",
+    "packages/mesh-ops/source/mesh_ops/bevel_vertex.d:bevelVerticesByMask",
+    "packages/mesh-ops/source/mesh_ops/cleanup.d:cleanDegenerateFaces",
+    "packages/mesh-ops/source/mesh_ops/extrude.d:extrudeFacesByMask",
+    "packages/mesh-ops/source/mesh_ops/extrude.d:extrudeVerticesByMask",
+    "packages/mesh-ops/source/mesh_ops/extrude.d:smoothShiftFacesByMask",
+    "packages/mesh-ops/source/mesh_ops/loop_slice.d:insertEdgeLoopsMulti",
+    "packages/mesh-ops/source/mesh_ops/revolve.d:extrudePathStep_",
 ];
 
 private string[] productionTargets()
 {
     string[] targets = [buildPath(repoRoot, "packages", "common", "source", "mesh.d")];
-    immutable opsDir = buildPath(repoRoot, "source", "mesh_ops");
+    immutable opsDir = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops");
     assert(exists(opsDir) && isDir(opsDir),
-           "the census cannot find source/mesh_ops/ at " ~ opsDir);
+           "the census cannot find packages/mesh-ops/source/mesh_ops/ at " ~ opsDir);
     foreach (entry; dirEntries(opsDir, SpanMode.shallow)) {
         if (!entry.isFile) continue;
         if (entry.name.length < 2 || entry.name[$ - 2 .. $] != ".d") continue;
@@ -1228,7 +1228,7 @@ unittest // the census: exactly these kernels arm FaceReindex, and no others
     }
     assert(scanned >= 12,
         format("only %d file(s) scanned — the walk is not reaching the tree "
-             ~ "it claims to guard (source/mesh_ops/ alone has 15 files as of "
+             ~ "it claims to guard (packages/mesh-ops/source/mesh_ops/ alone has 15 files as of "
              ~ "this writing), so an empty result would mean nothing", scanned));
 
     found.sort();
@@ -1465,7 +1465,7 @@ private string[] productionSourceTree()
     assert(exists(srcDir) && isDir(srcDir),
            "the flag census cannot find source/ at " ~ srcDir);
     string[] targets;
-    foreach (scanSourceRoot; [srcDir, buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [srcDir, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile) continue;
         if (entry.name.length < 2 || entry.name[$ - 2 .. $] != ".d") continue;

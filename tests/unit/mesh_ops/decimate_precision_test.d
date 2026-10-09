@@ -106,7 +106,7 @@ unittest { // source census pins all four call sites and the no-inline boundary
     import std.string : splitLines, strip;
 
     enum repoRoot = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));
-    immutable path = buildPath(repoRoot, "source", "mesh_ops", "decimate.d");
+    immutable path = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "decimate.d");
     immutable src = stripCommentsAndStrings(readText(path));
     immutable body = functionBody(src, "size_t reduceToTarget(");
 
@@ -135,7 +135,7 @@ unittest { // source census pins all four call sites and the no-inline boundary
 
     enum pragmaMessage =
         "pragma(inline, false) не стоит непосредственно над `private float norm3(` в\n"
-      ~ "source/mesh_ops/decimate.d. Эта строка — ЕДИНСТВЕННЫЙ страж: ни одна полоса\n"
+      ~ "packages/mesh-ops/source/mesh_ops/decimate.d. Эта строка — ЕДИНСТВЕННЫЙ страж: ни одна полоса\n"
       ~ "в дереве не собирает dmd с оптимизацией (dub build / dub test / perf-count —\n"
       ~ "без -O; всякая оптимизированная сборка идёт на LDC, .github/workflows/\n"
       ~ "build.yml:347), поэтому её снятие не может покраснеть поведенчески.\n"

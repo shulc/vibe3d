@@ -123,7 +123,7 @@ unittest { // the rule's own controls [E5]: the app.d shape is rejected, a real 
 
 unittest { // the layout census: four files, one stride constant, no other spelling
     string[] files;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = relativePath(de.name, buildPath(root, "source")).replace("\\", "/");
         if (bindsFaceVbo(blankUnittestBodies(blankNonCode(readText(de.name))))) files ~= rel;

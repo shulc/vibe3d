@@ -195,10 +195,12 @@ unittest // K1-K9: whole-tree census
     size_t sourceFiles, testFiles;
     Scan renderer, editorApp;
     size_t rendererSeen, editorAppSeen;
-    foreach (root; ["source", "packages/common/source", "tests"]) {
+    foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source"]) {
+        const production = root == "source" || root == "packages/common/source"
+            || root == "packages/mesh-ops/source" || root == "packages/interchange/source";
         foreach (entry; dirEntries(buildPath(repoRoot, root), "*.d", SpanMode.depth)) {
             const rel = relativePath(entry.name, repoRoot).replace("\\", "/");
-            if (root == "source") ++sourceFiles; else ++testFiles;
+            if (production) ++sourceFiles; else ++testFiles;
             const source = readText(entry.name);
             auto found = scan(source);
             if (found.definesMode) definers ~= rel;
@@ -211,7 +213,7 @@ unittest // K1-K9: whole-tree census
                 editorApp = found;
                 ++editorAppSeen;
             }
-            if (root == "source" && found.moduleName.length) {
+            if (production && found.moduleName.length) {
                 assert(found.moduleName !in productionModules,
                        "duplicate source module " ~ found.moduleName);
                 productionModules[found.moduleName] = found;
@@ -221,7 +223,7 @@ unittest // K1-K9: whole-tree census
             if (found.importsPolicyModule) importers ~= rel;
             if (found.policyNamedInForeignImport) foreign ~= rel;
             if (found.publicImportOfPolicyModule) publicImports ~= rel;
-            if (root == "source" && found.usesResolver)
+            if (production && found.usesResolver)
                 productionResolverUsers ~= rel;
         }
     }

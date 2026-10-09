@@ -199,7 +199,7 @@ private void pinClosure(string seed, const ref Closure closure, size_t baselineC
     foreach (name; actual) if (!baseline.canFind(name)) added ~= name;
     foreach (name; baseline) if (!actual.canFind(name)) removed ~= name;
     assert(added.length == 0 && removed.length == 0,
-        format("%s exact closure delta: added=%s removed=%s", seed, added, removed));
+        format("%s exact closure delta: added=%s removed=%s members=%s", seed, added, removed, actual));
 }
 
 // L1/L1b: the narrow registrar has no broad app vocabulary or mixin surface.
@@ -223,7 +223,7 @@ unittest {
 unittest {
     ModuleImports[string] modules;
     size_t sourceFiles, createSeen;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         auto scanned = scanModule(readText(entry.name));
@@ -269,9 +269,9 @@ unittest {
             assert(false, "6507 create_tool_registration reaches " ~ forbidden
                 ~ ": " ~ reachChain("create_tool_registration", forbidden, create));
     // Task 20261660: Tool reaches the detached model_preview view (+1 each).
-    pinClosure("create_tool_registration", create, 264);
-    pinClosure("registration", positive, 530);
-    assert(create.queue.length == 264 && positive.queue.length == 530,
+    pinClosure("create_tool_registration", create, 263);
+    pinClosure("registration", positive, 531);
+    assert(create.queue.length == 263 && positive.queue.length == 531,
         "6507 reviewed narrow and broad closure populations");
 }
 

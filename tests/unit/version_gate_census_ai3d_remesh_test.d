@@ -94,7 +94,9 @@ private DependencyGraph readDependencyGraph(string path)
         const target = targetField[0 .. targetEnd];
         result.edges[importer] ~= target;
         if (importerField.indexOf(" (source/") >= 0
-                || importerField.indexOf(" (packages/common/source/") >= 0)
+                || importerField.indexOf(" (packages/common/source/") >= 0
+                || importerField.indexOf(" (packages/mesh-ops/source/") >= 0
+                || importerField.indexOf(" (packages/interchange/source/") >= 0)
             result.ours[importer] = true;
         ++result.edgeCount;
     }
@@ -284,7 +286,7 @@ if [ "$config" = web ]; then
     echo "FATAL: --config=web described no -version=web; the gates would be inert" >&2; exit 2 ;;
   esac
 fi
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/common/source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/common/source packages/mesh-ops/source packages/interchange/source -name '*.d' -print)
 SH";
     enum graphConfigurations = ["web", "modeling"];
     const graphPaths = [webDepsPath, nativeDepsPath];

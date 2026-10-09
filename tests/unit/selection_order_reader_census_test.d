@@ -10,7 +10,7 @@
 // first, and this repository keeps exactly two files that are allowed to do
 // that ranking: `packages/common/source/mesh.d`, whose three readers are the law
 // (`selectedFaceIndicesInSelectionOrder`, `selectedVerticesBySelectionOrder`,
-// `lastSelectedInSelectionOrder`), and `source/mesh_ops/select_loop.d`, which
+// `lastSelectedInSelectionOrder`), and `packages/mesh-ops/source/mesh_ops/select_loop.d`, which
 // holds the recorded verbatim twin of the first. Everywhere else the plane may
 // be COPIED, ZEROED or SERIALISED — but not consulted to decide anything.
 //
@@ -84,7 +84,7 @@ private immutable string[] kPlanes = [
 /// neither actually spells an indexed read today.
 private immutable string[] kDeclaredHomes = [
     "packages/common/source/mesh.d",
-    "source/mesh_ops/select_loop.d",
+    "packages/mesh-ops/source/mesh_ops/select_loop.d",
 ];
 
 /// Gate 1's subject: the family that held the nine copies.
@@ -254,7 +254,7 @@ private Scan scanSource() {
     const root = buildPath(repoRoot, "source");
     assert(exists(root), "census: source/ not found under " ~ repoRoot);
     string[] paths;
-    foreach (scanSourceRoot; [root, buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [root, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) paths ~= e.name;
     paths.sort();
     foreach (name; paths) {
