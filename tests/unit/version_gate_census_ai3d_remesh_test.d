@@ -556,6 +556,16 @@ set -euo pipefail
 cd "$1"
 out=$(mktemp -d "/var/tmp/w16-a-web-probe.XXXXXX")
 trap 'rm -rf "$out"' EXIT
+# Describe lists ordinary STATIC archives but does not build them. Prepare
+# their declared web configurations before linking this host transport probe.
+for package in common mesh-ops interchange interaction-query pipe-evaluation \
+               tool-state transform-ops creation-ops alignment-ops input-events \
+               display-policy viewport-gpu subpatch-preview; do
+  case "$package" in viewport-gpu|subpatch-preview)
+    [ -f "packages/$package/dub.json" ] || continue ;;
+  esac
+  dub build --root="packages/$package" --config=web --compiler=dmd
+done
 for data in import-paths versions linker-files libs lflags source-files dflags \
             string-import-paths; do
   dub describe --config=web --data="$data" --data-list > "$out/$data.txt"
