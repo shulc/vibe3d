@@ -1,0 +1,272 @@
+{
+  "name": "vibe3d-subpatch-preview-tests",
+  "targetType": "executable",
+  "sourcePaths": [
+    "../source"
+  ],
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "dependencies": {
+    "vibe3d-common": {
+      "path": "../../common"
+    },
+    "vibe3d-display-policy": {
+      "path": "../../display-policy"
+    },
+    "vibe3d-viewport-gpu": {
+      "path": "../../viewport-gpu"
+    },
+    "d-opensubdiv": {
+      "version": "e74bb683d869d31ddcb279b2f05bfaebd53065ee",
+      "repository": "git+https://github.com/shulc/D-OpenSubdiv.git"
+    },
+    "bindbc-opengl": "~>1.1.1"
+  },
+  "versions": [
+    "GL_33"
+  ],
+  "importPaths": [
+    "source",
+    "../source"
+  ],
+  "configurations": [
+    {
+      "name": "algorithm"
+    }
+  ],
+  "sourceFiles": [
+    "source/tests/unit/subpatch_key_fold_test.d",
+    "source/tests/unit/subpatch_level_policy_test.d",
+    "source/tests/unit/subpatch_osd_test.d",
+    "source/tests/unit/subpatch_preview_population_test.d",
+    "../../common/source/active_mesh_resolver.d",
+    "../../common/source/app_version.d",
+    "../../common/source/argstring.d",
+    "../../common/source/change_bus.d",
+    "../../common/source/command.d",
+    "../../common/source/command_args.d",
+    "../../common/source/command_executor.d",
+    "../../common/source/command_history.d",
+    "../../common/source/command_invocation.d",
+    "../../common/source/command_registry.d",
+    "../../common/source/command_tool_policy.d",
+    "../../common/source/commands/history/redo.d",
+    "../../common/source/commands/history/undo.d",
+    "../../common/source/commands/mesh/gesture_payload.d",
+    "../../common/source/commands/mesh/mesh_edit_payload.d",
+    "../../common/source/commands/mesh/select.d",
+    "../../common/source/commands/mesh/selection_undo.d",
+    "../../common/source/commands/mesh/session_edit.d",
+    "../../common/source/commands/mesh/triple.d",
+    "../../common/source/commands/mesh/vertex_edit.d",
+    "../../common/source/commands/select/drop.d",
+    "../../common/source/commands/select/element.d",
+    "../../common/source/commands/select/invert.d",
+    "../../common/source/document.d",
+    "../../common/source/document_selection.d",
+    "../../common/source/edit_target_contract.d",
+    "../../common/source/editmode.d",
+    "../../common/source/falloff.d",
+    "../../common/source/history_lifecycle_contract.d",
+    "../../common/source/http_json.d",
+    "../../common/source/image_data.d",
+    "../../common/source/io/file_model.d",
+    "../../common/source/io/image_decode.d",
+    "../../common/source/io/image_path.d",
+    "../../common/source/io/native.d",
+    "../../common/source/item_kinds.d",
+    "../../common/source/item_xform.d",
+    "../../common/source/json_num.d",
+    "../../common/source/layer_params.d",
+    "../../common/source/log.d",
+    "../../common/source/math.d",
+    "../../common/source/mesh.d",
+    "../../common/source/mesh_bbox.d",
+    "../../common/source/mesh_corner_maps.d",
+    "../../common/source/mesh_dirty.d",
+    "../../common/source/mesh_edge_slice.d",
+    "../../common/source/mesh_edit_delta.d",
+    "../../common/source/mesh_morph.d",
+    "../../common/source/mesh_planes.d",
+    "../../common/source/mesh_selsets.d",
+    "../../common/source/mesh_topo.d",
+    "../../common/source/mesh_visibility.d",
+    "../../common/source/morph_target.d",
+    "../../common/source/operator.d",
+    "../../common/source/params.d",
+    "../../common/source/perf_probe.d",
+    "../../common/source/pilot_command_registration.d",
+    "../../common/source/plane_bytes.d",
+    "../../common/source/prepared_tool_effect.d",
+    "../../common/source/record_observer_hub.d",
+    "../../common/source/screen_buckets.d",
+    "../../common/source/seltype.d",
+    "../../common/source/session_owner.d",
+    "../../common/source/snapshot.d",
+    "../../common/source/standalone_application.d",
+    "../../common/source/symmetry_plane.d",
+    "../../common/source/tool_activation_ownership.d",
+    "../../common/source/tool_policy_values.d",
+    "../../common/source/toolpipe/packets.d",
+    "../../common/source/toolpipe/pipeline.d",
+    "../../common/source/toolpipe/stage.d",
+    "../../common/source/toolpipe/subject.d",
+    "../../common/source/trackball.d",
+    "../../common/source/tsan_annotate.d",
+    "../../common/source/view.d",
+    "../../common/source/workplane_basis.d",
+    "../../display-policy/source/camera_stamp.d",
+    "../../display-policy/source/display_state.d",
+    "../../display-policy/source/viewport_scheme.d",
+    "../../display-policy/source/viewport_overlay_mode.d",
+    "../../display-policy/source/viewport_probe_sampling.d",
+    "../../display-policy/source/weightmap_view.d",
+    "../../display-policy/source/light_rig.d",
+    "../../display-policy/source/vertex_normals.d",
+    "../../viewport-gpu/source/gl_thread_guard.d",
+    "../../viewport-gpu/source/gpu_pass_timer.d",
+    "../../viewport-gpu/source/mesh_gpu.d",
+    "../../viewport-gpu/source/shader.d",
+    "../../viewport-gpu/source/viewport_env.d",
+    "../../viewport-gpu/source/gpu_select.d"
+  ],
+  "subConfigurations": {
+    "vibe3d-common": "isolated-tests",
+    "vibe3d-display-policy": "isolated-tests",
+    "vibe3d-viewport-gpu": "isolated-tests"
+  }
+}

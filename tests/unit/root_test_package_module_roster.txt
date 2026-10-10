@@ -107,6 +107,11 @@ snap
 snap_election
 snapshot
 standalone_application
+subpatch_factories
+subpatch_osd
+subpatch_preview
+subpatch_worker
+subpatch_worker_web
 surface_pick
 symmetry
 symmetry_plane

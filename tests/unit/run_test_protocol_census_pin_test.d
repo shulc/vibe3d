@@ -102,14 +102,14 @@ import census_contracts
 failures = census_contracts.production_lexer_census(root)
 if failures:
     raise SystemExit("prepared-protocol production lexer census: " + "; ".join(failures))
-owners = {"source": 441, "packages/common/source": 76,
+owners = {"source": 436, "packages/common/source": 76,
           "packages/mesh-ops/source": 17, "packages/interchange/source": 8,
-          "packages/interaction-query/source": 10, "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1, "packages/input-events/source": 6, "packages/display-policy/source": 8, "packages/viewport-gpu/source": 6}
+          "packages/interaction-query/source": 10, "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1, "packages/input-events/source": 6, "packages/display-policy/source": 8, "packages/viewport-gpu/source": 6, "packages/subpatch-preview/source": 5}
 # Wave6 composition conserves production ownership; test each owner at its
 # exact boundary with a floor-sized synthetic owner before omitting one file.
-floors = {"source": 441, "packages/common/source": 76,
+floors = {"source": 436, "packages/common/source": 76,
           "packages/mesh-ops/source": 17, "packages/interchange/source": 8,
-          "packages/interaction-query/source": 10, "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1, "packages/input-events/source": 6, "packages/display-policy/source": 8, "packages/viewport-gpu/source": 6}
+          "packages/interaction-query/source": 10, "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1, "packages/input-events/source": 6, "packages/display-policy/source": 8, "packages/viewport-gpu/source": 6, "packages/subpatch-preview/source": 5}
 for owner, population in owners.items():
     floor = floors[owner]
     with tempfile.TemporaryDirectory(prefix="protocol-owner-") as scratch:

@@ -49,14 +49,14 @@ unittest
     string[] subjectTexts;
     foreach (subject; subjects)
     {
-        const path = buildPath(repoRoot, "source", subject ~ ".d");
+        const path = buildPath(repoRoot, "packages/subpatch-preview/source", subject ~ ".d");
         if (exists(path)) subjectTexts ~= readText(path);
     }
 
     const nativeRaw = readText(
-        buildPath(repoRoot, "source", "subpatch_worker.d"));
+        buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_worker.d"));
     const previewRaw = readText(
-        buildPath(repoRoot, "source", "subpatch_preview.d"));
+        buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_preview.d"));
     const providersRaw = readText(
         buildPath(repoRoot, "source", "http_providers.d"));
     const appRaw = readText(buildPath(repoRoot, "source", "app.d"));

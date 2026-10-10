@@ -11,7 +11,7 @@ unittest {
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     enum owners = ["common", "mesh-ops", "interchange", "interaction-query",
                    "pipe-evaluation", "tool-state", "transform-ops",
-                   "creation-ops", "alignment-ops", "input-events", "display-policy", "viewport-gpu"];
+                   "creation-ops", "alignment-ops", "input-events", "display-policy", "viewport-gpu", "subpatch-preview"];
     JSONValue config(JSONValue raw, string name) {
         foreach (candidate; raw["configurations"].array)
             if (candidate["name"].str == name) return candidate;
@@ -32,8 +32,8 @@ unittest {
     foreach (owner; owners)
         assert(selected.canFind("vibe3d-" ~ owner),
                "root test ownership named selector " ~ owner);
-    assert(selected.length == 12 && selected == expected,
-           "root test ownership frozen twelve selectors");
+    assert(selected.length == 13 && selected == expected,
+           "root test ownership frozen thirteen selectors");
     foreach (owner; owners) {
         const packageName = "vibe3d-" ~ owner;
         const packagePath = "packages/" ~ owner;

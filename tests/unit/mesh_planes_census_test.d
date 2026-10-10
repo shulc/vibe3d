@@ -872,7 +872,7 @@ unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_
     // `mesh_visibility.d` (step 2) carries zero hits today and is listed so
     // the rule is the list, not the hits.
     foreach (sat; ["packages/common/source/mesh_visibility.d",
-            "packages/common/source/mesh_edge_slice.d", "source/subpatch_factories.d"]) {
+            "packages/common/source/mesh_edge_slice.d", "packages/subpatch-preview/source/subpatch_factories.d"]) {
         immutable satPath = buildPath(repoRoot, sat);
         assert(exists(satPath),
                "the gate cannot find the struct-Mesh satellite " ~ satPath

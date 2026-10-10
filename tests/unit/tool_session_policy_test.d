@@ -940,8 +940,6 @@ unittest { // (4c)
     size_t scanned;
     bool sessionScanned;
     foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != "packages/subpatch-preview/source"))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const name = e.name;
@@ -1076,8 +1074,6 @@ unittest { // (4c)
     // the one tool reading the gate in S2b is Mirror's evaluate (S6: 12 sites).
     string[] mps;
     foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != "packages/subpatch-preview/source"))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         auto code = blankUnittestBodies(blankNonCode(readText(e.name)));
         foreach (site; identSites(code, "scriptedWriteEndsOperation", false))
@@ -1243,8 +1239,6 @@ unittest { // (4e)
     // block) — 12, the table's files.
     string[] model;
     foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != "packages/subpatch-preview/source"))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         if (blankNonCode(readText(e.name)).canFind("mixin TopologyStepClientBody!"))
             model ~= e.name;
@@ -1727,8 +1721,6 @@ unittest { // (4k)
     string[] datum;
     size_t scanned;
     foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != "packages/subpatch-preview/source"))
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
@@ -2608,8 +2600,6 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         string[] cuts;
         size_t files;
         foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
-        if (exists(scanSourceRoot)
-            || (scanSourceRoot != "packages/subpatch-preview/source"))
         foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++files;
             foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),

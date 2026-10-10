@@ -25,8 +25,7 @@ private string codeText(string src) { return blankUnittestBodies(blankNonCode(sr
 private string[string] sourceCode() {
     string[string] out_;
     foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
+
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         out_[relativePath(e.name, buildPath(root, "source"))] = codeText(readText(e.name));
     return out_;
@@ -112,7 +111,7 @@ unittest { // (a) the global angle constant is gone; (b) so is the one-cosine pl
     assert(hitsA.length == 0, format("kSmoothingAngleDeg is back in %s — the angle is per surface", hitsA));
     assert(hitsB.length == 0, format("the one-cosine plumbing is back: %s", hitsB));
     // The GLSL side, from the raw template.
-    immutable fan = glslRegion(readText(buildPath(root, "source", "subpatch_osd.d")),
+    immutable fan = glslRegion(readText(buildPath(root, "packages/subpatch-preview/source", "subpatch_osd.d")),
                                "private enum string FAN_OUT_VERT_SRC");
     assert(fan.length > 500, "census: the fan-out template region is empty");   // floor
     assert(identCount(fan, "u_cosSmooth") == 0, "the fan-out template still reads u_cosSmooth");
@@ -126,16 +125,16 @@ unittest { // (c) ONE policy builder, referenced only by the three producers' ho
         immutable n = identCount(c, "buildSmoothPolicy");
         if (n) refs[f] = n;
     }
-    foreach (f; ["../packages/display-policy/source/vertex_normals.d", "../packages/viewport-gpu/source/mesh_gpu.d", "subpatch_osd.d"])
+    foreach (f; ["../packages/display-policy/source/vertex_normals.d", "../packages/viewport-gpu/source/mesh_gpu.d", "../packages/subpatch-preview/source/subpatch_osd.d"])
         assert(f in refs, "census floor: " ~ f ~ " no longer references buildSmoothPolicy");
     string[] outside;
     foreach (f, n; refs)
-        if (!["../packages/display-policy/source/vertex_normals.d", "../packages/viewport-gpu/source/mesh_gpu.d", "subpatch_osd.d"].canFind(f)) outside ~= f;
+        if (!["../packages/display-policy/source/vertex_normals.d", "../packages/viewport-gpu/source/mesh_gpu.d", "../packages/subpatch-preview/source/subpatch_osd.d"].canFind(f)) outside ~= f;
     assert(outside.length == 0,
         format("buildSmoothPolicy is referenced in %s — a producer that derives the policy itself", outside));
     // Inside the two producer modules the reference sits in the named function
     // (the one other reference is the module's import).
-    immutable gpu = code["../packages/viewport-gpu/source/mesh_gpu.d"], osd = code["subpatch_osd.d"];
+    immutable gpu = code["../packages/viewport-gpu/source/mesh_gpu.d"], osd = code["../packages/subpatch-preview/source/subpatch_osd.d"];
     immutable gIn = identCount(bodyAt(gpu, "private void rebuildFaceAdjacency("), "buildSmoothPolicy");
     immutable oIn = identCount(bodyAt(osd, "void installGl("), "buildSmoothPolicy");
     // The fan-out's second home: its material half, re-run on a Material commit
@@ -143,7 +142,7 @@ unittest { // (c) ONE policy builder, referenced only by the three producers' ho
     immutable oRe = identCount(bodyAt(osd, "bool refreshSmoothPolicy("), "buildSmoothPolicy");
     assert(gIn >= 1 && refs["../packages/viewport-gpu/source/mesh_gpu.d"] == gIn + 1,
         "census: mesh_gpu.d builds the policy outside rebuildFaceAdjacency");
-    assert(oIn >= 1 && oRe >= 1 && refs["subpatch_osd.d"] == oIn + oRe + 1,
+    assert(oIn >= 1 && oRe >= 1 && refs["../packages/subpatch-preview/source/subpatch_osd.d"] == oIn + oRe + 1,
         "census: subpatch_osd.d builds the policy outside installGl / refreshSmoothPolicy");
 }
 
@@ -158,7 +157,7 @@ unittest { // (d) the lower-slot pair rule in BOTH producers, keyed on identifie
     assert(identCount("p.slotCos[max(sf, sg)]", "max") == 1, "control: the `max` offender is not reported");
     immutable vn  = codeText(readText(buildPath(root, "packages/display-policy/source", "vertex_normals.d")));
     immutable cpu = bodyAt(vn, "private Vec3 smoothCorner(");
-    immutable fan = glslRegion(readText(buildPath(root, "source", "subpatch_osd.d")),
+    immutable fan = glslRegion(readText(buildPath(root, "packages/subpatch-preview/source", "subpatch_osd.d")),
                                "private enum string FAN_OUT_VERT_SRC");
     assert(cpu.length > 200 && fan.length > 500, "census floor: a rule region is empty");   // floor
     // One needle per producer: N = 2 surfaces, 2 reds under the "higher slot" mutation [E14].
@@ -174,7 +173,7 @@ unittest { // (d) the lower-slot pair rule in BOTH producers, keyed on identifie
 
 unittest { // (e) the fan-out's unit-6 binding is restored and its TBO deleted
     // No pixel can witness a leaked binding or a leaked handle: this census IS the witness.
-    immutable osd = codeText(readText(buildPath(root, "source", "subpatch_osd.d")));
+    immutable osd = codeText(readText(buildPath(root, "packages/subpatch-preview/source", "subpatch_osd.d")));
     immutable refresh = bodyAt(osd, "bool refreshIntoFaceVbo(");
     immutable clear   = bodyAt(osd, "void clear()");
     assert(refresh.length > 1000 && clear.length > 300, "census floor: a GL body vanished");

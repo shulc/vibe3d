@@ -28,7 +28,7 @@ unittest {
 
     // This legal native carrier is deliberately outside the subject set. If
     // it loses the token, move all four thread-census positive controls.
-    const carrier = readText(buildPath(repoRoot, "source", "subpatch_worker.d"));
+    const carrier = readText(buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_worker.d"));
     immutable rawHits = count(carrier, "core.thread");
     assert(rawHits > 0,
            "W15-B positive control lost core.thread in source/subpatch_worker.d; " ~

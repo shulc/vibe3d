@@ -146,7 +146,7 @@ unittest { // GLSL slot sites all come from kSurfaceSlots: floor → needle → 
     assert(tokenCount(cut, "64") == 1 && matIdCompares(cut) == 1,
         "control: the needles miss the pre-S1e literal slot line");
     immutable shaderSrc = readText(buildPath(root, "packages/viewport-gpu/source", "shader.d"));
-    immutable osdSrc    = readText(buildPath(root, "source", "subpatch_osd.d"));
+    immutable osdSrc    = readText(buildPath(root, "packages/subpatch-preview/source", "subpatch_osd.d"));
     // The lit program's text is three regions: the shared Materials block
     // (array sizes + the slot helper, S1d) and the two stages.
     immutable lit = glslRegion(shaderSrc, "private enum string materialsBlockGlsl")

@@ -44,7 +44,7 @@ unittest
 {
     enum subjects = ["source/http_server.d"];
     enum transportPath = "source/http_transport.d";
-    enum foreignCarrierPath = "source/subpatch_worker.d";
+    enum foreignCarrierPath = "packages/subpatch-preview/source/subpatch_worker.d";
 
     const routerRaw = readText(buildPath(repoRoot, subjects[0]));
     const transportRaw = readText(buildPath(repoRoot, transportPath));

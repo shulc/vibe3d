@@ -427,8 +427,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
 
     string[] callers;
     foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (e.name == meshPath) continue;
         immutable src = readCode(e.name);
@@ -1850,8 +1849,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
         string[] qualified;
         size_t scanned2 = 0;
         foreach (scanSourceRoot; [srcRoot2, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-        if (exists(scanSourceRoot)
-            || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned2;
             immutable src2 = readCode(e.name);
@@ -2192,8 +2190,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
         string[] qualifiedF2;
         size_t scannedF2 = 0;
         foreach (scanSourceRoot; [srcRootF2, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-        if (exists(scanSourceRoot)
-            || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scannedF2;
             immutable srcF2 = readCode(e.name);
@@ -2613,8 +2610,7 @@ unittest // Stage G — the manifold edge bevel family
         size_t scanned = 0;
         string[] offenders;
         foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-        if (exists(scanSourceRoot)
-            || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned;
             immutable t = readCode(de.name);
@@ -2875,8 +2871,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
         size_t scanned = 0;
         string[][string] offenders;
         foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-        if (exists(scanSourceRoot)
-            || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned;
             immutable t = readCode(de.name);
@@ -3259,8 +3254,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         import std.string : replace;
 
         foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-        if (exists(scanSourceRoot)
-            || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
 
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
@@ -3392,8 +3386,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
 
         immutable srcRoot = buildPath(repoRoot, "source");
         foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-        if (exists(scanSourceRoot)
-            || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
             ++filesScanned;
@@ -3996,8 +3989,7 @@ unittest // L0-b — the recorder pins, one per command
     LedgerHit[] hits;
     size_t filesRead;
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = e.name[repoRoot.length + 1 .. $];
         const src = readCode(e.name);
@@ -4038,8 +4030,7 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
     size_t scanned = 0;
     string[] sites;
     foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         immutable src = readCode(e.name);
@@ -4207,7 +4198,7 @@ unittest // task 2310 — packages/common/source/mesh.d, the zone the write cens
              ~ "`setVertexPositions` and this number must not move.",
                raw, firstHit));
 
-    const factorySrc = readCode(buildPath(repoRoot, "source", "subpatch_factories.d"));
+    const factorySrc = readCode(buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_factories.d"));
     string factoryFirstHit;
     const factoryRaw = countRawPositionWrites(factorySrc, factoryFirstHit);
     assert(factoryRaw == 1,

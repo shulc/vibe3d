@@ -54,8 +54,7 @@ unittest // every production array-plus-seed hash stays in the reviewed stencil 
     auto hits = appender!(Hit[]);
     size_t sourceFiles;
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         const relative = entry.name[repoRoot.length + 1 .. $];
@@ -70,7 +69,7 @@ unittest // every production array-plus-seed hash stays in the reviewed stencil 
         format("seeded-hash census found %d sites, expected exactly 8: %s",
                found.length, found));
     foreach (hit; found)
-        assert(hit.file == "source/subpatch_preview.d"
+        assert(hit.file == "packages/subpatch-preview/source/subpatch_preview.d"
             && hit.symbol == "SubpatchPreview.computeStencilKey",
             format("unreviewed seeded hash at %s:%d in `%s`",
                    hit.file, hit.line, hit.symbol));

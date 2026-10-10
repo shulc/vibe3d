@@ -351,8 +351,6 @@ unittest { // u7: the ONE clear is the script scene.reset automation tail
     import std.file : SpanMode, dirEntries;
     size_t clears, files;
     foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != "packages/subpatch-preview/source"))
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
         clears += blankNonCode(readText(f.name)).count("toolAttrCache.clear(");

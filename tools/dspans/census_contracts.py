@@ -24,7 +24,7 @@ import dspans_client
 # string (GLSL sources) lexes as "Invalid identifier" -- dmd accepts the file.
 # The token-string span itself is right, so the census's answers for this file
 # are unaffected; any OTHER file, or a different count here, is a refusal.
-KNOWN_LEX_ERRORS = {"source/subpatch_osd.d": 4}
+KNOWN_LEX_ERRORS = {"packages/subpatch-preview/source/subpatch_osd.d": 4}
 
 # Population floor for cells(), measured; enforce() refuses any other count, so
 # a deleted cell reddens the census itself (review round 3, M1).
@@ -35,16 +35,16 @@ CONTRACT_CELLS = 21
 # ownership moves, the independent 2026-10-09 inventory is 492/75/17/8. The Wave5 prerequisite adds workplane_basis,
 # independently inventoried as common76 (task 20262020, same date).
 # Final Wave5 tracked membership: desktop472/common76/mesh17/interchange8/query10/evaluation12.
-# Wave6 construction, 2026-10-10: desktop441 plus twelve libraries154 =595.
+# Wave6 construction, 2026-10-10: desktop436 plus thirteen libraries159 =595.
 PRODUCTION_ROOTS = ("source", "packages/common/source", "packages/mesh-ops/source",
                     "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source")
 PRODUCTION_OWNER_FLOORS = {
-    "source": 441,
+    "source": 436,
     "packages/common/source": 76,
     "packages/mesh-ops/source": 17,
     "packages/interchange/source": 8,
     "packages/interaction-query/source": 10,
-    "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1, "packages/input-events/source": 6, "packages/display-policy/source": 8, "packages/viewport-gpu/source": 6
+    "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1, "packages/input-events/source": 6, "packages/display-policy/source": 8, "packages/viewport-gpu/source": 6, "packages/subpatch-preview/source": 5
 }
 
 

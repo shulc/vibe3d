@@ -115,7 +115,7 @@ unittest // publication, dirty key, writers, and reuse close the state census
     const app = blankNonCode(readText(
         buildPath(repoRoot, "source", "app.d")));
     const preview = blankNonCode(readText(
-        buildPath(repoRoot, "source", "subpatch_preview.d")));
+        buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_preview.d")));
     const mainBody = bodyAt(app, "void main(string[] args)");
 
     assert(mainBody.count(

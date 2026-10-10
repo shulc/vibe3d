@@ -339,8 +339,7 @@ unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
     // and the pen preview; light_rig.d declares the constants and is excluded.
     string[] files;
     foreach (scanSourceRoot; [src, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = relativePath(de.name, src).replace("\\", "/");
         if (rel == "../packages/display-policy/source/light_rig.d") continue;
@@ -422,8 +421,7 @@ unittest { // 5a. the fence: rig locations are private, and nobody spells around
     size_t scanned;
     string[] named;
     foreach (scanSourceRoot; [src, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = relativePath(de.name, src).replace("\\", "/");
         if (rel == "../packages/viewport-gpu/source/shader.d") continue;

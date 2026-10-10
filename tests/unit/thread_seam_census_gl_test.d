@@ -91,7 +91,7 @@ cd "$1"
 flags=$(dub describe --config=tests \
     --data=import-paths,string-import-paths,versions,debug-versions \
     2>"$2") || { cat "$2"; exit 1; }
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c -version=web $(find source packages/common/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c -version=web $(find source packages/common/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source -name '*.d' -print)
 SH";
     const run = execute(["bash", "-c", compileWebGraph, "w15-a-web-deps",
                          repoRoot, describeErrorPath, depsPath],
@@ -136,8 +136,7 @@ SH";
     size_t markMainThreadUses;
     size_t guardedCalls;
     foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
     {
         ++filesScanned;
@@ -169,7 +168,7 @@ SH";
                subjects.length, subjects));
 
     const carrier = blankNonCode(readText(
-        buildPath(sourceRoot, "subpatch_worker.d")));
+        buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_worker.d")));
     assert(identifierCount(carrier, "core.thread") == 1,
         "W15-A positive control moved: source/subpatch_worker.d must carry core.thread once");
     assert(identifierCount(blankUnittestBodies(carrier), "core.thread") == 1,

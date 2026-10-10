@@ -150,7 +150,7 @@ unittest
 // and compilation fails.
 unittest
 {
-    const osd = readText(buildPath(repoRoot, "source", "subpatch_osd.d"));
+    const osd = readText(buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_osd.d"));
     const app = readText(buildPath(repoRoot, "source", "app.d"));
 
     enum webGate = "version (web) enum bool g_osdGpuEnabled = false;\n"

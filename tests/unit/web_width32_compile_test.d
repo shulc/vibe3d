@@ -73,7 +73,7 @@ case " $flags " in *" -version=web "*) ;; *)
 esac
 mapfile -t files < <(dub describe --config=web --data=source-files --data-list \
     2>>"$2" | sed '/^$/d' | grep '\.d$')
-for package in common mesh-ops interchange interaction-query pipe-evaluation; do
+for package in common mesh-ops interchange interaction-query pipe-evaluation tool-state transform-ops creation-ops alignment-ops input-events display-policy viewport-gpu subpatch-preview; do
     mapfile -t package_files < <(dub describe --root="packages/$package" --config=web \
         --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
     files+=("${package_files[@]}")
