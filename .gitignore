@@ -177,3 +177,7 @@ tools/cli/.boundary/
 /packages/input-events/libvibe3d-input-events.a
 /packages/input-events/vibe3d-input-events.lib
 /packages/input-events/tests/vibe3d-input-events-tests-test-*
+
+/packages/display-policy/libvibe3d-display-policy.a
+/packages/display-policy/vibe3d-display-policy.lib
+/packages/display-policy/tests/vibe3d-display-policy-tests-test-*
