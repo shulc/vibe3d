@@ -1,7 +1,8 @@
 module item_xform;
 
 import math : Vec3, identityMatrix, translationMatrix, matrixFromEulerZYX,
-              pivotScaleMatrix, matMul4, ModelSpace;
+              pivotScaleMatrix, matMul4;
+import spatial : ModelSpace;
 
 // ---------------------------------------------------------------------------
 // THE ITEM TRANSFORM (task 0721, audit №4 item D10 — the `xform` stratum).

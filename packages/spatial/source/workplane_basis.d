@@ -1,6 +1,7 @@
 module workplane_basis;
 
-import math : Vec3, Viewport, dot;
+import math : Vec3, dot;
+import spatial : Viewport;
 import std.math : abs;
 
 /// The construction plane selected at tool activation: the world axis plane
