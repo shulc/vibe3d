@@ -339,7 +339,11 @@ unittest {
     size_t filesScanned;
     string[] found;
     foreach (scanSourceRoot; [dir, buildPath(guardRepoRoot, "packages/common/source"), buildPath(guardRepoRoot, "packages/mesh-ops/source"), buildPath(guardRepoRoot, "packages/interchange/source"), buildPath(guardRepoRoot, "packages/interaction-query/source"), buildPath(guardRepoRoot, "packages/pipe-evaluation/source"), buildPath(guardRepoRoot, "packages/tool-state/source"), buildPath(guardRepoRoot, "packages/transform-ops/source"), buildPath(guardRepoRoot, "packages/creation-ops/source"), buildPath(guardRepoRoot, "packages/alignment-ops/source"), buildPath(guardRepoRoot, "packages/input-events/source"), buildPath(guardRepoRoot, "packages/display-policy/source"), buildPath(guardRepoRoot, "packages/viewport-gpu/source"), buildPath(guardRepoRoot, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot))
+    if (exists(scanSourceRoot)
+        || (scanSourceRoot != buildPath(guardRepoRoot, "packages/input-events/source")
+            && scanSourceRoot != buildPath(guardRepoRoot, "packages/display-policy/source")
+            && scanSourceRoot != buildPath(guardRepoRoot, "packages/viewport-gpu/source")
+            && scanSourceRoot != buildPath(guardRepoRoot, "packages/subpatch-preview/source")))
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile || entry.name.length < 2
             || entry.name[$ - 2 .. $] != ".d") continue;

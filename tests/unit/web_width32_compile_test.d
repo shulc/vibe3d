@@ -100,7 +100,11 @@ SH";
     const ownerPrefix0 = buildPath(repoRoot, "packages/tool-state/source") ~ "/";
     const ownerPrefix1 = buildPath(repoRoot, "packages/transform-ops/source") ~ "/";
     const ownerPrefix2 = buildPath(repoRoot, "packages/creation-ops/source") ~ "/";
-    const ownerPrefix3 = buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source") ~ "/";
+    const ownerPrefix3 = buildPath(repoRoot, "packages/alignment-ops/source") ~ "/";
+    const ownerPrefix4 = buildPath(repoRoot, "packages/input-events/source") ~ "/";
+    const ownerPrefix5 = buildPath(repoRoot, "packages/display-policy/source") ~ "/";
+    const ownerPrefix6 = buildPath(repoRoot, "packages/viewport-gpu/source") ~ "/";
+    const ownerPrefix7 = buildPath(repoRoot, "packages/subpatch-preview/source") ~ "/";
 
     foreach (line; readText(depsPath).splitLines)
     {
@@ -115,7 +119,7 @@ SH";
         if (!parseDepNode(tail[cast(size_t)secondRel + 3 .. $], imported)) continue;
         importsByModule[importer.moduleName] ~= imported.moduleName;
         foreach (node; [importer, imported])
-            if (node.path.startsWith(sourcePrefix, commonPrefix, meshPrefix, interchangePrefix, queryPrefix, evaluationPrefix, ownerPrefix0, ownerPrefix1, ownerPrefix2, ownerPrefix3) && node.path.endsWith(".d"))
+            if (node.path.startsWith(sourcePrefix, commonPrefix, meshPrefix, interchangePrefix, queryPrefix, evaluationPrefix, ownerPrefix0, ownerPrefix1, ownerPrefix2, ownerPrefix3, ownerPrefix4, ownerPrefix5, ownerPrefix6, ownerPrefix7) && node.path.endsWith(".d"))
                 sourcePathByModule[node.moduleName] = node.path;
     }
     bool[string] reached;

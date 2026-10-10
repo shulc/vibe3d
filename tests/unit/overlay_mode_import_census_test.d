@@ -3,6 +3,8 @@
 // viewport renderer cannot reach editor_app even through a transitive import.
 module tests.unit.overlay_mode_import_census_test;
 
+import std.file : exists;
+
 import std.algorithm : canFind, sort;
 import std.array     : join, replace;
 import std.file      : dirEntries, readText, SpanMode;
@@ -196,9 +198,19 @@ unittest // K1-K9: whole-tree census
     Scan renderer, editorApp;
     size_t rendererSeen, editorAppSeen;
     foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"]) {
+        if (!exists(buildPath(repoRoot, root))
+            && (root == "packages/input-events/source"
+                || root == "packages/display-policy/source"
+                || root == "packages/viewport-gpu/source"
+                || root == "packages/subpatch-preview/source"
+                || root == "packages/input-events/tests/source"
+                || root == "packages/display-policy/tests/source"
+                || root == "packages/viewport-gpu/tests/source"
+                || root == "packages/subpatch-preview/tests/source")) continue;
         const production = root == "source" || root == "packages/common/source"
             || root == "packages/mesh-ops/source" || root == "packages/interchange/source"
-            || root == "packages/interaction-query/source" || root == "packages/pipe-evaluation/source" || root == "packages/tool-state/source" || root == "packages/transform-ops/source" || root == "packages/creation-ops/source" || root == "packages/alignment-ops/source";
+            || root == "packages/interaction-query/source" || root == "packages/pipe-evaluation/source" || root == "packages/tool-state/source" || root == "packages/transform-ops/source" || root == "packages/creation-ops/source" || root == "packages/alignment-ops/source"
+            || root == "packages/input-events/source" || root == "packages/display-policy/source" || root == "packages/viewport-gpu/source" || root == "packages/subpatch-preview/source";
         foreach (entry; dirEntries(buildPath(repoRoot, root), "*.d", SpanMode.depth)) {
             const rel = relativePath(entry.name, repoRoot).replace("\\", "/");
             if (production) ++sourceFiles; else ++testFiles;

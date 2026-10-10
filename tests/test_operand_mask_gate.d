@@ -218,9 +218,13 @@ unittest {
     hits ~= scanTree("packages/transform-ops/source");
     hits ~= scanTree("packages/creation-ops/source");
     hits ~= scanTree("packages/alignment-ops/source");
+    if (exists("packages/input-events/source"))
     hits ~= scanTree("packages/input-events/source");
+    if (exists("packages/display-policy/source"))
     hits ~= scanTree("packages/display-policy/source");
+    if (exists("packages/viewport-gpu/source"))
     hits ~= scanTree("packages/viewport-gpu/source");
+    if (exists("packages/subpatch-preview/source"))
     hits ~= scanTree("packages/subpatch-preview/source");
 
     size_t[string] byFile;

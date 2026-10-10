@@ -126,7 +126,11 @@ unittest { // the rule's own controls [E5]: the app.d shape is rejected, a real 
 unittest { // the layout census: four files, one stride constant, no other spelling
     string[] files;
     foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot))
+    if (exists(scanSourceRoot)
+        || (scanSourceRoot != buildPath(root, "packages/input-events/source")
+            && scanSourceRoot != buildPath(root, "packages/display-policy/source")
+            && scanSourceRoot != buildPath(root, "packages/viewport-gpu/source")
+            && scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = relativePath(de.name, buildPath(root, "source")).replace("\\", "/");
         if (bindsFaceVbo(blankUnittestBodies(blankNonCode(readText(de.name))))) files ~= rel;

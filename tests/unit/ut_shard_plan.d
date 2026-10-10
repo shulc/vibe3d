@@ -1,12 +1,12 @@
 // Pure half of the parallel module gate (task 7900): how the roster is packed
 // onto worker processes, what a worker's result file says, and the verdict a
 // parent may draw from N of them. The process orchestration lives in
-// tests/unit/ut_runner.d;
-
-import std.file : exists; everything here is data in, data out, so each way a
+// tests/unit/ut_runner.d; everything here is data in, data out, so each way a
 // merge can lie (a skipped module, a duplicated one, a shard that died) has a
 // cell below that makes it say so. Card: doc/tasks/work/parallel-module-gate.md.
 module tests.unit.ut_shard_plan;
+
+import std.file : exists;
 
 import std.algorithm : canFind, sort;
 import std.conv : to;
@@ -615,7 +615,15 @@ unittest // census: every unittest module that listens on a chosen port is pinne
     string[] offenders;
     size_t population, listeners;
     foreach (root; ["tests/unit", "source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"])
-        if (exists(buildPath(repoRoot, root)))
+        if (exists(buildPath(repoRoot, root))
+            || (root != "packages/input-events/source"
+                && root != "packages/display-policy/source"
+                && root != "packages/viewport-gpu/source"
+                && root != "packages/subpatch-preview/source"
+                && root != "packages/input-events/tests/source"
+                && root != "packages/display-policy/tests/source"
+                && root != "packages/viewport-gpu/tests/source"
+                && root != "packages/subpatch-preview/tests/source"))
         foreach (e; dirEntries(buildPath(repoRoot, root), SpanMode.depth)
                     .filter!(e => e.isFile && e.name.extension == ".d"))
         {

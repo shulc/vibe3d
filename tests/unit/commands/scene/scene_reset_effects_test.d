@@ -137,7 +137,11 @@ unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneRe
     size_t loops, retiredIdent;
     string[] sites;
     foreach (scanSourceRoot; [buildNormalizedPath(root, "source"), buildNormalizedPath(root, "packages/common/source"), buildNormalizedPath(root, "packages/mesh-ops/source"), buildNormalizedPath(root, "packages/interchange/source"), buildNormalizedPath(root, "packages/interaction-query/source"), buildNormalizedPath(root, "packages/pipe-evaluation/source"), buildNormalizedPath(root, "packages/tool-state/source"), buildNormalizedPath(root, "packages/transform-ops/source"), buildNormalizedPath(root, "packages/creation-ops/source"), buildNormalizedPath(root, "packages/alignment-ops/source"), buildNormalizedPath(root, "packages/input-events/source"), buildNormalizedPath(root, "packages/display-policy/source"), buildNormalizedPath(root, "packages/viewport-gpu/source"), buildNormalizedPath(root, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot))
+    if (exists(scanSourceRoot)
+        || (scanSourceRoot != buildNormalizedPath(root, "packages/input-events/source")
+            && scanSourceRoot != buildNormalizedPath(root, "packages/display-policy/source")
+            && scanSourceRoot != buildNormalizedPath(root, "packages/viewport-gpu/source")
+            && scanSourceRoot != buildNormalizedPath(root, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (de.name.endsWith("_test.d")) continue;
         const code = blankNonCode(readText(de.name));

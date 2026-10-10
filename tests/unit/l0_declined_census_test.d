@@ -28,9 +28,7 @@
 //
 //   GATE B — for each permanently-dense command: (i) its dense capture field
 //     is still there, and (ii) NO recorder call appears in its file. The
-//     declaration says "this command is never migrated";
-
-import std.file : exists; a migration is
+//     declaration says "this command is never migrated"; a migration is
 //     exactly an `ed.rec().record*(…)` appearing in one of these three files
 //     and a capture field going away. Either one contradicts the comment, and
 //     this gate is what catches the contradiction.
@@ -69,6 +67,8 @@ import std.file : exists; a migration is
 // verbatim messages and the lane each was observed in.
 // ===========================================================================
 module tests.unit.l0_declined_census_test;
+
+import std.file : exists;
 
 import std.algorithm : sort;
 import std.array     : appender;
@@ -199,7 +199,15 @@ private struct Found { string zone; string file; string symbol; string ident; si
 private Found[] scanDormant() {
     auto found = appender!(Found[]);
     foreach (zone; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"]) {
-        if (!exists(buildPath(repoRoot, zone))) continue;
+        if (!exists(buildPath(repoRoot, zone))
+            && (zone == "packages/input-events/source"
+                || zone == "packages/display-policy/source"
+                || zone == "packages/viewport-gpu/source"
+                || zone == "packages/subpatch-preview/source"
+                || zone == "packages/input-events/tests/source"
+                || zone == "packages/display-policy/tests/source"
+                || zone == "packages/viewport-gpu/tests/source"
+                || zone == "packages/subpatch-preview/tests/source")) continue;
         foreach (de; dirEntries(buildPath(repoRoot, zone), "*.d", SpanMode.depth)) {
             const rel  = de.name[repoRoot.length + 1 .. $];
             const code = blankNonCode(readText(de.name));
@@ -249,7 +257,11 @@ unittest // GATE A anti-vacuity — the tree walk actually read the tree
     // the real counts so it never needs touching as the tree grows.
     size_t nSource = 0, nTests = 0;
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
-    if (exists(scanSourceRoot))
+    if (exists(scanSourceRoot)
+        || (scanSourceRoot != buildPath(repoRoot, "packages/input-events/source")
+            && scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
+            && scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
+            && scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         ++nSource;
     foreach (de; dirEntries(buildPath(repoRoot, "tests"), "*.d", SpanMode.depth))
@@ -302,6 +314,11 @@ unittest // GATE B — dense declarations and the absence of recorder calls
     size_t filesRead;
 
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot)
+        || (scanSourceRoot != buildPath(repoRoot, "packages/input-events/source")
+            && scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
+            && scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
+            && scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[repoRoot.length + 1 .. $];
