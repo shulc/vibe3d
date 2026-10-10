@@ -661,6 +661,12 @@ def validate_actual_compiler(commands, project, owner, description, home, harnes
     return {'compile': compiled, 'link': linked, 'staticOwners': sorted(static)}
 
 
+def validate_algorithm_cwd(output, archive, owner):
+    expected = archive if owner == 'input-events' else archive / 'packages' / owner / 'tests'
+    require(re.findall(r'^PKG-CWD path=(.+)$', output, re.M) == [str(expected)],
+            'support algorithm actual working directory: ' + owner)
+
+
 def execute(project, owner, compiler, env, evidence):
     check_raw_tree(project, owner)
     description = describe(project, owner, 'modeling-noai', compiler, env, evidence)
@@ -696,8 +702,7 @@ def execute(project, owner, compiler, env, evidence):
     tested = run(['dub', 'test', '--root=' + str(root / 'tests'), '--recipe=' + str(recipe), '--config=algorithm',
                   '--compiler=' + compiler, '--force', '--verbose'], archive, env, evidence, 'algorithm-run')
     runtime_output = tested.stdout + tested.stderr
-    require(re.findall(r'^PKG-CWD path=(.+)$', runtime_output, re.M) == [str(archive)],
-            'support algorithm actual working directory: ' + owner)
+    validate_algorithm_cwd(runtime_output, archive, owner)
     if owner in FIXTURES:
         require(re.findall(r'^PKG-FIXTURE sha256=(.+)$', runtime_output, re.M) == [FIXTURES[owner][1]],
                 'support algorithm actual fixture hash: ' + owner)
@@ -995,6 +1000,19 @@ def self_test():
                 red(owner + '-unspecified-fixture',
                     lambda: validate_staged_fixture({'cwd': str(archive)}, {}, owner, archive),
                     'PREPARATION-REFUSED: fixture staging differs')
+        archive = project / 'runtime-archive'
+        for owner, relative in (('input-events', ''),
+                                ('display-policy', 'packages/display-policy/tests'),
+                                ('viewport-gpu', 'packages/viewport-gpu/tests'),
+                                ('subpatch-preview', 'packages/subpatch-preview/tests')):
+            valid = 'PKG-CWD path=' + str(archive / relative) + '\n'
+            validate_algorithm_cwd(valid, archive, owner)
+            cells.append(owner + '-runtime-cwd-positive')
+            wrong = archive / 'packages/input-events/tests' if owner == 'input-events' else archive
+            red(owner + '-runtime-cwd-wrong',
+                lambda: validate_algorithm_cwd('PKG-CWD path=' + str(wrong) + '\n', archive, owner),
+                'support algorithm actual working directory: ' + owner)
+            validate_algorithm_cwd(valid, archive, owner)
         for owner in ('input-events', 'viewport-gpu'):
             relative, sha = FIXTURES[owner]
             original = {'path': relative, 'sha256': sha, 'cwd': str(project)}
