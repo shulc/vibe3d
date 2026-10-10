@@ -62,6 +62,16 @@ unittest {
                    "root test ownership lower fixture-only versions " ~ owner);
             source["versions"] = modeling["versions"];
         }
+        if (owner == "mesh-ops") {
+            assert(modeling["dflags-ldc"].array.length == 1 &&
+                   modeling["dflags-ldc"][0].str == "--singleobj",
+                   "root test ownership mesh-ops LDC archive flag");
+            auto flags = "dflags-ldc" in source.object;
+            assert(flags is null || flags.array.length == 0,
+                   "root test ownership mesh-ops sourceLibrary has no archive flag");
+            modeling.object.remove("dflags-ldc");
+            source.object.remove("dflags-ldc");
+        }
         source.object.remove("targetType");
         source["name"] = JSONValue("modeling");
         if (auto subs = "subConfigurations" in source.object) {

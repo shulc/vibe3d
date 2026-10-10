@@ -178,7 +178,10 @@
         "vibe3d-mesh-contracts": "modeling",
         "vibe3d-mesh-topology": "modeling",
         "vibe3d-log": "modeling"
-      }
+      },
+      "dflags-ldc": [
+        "--singleobj"
+      ]
     },
     {
       "name": "modeling-noai",
@@ -190,7 +193,10 @@
         "vibe3d-mesh-contracts": "modeling-noai",
         "vibe3d-mesh-topology": "modeling-noai",
         "vibe3d-log": "modeling-noai"
-      }
+      },
+      "dflags-ldc": [
+        "--singleobj"
+      ]
     },
     {
       "name": "with-render",
@@ -202,7 +208,10 @@
         "vibe3d-mesh-contracts": "with-render",
         "vibe3d-mesh-topology": "with-render",
         "vibe3d-log": "with-render"
-      }
+      },
+      "dflags-ldc": [
+        "--singleobj"
+      ]
     },
     {
       "name": "web",
@@ -216,7 +225,10 @@
         "vibe3d-mesh-contracts": "web",
         "vibe3d-mesh-topology": "web",
         "vibe3d-log": "web"
-      }
+      },
+      "dflags-ldc": [
+        "--singleobj"
+      ]
     },
     {
       "name": "root-tests",
