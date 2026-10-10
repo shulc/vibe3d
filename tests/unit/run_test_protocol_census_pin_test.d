@@ -91,6 +91,7 @@ private size_t lineOf(string src, size_t off)
 // missing owner can silently evade the lexer check; see the task evidence.
 unittest
 {
+    import std.stdio : write;
     const probe = q"PY
 from pathlib import Path
 import sys
@@ -133,9 +134,15 @@ for owner, population in owners.items():
             raise SystemExit(f"prepared-protocol synthetic owner baseline {owner}: {got!r}")
         (partial / owner / inputs[0].relative_to(root / owner)).unlink()
         got = census_contracts.production_lexer_census(partial)
-        want = f"dspans lexer census owner {owner} read {floor - 1} files; floor {floor} (materialized 2026-10-10)"
-        if got != [want]:
-            raise SystemExit(f"prepared-protocol omission guard {owner}: got {got!r}, want {[want]!r}")
+        complement = "dspans production complement read 594 files; floor 595"
+        owner_refusal = f"dspans lexer census owner {owner} read {floor - 1} files; floor {floor} (materialized 2026-10-10)"
+        if complement not in got:
+            raise SystemExit(f"prepared-protocol COMPLEMENT omission guard {owner}: got {got!r}, missing {complement!r}")
+        if owner_refusal not in got:
+            raise SystemExit(f"prepared-protocol OWNER omission guard {owner}: got {got!r}, missing {owner_refusal!r}")
+        if got != [complement, owner_refusal]:
+            raise SystemExit(f"prepared-protocol omission diagnostics {owner}: got {got!r}, want {[complement, owner_refusal]!r}")
+        print(f"prepared-protocol omission {owner}: COMPLEMENT and OWNER refused independently", flush=True)
 PY";
     const scratch = buildPath(tempDir(), format("protocol-census-%d", thisProcessID));
     mkdirRecurse(scratch);
@@ -145,6 +152,7 @@ PY";
     env["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = buildPath(scratch, "run.lock");
     const result = execute(["python3", "-c", probe, repoRoot], env);
     assert(result.status == 0, result.output);
+    write(result.output);
 }
 
 private size_t countOf(string hay, string needle)
