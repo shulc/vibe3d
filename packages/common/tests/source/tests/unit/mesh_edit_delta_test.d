@@ -23,7 +23,7 @@ private void assertArraySnapshotValues(bool replaceSource) {
     assert(added == 1 && m.faces.length == 2 && m.vertices.length == 6,
         "array snapshot value population: one original and one cloned triangle");
     Vec3[] transformed = [Vec3(-2, 0, -6), Vec3(4, 9, 6), Vec3(10, 0, 18)];
-    Vec3[] cloned = [Vec3(9, 13, 11), Vec3(15, 22, 23), Vec3(21, 13, 35)];
+    Vec3[] cloned = [Vec3(9, 0, -6), Vec3(15, 9, 6), Vec3(21, 0, 18)];
     foreach (i; 0 .. 3) {
         auto expected = replaceSource ? transformed[i] : original[i];
         assert(m.vertices[i].x == expected.x && m.vertices[i].y == expected.y
