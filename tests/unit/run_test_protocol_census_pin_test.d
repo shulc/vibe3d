@@ -87,7 +87,7 @@ private size_t lineOf(string src, size_t off)
 }
 
 // Task 20261990: call the production reader, then omit one real input from
-// each owner in temporary trees. Independent floors must refuse before a
+// each floor-sized synthetic owner in temporary trees. Independent floors refuse before a
 // missing owner can silently evade the lexer check; see the task evidence.
 unittest
 {
@@ -101,10 +101,16 @@ import census_contracts
 failures = census_contracts.production_lexer_census(root)
 if failures:
     raise SystemExit("prepared-protocol production lexer census: " + "; ".join(failures))
-owners = {"source": 472, "packages/common/source": 76,
+owners = {"source": 473, "packages/common/source": 76,
           "packages/mesh-ops/source": 17, "packages/interchange/source": 8,
           "packages/interaction-query/source": 10, "packages/pipe-evaluation/source": 12}
-for owner, floor in owners.items():
+# Wave6A adds a desktop leaf; preserve the production floors and test their
+# exact boundary with a floor-sized synthetic owner before omitting one file.
+floors = {"source": 472, "packages/common/source": 76,
+          "packages/mesh-ops/source": 17, "packages/interchange/source": 8,
+          "packages/interaction-query/source": 10, "packages/pipe-evaluation/source": 12}
+for owner, population in owners.items():
+    floor = floors[owner]
     with tempfile.TemporaryDirectory(prefix="protocol-owner-") as scratch:
         partial = Path(scratch)
         for other in owners:
@@ -116,12 +122,16 @@ for owner, floor in owners.items():
             inputs = sorted((root / owner).rglob("*.d"))
             # The omission population is independently frozen, not derived
             # from the reader or the fixture it will judge.
-            if len(inputs) != floor:
+            if len(inputs) != population:
                 raise SystemExit(f"prepared-protocol omission input changed: {owner}")
-            for path in inputs[1:]:
+            for path in inputs[:floor]:
                 link = target / path.relative_to(root / owner)
                 link.parent.mkdir(parents=True, exist_ok=True)
                 link.symlink_to(path)
+        got = census_contracts.production_lexer_census(partial)
+        if got:
+            raise SystemExit(f"prepared-protocol synthetic owner baseline {owner}: {got!r}")
+        (partial / owner / inputs[0].relative_to(root / owner)).unlink()
         got = census_contracts.production_lexer_census(partial)
         want = f"dspans lexer census owner {owner} read {floor - 1} files; floor {floor} (measured 2026-10-09)"
         if got != [want]:

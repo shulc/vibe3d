@@ -146,7 +146,7 @@ SH";
     write(buildPath(tempDir(), stem ~ ".modules"), selectedModules.join("\n") ~ "\n");
     const baseline = readText(buildPath(repoRoot, "tests", "unit",
         "web_width32_baseline_modules.txt")).strip.splitLines;
-    assert(baseline.length == 554, "web compiler baseline manifest population");
+    assert(baseline.length == 555, "web compiler baseline manifest population");
     string[] added, removed;
     foreach (name; selectedModules) if (!baseline.canFind(name)) added ~= name;
     foreach (name; baseline) if (!selectedModules.canFind(name)) removed ~= name;
@@ -158,7 +158,8 @@ SH";
     // Task 20261660: the compiler-selected web closure adds model_preview (+1).
     // Task 20261720: three literal-preserving lower-owner modules join the closure.
     // Wave5 compiler witness adds surface_pick, toolpipe.state_paths, workplane_basis.
-    enum expectedWebModules = 554; // +1 task 9504 evaluated_move_weld; +1 task 9449 tools.edit.haul_axis_latch; -1 task 9525 tools.edit.drag_weld; +1 task 9492 tool_attr_bounds; -5 wave-2 PRM2: five more param-update owner modules folded; +1 task 9429 tools.topology_step; -10 wave-2 PRM1: eleven param-update owner modules became one; +1 pen S1 tools.create.pen_geometry; +4: remesh job, stitch, command and modal state; +1 M5 toolpipe.attr_cache; +1 viewport_probe_sampling; +3 retopology S4 light_rig, retopology_line_shade, retopology_dot_cull; +1 retopology S5 retopology_order; +1 viewport shading S1a vertex_normals; +1 viewport shading SP gpu_pass_timer; +1 viewport shading S2b viewport_composite; +1 viewport shading S1e commands.mesh.surface_attr; +1 viewport shading S4b viewport_env
+    // Wave6A: the existing kernel reaches its extracted cluster_values leaf (+1).
+    enum expectedWebModules = 555; // +1 task 9504 evaluated_move_weld; +1 task 9449 tools.edit.haul_axis_latch; -1 task 9525 tools.edit.drag_weld; +1 task 9492 tool_attr_bounds; -5 wave-2 PRM2: five more param-update owner modules folded; +1 task 9429 tools.topology_step; -10 wave-2 PRM1: eleven param-update owner modules became one; +1 pen S1 tools.create.pen_geometry; +4: remesh job, stitch, command and modal state; +1 M5 toolpipe.attr_cache; +1 viewport_probe_sampling; +3 retopology S4 light_rig, retopology_line_shade, retopology_dot_cull; +1 retopology S5 retopology_order; +1 viewport shading S1a vertex_normals; +1 viewport shading SP gpu_pass_timer; +1 viewport shading S2b viewport_composite; +1 viewport shading S1e commands.mesh.surface_attr; +1 viewport shading S4b viewport_env
     assert(closurePaths.length == expectedWebModules,
         format("W16-W web closure population changed: expected %d source modules to reach "
              ~ "the 32-bit compiler, got %d", expectedWebModules, closurePaths.length));

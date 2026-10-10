@@ -101,8 +101,8 @@ unittest {
         assert(!code.split.join("").canFind("voidselectBrowserBackendForTest("),
             "file model setter has only its lower production owner: " ~ file.name);
     }
-    // Independent tracked six-owner membership: 472/76/17/8/10/12 (task 20262020).
-    assert(sourceFiles == 595, "file model production source population");
+    // Independent tracked six-owner membership: 473/76/17/8/10/12 (Wave6A cluster_values).
+    assert(sourceFiles == 596, "file model production source population");
 }
 
 unittest {

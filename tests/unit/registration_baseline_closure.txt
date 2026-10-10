@@ -488,6 +488,7 @@ tools.slice.loop_slice_tool
 tools.slice.slice_tool
 tools.topology_step
 tools.transform.arcball
+tools.transform.cluster_values
 tools.transform.item_xform_kernels
 tools.transform.morph_route
 tools.transform.move

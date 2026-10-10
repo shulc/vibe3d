@@ -290,11 +290,12 @@ unittest {
     // Task 9525: `tools.edit.drag_weld` deleted (-1 each).
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
     // Task 20260660: Tool reaches the detached model_preview view (+1 each).
-    pinClosure("edit_tool_registration", edit, 262);
-    pinClosure("registration", positive, 533);
-    assert(edit.queue.length == 262 && positive.queue.length == 533,
-        format("6670 import closure census changed: edit=%d/262 "
-            ~ "registration=%d/533", edit.queue.length,
+    // Wave6A: the existing kernel reaches its extracted cluster_values leaf (+1 each).
+    pinClosure("edit_tool_registration", edit, 263);
+    pinClosure("registration", positive, 534);
+    assert(edit.queue.length == 263 && positive.queue.length == 534,
+        format("6670 import closure census changed: edit=%d/263 "
+            ~ "registration=%d/534", edit.queue.length,
             positive.queue.length));
 }
 
