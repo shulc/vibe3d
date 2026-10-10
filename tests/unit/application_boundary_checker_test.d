@@ -4,6 +4,7 @@ import std.algorithm : canFind;
 import std.path : buildPath, dirName;
 import std.process : execute;
 import std.stdio : writeln;
+import std.string : lineSplitter;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -38,6 +39,8 @@ unittest {
     auto support = execute(["python3", buildPath(repoRoot, "tools",
         "check_package_support_boundary.py"), "--self-test"]);
     assert(support.status == 0, "support package checker controls: " ~ support.output);
+    assert(support.output.lineSplitter.canFind("PKG-SELF-CONTROLS passed=358"),
+        "support package checker missing control population");
     assert(support.output.canFind("PKG-BOUNDARY-VERDICT=GREEN"),
         "support package checker missing terminal verdict");
 }
