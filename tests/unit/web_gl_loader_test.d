@@ -135,7 +135,7 @@ private DependencyGraph readDependencyGraph(string path)
         if (importerField[$ - 1] == ')' && pathStart < importerField.length - 1)
         {
             const sourcePath = importerField[pathStart .. $ - 1];
-            if (sourcePath.startsWith("source/", "packages/common/source/", "packages/mesh-ops/source/", "packages/interchange/source/", "packages/interaction-query/source/", "packages/pipe-evaluation/source/"))
+            if (sourcePath.startsWith("source/", "packages/common/source/", "packages/mesh-ops/source/", "packages/interchange/source/", "packages/interaction-query/source/", "packages/pipe-evaluation/source/", "packages/tool-state/source/", "packages/transform-ops/source/", "packages/creation-ops/source/", "packages/alignment-ops/source/"))
             {
                 result.ours[importer] = true;
                 result.sourcePath[importer] = sourcePath.idup;

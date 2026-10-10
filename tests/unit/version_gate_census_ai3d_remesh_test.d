@@ -98,7 +98,11 @@ private DependencyGraph readDependencyGraph(string path)
                 || importerField.indexOf(" (packages/mesh-ops/source/") >= 0
                 || importerField.indexOf(" (packages/interchange/source/") >= 0
                 || importerField.indexOf(" (packages/interaction-query/source/") >= 0
-                || importerField.indexOf(" (packages/pipe-evaluation/source/") >= 0)
+                || importerField.indexOf(" (packages/pipe-evaluation/source/") >= 0
+                || importerField.indexOf(" (packages/tool-state/source/") >= 0
+                || importerField.indexOf(" (packages/transform-ops/source/") >= 0
+                || importerField.indexOf(" (packages/creation-ops/source/") >= 0
+                || importerField.indexOf(" (packages/alignment-ops/source/") >= 0)
             result.ours[importer] = true;
         ++result.edgeCount;
     }
