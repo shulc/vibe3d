@@ -561,7 +561,8 @@ def stage_dependencies(active, archive, evidence, env):
         if name.startswith('vibe3d-'):
             continue
         original = Path(package['path']).resolve()
-        staged = archive / 'dependencies' / name
+        staged = (home / 'packages' / name / REVISIONS[name][0] / name
+                  if name in REVISIONS else archive / 'dependencies' / name)
         # Fresh D archives and native outputs must be built in this copy.
         shutil.copytree(original, staged, ignore=shutil.ignore_patterns('.git', '.dub', 'build', 'out', '*.a', '*.o', '*.obj', '*.lib'))
         files = {str(p.relative_to(staged)): digest(p) for p in sorted(staged.rglob('*')) if p.is_file()}
