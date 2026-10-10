@@ -9,6 +9,9 @@ import std.traits : Unqual, isDynamicArray, isAssociativeArray, isStaticArray,
                     KeyType, ValueType;
 import std.range.primitives : ElementType;
 import math;
+import spatial : ModelSpace;
+import std.array : insertInPlace;
+import mesh_selsets : selSetGatherVertexMaskReverse, selSetDropFilterVertexMask;
 import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta, MeshOpEntry;
 import change_bus : SelDomain, changeBus;
@@ -41,32 +44,6 @@ public import mesh_topo;
 // captures the old corner space and arms the drop) stays here — it holds a
 // `Mesh*`, so it cannot live in a module Mesh imports.
 public import mesh_corner_maps;
-
-// The visibility probe (`VisibilityProbe`, `visibilityProbe`, `visibleVertices`)
-// plus its `version(unittest)` instrumentation (`VisibilityCounters`,
-// `g_visCounters`) → extracted to source/mesh_visibility.d (task 3230, step 2
-// of doc/tasks/work/2910-mesh-struct-seams.md). Re-exported so every existing
-// `m.visibilityProbe(...)` / `m.visibleVertices(...)` / `g_visCounters`
-// reference resolves unchanged, the same template as `mesh_topo` /
-// `mesh_corner_maps` above.
-public import mesh_visibility;
-
-// The edge-slice family (`insertEdgePoint`, `addEdgePoint`,
-// `rebuildFacesWithChordSplits`, `edgeIndexOfVerts`, `edgeIndexOf`,
-// `EdgeSliceResult`, `edgeSliceReachable`, `edgeSliceEx`, `edgeSlice`,
-// `splitFaceByVertices`, and the `private` BFS `findChordPath` they share)
-// -> extracted to source/mesh_edge_slice.d (task 3240, step 3 of
-// doc/tasks/work/2910-mesh-struct-seams.md). Re-exported so every existing
-// `m.edgeSlice(...)` / `ed.insertEdgePoint(...)` / `Mesh` client resolves
-// unchanged, the same template as `mesh_topo` / `mesh_corner_maps` /
-// `mesh_visibility` above. `EdgeSliceResult` moved with them, so the two
-// sites that spelled it `Mesh.EdgeSliceResult` are now plain
-// `EdgeSliceResult` -- a member of the MODULE, not of the type.
-public import mesh_edge_slice;
-
-// Whole-layer geometry bounds live outside `struct Mesh`; re-exported so
-// existing mesh imports can keep using UFCS at call sites.
-public import mesh_bbox;
 
 // ---------------------------------------------------------------------------
 // Mesh
@@ -2796,6 +2773,1239 @@ struct Mesh {
     ulong[]      faceSetMask;
 
     // --- Mesh-edit change tracker (mesh_edit_delta) -----------------------
+    // Restoration doors retain task 1903 replay guards; task 20262340.
+    // Policy lives in mesh_edit_replay; these writers never append recorder entries.
+    void restoreEdgeSetImage(in ulong[] keys, in ulong[] words) {
+        if (keys.length == 0) return;
+        assert(keys.length == words.length,
+            "restoreEdgeSetImage: the recorded edge-set keys and words are not "
+          ~ "parallel");
+        ulong[ulong] before;
+        foreach (i, k; keys) before[k] = words[i];
+        this.edgeSetMask = before;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Reindex — the crux (doc §2). `perm[old] = new` for kept verts, ~0u for
+    // dropped. The pair (RemoveVerts, Reindex) is recorded in that order by
+    // compactUnreferenced (drop-before-permute); LIFO reverse therefore runs
+    // Reindex^-1 first (restore the pre-compaction index space), then
+    // RemoveVerts^-1 (re-insert the dropped verts into the re-opened gaps).
+    // ---------------------------------------------------------------------------
+
+    // Forward: apply the compaction the kernel already did to the CURRENT mesh
+    // (rewrite face vids old->new, drop ~0u verts, repack vertices to new order).
+    // Used by redo (apply): on redo the verts are present at their pre-compaction
+    // positions (RemoveVerts^-1 + Reindex^-1 having been undone), so re-applying
+    // the recorded permutation reproduces the post-compaction state.
+    void restoreVertexReindexForward(in uint[] perm) {
+        if (perm.length == 0) return;
+        // New vertex array sized to the count of kept slots.
+        size_t kept = 0;
+        foreach (p; perm) if (p != ~0u) ++kept;
+        Vec3[] nv;
+        nv.length = kept;
+        // vertexMarks rides the SAME permutation as positions (task 0613 §4.2 —
+        // the "vertex-mark permutation gap"). Without this, a kept vertex's whole
+        // marks word — including a LOOSE vertex's own Hide bit, the only per-
+        // vertex Hide state that is not self-healed by refreshHiddenDerived()
+        // (a face-bound vertex's bit IS re-derived every geometry commit; a loose
+        // vertex's is not, since it never has an incident face to derive from) —
+        // stays parked at its OLD slot while the vertex itself moves to `p`,
+        // exactly the "bit slides onto whoever moves into the vacated slot"
+        // defect fixed at deleteFacesByMask's own compaction, here on the vertex
+        // side of a Reindex replay.
+        uint[] nm;
+        nm.length = kept;
+        // vertexSelectionOrder rides the SAME permutation (task 0613 §4.2, S3
+        // code review): before this task neither vertexMarks nor the order
+        // stamps moved with a compaction, so the two were consistently wrong
+        // TOGETHER. Fixing only vertexMarks would leave a kept vertex's mark
+        // word correctly at its new slot `p` while its selection-order stamp
+        // stayed behind at the OLD slot — the same "stale stamp" class this
+        // repository has already fixed three times elsewhere (see
+        // SelectionSnapshot.restore's own S3 fix in snapshot.d).
+        int[] no;
+        no.length = kept;
+        foreach (old, p; perm) {
+            if (p == ~0u) continue;
+            if (old < this.vertices.length) nv[p] = this.vertices[old];
+            if (old < this.vertexMarks.length) nm[p] = this.vertexMarks[old];
+            if (old < this.vertexSelectionOrder.length) no[p] = this.vertexSelectionOrder[old];
+        }
+        this.vertices             = nv;
+        this.vertexMarks          = nm;
+        this.vertexSelectionOrder = no;
+        // Task 0930: every Point-domain MeshMap (vertex weight, vertex color)
+        // rides the SAME permutation as `vertices`/`vertexMarks` above — the gap
+        // this task closes. Before this, `this.meshMaps` was never touched by this
+        // function at all; the tail `finalize()`'s `resizeAllMeshMaps()` only
+        // grows/shrinks each map's `data` by LENGTH (a raw truncate/grow, not a
+        // permutation), so a vertex dropped from the middle of a compaction left
+        // every survivor after it wearing a neighbour's weight — the same
+        // truncate-from-the-tail bug `compactUnreferenced` itself carried before
+        // task 0920 fixed it there. This mirrors that fix's gather shape,
+        // extended to the undo/redo replay side of the SAME compaction.
+        foreach (ref mm; this.meshMaps) {
+            if (mm.domain != MapDomain.Point) continue;
+            const ubyte dim = mm.dim;
+            float[] nd;
+            nd.length = kept * dim;
+            // Task 1069: the presence channel rides the SAME permutation, one
+            // entry per ELEMENT (no `* dim`).
+            const bool hasP = mm.present.length != 0;
+            ubyte[] np;
+            if (hasP) np.length = kept;
+            foreach (old, p; perm) {
+                if (p == ~0u) continue;
+                const size_t ob = cast(size_t)old * dim;
+                if (ob + dim > mm.data.length) continue; // defensive
+                nd[p * dim .. p * dim + dim] = mm.data[ob .. ob + dim];
+                if (hasP && old < mm.present.length) np[p] = mm.present[old];
+            }
+            mm.data = nd;
+            if (hasP) mm.present = np;
+        }
+        // Task 1060: `vertexSetMask` rides the SAME permutation as the
+        // Point-domain meshMaps loop just above (same gap `mesh.d`'s
+        // `compactUnreferenced` closed for the live path — this is its
+        // undo/redo replay twin).
+        this.vertexSetMask = selSetGatherVertexMaskForward(this.vertexSetMask, perm, kept);
+        // Task 1060, Stage 5b: the edge-set registry rides the SAME permutation
+        // — `perm[old] == ~0u` is exactly `selSetRekeyEdges`'s "vertex gone"
+        // sentinel already.
+        selSetRekeyEdges(this, (uint v) => v < perm.length ? perm[v] : uint.max,
+                         WireKeyPolicy.carry);
+        // Rewrite face vertex ids old->new.
+        foreach (ref f; this.faces)
+            foreach (ref vid; f)
+                if (vid < perm.length && perm[vid] != ~0u) vid = perm[vid];
+    }
+
+    // Reverse: restore the PRE-compaction index space. Grow `vertices` back to
+    // perm.length, placing the current (post-compaction) vert `new` back at its
+    // old index; dropped slots stay as gaps (Vec3.init) to be filled by the
+    // following RemoveVerts^-1. Face vids are rewritten new->old via the inverse
+    // permutation.
+    void restoreVertexReindexReverse(in uint[] perm) {
+        // NEGATIVE CONTROL (test only): stub Reindex^-1 to a no-op. Compiled in
+        // ONLY under -version=UndoNegControlReindex so the compaction round-trip
+        // test (b) can prove the permutation handling is load-bearing (the appended
+        // verts/faces then truncate in the wrong index space → corrupted mesh).
+        version (UndoNegControlReindex) return;
+        if (perm.length == 0) return;
+        Vec3[] nv;
+        nv.length = perm.length;            // pre-compaction length (gaps included)
+        // vertexMarks rides the SAME reverse permutation — see restoreVertexReindexForward's
+        // comment (task 0613 §4.2). Dropped slots stay 0 (no bits), matching how
+        // `nv`'s dropped slots stay a Vec3.init gap: both are filled by the
+        // following RemoveVerts^-1 (positions only — see restoreInsertVertices's own
+        // comment for why a removed vertex's marks are not restored here).
+        uint[] nm;
+        nm.length = perm.length;
+        // vertexSelectionOrder rides the SAME reverse permutation — see
+        // restoreVertexReindexForward's comment (task 0613 §4.2, S3 code review).
+        // Dropped slots stay 0 (not manually selected), same convention as
+        // `nm`'s dropped slots.
+        int[] no;
+        no.length = perm.length;
+        foreach (old, p; perm) {
+            if (p == ~0u) continue;         // dropped slot — gap, filled by RemoveVerts^-1
+            if (p < this.vertices.length) nv[old] = this.vertices[p];
+            if (p < this.vertexMarks.length) nm[old] = this.vertexMarks[p];
+            if (p < this.vertexSelectionOrder.length) no[old] = this.vertexSelectionOrder[p];
+        }
+        this.vertices             = nv;
+        this.vertexMarks          = nm;
+        this.vertexSelectionOrder = no;
+        // Task 0930: every Point-domain MeshMap rides the SAME reverse
+        // permutation — see restoreVertexReindexForward's comment. Dropped slots are
+        // explicitly zeroed (not left at `float.init` == NaN, unlike `nm`/`no`'s
+        // default-0 `uint`/`int` gaps) and stay that way until the following
+        // RemoveVerts^-1 fills them — matching `nv`'s Vec3 gap and `nm`/`no`'s
+        // documented "not restored here" convention.
+        foreach (ref mm; this.meshMaps) {
+            if (mm.domain != MapDomain.Point) continue;
+            const ubyte dim = mm.dim;
+            float[] nd;
+            nd.length = perm.length * dim;
+            nd[] = 0f;
+            // Task 1069: presence rides the same reverse permutation. Gap slots
+            // stay 0 == ABSENT, which is the right default for both morph kinds
+            // and matches `nd`'s explicit zero fill above.
+            const bool hasP = mm.present.length != 0;
+            ubyte[] np;
+            if (hasP) { np.length = perm.length; np[] = 0; }
+            foreach (old, p; perm) {
+                if (p == ~0u) continue;
+                const size_t pb = cast(size_t)p * dim;
+                if (pb + dim > mm.data.length) continue; // defensive
+                nd[old * dim .. old * dim + dim] = mm.data[pb .. pb + dim];
+                if (hasP && p < mm.present.length) np[old] = mm.present[p];
+            }
+            mm.data = nd;
+            if (hasP) mm.present = np;
+        }
+        // Task 1060: `vertexSetMask` rides the SAME reverse permutation as the
+        // Point-domain meshMaps loop just above.
+        this.vertexSetMask = selSetGatherVertexMaskReverse(this.vertexSetMask, perm);
+        // Inverse map: new -> old. Build it once, then rewrite face vids.
+        uint[] inv;
+        inv.length = this.vertices.length; // == perm.length now; safe upper bound for `new` ids
+        // Initialise to identity-ish; only kept `new` slots matter.
+        foreach (old, p; perm)
+            if (p != ~0u && p < inv.length) inv[p] = cast(uint)old;
+        // Task 1060, Stage 5b: re-key the edge-set registry through the SAME
+        // inverse map that is about to rewrite face vertex ids below — `m`'s
+        // vertices are back at pre-compaction (old) index space after this
+        // function returns, so the edge-set keys must be too.
+        selSetRekeyEdges(this, (uint v) => v < inv.length ? inv[v] : uint.max,
+                         WireKeyPolicy.carry);
+        foreach (ref f; this.faces)
+            foreach (ref vid; f) {
+                // A face vid here is a post-compaction `new` id; map back to old.
+                // It must reference a kept vert, so inv[vid] is defined.
+                if (vid < inv.length) vid = inv[vid];
+            }
+    }
+
+    // ---------------------------------------------------------------------------
+    // FaceReindex forward/reverse (task 1902 Stage H, plan §7.2). Unlike
+    // Reindex (vertex-only, a pure permutation with no content change),
+    // FaceReindex's forward direction is the LIVE primitive itself — see
+    // restoreFaceReindexForward's own comment for why a face's winding cannot be
+    // re-derived from the correspondence alone.
+    // ---------------------------------------------------------------------------
+
+    // Forward: redo. `rewriteFaces` IS the recorded operation (plan §7.2's "one
+    // implementation, so replay and live edit cannot drift") — this just hands
+    // it back the same `newFaceLists`/`faceOldOfNew` the live edit built. Safe to
+    // call unconditionally even on a mesh with an OPEN, armed batch: replay only
+    // ever runs after `Mesh.endEditBatch()` has detached the recorder (this
+    // entry's own log has already been finished by then), so `rewriteFaces`'s own
+    // internal `wantsFaceReindexRecording()` check reads `editRecorder_ is null`
+    // and records nothing — no double-append.
+    void restoreFaceReindexForward(ref const MeshOpEntry e,
+                                        bool cornerCarryActive) {
+        // Review finding B3: `e.faceOldOfNew.length == 0` used to read as
+        // "nothing to redo" and return early — but it is ALSO the shape of a
+        // redo whose rewrite drops every face (`newFaces.length == 0`, e.g.
+        // select-all + delete). That early return refused to redo exactly the
+        // entry `recordFaceReindex`'s own B3 fix now records. `rewriteFaces`
+        // already handles `newFaces.length == 0` correctly on its own (every
+        // generated plane carries zero elements, `this.faces` becomes empty), so no
+        // guard is needed here at all — the guard belongs solely at the record
+        // site, and the two must agree on what "no-op" means (`oldFaceCount ==
+        // 0`, not `faceOldOfNew.length == 0`).
+        uint[][] nf;
+        nf.reserve(e.newFaceLists.length);
+        foreach (l; e.newFaceLists) nf ~= l.dup;
+        rewriteFaces(this, nf, FaceSource(e.faceOldOfNew));
+        // `rewriteFaces` is called with `rw = null` — same as 15 of the 19 live
+        // sites (plan §2.6) — so it declares nothing about the PolyVertex corner
+        // map itself. Those 15 sites each pair `rw = null` with their OWN bare
+        // `dropCornerProvenance(CornerDrop.…)` call; this is FaceReindex's:
+        // `CornerDrop.DeltaReplayDeclined` exists for exactly this ("the replay
+        // normally carries the plane itself … and reaches this only when the
+        // carry DECLINES" — mesh_corner_maps.d's own doc comment on that value).
+        // `CornerCarry` (above) HAS a `Kind.FaceReindex` case as of task 1903
+        // Stage J, so this drop is the FALLBACK rather than the policy: it runs
+        // only when the carry has declined (no PolyVertex map at all, maps out of
+        // step with `faces` at replay entry, or the case's own index-space check
+        // fired). An EXPLICIT drop in that case is what keeps `buildLoops()` from
+        // either asserting (a length mismatch it cannot explain) or, worse,
+        // silently leaving a length-correct-by-COINCIDENCE map sitting on the
+        // wrong faces' corners. When the carry IS active it will place the values
+        // itself in `finalize` — declaring a drop here would zero them, because
+        // `resizePolyVertexMaps` consumes the declaration and returns from its
+        // FIRST branch without ever looking at what the carry wrote.
+        if (!cornerCarryActive)
+            this.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
+    }
+
+    // Reverse: undo. Rebuilds the pre-reindex `faces` (and its five carried
+    // planes) at exactly `oldFaceCount` slots:
+    //   * an old index NAMED by >=1 new index restores from the CURRENT mesh
+    //     (still in its post-reindex state at this point in the LIFO replay) at
+    //     its FIRST naming new index — that data is live, not archived, because
+    //     the forward carry put it there verbatim via the same correspondence;
+    //   * an old index named by NO new index (the drop set) restores from
+    //     fIdx/faceLists/faceMat/facePrt/faceSub/faceSetMsk/faceOrd, captured
+    //     before the forward rewrite ran (same fields RemoveFaces carries).
+    // A `kNoSource` new face names no old index at all, so it contributes to
+    // neither bucket and simply vanishes — correct, per plan §7.2: "they had no
+    // prior existence".
+    void restoreFaceReindexReverse(ref const MeshOpEntry e,
+                                        bool cornerCarryActive) {
+        // Review finding S4: this function used to open with
+        // `if (e.oldFaceCount == 0) return;` — read as "nothing to undo", but it
+        // is ALSO the shape of undoing a rewrite FROM an empty mesh (a
+        // create-only op: `oldFaceCount == 0`, `faceOldOfNew` all `kNoSource`).
+        // The correct reverse of THAT is to truncate every plane back to length
+        // 0, which is exactly what the code below does on its own when
+        // `e.oldFaceCount == 0` (every `rest*` array below is sized `0`) — no
+        // special case needed, just no early exit to skip it.
+        enum uint kNoneYet = uint.max;
+        uint[] firstNew;
+        firstNew.length = e.oldFaceCount;
+        firstNew[] = kNoneYet;
+        foreach (nf, of; e.faceOldOfNew) {
+            if (of == kNoSource || of >= e.oldFaceCount) continue;
+            if (firstNew[of] == kNoneYet) firstNew[of] = cast(uint) nf;
+        }
+
+        // Review finding B2: a survivor's winding, read off the CURRENT
+        // (post-reindex) mesh at `nf`, is the POST-rewrite winding — not always
+        // the PRE-rewrite one this entry must restore (e.g.
+        // `Mesh.removeVertsByMask` drops a corner from a kept face's list while
+        // its old index still survives). `mesh_planes.rewriteFaces` captures the
+        // pre-rewrite winding for exactly the survivors where it differs
+        // (`faceSurvivorIdx`/`faceSurvivorLists` — see their own doc comment in
+        // `MeshOpEntry`); build an old-index -> capture-slot lookup once so the
+        // restore loop below can prefer a captured winding over the live mesh.
+        uint[] survivorSlot;
+        survivorSlot.length = e.oldFaceCount;
+        survivorSlot[] = kNoneYet;
+        foreach (i, of; e.faceSurvivorIdx)
+            if (of < e.oldFaceCount) survivorSlot[of] = cast(uint) i;
+
+        uint[][] restFaces;  restFaces.length  = e.oldFaceCount;
+        uint[]   restMarks;  restMarks.length  = e.oldFaceCount;
+        uint[]   restMat;    restMat.length    = e.oldFaceCount;
+        uint[]   restPrt;    restPrt.length    = e.oldFaceCount;
+        int[]    restOrd;    restOrd.length    = e.oldFaceCount;
+        ulong[]  restSetMsk; restSetMsk.length = e.oldFaceCount;
+
+        foreach (of; 0 .. e.oldFaceCount) {
+            const uint nf = firstNew[of];
+            if (nf == kNoneYet) continue;   // filled from the drop set below
+            // Bounds-guard the survivor-list read too, house style with the
+            // fields around it: `faceSurvivorIdx`/`faceSurvivorLists` are meant
+            // to stay parallel, but nothing in the type enforces it, and
+            // `survivorSlot[of]` is built from `faceSurvivorIdx`'s own indices —
+            // a malformed/hand-built entry with a shorter `faceSurvivorLists`
+            // would otherwise index it out of bounds instead of falling back.
+            restFaces[of]  = (survivorSlot[of] != kNoneYet
+                              && survivorSlot[of] < e.faceSurvivorLists.length)
+                            ? e.faceSurvivorLists[survivorSlot[of]].dup
+                            : ((nf < this.faces.length) ? this.faces[nf].dup : null);
+            restMarks[of]  = (nf < this.faceMarks.length) ? this.faceMarks[nf] : 0;
+            restMat[of]    = (nf < this.faceMaterial.length) ? this.faceMaterial[nf] : 0;
+            restPrt[of]    = (nf < this.facePart.length) ? this.facePart[nf] : 0;
+            restOrd[of]    = (nf < this.faceSelectionOrder.length) ? this.faceSelectionOrder[nf] : 0;
+            restSetMsk[of] = (nf < this.faceSetMask.length) ? this.faceSetMask[nf] : 0UL;
+        }
+        // Overlay the drop set. Same documented limit RemoveFaces's own reverse
+        // has always had: the dropped face's whole `faceMarks` word (Select /
+        // Hide) is NOT captured by this entry, only its Subpatch bit (`faceSub`,
+        // restored by name below, after `this.faceMarks` exists at its new length) —
+        // see restoreInsertFaces's own comment for why.
+        foreach (i, fi; e.fIdx) {
+            if (fi >= e.oldFaceCount) continue;
+            restFaces[fi]  = (i < e.faceLists.length) ? e.faceLists[i].dup : null;
+            restMat[fi]    = (i < e.faceMat.length) ? e.faceMat[i] : 0;
+            restPrt[fi]    = (i < e.facePrt.length) ? e.facePrt[i] : 0;
+            restOrd[fi]    = (i < e.faceOrd.length) ? e.faceOrd[i] : 0;
+            restSetMsk[fi] = (i < e.faceSetMsk.length) ? e.faceSetMsk[i] : 0UL;
+        }
+
+        // Review finding S6 (nit): a malformed entry must not send a
+        // zero-length face into `buildLoops` — every old index in
+        // `[0, oldFaceCount)` must be named either by `faceOldOfNew` (a
+        // surviving/duplicated new face, `firstNew[of] != kNoneYet`) or by the
+        // drop set (`fIdx`, overlaid just above). Cheap: reuses the two passes
+        // above, one extra `bool[]`. `debug { }`, not a plain block: this is a
+        // coverage ASSERTION, not a repair — under `-release` it must do no
+        // work at all, matching the identical `debug { assert(...) }` shape at
+        // `Mesh.dropCornerProvenance`'s own corner-space check (mesh.d).
+        debug {
+            bool[] covered;
+            covered.length = e.oldFaceCount;
+            foreach (of; 0 .. e.oldFaceCount) if (firstNew[of] != kNoneYet) covered[of] = true;
+            foreach (fi; e.fIdx) if (fi < e.oldFaceCount) covered[fi] = true;
+            foreach (of; 0 .. e.oldFaceCount)
+                assert(covered[of],
+                       "restoreFaceReindexReverse: malformed entry — an old face "
+                     ~ "index is named by neither faceOldOfNew nor the drop set "
+                     ~ "(fIdx); reverse cannot rebuild it and would leave a "
+                     ~ "zero-length face for buildLoops");
+        }
+
+        this.faces              = restFaces;
+        this.faceMarks          = restMarks;
+        this.faceMaterial       = restMat;
+        this.facePart           = restPrt;
+        this.faceSelectionOrder = restOrd;
+        this.faceSetMask        = restSetMsk;
+
+        if (e.faceSub.length == e.fIdx.length)
+            foreach (i, fi; e.fIdx)
+                if (fi < this.faces.length)
+                    this.setFaceSubpatch(fi, e.faceSub[i] != 0);
+
+        // Same declared-drop obligation as restoreFaceReindexForward's own comment
+        // — this function assigns `this.faces` directly (no `rewriteFaces` call, so
+        // no `rw` parameter to have passed null in the first place), but the
+        // PolyVertex corner map is exactly as undeclared-for here, and
+        // `buildLoops()` (later, in `finalize()`) enforces the same precondition
+        // regardless of which code path rewrote `faces`. Same FALLBACK gate as
+        // the forward direction (task 1903 Stage J): declared only when
+        // `CornerCarry` has declined, including when `oldFaceCount == 0` (S4
+        // above), where the carry's own `payloadForCount` finds no payload for
+        // zero faces and declines on its own.
+        if (!cornerCarryActive)
+            this.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
+    }
+
+    // ---------------------------------------------------------------------------
+    // RemoveVerts forward/reverse (used by RemoveVerts entries that are NOT the
+    // compaction pair — e.g. a future direct vert-removal op). The compaction
+    // path records RemoveVerts purely to carry the dropped positions; on reverse
+    // they are re-inserted into the gaps Reindex^-1 re-opened.
+    // ---------------------------------------------------------------------------
+
+    // Forward drop: remove the listed (sorted-ascending) indices from `vertices`.
+    void restoreRemoveVertices(ref const MeshOpEntry e) {
+        const auto idx = e.vIdx;
+        if (idx.length == 0) return;
+        bool[] drop;
+        drop.length = this.vertices.length;
+        foreach (i; idx) if (i < drop.length) drop[i] = true;
+        Vec3[] nv;
+        nv.reserve(this.vertices.length);
+        foreach (i, v; this.vertices) if (!drop[i]) nv ~= v;
+        this.vertices = nv;
+        // Drop the same indices from vertexMarks (task 0613 §4.2 — same
+        // permutation-gap fix as restoreVertexReindexForward/Reverse above), so a
+        // surviving vertex's marks stay aligned with the dropped-then-repacked
+        // position array instead of one drifting relative to the other.
+        uint[] nm;
+        nm.reserve(this.vertexMarks.length);
+        foreach (i, w; this.vertexMarks) if (i >= drop.length || !drop[i]) nm ~= w;
+        this.vertexMarks = nm;
+        // Same drop for vertexSelectionOrder (task 0613 §4.2, S3 code review) —
+        // see restoreVertexReindexForward's comment for why the order stamp must move
+        // with the mark word, not just the position.
+        int[] no;
+        no.reserve(this.vertexSelectionOrder.length);
+        foreach (i, o; this.vertexSelectionOrder) if (i >= drop.length || !drop[i]) no ~= o;
+        this.vertexSelectionOrder = no;
+        // Task 0930: same parallel drop-filter for every Point-domain MeshMap —
+        // see restoreVertexReindexForward's comment for why a surviving vertex's own
+        // value must move with it rather than being left to finalize()'s tail
+        // length-only resize. Same `i >= drop.length || !drop[i]` survive
+        // condition as the three arrays above, scaled by the map's own `dim`.
+        foreach (ref mm; this.meshMaps) {
+            if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+            const size_t dim = mm.dim;
+            const size_t n   = mm.data.length / dim;
+            float[] nd;
+            nd.reserve(mm.data.length);
+            // Task 1069: presence rides the SAME drop-filter, one entry per
+            // ELEMENT, filtered on the identical survive condition.
+            const bool hasP = mm.present.length != 0;
+            ubyte[] np;
+            if (hasP) np.reserve(mm.present.length);
+            foreach (i; 0 .. n)
+                if (i >= drop.length || !drop[i]) {
+                    nd ~= mm.data[i * dim .. i * dim + dim];
+                    if (hasP) np ~= (i < mm.present.length) ? mm.present[i] : cast(ubyte)0;
+                }
+            mm.data = nd;
+            if (hasP) mm.present = np;
+        }
+        // Task 1060: `vertexSetMask` rides the SAME drop-filter as the
+        // Point-domain meshMaps loop just above — computed BEFORE `this.vertices`
+        // was reassigned, so `mm.data`'s pre-drop length still lines up with
+        // `drop`. Re-derive the same relation for `vertexSetMask`.
+        this.vertexSetMask = selSetDropFilterVertexMask(this.vertexSetMask, drop);
+        // Task 1060, Stage 5b: re-key the edge-set registry through THIS drop's
+        // prefix-sum remap — the drop-filter's own old->new correspondence,
+        // built the same way `compactUnreferenced`'s `remap` is (kept indices
+        // renumbered by how many earlier entries were dropped; a dropped
+        // vertex maps to `uint.max`). This must run on the SAME `drop` array
+        // used just above, before any caller reassigns `this.vertices` further.
+        {
+            uint[] vremap;
+            vremap.length = drop.length;
+            uint nextIdx = 0;
+            foreach (i; 0 .. drop.length)
+                vremap[i] = drop[i] ? uint.max : nextIdx++;
+            // No production RemoveVerts reaches this standalone forward arm: the
+            // sole producer writes an immediate Reindex pair, skipped at 848-851.
+            // carry is declared, not witnessed; a direct-removal producer must
+            // revisit this policy and the matching reverse insert arm.
+            selSetRekeyEdges(this,
+                (uint v) => v < vremap.length ? vremap[v] : uint.max,
+                WireKeyPolicy.carry);
+        }
+    }
+
+    // Reverse: restore the dropped verts at their recorded (pre-removal) indices.
+    //
+    // Two cases compose here:
+    //  * After a preceding Reindex^-1 (the compaction pair, the common case),
+    //    `vertices` is ALREADY at pre-compaction length with the dropped slots
+    //    sitting as gaps — so we ASSIGN the recorded position into the existing
+    //    gap (NOT insert, which would double-grow the array).
+    //  * For a standalone RemoveVerts with no preceding Reindex (a future direct
+    //    removal op), the slot does not exist yet, so we INSERT.
+    // `idx` is ascending; low-to-high keeps later indices valid in the insert case.
+    //
+    // vertexMarks (task 0613 §4.2): kept in LENGTH lock-step with `vertices` at
+    // every step, mirroring each of the three position operations exactly —
+    // otherwise a LATER Reindex/RemoveVerts entry in the same batch (a multi-step
+    // compaction) would see `vertexMarks.length != vertices.length` mid-replay,
+    // not just at finalize()'s tail resize. The VALUE inserted is 0 (no bits),
+    // not a restored capture: `MeshOpEntry.RemoveVerts` only records `vIdx` +
+    // `pos` — a removed vertex's marks are not captured anywhere in the delta.
+    // Re-inserting a vertex that was hidden (a loose point's own bit; a
+    // face-bound vertex's bit self-heals via refreshHiddenDerived and needs no
+    // capture) therefore comes back VISIBLE, same as the reference's own convention that
+    // selection bits do not survive an index change elsewhere in mesh.d
+    // (`clearFaceSelectionResize` et al.) — not a regression, a documented limit.
+    //
+    // Task 0930: every Point-domain MeshMap gets the same treatment as
+    // `vertexMarks` in all three branches (gap-fill / tail-append / standalone
+    // insert) — length lock-step, value 0 (not a restored capture, same
+    // documented limit; `MeshOpEntry.RemoveVerts` does not carry a removed
+    // vertex's own map values any more than it carries its marks word).
+    //
+    // TASK 1903 STAGE L5-b — `vertexSetMask` LEFT THAT CLASS AND THE OTHERS DID
+    // NOT. Read the paragraph above as history: it lumps four planes together
+    // (`vertexMarks`, the Point-map values, the `present` bytes, and the set mask)
+    // under one "documented limit", and exactly one of the four is now RESTORED.
+    //
+    //   RESTORED, from the entry's own payload: `vertexSetMask`, on all three
+    //       arms, plus the `edgeSetMask` entries whose endpoint vanished (re-
+    //       inserted after the loop, in the pre-compaction key space
+    //       `restoreVertexReindexReverse` has just put the mesh back into).
+    //   ALSO RESTORED SINCE STAGE L7-P3: every Point-domain `MeshMap` VALUE and
+    //       its `present` byte, on the same three arms, from `mapDims` /
+    //       `mapVals` / `presentBefore` (see their doc on `MeshOpEntry`). The
+    //       payload is optional — absent means "nothing to restore" and the arms
+    //       zero as they always did — and a present-but-unbindable one is refused
+    //       WHOLE, ticking `changeBus.mapDeltaBindRefused`.
+    //   STILL ZEROED, unchanged: `vertexMarks` — and it is now the ONLY plane in
+    //       that class, so the paragraph above should not be read as covering a
+    //       family.
+    //
+    // WHY THE SPLIT IS NOT ARBITRARY. The set mask is DOCUMENT state a user
+    // names, saves in `.v3d` and reloads — "a named selection set vanished on
+    // Ctrl+Z" is a data-loss report (task 2280). The Point-map values are the
+    // same class of loss one level down: a weight or a morph offset is authored
+    // data, and for a `morphAbsolute` map the zero this used to write is a LEGAL
+    // value ("stay at the base"), so the loss is a silent geometric answer rather
+    // than a blank. It was measured as the last blocker under an armed
+    // `bevelEdgesByMask` (card 2320) and under the L10 weld twin, which is why it
+    // left the class here rather than staying belt-covered by the migrated
+    // commands' own `preMaps_` capture.
+    //
+    // A re-inserted vertex coming back VISIBLE and un-marked is a different case
+    // and stays: that is the convention the rest of `mesh.d` already follows for
+    // index changes (`clearFaceSelectionResize` et al.), not authored data.
+    //
+    // `vertexSelectionOrder` (task 0930, secondary finding) now gets the SAME
+    // standalone-insert treatment `vertexMarks` already had: the gap-fill and
+    // tail-append branches were already safe (the gap/tail slot arrives at 0 via
+    // restoreVertexReindexReverse's own permute / finalize()'s tail length-resize), but
+    // the standalone insertInPlace branch left it out of lock-step with
+    // `vertices`' mid-array growth — the same hole this task closed for
+    // `meshMaps` just above, on an array that already had the fix everywhere
+    // else. No live producer reaches this branch yet (a standalone RemoveVerts
+    // with no paired Reindex — see the doc comment above), so this is a
+    // preventive close, not a measured-by-value fix; closed here because the
+    // adjacent lines were already being touched for the meshMaps fix.
+    void restoreInsertVertices(ref const MeshOpEntry e) {
+        const auto idx = e.vIdx; const auto pos = e.pos; const auto vertSetMaskBefore = e.vertSetMaskBefore; const auto edgeSetKeys = e.edgeSetKeys; const auto edgeSetWords = e.edgeSetWords; const auto pointMapDims = e.mapDims; const auto pointMapVals = e.mapVals; const auto pointMapPresent = e.presentBefore;
+        // Task 1903 Stage L5-b. EMPTY means "nothing to restore" — the honest
+        // empty a mesh with no selection sets produces — and a payload of the
+        // WRONG length is refused WHOLE rather than applied to the prefix that
+        // happens to line up: a set membership landing on the wrong vertex is a
+        // legal-looking wrong answer, which is worse than the zero it replaces.
+        const bool haveVsm = vertSetMaskBefore.length == idx.length;
+        ulong vsmFor(size_t i) { return haveVsm ? vertSetMaskBefore[i] : 0UL; }
+
+        // ---- Task 1903 Stage L7-P3: the Point-domain MAP-VALUE payload ---------
+        //
+        // BIND FIRST, ONCE, BEFORE ANY ARM RUNS. The three arms below differ in how
+        // they make room for the vertex, not in what they write into it, so the
+        // decision "is this payload usable at all" is taken here and the arms only
+        // read `pmValue` / `pmPresent`.
+        //
+        // THE BIND IS BY COUNT + DIMS + REGISTRATION ORDER, the same identity
+        // `CornerCarry`'s restore uses for the PolyVertex side. Names are
+        // deliberately not carried: a rename is its own history entry, so it must
+        // already have been undone before this delta's own undo can run (LIFO), and
+        // a `string[]` would be the fourth heap field on the struct — the cost this
+        // stage exists to avoid.
+        //
+        // MISMATCH REFUSES THE WHOLE BLOCK — every channel, not the prefix that
+        // lines up — and the arms then zero exactly as they did before this stage.
+        // The `RemoveVerts` entry itself is NOT refused: its other half re-inserts
+        // the vertex, and skipping that would leave the mesh short a vertex, which
+        // is a corruption rather than a documented limit.
+        size_t pmStride = 0;
+        foreach (d; pointMapDims) pmStride += d;
+        bool pmBound = false;
+        if (pointMapDims.length != 0) {
+            // The live Point-domain registry, in the order the recorder walked it.
+            // The COUNT and the DIMS are two separate terms on purpose: they fail
+            // on different drifts (a map appearing or vanishing vs a map coming
+            // back with a different shape), and a bind that folded them together
+            // would have one of the two untestable. The loop does not `break` for
+            // the same reason — an early exit makes `liveCount` a function of the
+            // dim mismatch and collapses the two terms back into one.
+            size_t liveCount = 0;
+            bool   dimsOk    = true;
+            foreach (ref mm; this.meshMaps) {
+                if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                if (liveCount >= pointMapDims.length
+                    || pointMapDims[liveCount] != mm.dim) dimsOk = false;
+                ++liveCount;
+            }
+            if (dimsOk && liveCount == pointMapDims.length
+                && pointMapVals.length == idx.length * pmStride
+                && (pointMapPresent.length == 0
+                    || pointMapPresent.length == idx.length * pointMapDims.length))
+                pmBound = true;
+            else
+                ++changeBus.mapDeltaBindRefused;
+        }
+        /// The `dim` floats this payload holds for dropped vertex `i`, map `j` —
+        /// or `null` when the payload is absent or refused, which is what the arms
+        /// read as "zero, as before".
+        const(float)[] pmValue(size_t i, size_t j, size_t off, size_t dim) {
+            if (!pmBound) return null;
+            const size_t b = i * pmStride + off;
+            return pointMapVals[b .. b + dim];
+        }
+        /// The presence byte for the same pair. Absent presence payload ⇒ 0, which
+        /// is exactly what the pre-L7-P3 arms wrote.
+        ubyte pmPresent(size_t i, size_t j) {
+            if (!pmBound || pointMapPresent.length == 0) return 0;
+            return pointMapPresent[i * pointMapDims.length + j];
+        }
+
+        foreach (i, vi; idx) {
+            if (vi < this.vertices.length) {
+                this.vertices[vi] = pos[i];          // fill the gap re-opened by Reindex^-1
+                if (vi < this.vertexMarks.length) this.vertexMarks[vi] = 0;
+                {
+                    size_t j = 0, off = 0;
+                    foreach (ref mm; this.meshMaps) {
+                        if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                        const size_t dim = mm.dim;
+                        // Task 1903 Stage L7-P3: this IS a restored capture now,
+                        // when the payload bound. `null` from `pmValue` is the
+                        // pre-L7-P3 zero-fill, unchanged.
+                        auto src = pmValue(i, j, off, dim);
+                        if (vi * dim + dim <= mm.data.length) {
+                            if (src !is null) mm.data[vi * dim .. vi * dim + dim] = src[];
+                            else              mm.data[vi * dim .. vi * dim + dim] = 0f;
+                        }
+                        // Task 1069: the presence channel travels with the value.
+                        if (vi < mm.present.length) mm.present[vi] = pmPresent(i, j);
+                        ++j;
+                        off += dim;
+                    }
+                }
+                // Task 1903 Stage L5-b: this IS a restored capture now — the
+                // one plane of the four that left the "documented limit" class.
+                // See this function's header for which three did not.
+                if (vi < this.vertexSetMask.length) this.vertexSetMask[vi] = vsmFor(i);
+            } else if (vi == this.vertices.length) {
+                this.vertices ~= pos[i];             // contiguous append at the tail
+                this.vertexMarks ~= 0u;
+                {
+                    size_t j = 0, off = 0;
+                    foreach (ref mm; this.meshMaps) {
+                        if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                        const size_t dim = mm.dim;
+                        auto src = pmValue(i, j, off, dim);   // Stage L7-P3
+                        if (src !is null) mm.data ~= src[];
+                        else foreach (_; 0 .. dim) mm.data ~= 0f;
+                        if (mm.present.length != 0) mm.present ~= pmPresent(i, j); // task 1069
+                        ++j;
+                        off += dim;
+                    }
+                }
+                this.vertexSetMask ~= vsmFor(i);   // task 1903 Stage L5-b
+            } else {
+                this.vertices.insertInPlace(vi, pos[i]); // standalone removal (no Reindex)
+                if (vi <= this.vertexMarks.length) this.vertexMarks.insertInPlace(vi, 0u);
+                if (vi <= this.vertexSelectionOrder.length) this.vertexSelectionOrder.insertInPlace(vi, 0);
+                {
+                    size_t j = 0, off = 0;
+                    foreach (ref mm; this.meshMaps) {
+                        if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                        const size_t dim = mm.dim;
+                        auto src = pmValue(i, j, off, dim);   // Stage L7-P3
+                        if (vi * dim <= mm.data.length) {
+                            float[] fill;
+                            fill.length = dim;
+                            if (src !is null) fill[] = src[];
+                            else              fill[] = 0f;
+                            mm.data.insertInPlace(vi * dim, fill);
+                            // Task 1069: the presence channel shifts with the values.
+                            if (mm.present.length != 0 && vi <= mm.present.length)
+                                mm.present.insertInPlace(vi, pmPresent(i, j));
+                        }
+                        ++j;
+                        off += dim;
+                    }
+                }
+                if (vi <= this.vertexSetMask.length)
+                    this.vertexSetMask.insertInPlace(vi, vsmFor(i));   // Stage L5-b
+                // Task 1060, Stage 5b: this is the STANDALONE insert branch — no
+                // live producer reaches it today (see the comment above this
+                // function), but the edge-set re-key belongs here for the same
+                // reason the meshMaps insert does: inserting a vertex at `vi`
+                // shifts every vertex index >= vi up by one, so any edge-set
+                // entry with such an endpoint must shift with it or it silently
+                // points at the wrong (or a now-nonexistent) pair. Preventive
+                // close, not measured-by-value — mirrors the note on
+                // `vertexSelectionOrder`'s insert two lines above.
+                // No production RemoveVerts reaches this standalone insert arm:
+                // the compaction pair reverses into the hole-fill arm above.
+                // carry is declared, not witnessed; a future direct-removal
+                // producer must revisit both standalone policies and add a cell.
+                selSetRekeyEdges(this, (uint v) => v >= vi ? v + 1 : v,
+                                 WireKeyPolicy.carry);
+            }
+        }
+        // Task 1903 Stage L5-b — the EDGE half, AFTER the whole loop and not
+        // inside it. The recorded keys name PRE-compaction vertex indices, which
+        // is the space the mesh is in only once every arm above has run (the
+        // standalone-insert arm shifts existing keys up as it goes). Merged with
+        // `|=` rather than assigned, matching `selSetRekeyEdges`' own conservative
+        // rule for two old keys landing on one new one: a restore may add
+        // membership back, never take it away.
+        foreach (k, key; edgeSetKeys) {
+            if (auto p = key in this.edgeSetMask) *p |= edgeSetWords[k];
+            else                               this.edgeSetMask[key] = edgeSetWords[k];
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // RemoveFaces forward/reverse.
+    // ---------------------------------------------------------------------------
+    void restoreRemoveFaces(ref const MeshOpEntry e) {
+        const auto idx = e.fIdx;
+        if (idx.length == 0) return;
+        bool[] drop;
+        drop.length = this.faces.length;
+        foreach (i; idx) if (i < drop.length) drop[i] = true;
+        uint[][] nf;
+        nf.reserve(this.faces.length);
+        foreach (i, ref f; this.faces) if (!drop[i]) nf ~= f.dup;
+        this.faces = nf;
+        // faceMarks rides the SAME compaction (task 0613 §4.2/S2 code review —
+        // the face-side twin of restoreRemoveVertices's vertexMarks fix above).
+        // This is a real array compaction (drop + shift), not a positional
+        // insert/remove, so a surviving face's WHOLE marks word (Subpatch +
+        // Hide) must move with it to its new index — otherwise finalize()'s
+        // tail `faceMarks.length = this.faces.length` truncate/grow leaves the
+        // word at each surviving index stale, and a face's Hide bit silently
+        // lands on whichever OTHER face slides into its old slot. Same class of
+        // bug already fixed at deleteFacesByMask's own compaction
+        // (`keptWord`, in `Mesh.finalizeTopologyEdit`). Reached on the apply/redo path of
+        // MeshSessionEdit-backed tools (bevel, loop-slice, reduce,
+        // topology-pen-remove — commands/mesh/session_edit.d:108); delete/remove
+        // dodge it because their own revert() re-overlays the full pre-op word
+        // afterward (see MeshDelete.revert) and their redo re-runs the kernel
+        // instead of replaying this forward op.
+        uint[] nm;
+        nm.reserve(this.faceMarks.length);
+        foreach (i, w; this.faceMarks) if (i >= drop.length || !drop[i]) nm ~= w;
+        this.faceMarks = nm;
+        // Task 0922: `faceMaterial` / `facePart` / `faceSelectionOrder` ride the
+        // SAME drop-filter as `faces`/`faceMarks` just above — the same class of
+        // bug, the same fix. Without this, `finalize()`'s tail
+        // `faceMaterial.length = this.faces.length` (a raw truncate/grow, not a
+        // compaction) left each of these three planes at their STALE pre-drop
+        // position instead of following their own face through the drop, so a
+        // face dropped anywhere but the array's tail left every survivor after
+        // it wearing a neighbour's material/part/pick-order stamp. Reached on
+        // the same apply/redo path as the faceMarks fix above.
+        uint[] nmat;
+        nmat.reserve(this.faceMaterial.length);
+        foreach (i, v; this.faceMaterial) if (i >= drop.length || !drop[i]) nmat ~= v;
+        this.faceMaterial = nmat;
+        uint[] nprt;
+        nprt.reserve(this.facePart.length);
+        foreach (i, v; this.facePart) if (i >= drop.length || !drop[i]) nprt ~= v;
+        this.facePart = nprt;
+        // Task 1060, Stage 5c: `faceSetMask` rides the SAME drop-filter as
+        // `facePart` just above — this is the undo/redo replay twin of the
+        // face-drop carry `deleteFacesByMask`/`dissolveVerticesByMask`/etc.
+        // already do on the live path.
+        ulong[] nsetm;
+        nsetm.reserve(this.faceSetMask.length);
+        foreach (i, v; this.faceSetMask) if (i >= drop.length || !drop[i]) nsetm ~= v;
+        this.faceSetMask = nsetm;
+        int[] nord;
+        nord.reserve(this.faceSelectionOrder.length);
+        foreach (i, v; this.faceSelectionOrder) if (i >= drop.length || !drop[i]) nord ~= v;
+        this.faceSelectionOrder = nord;
+    }
+
+    void restoreInsertFaces(ref const MeshOpEntry e) {
+        const auto idx = e.fIdx; const auto lists = e.faceLists; const auto mat = e.faceMat; const auto prt = e.facePrt; const auto sub = e.faceSub; const auto setm = e.faceSetMsk; const auto ord = e.faceOrd;
+        // NEGATIVE CONTROL (test only): stub RemoveFaces^-1 to a no-op under
+        // -version=UndoNegControlRemoveFaces so the delete/remove round-trip proves
+        // the face re-insertion inverse is load-bearing (without it the deleted
+        // faces never come back on undo → face count diverges from the pre-op mesh).
+        version (UndoNegControlRemoveFaces) return;
+        // Task 1902 Stage H (plan §7.3): `faceSelectionOrder` is now carried the
+        // same way `facePrt`/`faceSetMsk` are — an entry recorded before this
+        // task (or a hand-built test fixture with no `ord`) falls back to the
+        // pre-existing "insert 0" behaviour, unchanged.
+        const bool haveOrd = ord.length == idx.length;
+        // Insert ascending so later indices stay valid.
+        foreach (i, fi; idx) {
+            if (fi <= this.faces.length)
+                this.faces.insertInPlace(fi, lists[i].dup);
+            // faceMarks shifts in LOCKSTEP with `this.faces` (task 0613 §4.2/S2 code
+            // review — the reverse-direction twin of restoreRemoveFaces's fix
+            // above; mirrors how faceMaterial/facePart already insertInPlace at
+            // `fi` just below). Without this, `this.faces` grows by one at `fi`
+            // (shifting every surviving face after it up one slot) while
+            // `this.faceMarks` sits untouched until finalize()'s tail
+            // `faceMarks.length = this.faces.length` — a LENGTH GROW, which appends
+            // zeros at the TAIL, not at `fi` — so every surviving face's word
+            // ends up misaligned with its (now-shifted) face, not just the
+            // re-inserted one. Insert 0 (no bits): a re-inserted face's OWN word
+            // is not captured by this entry beyond `sub` (Subpatch, restored by
+            // name just below) — same "not a regression, a documented limit" as
+            // restoreInsertVertices's vertexMarks insert above.
+            if (fi <= this.faceMarks.length) this.faceMarks.insertInPlace(fi, 0u);
+            // faceSelectionOrder shifts in LOCKSTEP too (task 0922 — the reverse
+            // twin of the forward drop-filter fixed above). SelectionDelta only
+            // ever patches the Select BIT (see restoreSelectionValues below); it does not
+            // touch the pick-order stamp. Task 1902 Stage H: when `ord` is
+            // carried, insert the DROPPED face's own recorded stamp instead of
+            // the earlier unconditional 0 — the same carried/not-carried split
+            // `facePrt`/`faceSetMsk` already use below.
+            if (fi <= this.faceSelectionOrder.length)
+                this.faceSelectionOrder.insertInPlace(fi, haveOrd ? ord[i] : 0);
+        }
+        // Restore parallel per-face arrays (material / part / subpatch) where
+        // carried. The face SELECT bit is restored by the SelectionDelta /
+        // whole-array path, not here (see faceSelectionOrder's own insert above
+        // for why the pick-order STAMP is not restorable that way).
+        if (mat.length == idx.length) {
+            foreach (i, fi; idx) {
+                // `<=`, not `<` (task 0922): `fi == this.faceMaterial.length` is the
+                // legal TAIL-insert case `insertInPlace` accepts, and `facePart`
+                // just below already uses `<=` for the identical insert. The
+                // stricter `<` silently skipped exactly that tail re-insertion,
+                // leaving a re-inserted face's material lost — not merely
+                // deferred to finalize()'s tail pad, since that pad writes 0 at
+                // the array's OWN new tail, which after this skip is one slot
+                // short of where the restored face actually landed.
+                if (fi <= this.faceMaterial.length) {
+                    this.faceMaterial.insertInPlace(fi, mat[i]);
+                }
+            }
+        }
+        if (prt.length == idx.length) {
+            foreach (i, fi; idx) {
+                if (fi <= this.facePart.length)
+                    this.facePart.insertInPlace(fi, prt[i]);
+            }
+        } else {
+            // prt not carried (old delta): insert 0u to keep length aligned.
+            foreach (i, fi; idx) {
+                if (fi <= this.facePart.length)
+                    this.facePart.insertInPlace(fi, 0u);
+            }
+        }
+        // Task 1060, Stage 5c / review SHOULD-FIX 4: `faceSetMask` rides the SAME
+        // carried/not-carried split `prt` uses just above, NOT an unconditional
+        // 0-insert. The earlier comment here claimed this matched an "inherited"
+        // limit of the per-face-part data — that was wrong: all four live
+        // `recordRemoveFaces` call sites (`Mesh.deleteFacesByMask`,
+        // `Mesh.dissolveVerticesByMask`, the merge path, `extrudeFacesByMask`)
+        // already populate and pass `prt`, so `facePrt`'s "not carried" arm is
+        // dead in practice — only reachable from a hand-built (pre-1060)
+        // `MeshOpEntry`. `faceSetMask` had no capture field at all until this
+        // fix, so its 0-insert was the ONLY reachable arm: every face-delete undo
+        // silently dropped the restored face's set membership while its material
+        // and part id came back correctly. Carried the same way `prt` is.
+        if (setm.length == idx.length) {
+            foreach (i, fi; idx) {
+                if (fi <= this.faceSetMask.length)
+                    this.faceSetMask.insertInPlace(fi, setm[i]);
+            }
+        } else {
+            // Not carried (a hand-built entry with no faceSetMsk, e.g. this
+            // module's own S2 unittest fixture): insert 0UL to keep length
+            // aligned with `this.faces`, same as `prt`'s fallback arm above.
+            foreach (i, fi; idx) {
+                if (fi <= this.faceSetMask.length)
+                    this.faceSetMask.insertInPlace(fi, 0UL);
+            }
+        }
+        if (sub.length == idx.length) {
+            foreach (i, fi; idx)
+                if (fi < this.faces.length)
+                    this.setFaceSubpatch(fi, sub[i] != 0);
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Sparse mark patches. SelectionDelta carries the whole Select mark word per
+    // touched element; Subpatch/Material carry the bit / id.
+    // ---------------------------------------------------------------------------
+    void restoreSelectionValues(MeshOpEntry.SelDomain dom,
+                                in uint[] idx, in uint[] vals) {
+        import change_bus : BusSelDomain = SelDomain;
+        bool any = false;
+        BusSelDomain busDom;
+        final switch (dom) {
+            case MeshOpEntry.SelDomain.Vertex:
+                busDom = BusSelDomain.Vertex;
+                foreach (i, e; idx) if (e < this.vertexMarks.length) any |= setSelectBit(this.vertexMarks[e], vals[i]);
+                break;
+            case MeshOpEntry.SelDomain.Edge:
+                busDom = BusSelDomain.Edge;
+                foreach (i, e; idx) if (e < this.edgeMarks.length) any |= setSelectBit(this.edgeMarks[e], vals[i]);
+                break;
+            case MeshOpEntry.SelDomain.Face:
+                busDom = BusSelDomain.Face;
+                foreach (i, e; idx) if (e < this.faceMarks.length) any |= setSelectBit(this.faceMarks[e], vals[i]);
+                break;
+        }
+        // TASK 1903 L0.P1 — NOTE THE SELECTION DOMAIN, on BOTH paths.
+        //
+        // This loop writes Select marks RAW (see `setSelectBit` below) and, until
+        // now, noted no selection domain at all: on the slow path the incidental
+        // full `Polygons` re-upload that `rebuildEdges` publishes repainted the
+        // highlight by brute force, so nobody noticed. The carve-out drops that
+        // publish, and `Marks` is deliberately outside the local
+        // `DisplayRefreshMask`, so the domain note is what a selection consumer has
+        // left to key on.
+        //
+        // Placed HERE rather than in the fast branch so the two paths cannot
+        // diverge: it is the funnel every guarded marks setter on `Mesh` already
+        // uses, it accumulates without delivering (`finalize`'s `commitRestored`
+        // is the delivery), and it can only invalidate MORE, never less.
+        //
+        // Guarded on a REAL flip, like every one of those setters — `setSelectBit`
+        // reports whether the word actually changed. The recorders guard only
+        // `idx.length == 0`, so a `before == after` entry is representable, and a
+        // no-op restore must not publish (памятка: a paint stroke without
+        // compare-before-set delivered 280 times for 42 edits).
+        if (any) this.noteSelectionChange(busDom);
+    }
+
+    // Returns TRUE iff the word actually changed — see `restoreSelectionValues`'s domain
+    // note above for why the caller needs to know.
+    private bool setSelectBit(ref uint word, uint on) {
+        // §3.1 Select ∧ Hide = ∅ (doc/hide_geometry_plan.md, code review task
+        // 0613 — S2) — this sparse patch is the delta-backed undo/redo replay's
+        // own Select writer (delete / remove / edge extrude / edge extend), and
+        // it does not go through any of mesh.d's guarded selectX /
+        // setXSelectedFrom primitives. Refuse the same way they do — silently —
+        // or a redo/undo round-trip could resurrect a Select bit on an element
+        // that is (still) hidden at this index.
+        if (on != 0 && (word & Mesh.Marks.Hide) != 0) return false;
+        const uint was = word;
+        if (on) word |=  Mesh.Marks.Select;
+        else    word &= ~Mesh.Marks.Select;
+        return word != was;
+    }
+
+    // Mirrors patchSubpatch (task 0613 §4.2/S1) — sparse face-indexed Hide patch.
+    // Routes through setHideBit below rather than poking the word directly, for
+    // the same reason setSelectBit exists just above: this is a mark WRITER and
+    // owes the §3.1 invariant, not a caller-side convenience.
+    void restoreHideValues(in uint[] idx, in uint[] vals) {
+        foreach (i, e; idx)
+            if (e < this.faceMarks.length)
+                setHideBit(this.faceMarks[e], vals[i]);
+    }
+
+    private void setHideBit(ref uint word, uint on) {
+        // §3.1 Select ∧ Hide = ∅ — the same invariant setSelectBit enforces from
+        // the OTHER direction (refuse Select while Hide is set); this is the Hide
+        // side of it (clear Select when Hide gets set). Raw bit-twiddle — no
+        // commitChange, no refreshHiddenDerived here: finalize() does both ONCE
+        // for the whole replay (same convention as restoreSubpatchValues/restoreMaterialValues),
+        // and refreshHiddenDerived() is what re-derives the vertex/edge planes
+        // afterward — this function only owns the authoritative face bit.
+        if (on != 0) {
+            word |= Mesh.Marks.Hide;
+            word &= ~Mesh.Marks.Select;
+        } else {
+            word &= ~Mesh.Marks.Hide;
+        }
+    }
+
+    void restoreMaterialValues(in uint[] idx, in uint[] vals) {
+        foreach (i, e; idx)
+            if (e < this.faceMaterial.length)
+                this.faceMaterial[e] = vals[i];
+    }
+
+    // Resolve the entry's map and check every REFUSAL term the payload carries.
+    // Returns null (having ticked the counter) on any mismatch.
+    private MeshMap* bindMapForEntry(ref const MeshOpEntry e, string name) {
+        auto live = this.meshMap(name);
+        if (live is null)          { ++changeBus.mapDeltaBindRefused; return null; }
+        if (live.dim    != e.mapDim
+         || live.domain != e.mapDomain
+         || live.kind   != e.mapKind) { ++changeBus.mapDeltaBindRefused; return null; }
+        return live;
+    }
+
+    void restoreMapValues(ref const MeshOpEntry e, bool forward) {
+        auto live = bindMapForEntry(e, e.mapName);
+        if (live is null) return;
+
+        const bool tracks = kindInfo(live.kind).tracksPresence;
+        const(float)[] vals = forward ? e.mapValsAfter  : e.mapValsBefore;
+        const(ubyte)[] pres = forward ? e.presentAfter : e.presentBefore;
+
+        final switch (e.mapAddr) with (MeshOpEntry.MapAddressing) {
+            case Listed:
+                // A `Listed` entry with NO indices is a DROPPED plane, not "all
+                // elements" — refuse it rather than rewriting the whole map with
+                // whatever the value arrays hold. That inference is the
+                // empty-means-all trap this addressing enum exists to close.
+                if (e.mapElemIdx.length == 0) { ++changeBus.mapDeltaBindRefused; return; }
+                const size_t want = e.mapElemIdx.length * live.dim;
+                if (e.mapValsBefore.length != want || e.mapValsAfter.length != want) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+                if (tracks) {
+                    if (e.presentBefore.length != e.mapElemIdx.length
+                     || e.presentAfter.length  != e.mapElemIdx.length) {
+                        ++changeBus.mapDeltaBindRefused; return;
+                    }
+                    // THE LIVE CHANNEL'S OWN LENGTH, and this term is not
+                    // decoration. `present.length == 0` LEGALLY means "every
+                    // element is present", and every writer in `mesh.d` guards on
+                    // `i < present.length` — so without this compare a Listed
+                    // restore writes `data`, silently drops the presence half, and
+                    // every other length term still passes with no counter moving.
+                    // `data` then compares equal to the recorded values, so a
+                    // value-plane assertion does not see it either.
+                    if (live.present.length != this.elementCount(live.domain)) {
+                        ++changeBus.mapDeltaBindRefused; return;
+                    }
+                } else if (e.presentBefore.length != 0 || e.presentAfter.length != 0) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+                foreach (idx; e.mapElemIdx) {
+                    const size_t b = cast(size_t)idx * live.dim;
+                    if (idx >= this.elementCount(live.domain) || b + live.dim > live.data.length) {
+                        ++changeBus.mapDeltaBindRefused; return;
+                    }
+                }
+                // Bound. From here every write lands, and DELIBERATELY WITHOUT a
+                // second `idx < live.present.length` guard: the bind terms above
+                // are the single authority, and a belt-and-braces guard here would
+                // be an unnamed second refusal standing in front of the named one —
+                // the shape that makes a witness green on the broken code. If the
+                // live-presence bind term is ever removed, this line is a
+                // bounds-checked abort in `-debug` and an out-of-bounds WRITE in
+                // `-release`; that is a feature of the arrangement, not an
+                // oversight. (The plan predicted a silent drop here, on the
+                // assumption that this loop would guard the way `mesh.d`'s own
+                // setters do. It does not, so the term protects more than the
+                // plan said. Recorded rather than "fixed" by adding the guard.)
+                foreach (k, idx; e.mapElemIdx) {
+                    const size_t b = cast(size_t)idx * live.dim;
+                    live.data[b .. b + live.dim] = vals[k * live.dim .. (k + 1) * live.dim];
+                    if (tracks) live.present[idx] = pres[k];
+                }
+                break;
+
+            case WholeArray:
+                if (e.mapValsBefore.length != live.data.length
+                 || e.mapValsAfter.length  != live.data.length) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+                if (tracks) {
+                    if (e.presentBefore.length != live.present.length
+                     || e.presentAfter.length  != live.present.length) {
+                        ++changeBus.mapDeltaBindRefused; return;
+                    }
+                } else if (e.presentBefore.length != 0 || e.presentAfter.length != 0) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+                live.data[] = vals[];
+                if (tracks) live.present[] = pres[];
+                break;
+
+            case DefaultInit:
+                // Meaningless for a value write — it is the `Create` arm's "the
+                // content `addMeshMapOfKind` produces". A `Values` entry that
+                // carries it is malformed, and saying so is cheaper than guessing
+                // which of the two shapes the recorder meant.
+                ++changeBus.mapDeltaBindRefused;
+                break;
+        }
+    }
+
+    // Register the entry's map and, unless the entry says DefaultInit, fill it
+    // from the supplied image. Used by `Create` FORWARD and `Remove` REVERSE —
+    // the same operation, reached from the two arms whose payload class differs.
+    void restoreMapRegister(ref const MeshOpEntry e, bool forward) {
+        const(float)[] vals = forward ? e.mapValsAfter : e.mapValsBefore;
+        const(ubyte)[] pres = forward ? e.presentAfter : e.presentBefore;
+        const uint slot = forward ? uint.max : e.mapSlot;
+        if (e.mapName.length == 0)          { ++changeBus.mapDeltaBindRefused; return; }
+        if (this.meshMap(e.mapName) !is null)  { ++changeBus.mapDeltaBindRefused; return; }
+
+        // Through the CLASSIFIED door when the kind declares a shape, so dim and
+        // domain come from `kindInfo` and cannot drift from the shape table; the
+        // raw door otherwise (`unclassified` has no declarable shape — `kindInfo`
+        // gives it dim 0, which `addMeshMap` rejects outright).
+        MeshMap* live;
+        if (e.mapKind == MapKind.unclassified)
+            live = this.addMeshMap(e.mapName, e.mapDim, e.mapDomain);
+        else
+            live = this.addMeshMapOfKind(e.mapKind, e.mapName);
+
+        // `addMeshMap` returns NULL at the MAX_MESH_MAPS ceiling as well as on a
+        // duplicate name. A reverse that dereferenced it would crash; a reverse
+        // that ignored it would restore nothing and answer `true`.
+        if (live is null) { ++changeBus.mapDeltaBindRefused; return; }
+
+        // The shape the classified door produced must be the shape recorded, or
+        // the fill below writes into the wrong layout.
+        if (live.dim != e.mapDim || live.domain != e.mapDomain) {
+            this.removeMeshMap(e.mapName);
+            ++changeBus.mapDeltaBindRefused;
+            return;
+        }
+
+        if (e.mapAddr == MeshOpEntry.MapAddressing.DefaultInit) {
+            // "the content addMeshMapOfKind produces" — already there.
+            restoreMapSlot(slot);
+            return;
+        }
+
+        const bool tracks = kindInfo(live.kind).tracksPresence;
+        if (vals.length != live.data.length
+         || (tracks && pres.length != live.present.length)
+         || (!tracks && pres.length != 0)) {
+            // Refuse the entry WHOLE — including the registration it just made,
+            // so a half-restored map never reaches the document.
+            this.removeMeshMap(e.mapName);
+            ++changeBus.mapDeltaBindRefused;
+            return;
+        }
+        live.data[] = vals[];
+        if (tracks) live.present[] = pres[];
+        // LAST, and it must be last: `live` points into `meshMaps` and the move
+        // below rewrites that array. Fill through the pointer, then place.
+        restoreMapSlot(slot);
+    }
+
+    // Rotate the just-appended map from the end of `meshMaps` into `slot`,
+    // shifting the maps in between right by one — the inverse of the splice
+    // `removeMeshMap` performed. A no-op for `uint.max` and for any slot at or
+    // past the end.
+    //
+    // CLAMPS RATHER THAN REFUSES, and the reason is in `MeshOpEntry.mapSlot`: the
+    // registry may legitimately have shrunk between record and replay, and a map
+    // restored at the wrong index is a smaller error than a map not restored at
+    // all. Every pointer into `meshMaps` is invalid after this call.
+    void restoreMapSlot(uint slot) {
+        if (slot == uint.max || this.meshMaps.length == 0) return;
+        const size_t last = this.meshMaps.length - 1;
+        if (cast(size_t)slot >= last) return;
+        auto moved = this.meshMaps[last];
+        foreach_reverse (i; cast(size_t)slot .. last)
+            this.meshMaps[i + 1] = this.meshMaps[i];
+        this.meshMaps[cast(size_t)slot] = moved;
+    }
+
+    // Drop the entry's map — `Create` REVERSE and `Remove` FORWARD. Binds first,
+    // with the same refusal terms, so a map that came back reshaped between record
+    // and replay is not deleted on this entry's word.
+    void restoreMapUnregister(ref const MeshOpEntry e) {
+        auto live = bindMapForEntry(e, e.mapName);
+        if (live is null) return;
+        this.removeMeshMap(e.mapName);
+    }
+
+    // Rename `from` -> `to`, in whichever direction the caller asked for.
+    //
+    // BOTH ENDS BIND. `Mesh.meshMap()` and `Mesh.removeMeshMap()` each take the
+    // FIRST name match, so a DUPLICATE source name would rename the wrong map and
+    // leave the other permanently unreachable; and the shipped rename command
+    // throws on a taken target, which this arm must not quietly undercut.
+    void restoreMapRename(ref const MeshOpEntry e, string from, string to) {
+        if (from.length == 0 || to.length == 0) { ++changeBus.mapDeltaBindRefused; return; }
+        auto live = bindMapForEntry(e, from);
+        if (live is null) return;
+        size_t matches = 0;
+        foreach (ref mm; this.meshMaps) if (mm.name == from) ++matches;
+        if (matches != 1)                { ++changeBus.mapDeltaBindRefused; return; }
+        if (this.meshMap(to) !is null)      { ++changeBus.mapDeltaBindRefused; return; }
+        live.name = to;
+    }
+
+
+    void restoreParallelPlaneLengths() {
+        // Keep the per-element marks / order arrays length-correct with the
+        // restored geometry (the same resize primitives the topology mutators run).
+        // These GROW/SHRINK without clearing; the SelectionDelta entries restored
+        // the actual bits, so this only fixes lengths after a count change.
+        this.vertexMarks.length          = this.vertices.length;
+        this.vertexSelectionOrder.length = this.vertices.length;
+        // TASK 1903 STAGE L2-c — `vertexSetMask` was missing from this length sync,
+        // the SAME hole task 1060's review closed for `faceSetMask` two lines below
+        // and for the same reason. `AddVerts`'s forward/reverse (`this.vertices ~= …` /
+        // `this.vertices.length = v0`) carry no parallel-array payload of their own, so
+        // they rely entirely on this blanket resize to stay aligned; `RemoveVerts`'s
+        // reverse splices its own entry in and this line is a no-op for it.
+        //
+        // FOUND BY THE FROZEN PARITY ORACLE, not by review: `mesh.split_edge`'s
+        // `resetSelection()` grows `vertexSetMask` to V+1 on the forward, and the
+        // delta revert put `vertices` back to V and left the mask at V+1 —
+        // `create_stable.json [mesh.split_edge/postUndo]: plane 'vertexSetMask'
+        // differs`. The snapshot path restored the array whole and did not.
+        //
+        // THE USER-VISIBLE HALF, which is why this is a fix and not hygiene:
+        // `mesh_selsets.selSetMembersVertex` walks the MASK, not `this.vertices`, so a
+        // stale out-of-range entry reaches `/api/model` and the `.v3d` writer, and
+        // the loader's own bounds guard then drops the WHOLE named set on reload
+        // rather than the one bad entry — the exact incident `faceSetMask`'s line
+        // records.
+        this.vertexSetMask.length        = this.vertices.length;
+        this.edgeMarks.length            = this.edges.length;
+        this.edgeSelectionOrder.length   = this.edges.length;
+        this.faceMarks.length            = this.faces.length;
+        this.faceSelectionOrder.length   = this.faces.length;
+        this.faceMaterial.length         = this.faces.length;
+        this.facePart.length             = this.faces.length;
+        // Task 1060 review SHOULD-FIX 3: `faceSetMask` was missing from this
+        // length sync. `AddFaces`'s forward/reverse (`this.faces ~= …` / `this.faces.length
+        // = f0`) carry NO parallel-array payload of their own — same as
+        // facePart/faceMaterial, they rely entirely on this blanket resize to stay
+        // aligned. Without this line an AddFaces-revert SHRINK left `faceSetMask`
+        // over-long with stale, now out-of-range LIVE bits (add faces, put them in
+        // a polygon set, undo): `selSetMembersPolygon` walks the mask, not
+        // `this.faces`, so those out-of-range indices reached `/api/model` and the
+        // `.v3d` writer, and the loader's own bounds guard then dropped the WHOLE
+        // set on reload rather than the one stale entry.
+        this.faceSetMask.length          = this.faces.length;
+    }
+    void restoreTopologyEpoch() { ++topologyVersion; }
+
+    void restoreAppendVertices(in Vec3[] pos) { foreach (p; pos) vertices ~= p; }
+    void restoreVertexTail(uint v0) { if (v0 <= vertices.length) vertices.length = v0; }
+    void restorePositions(in uint[] idx, in Vec3[] pos) { foreach (i, vi; idx) if (vi < vertices.length) vertices[vi] = pos[i]; }
+    void restoreAppendFaces(in uint[][] lists) { foreach (l; lists) faces ~= l.dup; }
+    void restoreFaceTail(FaceIdx f0) { if (f0 <= faces.length) faces.length = f0; }
+    void restoreFaceWindings(in FaceIdx[] idx, in uint[][] lists) { foreach (i, fi; idx) if (fi < faces.length) faces[fi] = lists[i].dup; }
+
     // Nullable recorder. NULL unless an edit batch is open (the common case —
     // it is opened only around a committed topology op, never per drag frame).
     // While non-null, the hooked mutation primitives (addVertex, addFace,
@@ -4131,204 +5341,6 @@ struct Mesh {
         return mask;
     }
 
-
-
-    /// For each connected island of selected faces, computes the island's
-    /// area-weighted average plane (centroid + normal via raw Newell sum)
-    /// and orthogonally projects every vertex touched by that island onto
-    /// the plane.  Position-only; no topology change.
-    ///
-    /// Degenerate island (areaSum < 1e-12 or |normalSum| < 1e-6): skipped.
-    ///
-    /// **Shared-vertex semantic**: every vertex referenced by a selected face
-    /// is projected, including verts also used by unselected faces.
-    /// Adjacent unselected faces are therefore deformed.  Use topologically
-    /// isolated test fixtures to get unambiguous residuals.
-    ///
-    /// **Compute-before-write with coordinate-scaled eps**: displacements are
-    /// computed first; only verts whose |displacement| >= eps are written,
-    /// where eps = 1e-6 * max(1, maxAbsCoord).  An already-planar (even
-    /// tilted) selection returns 0 without a version bump — clean no-op.
-    ///
-    /// Returns: number of vertices moved; 0 means nothing changed.
-    size_t alignFacesByMask(in bool[] faceMaskIn) {
-        const faceMask = maskMinusHiddenFaces(faceMaskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
-        import std.math : sqrt, abs;
-
-        if (faceMask.length != faces.length) return 0;
-
-        bool anySelected = false;
-        foreach (b; faceMask) if (b) { anySelected = true; break; }
-        if (!anySelected) return 0;
-
-        // Union-find over face indices: two selected faces sharing a vertex
-        // belong to the same island (identical pattern to collapseFacesByMask).
-        int[] parent;
-        parent.length = faces.length;
-        foreach (i; 0 .. faces.length) parent[i] = cast(int)i;
-
-        int findRoot(int x) {
-            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
-            return x;
-        }
-        void unite(int a, int b) {
-            a = findRoot(a); b = findRoot(b);
-            if (a != b) parent[b] = a;
-        }
-
-        // Map each vertex to the first selected face that contains it.
-        // When a second selected face shares that vertex, unite the two faces.
-        int[] vertToFace;
-        vertToFace.length = vertices.length;
-        vertToFace[] = -1;
-        foreach (fi; 0 .. faces.length) {
-            if (!faceMask[fi]) continue;
-            foreach (v; faces[fi]) {
-                if (v >= vertices.length) continue;
-                if (vertToFace[v] == -1)
-                    vertToFace[v] = cast(int)fi;
-                else
-                    unite(cast(int)fi, vertToFace[v]);
-            }
-        }
-
-        // Collect all verts touched by selected faces.
-        bool[] inSelection;
-        inSelection.length = vertices.length;
-        foreach (i; 0 .. vertices.length)
-            if (vertToFace[i] >= 0) inSelection[i] = true;
-
-        // Per-island: accumulate raw Newell sum (area-weighted normal) and
-        // area-weighted centroid.  The raw Newell vector has magnitude 2*area,
-        // so summing gives an area-weighted normal without a separate divide.
-        Vec3[int]  normalSum;
-        float[int] areaSum;
-        Vec3[int]  centroidSum;
-
-        foreach (fi; 0 .. faces.length) {
-            if (!faceMask[fi]) continue;
-            int root = findRoot(cast(int)fi);
-            const uint[] face = faces[fi];
-
-            // Raw Newell sum for this face (same loop as faceNormal, no divide).
-            float nx = 0, ny = 0, nz = 0;
-            foreach (i; 0 .. face.length) {
-                Vec3 a = vertices[face[i]];
-                Vec3 b = vertices[face[(i + 1) % face.length]];
-                nx += (a.y - b.y) * (a.z + b.z);
-                ny += (a.z - b.z) * (a.x + b.x);
-                nz += (a.x - b.x) * (a.y + b.y);
-            }
-            float rawLen = sqrt(nx*nx + ny*ny + nz*nz);
-            float area   = 0.5f * rawLen;            // area of this face
-            Vec3  centF  = faceCentroid(cast(uint)fi);
-
-            if (root in normalSum) {
-                normalSum[root]   += Vec3(nx, ny, nz);
-                areaSum[root]     += area;
-                centroidSum[root] += centF * area;
-            } else {
-                normalSum[root]   = Vec3(nx, ny, nz);
-                areaSum[root]     = area;
-                centroidSum[root] = centF * area;
-            }
-        }
-
-        // Build per-island plane (C, n) from the accumulators.
-        struct IslandPlane { Vec3 C; Vec3 n; }
-        IslandPlane[int] planes;
-        foreach (root, ns; normalSum) {
-            float as_ = areaSum[root];
-            if (as_ < 1e-12f) continue;
-            float nlen = sqrt(ns.x*ns.x + ns.y*ns.y + ns.z*ns.z);
-            if (nlen < 1e-6f) continue;
-            Vec3 n  = Vec3(ns.x / nlen, ns.y / nlen, ns.z / nlen);
-            Vec3 cs = centroidSum[root];
-            planes[root] = IslandPlane(Vec3(cs.x / as_, cs.y / as_, cs.z / as_), n);
-        }
-
-        // Compute-before-write: signed distance from each touched vertex to
-        // its island's plane.  Explicitly zero-initialised (float.init = NaN).
-        float[] dScalar;
-        dScalar.length = vertices.length;
-        foreach (ref f; dScalar) f = 0.0f;
-
-        foreach (vi; 0 .. vertices.length) {
-            if (!inSelection[vi]) continue;
-            int root = findRoot(vertToFace[vi]);
-            if (!(root in planes)) continue;
-            auto pl = planes[root];
-            Vec3 v = vertices[vi];
-            dScalar[vi] = (v.x - pl.C.x) * pl.n.x
-                        + (v.y - pl.C.y) * pl.n.y
-                        + (v.z - pl.C.z) * pl.n.z;
-        }
-
-        // Coordinate-scaled epsilon: max absolute coordinate over touched verts.
-        float maxAbsCoord = 1.0f;
-        foreach (vi; 0 .. vertices.length) {
-            if (!inSelection[vi]) continue;
-            Vec3 v = vertices[vi];
-            if (abs(v.x) > maxAbsCoord) maxAbsCoord = abs(v.x);
-            if (abs(v.y) > maxAbsCoord) maxAbsCoord = abs(v.y);
-            if (abs(v.z) > maxAbsCoord) maxAbsCoord = abs(v.z);
-        }
-        float eps = 1e-6f * maxAbsCoord;
-
-        // --- TASK 1903 STAGE L2-h: THE PROJECTION GOES THROUGH THE DOOR ---
-        //
-        // These three lines were `vertices[vi].x -= d * pl.n.x;` and friends —
-        // a raw position write reaching no hook, so `mesh.align` produced NO
-        // `Kind.SetPos` at all and its delta-path undo left every projected
-        // vertex on the plane. Plan §L2.0 row 3: `polygon_align` is a POSITION
-        // command whose row in §5.5 names only the create kinds.
-        //
-        // COLLECT THEN WRITE ONCE, the L0-d shape (A): `setVertexPositions`
-        // takes ONE op-log entry and ONE `commitChange` for the whole set,
-        // where a per-vertex door would take one of each per vertex — the task
-        // 1330 shape that makes a bulk kernel quadratic through the derived-hide
-        // sweep. Buffers are pre-sized off a counting pass, never grown by `~=`
-        // (task 2160).
-        //
-        // `moved` KEEPS ITS OLD MEANING — the number of vertices whose
-        // displacement cleared `eps` — and is deliberately NOT taken from the
-        // door's return. `setVertexPositions` additionally drops a write whose
-        // result is BIT-IDENTICAL to what is already there, which is reachable
-        // here (a displacement that clears `eps` but whose three products
-        // underflow to zero), and a caller that reported the door's count would
-        // change which meshes `mesh.align` REFUSES.
-        size_t moved = 0;
-        foreach (vi; 0 .. vertices.length) {
-            if (!inSelection[vi]) continue;
-            if (abs(dScalar[vi]) < eps) continue;
-            ++moved;
-        }
-        if (moved == 0) return 0;
-
-        {
-            import std.array : uninitializedArray;
-            auto idx = uninitializedArray!(uint[])(moved);
-            auto to  = uninitializedArray!(Vec3[])(moved);
-            size_t w = 0;
-            foreach (vi; 0 .. vertices.length) {
-                if (!inSelection[vi]) continue;
-                immutable float d = dScalar[vi];
-                if (abs(d) < eps) continue;
-                auto pl = planes[findRoot(vertToFace[vi])];
-                idx[w] = cast(uint) vi;
-                to[w]  = Vec3(vertices[vi].x - d * pl.n.x,
-                              vertices[vi].y - d * pl.n.y,
-                              vertices[vi].z - d * pl.n.z);
-                ++w;
-            }
-            assert(w == moved, "Mesh.alignFacesByMask: the counting pass and "
-                             ~ "the write pass disagree");
-            // The door publishes `MeshEditScope.Position` itself — the
-            // `commitChange` this replaces is inside it, not dropped.
-            setVertexPositions(idx, to);
-        }
-        return moved;
-    }
 
 
     /// The ONE coincidence search (task 9436), read-only: `remap[j] == i` when
@@ -6994,147 +8006,6 @@ struct Mesh {
 
         if (faceOriginOut !is null) *faceOriginOut = faceOrigin;
         return changed;
-    }
-
-    /// Return the vertex in `face` that is neither `va` nor `vb`.
-    /// Returns `uint.max` on a degenerate face (both shared verts absent or
-    /// the face has fewer than 3 corners).
-    private static uint findNonSharedVertex(const uint[] face,
-                                            uint va, uint vb) pure nothrow {
-        foreach (v; face)
-            if (v != va && v != vb) return v;
-        return uint.max;
-    }
-
-    /// Build the edge-dissolve mask for `removeEdgesByMask` by scanning
-    /// interior edges between masked faces and applying `accept`.
-    ///
-    /// When `matching` is true, uses a greedy matching (ascending edge index):
-    /// once both faces of an accepted edge are consumed no further edge
-    /// touching either face is accepted. This guarantees `removeEdgesByMask`
-    /// never fuses more than two faces per component (safe for Quadruple).
-    ///
-    /// When `matching` is false, selects ALL interior edges satisfying the
-    /// predicate, allowing multi-face coplanar-region merges (Detriangulate).
-    private bool[] selectMergeEdges(in bool[] faceMask,
-            bool delegate(uint edgeIdx, uint fA, uint fB) accept,
-            bool matching) {
-        // Build edge → up-to-2 adjacent MASKED faces. An edge whose second
-        // slot stays -1 is a boundary of the masked region and is skipped.
-        auto edgeFaces = buildEdgeFaces(faceMask);
-
-        bool[] edgeMask = new bool[](edges.length);
-        bool[] consumed = matching ? new bool[](faces.length) : null;
-
-        foreach (ei; 0 .. edges.length) {
-            ulong key = edgeKey(edges[ei][0], edges[ei][1]);
-            auto p = key in edgeFaces;
-            if (p is null) continue;
-            int fA = (*p)[0], fB = (*p)[1];
-            if (fA < 0 || fB < 0) continue;               // boundary
-            if (!accept(cast(uint)ei, cast(uint)fA, cast(uint)fB)) continue;
-            if (matching && (consumed[fA] || consumed[fB])) continue;
-            edgeMask[ei] = true;
-            if (matching) { consumed[fA] = true; consumed[fB] = true; }
-        }
-
-        return edgeMask;
-    }
-
-    /// Pair adjacent triangles in the mask into convex coplanar quads where
-    /// possible. The accept predicate requires BOTH:
-    ///   1. Coplanarity: dot(normalA, normalB) > 0.999  (in-repo threshold)
-    ///   2. Convexity: the merged 4-corner polygon projects convex in the
-    ///      face-normal plane (all consecutive cross-products same-sign).
-    /// Uses a greedy matching so each triangle is consumed at most once.
-    /// Unmatchable or non-convex/non-coplanar triangles stay as-is.
-    /// Returns the number of edges dissolved.
-    size_t quadrupleFacesByMask(in bool[] maskIn) {
-        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
-        if (mask.length != faces.length) return 0;
-        import math : cross, dot, normalize;
-
-        bool accept(uint edgeIdx, uint fA, uint fB) {
-            if (faces[fA].length != 3 || faces[fB].length != 3) return false;
-            Vec3 nA = faceNormal(fA);
-            Vec3 nB = faceNormal(fB);
-            if (dot(nA, nB) <= 0.999f) return false;       // not coplanar
-
-            // Find the 4 corners of the merged quad in boundary-walk order.
-            uint va = edges[edgeIdx][0], vb = edges[edgeIdx][1];
-            uint vp = findNonSharedVertex(faces[fA], va, vb);
-            uint vq = findNonSharedVertex(faces[fB], va, vb);
-            if (vp == uint.max || vq == uint.max) return false;
-
-            // Quad in removeEdgesByMask walk order: [vp, va, vq, vb].
-            Vec3 p0 = vertices[vp], p1 = vertices[va],
-                 p2 = vertices[vq], p3 = vertices[vb];
-            Vec3 n  = normalize(nA + nB);
-
-            // Reject degenerate edges.
-            Vec3 e0 = p1 - p0, e1 = p2 - p1, e2 = p3 - p2, e3 = p0 - p3;
-            if (e0.length < 1e-6f || e1.length < 1e-6f ||
-                e2.length < 1e-6f || e3.length < 1e-6f) return false;
-
-            // All four consecutive cross-products must align with n (convexity).
-            float c0 = dot(cross(e0, e1), n);
-            float c1 = dot(cross(e1, e2), n);
-            float c2 = dot(cross(e2, e3), n);
-            float c3 = dot(cross(e3, e0), n);
-            const float eps = 1e-5f;
-            return (c0 > -eps && c1 > -eps && c2 > -eps && c3 > -eps) ||
-                   (c0 <  eps && c1 <  eps && c2 <  eps && c3 <  eps);
-        }
-
-        bool[] edgeMask = selectMergeEdges(mask, &accept, true /* matching */);
-        return removeEdgesByMask(edgeMask);
-    }
-
-    /// Merge adjacent coplanar faces in the mask into n-gons by dissolving
-    /// every interior edge whose two incident faces satisfy
-    /// dot(normalA, normalB) > 0.999 (the in-repo ExEdge.coplanar threshold).
-    /// Non-coplanar neighbours and boundary edges are left untouched.
-    /// Returns the number of edges dissolved.
-    ///
-    /// v1 restriction: `removeEdgesByMask` does not dissolve 2-valent /
-    /// collinear boundary vertices that may survive on the merged n-gon when
-    /// a coplanar region is only partially dissolved. Tested cases (cube /
-    /// quad round-trips) have no such interior verts; the `dissolveDegree2Verts`
-    /// cleanup is a documented follow-up.
-    size_t detriangulateFacesByMask(in bool[] maskIn) {
-        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
-        if (mask.length != faces.length) return 0;
-        import math : dot;
-
-        bool accept(uint /*edgeIdx*/, uint fA, uint fB) {
-            return dot(faceNormal(fA), faceNormal(fB)) > 0.999f;
-        }
-
-        bool[] edgeMask = selectMergeEdges(mask, &accept, false /* region */);
-        return removeEdgesByMask(edgeMask);
-    }
-
-    /// Merge the masked faces into one polygon per connected group by dissolving
-    /// EVERY interior edge shared by two masked faces, regardless of coplanarity
-    /// (selection is the only criterion). Boundary edges (one masked neighbour) are
-    /// kept. Disjoint masked groups each collapse to their own boundary n-gon.
-    /// Returns the number of edges dissolved.
-    ///
-    /// Unlike `detriangulateFacesByMask`, no coplanarity criterion is applied and
-    /// there is NO whole-mesh fallback: an empty mask dissolves nothing and
-    /// returns 0.
-    ///
-    /// v1 restrictions (inherited from `removeEdgesByMask`): collinear 2-valent
-    /// boundary vertices on the merged n-gon are NOT removed (e.g. merging two
-    /// coplanar quads sharing one edge yields a 6-corner n-gon, not a 4-corner
-    /// rectangle); concave / non-coplanar / non-simply-connected (holed) selections
-    /// produce a single boundary walk that may be non-planar or self-intersecting.
-    size_t mergeFacesByMask(in bool[] maskIn) {
-        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
-        if (mask.length != faces.length) return 0;
-        bool acceptAll(uint, uint, uint) { return true; }
-        bool[] edgeMask = selectMergeEdges(mask, &acceptAll, false /* region */);
-        return removeEdgesByMask(edgeMask);
     }
 
     /// Radial-array the faces marked true in `mask`: insert `count-1`
@@ -15774,6 +16645,7 @@ version (unittest) private Mesh makeGridWithLooseGeometry(int n) {
 // keying alike — reverting stage 2d's re-key leaves it GREEN. Cell 2
 // drives the SCRIPTED half, which is the half the re-key is about.
 // ---------------------------------------------------------------------------
+version (unittest) version (MeshSnapshotFixtures) {
 unittest {
     import change_bus : MeshEditScope;
     import std.conv   : to;
@@ -15976,9 +16848,12 @@ unittest {
         ~ "the length guard fires unless `rebuildEdges` bumps on a clear "
         ~ "that inserts nothing back. Got " ~ nbZ2.length.to!string
         ~ " neighbour entries over a mesh with no edges at all");
+    import std.stdio : writeln;
+    writeln("MeshSnapshotFixtures: adjacency restore and keep-selection cells passed");
 }
 
 // --- was in the body of `struct Mesh`: the loops / edge-map derived-state stamps (reads `loopsState_`, `edgeMapState_`)
+}
 unittest {
     // A preview-style wipe (subpatch_osd's contract): markDerivedEmpty()
     // reads DeliberatelyEmpty, not Valid and not (bare) Stale.

@@ -152,6 +152,7 @@ module mesh_planes;
 
 import mesh : Mesh, PolyVertexBlend, PolyVertexGen;
 import mesh_types : FaceIdx;
+import mesh_edit_delta : MeshOpEntry;
 public import mesh_plane_types;
 import mesh_topo : edgeKey;
 import math : Vec3;
@@ -393,7 +394,9 @@ template countMemberOverloads(T) {
     }();
 }
 
-static assert(__traits(allMembers, Mesh).length == 367,
+// Task 20262340: compiler-measured 389/320; 6 operation members removed,
+// 28 restoration/private helper members added; live fields remain 55/34.
+static assert(__traits(allMembers, Mesh).length == 389,
     "`struct Mesh` gained (or lost) a member NAME — a function, a nested type, "
   ~ "an `enum`, an `alias` or a field. This is the step-4 RATCHET of "
   ~ "`doc/tasks/work/2910-mesh-struct-seams.md`: the struct was 13 308 lines on "
@@ -414,7 +417,7 @@ static assert(__traits(allMembers, Mesh).length == 367,
   ~ "below to learn whether a FUNCTION landed or a TYPE. THIS TREE HAS "
   ~ ctfeDec(__traits(allMembers, Mesh).length) ~ " member names.");
 
-static assert(countMemberOverloads!Mesh == 298,
+static assert(countMemberOverloads!Mesh == 320,
     "`struct Mesh` gained (or lost) a member-function OVERLOAD. Read it with "
   ~ "the name count above: if BOTH moved, a whole new function name landed. If "
   ~ "ONLY the name count moved, what landed is a nested type, an `enum` or an "
@@ -544,7 +547,7 @@ void rewriteFaces(ref Mesh m, uint[][] newFaces, in FaceSource src,
             if (!named[fi]) {
                 rec.dropIdx   ~= fi;
                 rec.dropLists ~= m.faces[fi].dup;
-                rec.dropPlanes.captureFace(m, fi);   // task 4059 — every plane, from the list
+                captureFacePlaneDrop(rec.dropPlanes, m, fi);   // task 4059 — every plane, from the list
                 continue;
             }
             // Review finding B2: a survivor's winding at reverse time would
@@ -902,3 +905,39 @@ unittest // rewriteFaces / rewriteVertices touch neither mutationVersion nor top
 // mesh_planes_test.d's L3) because they are properties of the correspondence
 // TYPE, independent of which planes exist.
 // ---------------------------------------------------------------------------
+
+    /// Append face `fi`'s value on every plane. Reads the planes LAZILY —
+    /// `facePart` / `faceMaterial` / `faceSetMask` grow on write and read as
+    /// `T.init` past their length by convention (their own declarations in
+    /// mesh.d say so), so an out-of-range index is a legal zero and not a
+    /// bug to bounds-check away.
+    ///
+    /// MUST be called BEFORE the carry that overwrites the planes: the whole
+    /// point of a drop payload is "the planes of an old face no new face
+    /// names", and those values are gone the moment `rewriteFaces`'s carry
+    /// loop runs. `CLAUDE.md`'s "the check is CORRECT but runs at the wrong
+    /// MOMENT" applies to captures as much as to assertions.
+    void captureFacePlaneDrop(ref FacePlaneDrops drops, ref const Mesh m, size_t fi) {
+        static foreach (n; kFacePlanes) {
+            {
+                static if (n == "faceMarks") {
+                    // THE ONE NARROWING, stated once. `MeshOpEntry.faceSub`
+                    // carries the Subpatch BIT alone, not the whole mark word
+                    // — see `kFacePlaneEntryField`'s doc comment for why that
+                    // is inherited rather than chosen.
+                    __traits(getMember, drops, n) ~= (m.isFaceSubpatch(fi) ? 1u : 0u);
+                } else {
+                    auto src = __traits(getMember, m, n);
+                    __traits(getMember, drops, n) ~=
+                        (fi < src.length) ? src[fi] : typeof(src[0]).init;
+                }
+            }
+        }
+    }
+
+static foreach (n; kFacePlanes) {
+    mixin("alias PlaneType_" ~ n ~ " = " ~ kFacePlaneType[n] ~ ";");
+    mixin("static assert(is(typeof(Mesh." ~ n ~ ") == PlaneType_" ~ n ~ "), \"face plane live type equality: " ~ n ~ "\");");
+    mixin("static assert(is(typeof(FacePlaneDrops." ~ n ~ ") == PlaneType_" ~ n ~ "), \"face plane drop type equality: " ~ n ~ "\");");
+    mixin("static assert(is(typeof(MeshOpEntry." ~ kFacePlaneEntryField[n] ~ ") == PlaneType_" ~ n ~ "), \"face plane entry type equality: " ~ n ~ "\");");
+}

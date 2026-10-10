@@ -560,3 +560,5 @@ unittest {
       ~ "compaction through the SAME perm-gather compactUnreferenced uses, "
       ~ "not merely leave stale data untouched — got " ~ weights().to!string);
 }
+
+import mesh_edit_replay : apply, revert, captureSelectedEdgeEnds, restoreSelectedEdgeEnds;
