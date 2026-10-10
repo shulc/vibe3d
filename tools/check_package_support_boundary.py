@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -232,7 +233,7 @@ def expected_descriptor(owner, tests=False):
     if owner == 'viewport-gpu':
         raw['stringImportPaths'] = ['../assets/shading', '../../../assets/icon'] if tests else ['assets/shading']
     if tests:
-        raw.update(importPaths=['source', '../source'], dflags=['-i'],
+        raw.update(importPaths=['source', '../source'],
                    configurations=[{'name': 'algorithm'}],
                    sourceFiles=['source/tests/unit/' + x + '.d' for x in carrier_names(owner)],
                    subConfigurations={'vibe3d-' + x: 'modeling-noai' for x in spec['lower']})
@@ -419,7 +420,7 @@ def validate_description(description, project, owner, config, tests=False, harne
                     sorted((path / p).resolve() for p in expected_strings), 'support resolved stringImportPaths: ' + name)
             for field in ('lflags', 'libs', 'frameworks', 'injectSourceFiles', 'copyFiles', 'extraDependencyFiles'):
                 require(not package.get(field), 'support resolved owner link grant: ' + name + ':' + field)
-            require(package.get('dflags', []) == (['-i'] if settings else []), 'support resolved owner dflags: ' + name)
+            require(package.get('dflags', []) == [], 'support resolved owner dflags: ' + name)
         else:
             expected_native_type = 'library' if name == 'dyaml' else 'staticLibrary'
             require(package['targetType'] == expected_native_type, 'support resolved native archive target: ' + name)
@@ -580,6 +581,79 @@ def stage_dependencies(active, archive, evidence, env):
     return receipts
 
 
+def compiler_commands(output, compiler_cwd=None):
+    """Read DUB's verbose compiler argv, including its actual working directory."""
+    commands = []
+    for line in output.splitlines():
+        match = re.match(r'^\[cwd=(.+?)\] (.+)$', line)
+        if match:
+            cwd, command = Path(match[1]).resolve(), match[2]
+            cwd_evidence = 'compiler log prefix'
+        elif compiler_cwd is not None and re.match(r'^(?:\S*/)?(?:dmd|ldc2)\s', line):
+            # DUB emits the prefix for DMD but not every supported compiler.
+            # build keeps its invocation cwd; test compiles in its target root.
+            cwd, command = compiler_cwd.resolve(), line
+            cwd_evidence = 'DUB build cwd / test target directory'
+        else:
+            continue
+        argv = shlex.split(command)
+        if not argv or Path(argv[0]).name not in ('dmd', 'ldc2'):
+            continue
+        def expand(arguments, depth=0):
+            require(depth < 8, 'support compiler response recursion')
+            expanded = []
+            for arg in arguments:
+                if arg.startswith('@'):
+                    expanded += expand(shlex.split((cwd / arg[1:]).read_text()), depth + 1)
+                else:
+                    expanded.append(arg)
+            return expanded
+        argv = expand(argv)
+        inputs = [str((cwd / arg).resolve()) for arg in argv[1:] if not arg.startswith('-')]
+        outputs = [str((cwd / arg.removeprefix('-of').lstrip('=')).resolve())
+                   for arg in argv[1:] if arg.startswith('-of')]
+        commands.append({'cwd': str(cwd), 'cwdEvidence': cwd_evidence, 'argv': argv,
+                         'sourceInputs': [p for p in inputs if p.endswith('.d')],
+                         'archiveInputs': [p for p in inputs if p.endswith('.a')],
+                         'objectInputs': [p for p in inputs if p.endswith(('.o', '.obj'))],
+                         'outputs': outputs})
+    require(commands, 'NO-VERDICT: support actual compiler argv/cwd missing')
+    return commands
+
+
+def validate_actual_compiler(commands, project, owner, description, home, harness):
+    # Task 20262190 / amendment 20262200: explicit sources own emission; the
+    # resolved graph separately admits STATIC dependencies. Judge actual argv.
+    own = str(production_files(project, owner)[0])
+    compiles = [c for c in commands if own in c['sourceInputs']]
+    require(len(compiles) == 1, 'support actual compiler source identity: ' + owner)
+    compiled = compiles[0]
+    require(not any(arg == '-i' or arg.startswith('-i=') or
+                    arg in ('--include-imports', '-include-imports') or
+                    arg.startswith(('--include-imports=', '-include-imports='))
+                    for arg in compiled['argv']),
+            'support actual compiler include-import flags: ' + owner)
+    name = 'vibe3d-' + owner + '-tests'
+    sources = compiled['sourceInputs']
+    generated = [p for p in sources if Path(p).name == 'dub_test_root.d' and
+                 Path(p).is_relative_to(home / 'cache' / name / '~master' / 'code')]
+    expected = [str(p) for p in test_files(project, owner)] + [str(harness.resolve())] + generated
+    require(len(generated) == 1 and sorted(sources) == sorted(expected),
+            'support actual compiler source identity: ' + owner)
+    links = [c for c in commands if any(p in c['objectInputs'] for p in compiled['outputs'])]
+    require(len(links) == 1, 'support actual compiler D archive inputs: ' + owner)
+    linked = links[0]
+    active = {p['name']: p for p in description['packages'] if p.get('active')}
+    static = {n: ARCHIVES[n] if n in ARCHIVES else 'lib' + n + '.a'
+              for n, p in active.items() if n != name and p['targetType'] in ('staticLibrary', 'library')}
+    archives = linked['archiveInputs']
+    require(len(archives) == len(static) and all(
+        sum(Path(a).is_relative_to(home / 'cache' / n) and
+            Path(a).name == Path(filename).name for a in archives) == 1
+        for n, filename in static.items()), 'support actual compiler D archive inputs: ' + owner)
+    return {'compile': compiled, 'link': linked, 'staticOwners': sorted(static)}
+
+
 def execute(project, owner, compiler, env, evidence):
     check_raw_tree(project, owner)
     description = describe(project, owner, 'modeling-noai', compiler, env, evidence)
@@ -611,7 +685,7 @@ def execute(project, owner, compiler, env, evidence):
     raw['sourceFiles'].append('boundary_roster.d')
     recipe = root / 'tests/dub.boundary.json'
     recipe.write_text(json.dumps(raw, indent=2))
-    describe(archive, owner, 'algorithm', compiler, env, evidence, True, recipe, harness)
+    algorithm = describe(archive, owner, 'algorithm', compiler, env, evidence, True, recipe, harness)
     tested = run(['dub', 'test', '--root=' + str(root / 'tests'), '--recipe=' + str(recipe), '--config=algorithm',
                   '--compiler=' + compiler, '--force', '--verbose'], archive, env, evidence, 'algorithm-run')
     runtime_output = tested.stdout + tested.stderr
@@ -624,12 +698,39 @@ def execute(project, owner, compiler, env, evidence):
     compiler_lines = [x for x in (built.stdout + built.stderr + tested.stdout + tested.stderr).splitlines()
                       if re.search(r'(?:^|\s)(?:\S*/)?(?:dmd|ldc2)\s', x)]
     require(compiler_lines, 'NO-VERDICT: support fresh compiler argv missing')
-    native = {str(p.relative_to(archive)): digest(p) for p in archive.rglob('*.a')}
+    actual = compiler_commands(tested.stdout + tested.stderr, root / 'tests')
+    ownership = validate_actual_compiler(actual, archive, owner, algorithm, Path(env['DUB_HOME']), harness)
+    (evidence / 'actual-compiler-argv.json').write_text(json.dumps(actual, indent=2))
+    (evidence / 'actual-ownership.json').write_text(json.dumps(ownership, indent=2))
+    # Both owned roots contain actual inputs; a glob over archive alone misses
+    # pinned repository dependencies and the DUB build cache.
+    input_hashes = {}
+    for result, compiler_cwd in ((built, archive), (tested, root / 'tests')):
+        for command in compiler_commands(result.stdout + result.stderr, compiler_cwd):
+            for path in command['sourceInputs'] + command['archiveInputs'] + command['objectInputs']:
+                selected = Path(path)
+                require(selected.is_relative_to(archive) or selected.is_relative_to(Path(env['DUB_HOME'])),
+                        'support actual input outside owned roots: ' + path)
+                input_hashes[path] = digest(selected)
+    link = ownership['link']
+    search_paths = [(Path(link['cwd']) / arg.removeprefix('-L-L')).resolve()
+                    for arg in link['argv'] if arg.startswith('-L-L')]
+    for library in ('stb_image_c', 'osdc', 'osdCPU', 'osdGPU'):
+        if '-L-l' + library not in link['argv']:
+            continue
+        inputs = [directory / ('lib' + library + '.a') for directory in search_paths
+                  if (directory / ('lib' + library + '.a')).is_file()]
+        require(len(inputs) == 1, 'support actual native archive input: ' + library)
+        input_hashes[str(inputs[0])] = digest(inputs[0])
+    native = {str(p): digest(p) for owned in (archive, Path(env['DUB_HOME']))
+              for p in owned.rglob('*.a')}
+    (evidence / 'actual-input-hashes.json').write_text(json.dumps(input_hashes, indent=2))
     witness = {'sha': sha, 'compiler': compiler, 'archive': str(archive), 'archiveSha256': digest(evidence / 'committed.tar'),
                'productionArchiveSha256': digest(binary), 'compilerArgv': compiler_lines,
                'productionSources': [str(p) for p in production_files(archive, owner)],
                'testCompilerSources': [str(p) for p in test_files(archive, owner)] + [str(harness)],
-               'fixture': fixture_receipt(archive, owner), 'archiveInputs': native, 'runtime': runtime}
+               'fixture': fixture_receipt(archive, owner), 'archiveInputs': native,
+               'actualOwnership': ownership, 'actualInputHashes': input_hashes, 'runtime': runtime}
     (evidence / 'witness.json').write_text(json.dumps(witness, indent=2))
     print('PKG-EXECUTE package=' + owner + ' sha=' + sha + ' modules=' + str(runtime['modules']))
 
@@ -661,7 +762,7 @@ def description_control(project, owner, tests=False, config='modeling-noai'):
         packages.append({'name': 'vibe3d-' + name + ('-tests' if is_test else ''), 'active': True, 'path': str(path),
                          'configuration': actual_config, 'targetType': 'executable' if is_test else 'sourceLibrary' if actual_config in ('root-tests', 'isolated-tests') else 'staticLibrary',
                          'dependencies': deps, 'versions': versions, 'importPaths': ['source', '../source'] if is_test else ['source'],
-                         'stringImportPaths': strings, 'dflags': ['-i'] if is_test else [],
+                         'stringImportPaths': strings, 'dflags': [],
                          'files': [{'role': 'source', 'path': str(p)} for p in files]})
     for name in sorted(external):
         deps = list(EXTERNAL_DEPS[name])
@@ -718,14 +819,15 @@ def self_test():
         for tests in (False, True):
             valid = expected_descriptor(owner, tests)
             validate_raw(valid, owner, tests)
-            for field, value in [('importPaths', ['../../../source']), ('sourcePaths', ['../../../source'])]:
+            for field, value in [('importPaths', ['../../../source' if tests else '../../source']),
+                                 ('sourcePaths', ['../../../source' if tests else '../../source'])]:
                 broken = copy.deepcopy(valid); broken[field] = value
                 red(owner + '-' + str(tests) + '-' + field, lambda: validate_raw(broken, owner, tests), 'desktop import grant')
             broken = copy.deepcopy(valid); broken['targetType'] = 'sourceLibrary'
             red(owner + '-' + str(tests) + '-static', lambda: validate_raw(broken, owner, tests), 'ordinary static target')
             for field in ('dependencies', 'sourceFiles', 'versions', 'stringImportPaths', 'buildTypes', 'toolchainRequirements', 'dflags') + HOOKS:
                 broken = copy.deepcopy(valid)
-                broken[field] = {'foreign': 'x'} if field in ('dependencies', 'buildTypes', 'toolchainRequirements') else ['foreign']
+                broken[field] = {'foreign': 'x'} if field in ('dependencies', 'buildTypes', 'toolchainRequirements') else ['-i'] if tests and field == 'dflags' else ['foreign']
                 red(owner + '-' + str(tests) + '-' + field, lambda: validate_raw(broken, owner, tests), 'descriptor contract')
             if not tests:
                 root_tests = next(c for c in valid['configurations'] if c['name'] == 'root-tests')
@@ -789,6 +891,67 @@ def self_test():
                     judged['targetType'] = 'staticLibrary'
                     red('isolated-lower-static', lambda: validate_description(broken, project, owner, config, tests), 'compiler owner')
                 validate_description(valid, project, owner, config, tests)
+
+            # The same finite four-owner contract exercises actual compile/link
+            # ownership independently of raw and resolved descriptor pins.
+            valid = description_control(project, owner, True, 'algorithm')
+            home = project / 'dub-home'
+            name = 'vibe3d-' + owner + '-tests'
+            harness = project / 'packages' / owner / 'tests/boundary_roster.d'
+            generated = home / 'cache' / name / '~master/code/control/dub_test_root.d'
+            sources = [str(p) for p in test_files(project, owner)] + [str(harness), str(generated)]
+            obj = home / 'cache' / name / '~master/build/control/test.o'
+            static = [p['name'] for p in valid['packages'] if p['targetType'] in ('staticLibrary', 'library')]
+            archives = [str(home / 'cache' / n / 'control' / Path(ARCHIVES[n] if n in ARCHIVES else 'lib' + n + '.a').name)
+                        for n in static]
+            lines = '[cwd=' + str(project) + '] dmd -unittest ' + shlex.join(sources) + ' -c -of=' + str(obj) + '\n'
+            lines += '[cwd=' + str(project) + '] dmd ' + shlex.join([str(obj)] + archives) + ' -of=test\n'
+            actual = compiler_commands(lines)
+            validate_actual_compiler(actual, project, owner, valid, home, harness)
+            unprefixed = lines.replace('[cwd=' + str(project) + '] ', '')
+            validate_actual_compiler(compiler_commands(unprefixed, project), project, owner, valid, home, harness)
+            for flag in ('-i', '-i=editor', '--include-imports', '--include-imports=editor'):
+                broken = copy.deepcopy(actual); broken[0]['argv'].append(flag)
+                red(owner + '-actual-flags-' + flag, lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
+                    'support actual compiler include-import flags: ' + owner)
+            for label, extra in [('static-source', str(production_files(project, 'common')[0])),
+                                 ('duplicate-source', sources[0])]:
+                broken = copy.deepcopy(actual); broken[0]['sourceInputs'].append(extra)
+                red(owner + '-actual-' + label, lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
+                    'support actual compiler source identity: ' + owner)
+            for source in sources:
+                broken = copy.deepcopy(actual); broken[0]['sourceInputs'].remove(source)
+                red(owner + '-actual-omit-' + source, lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
+                    'support actual compiler source identity: ' + owner)
+            broken = copy.deepcopy(actual); broken[0]['sourceInputs'].append(str(generated))
+            red(owner + '-actual-duplicate-main', lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
+                'support actual compiler source identity: ' + owner)
+            broken = copy.deepcopy(actual); broken.append(copy.deepcopy(actual[0]))
+            red(owner + '-actual-duplicate-compile', lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
+                'support actual compiler source identity: ' + owner)
+            for label, broken in [('missing', actual[:1]), ('duplicate', actual + [actual[1]])]:
+                red(owner + '-actual-' + label + '-link', lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
+                    'support actual compiler D archive inputs: ' + owner)
+            for archive in archives:
+                broken = copy.deepcopy(actual); broken[1]['archiveInputs'].remove(archive)
+                red(owner + '-actual-omit-' + archive, lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
+                    'support actual compiler D archive inputs: ' + owner)
+                for replacement in (str(Path(archive).with_name('foreign.a')),
+                                    str(home / 'cache/foreign' / Path(archive).name)):
+                    broken = copy.deepcopy(actual)
+                    broken[1]['archiveInputs'][archives.index(archive)] = replacement
+                    red(owner + '-actual-archive-identity-' + archive, lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
+                        'support actual compiler D archive inputs: ' + owner)
+            for extra in (archives[0], str(home / 'cache' / ('vibe3d-' + owner) / 'control/own.a')):
+                broken = copy.deepcopy(actual); broken[1]['archiveInputs'].append(extra)
+                red(owner + '-actual-extra-archive', lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
+                    'support actual compiler D archive inputs: ' + owner)
+            if owner == 'subpatch-preview':
+                broken = copy.deepcopy(actual)
+                broken[1]['archiveInputs'].append(str(home / 'cache/vibe3d-viewport-gpu/control/libvibe3d-viewport-gpu.a'))
+                red(owner + '-actual-lower-gpu-archive', lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
+                    'support actual compiler D archive inputs: ' + owner)
+            validate_actual_compiler(actual, project, owner, valid, home, harness)
 
         for owner in SPECS:
             red(owner + '-missing', lambda: check_raw_tree(project, owner), 'selected descriptor missing')

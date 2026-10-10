@@ -157,9 +157,6 @@
     "source",
     "../source"
   ],
-  "dflags": [
-    "-i"
-  ],
   "configurations": [
     {
       "name": "algorithm"
