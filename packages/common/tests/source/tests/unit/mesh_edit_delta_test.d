@@ -8,6 +8,39 @@ import mesh;            // Mesh, Marks, edgeKey (mutual import — see note belo
 import math : Vec3;
 import mesh_edit_delta;
 
+// Task 20262210: both grid read surfaces preserve all three position channels
+// and clone from the original snapshot even after source replacement.
+private void assertArraySnapshotValues(bool replaceSource) {
+    Mesh m;
+    m.vertices = [Vec3(1, 2, 3), Vec3(4, 5, 6), Vec3(7, 2, 9)];
+    m.addFace([0, 1, 2]);
+    m.buildLoops();
+    m.syncSelection();
+    auto original = m.vertices.dup;
+    auto added = m.arrayFacesGrid([true], 2, 1, 1,
+        Vec3(11, 13, 17), Vec3(0, 0, 0), Vec3(2, 3, 4), Vec3(0, 0, 0),
+        false, replaceSource, false, CloneWeld.init);
+    assert(added == 1 && m.faces.length == 2 && m.vertices.length == 6,
+        "array snapshot value population: one original and one cloned triangle");
+    Vec3[] transformed = [Vec3(-2, 0, -6), Vec3(4, 9, 6), Vec3(10, 0, 18)];
+    Vec3[] cloned = [Vec3(9, 13, 11), Vec3(15, 22, 23), Vec3(21, 13, 35)];
+    foreach (i; 0 .. 3) {
+        auto expected = replaceSource ? transformed[i] : original[i];
+        assert(m.vertices[i].x == expected.x && m.vertices[i].y == expected.y
+            && m.vertices[i].z == expected.z,
+            "array snapshot replacement values: preserve original x/y/z transform");
+        auto actual = m.vertices[i + 3];
+        assert(actual.x == cloned[i].x && actual.y == cloned[i].y
+            && actual.z == cloned[i].z,
+            "array snapshot clone values: preserve pre-replacement x/y/z and offset");
+    }
+    assert(m.faces[0] == [0u, 1u, 2u] && m.faces[1] == [3u, 4u, 5u],
+        "array snapshot winding: preserve original and clone vertex order");
+}
+
+unittest { assertArraySnapshotValues(false); }
+unittest { assertArraySnapshotValues(true); }
+
 // ---------------------------------------------------------------------------
 // Vertex-mark permutation gap (doc/hide_geometry_plan.md §4.2/S1 — "the
 // vertex-mark permutation gap at applyReindex*/removeVertsForward/Reverse").

@@ -60,6 +60,44 @@ enum size_t kFaces         = 10_000;          // kGridN * kGridN
 enum size_t kSelected      = kFaces / 2;
 enum double kMaxBytesPerFace = 4_000.0;
 
+// Finite source guards for the two task 20262210 read surfaces. The task receipt
+// ties this spelling to actual three-float AA loads; these are source guards,
+// not a protected-page runtime test. Keep them before the allocation drivers.
+private string arraySnapshotSite(bool replacement) {
+    import std.file : readText;
+    import std.string : indexOf, split;
+    import std.array : join;
+    auto source = readText("packages/common/source/mesh.d");
+    auto arrayStart = source.indexOf("size_t arrayFacesGrid(");
+    assert(arrayStart >= 0, "snapshot read guard: arrayFacesGrid owner exists");
+    auto body = source[cast(size_t)arrayStart .. $];
+    auto sourceStart = body.indexOf("if (isSourceSlot) {");
+    auto cloneStart = body.indexOf("copyStarts ~= vertices.length;");
+    auto cloneEnd = body.indexOf("auto src = origFaceVerts[fi];");
+    assert(sourceStart >= 0 && cloneStart > sourceStart && cloneEnd > cloneStart,
+        "snapshot read guard: both production site regions exist in order");
+    return (replacement ? body[cast(size_t)sourceStart .. cast(size_t)cloneStart]
+        : body[cast(size_t)cloneStart .. cast(size_t)cloneEnd]).split.join(" ");
+}
+
+unittest {
+    import std.algorithm.searching : canFind;
+    assert(arraySnapshotSite(true).canFind(
+        "auto snapshot = &origPos[vid]; Vec3 p; p.x = snapshot.x; "
+        ~ "p.y = snapshot.y; p.z = snapshot.z; "
+        ~ "vertices[vid] = cloneVertex(p, shift, jit);"),
+        "array snapshot replacement read: materialize exactly x/y/z before cloneVertex");
+}
+
+unittest {
+    import std.algorithm.searching : canFind;
+    assert(arraySnapshotSite(false).canFind(
+        "auto snapshot = &origPos[vid]; Vec3 p; p.x = snapshot.x; "
+        ~ "p.y = snapshot.y; p.z = snapshot.z; "
+        ~ "vertices ~= cloneVertex(p, shift, jit);"),
+        "array snapshot clone read: materialize exactly x/y/z before cloneVertex");
+}
+
 unittest {
     Mesh m = makeGridPlane(kGridN);
 

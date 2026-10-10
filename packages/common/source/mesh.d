@@ -7954,7 +7954,15 @@ struct Mesh {
                             foreach (vid; origFaceVerts[fi])
                                 if (vid !in doneV) {
                                     doneV[vid] = true;
-                                    vertices[vid] = cloneVertex(origPos[vid], shift, jit);
+                                    // Materialize exactly the snapshot's three floats: a direct
+                                    // by-value AA argument can overread Vec3's 12-byte value
+                                    // (task 20262210; guard-page evidence in the task receipt).
+                                    auto snapshot = &origPos[vid];
+                                    Vec3 p;
+                                    p.x = snapshot.x;
+                                    p.y = snapshot.y;
+                                    p.z = snapshot.z;
+                                    vertices[vid] = cloneVertex(p, shift, jit);
                                 }
                         }
                         if (invertPolygons)
@@ -7971,7 +7979,12 @@ struct Mesh {
                         foreach (vid; origFaceVerts[fi]) {
                             if (vid !in vertMap) {
                                 vertMap[vid] = cast(uint)vertices.length;
-                                vertices ~= cloneVertex(origPos[vid], shift, jit);
+                                auto snapshot = &origPos[vid];
+                                Vec3 p;
+                                p.x = snapshot.x;
+                                p.y = snapshot.y;
+                                p.z = snapshot.z;
+                                vertices ~= cloneVertex(p, shift, jit);
                             }
                         }
                     }
