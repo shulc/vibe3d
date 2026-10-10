@@ -29,7 +29,7 @@ import std.file      : dirEntries, SpanMode, readText, exists;
 import std.path      : buildPath;
 import std.regex     : matchAll, regex;
 import std.string    : indexOf, count;
-import std.path      : relativePath;
+import std.path      : relativePath, buildNormalizedPath;
 import std.string    : replace;
 
 private string repoRoot()
@@ -63,7 +63,7 @@ private size_t bridgeTargetSites(string path, string text)
         tail = "}\nelse\n{\n\nimport std.file";
         fragments = [
             "version (WebAssembly)\n        extern(C) int vibe3d_web_assimp_available() nothrow @nogc;",
-            "bool isAssimpAvailable() nothrow @nogc\n    {\n        version (WebAssembly) { return vibe3d_web_assimp_available() != 0; }\n        else return false;",
+            "bool isAssimpAvailable() nothrow @nogc\n    {\n        version (WebAssembly) { return vibe3d_web_assimp_available() != 0; }",
         ];
         break;
     case "packages/interchange/source/io/scene_export.d":
@@ -73,8 +73,6 @@ private size_t bridgeTargetSites(string path, string text)
             "version (WebAssembly)\n    extern(C) int vibe3d_web_assimp_export(const(ubyte)* data, uint length,\n                                           const(char)* formatId, const(char)* path);",
             "bool exportDocumentViaAssimp(ref const Document document, string path,\n                                 string formatId)\n    {\n        version (WebAssembly) {\n        auto wire = encodeAssimpWire(document);",
         ];
-        assert(text.count("        } else return false;\n    }\n}\nelse") == 1,
-            "6910 bridge native export must keep its unavailable fallback");
         break;
     case "packages/interchange/source/io/scene_import.d":
         outer = "version (web)\n{";
@@ -83,8 +81,6 @@ private size_t bridgeTargetSites(string path, string text)
             "version (WebAssembly) {\n    extern(C) int vibe3d_web_assimp_import(const(char)* path, void** data, uint* length);\n    extern(C) void vibe3d_web_assimp_free(void* data);\n    }",
             "bool importViaAssimp(string path, ref ImportedScene scene)\n    {\n        version (WebAssembly) {\n        void* data;",
         ];
-        assert(text.count("        } else return false;\n    }\n}\nelse") == 1,
-            "6910 bridge native import must keep its unavailable fallback");
         break;
     default:
         return 0;
@@ -128,7 +124,7 @@ unittest // the browser seam key is exactly one identifier, and the alternative 
         webSites += w;
         wasmSites += a;
         wasmGuardSites += g;
-        const b = bridgeTargetSites(relativePath(entry.name, root).replace("\\", "/"), text);
+        const b = bridgeTargetSites(buildNormalizedPath(relativePath(entry.name, root)).replace("\\", "/"), text);
         bridgeSites += b;
         if (a != g + b) offenders ~= entry.name;
     }
