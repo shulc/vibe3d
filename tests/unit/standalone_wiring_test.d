@@ -34,11 +34,13 @@ unittest {
         "standalone-wiring: suite unittest source grant tool-state");
     assert(library.count("\" --root=packages/transform-ops\"") == 1,
         "standalone-wiring: suite unittest source grant transform-ops");
-    assert(library.count("foreach (root; [\"\", \" --root=packages/common\", \" --root=packages/tool-state\", \" --root=packages/transform-ops\"])") == 1
+    assert(library.count("\" --root=packages/input-events\"") == 1,
+        "standalone-wiring: suite unittest source grant input-events");
+    assert(library.count("foreach (root; [\"\", \" --root=packages/common\", \" --root=packages/tool-state\", \" --root=packages/transform-ops\", \" --root=packages/input-events\"])") == 1
         && library.count(" --config=modeling --data=source-files --data-list 2>/dev/null") == 1
         && library.count("dmd -lib -unittest%s %s -of=%s 2>&1") == 1
         && library.count("sourceCompileFlags(), srcs.join(\" \"), lib") == 1,
-        "standalone-wiring: suite compiles exactly four source inventories under unittest flags");
+        "standalone-wiring: suite compiles exactly five source inventories under unittest flags");
 }
 
 unittest {
