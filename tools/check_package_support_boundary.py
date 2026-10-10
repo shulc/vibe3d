@@ -401,8 +401,8 @@ def validate_description(description, project, owner, config, tests=False, harne
             expected_config = ('algorithm' if name.endswith('-tests') else 'isolated-tests'
                                if source_lower
                                else 'modeling-noai' if tests else config)
-            require(package['configuration'] == expected_config, 'support resolved configuration: ' + name)
             require(package['targetType'] == target, 'support resolved compiler owner: ' + name)
+            require(package['configuration'] == expected_config, 'support resolved configuration: ' + name)
             require(all(not package.get(k) for k in HOOKS), 'support resolved owner hook: ' + name)
             files = sorted((path / f['path']).resolve() for f in package['files'] if f['role'] == 'source')
             expected_files = test_files(project, owner) if name.endswith('-tests') else production_files(project, selected)
