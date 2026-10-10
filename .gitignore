@@ -174,3 +174,6 @@ tools/cli/.boundary/
 /packages/creation-ops/vibe3d-creation-ops.lib
 /packages/alignment-ops/libvibe3d-alignment-ops.a
 /packages/alignment-ops/vibe3d-alignment-ops.lib
+/packages/input-events/libvibe3d-input-events.a
+/packages/input-events/vibe3d-input-events.lib
+/packages/input-events/tests/vibe3d-input-events-tests-test-*
