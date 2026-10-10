@@ -410,6 +410,7 @@ def validate_description(description, project, owner, config, tests=False, harne
                 require(not package.get(field), 'support resolved owner link grant: ' + name + ':' + field)
             require(package.get('dflags', []) == (['-i'] if settings else []), 'support resolved owner dflags: ' + name)
         else:
+            require(package['targetType'] == 'staticLibrary', 'support resolved native static target: ' + name)
             expected_hooks = []
             if name == 'd-stb-image':
                 expected_hooks = ['cmake -B $PACKAGE_DIR/build -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $PACKAGE_DIR',
@@ -741,6 +742,9 @@ def self_test():
                     judged = next(t for t in broken['targets'] if t['rootPackage'] == broken['rootPackage'])
                     judged['buildSettings'][field] = ['desktop']
                     red(owner + '-target-' + field, lambda: validate_description(broken, project, owner, config, tests), 'support target')
+                broken = copy.deepcopy(valid)
+                next(p for p in broken['packages'] if p['name'] == 'd-stb-image')['targetType'] = 'sourceLibrary'
+                red(owner + '-external-static', lambda: validate_description(broken, project, owner, config, tests), 'native static target')
                 broken = copy.deepcopy(valid); broken['packages'].append(copy.deepcopy(broken['packages'][0]))
                 red(owner + '-active-duplicate', lambda: validate_description(broken, project, owner, config, tests), 'active package population')
                 if tests and owner == 'subpatch-preview':
