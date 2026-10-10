@@ -32,6 +32,7 @@ import std.conv : to;
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName, FaceIdx;
 import math : Vec3;
 import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshOpEntry, MeshEditScope;
+import mesh_edit_replay : apply, revert;
 
 void main() {}
 

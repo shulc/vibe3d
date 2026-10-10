@@ -23,6 +23,7 @@ import std.math : fabs;
 
 import mesh : Mesh, makeCube;
 import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope, MeshOpEntry;
+import mesh_edit_replay : apply, revert;
 import math : Vec3;
 
 void main() {}

@@ -48,8 +48,8 @@ import drag_helpers : Vec3, dot, cross, normalize, gizmoSize,
                       projectToWindow, buildDragLog, playAndWait;
 
 import tools.transform.xfrm_transform : XfrmTransformTool;
-import math : NativeVec3 = Vec3, NativeViewport = Viewport;
-import spatial : ModelSpace;
+import math : NativeVec3 = Vec3;
+import spatial : NativeViewport = Viewport, ModelSpace;
 import mesh : Mesh;
 import editmode : EditMode;
 import seltype : SelType;

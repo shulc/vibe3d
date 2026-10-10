@@ -24,12 +24,12 @@ import std.conv : to;
 import std.math : fabs;
 
 import mesh : CloneWeld, Mesh, MeshMap, MapDomain, kUvMapName,
-              MeshEditBatch,
+              MeshEditBatch;
+import mesh_edge_slice :
               // task 3240 (plan 2910 step 3): `addEdgePoint` is a free
-              // function in `packages/mesh-ops/source/mesh_edge_slice.d` now, and a SELECTIVE
-              // `import mesh : …` does not pick up a `public import`'s names
-              // unless it names them — so `m.addEdgePoint(...)` below stops
-              // resolving without this line. (`edgeIndexOf` is NOT added on
+              // function in `packages/mesh-ops/source/mesh_edge_slice.d`; the
+              // direct selective import makes `m.addEdgePoint(...)` resolve
+              // without an upward re-export from mesh. (`edgeIndexOf` is NOT added on
               // purpose: this file declares its own module-local helper of
               // that exact name and signature at line 273, and a local
               // declaration beats an imported one — naming it here would
