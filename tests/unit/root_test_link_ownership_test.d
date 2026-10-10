@@ -9,9 +9,10 @@ unittest {
     import std.algorithm : sort, canFind;
 
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    enum owners = ["common", "mesh-ops", "interchange", "interaction-query",
-                   "pipe-evaluation", "tool-state", "transform-ops",
-                   "creation-ops", "alignment-ops", "input-events", "display-policy", "viewport-gpu", "subpatch-preview"];
+    enum owners = ["alignment-ops", "common", "creation-ops", "display-policy", "edit-contracts", "input-events", "interaction-query", "interchange", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-ops", "mesh-snapshot", "mesh-topology", "mesh", "pipe-evaluation", "profiling", "spatial", "subpatch-preview", "tool-state", "transform-ops", "viewport-gpu", "log", "math", "parallel", "plane-bytes", "screen-buckets"];
+    enum utilOwners = ["log", "math", "parallel", "plane-bytes", "screen-buckets"];
+    enum noCarriers = ["log", "parallel", "plane-bytes", "profiling", "screen-buckets", "mesh-change", "mesh-topology"];
+    enum fixtureOnlyVersions = ["edit-contracts", "mesh", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-snapshot", "mesh-topology"];
     JSONValue config(JSONValue raw, string name) {
         foreach (candidate; raw["configurations"].array)
             if (candidate["name"].str == name) return candidate;
@@ -32,11 +33,11 @@ unittest {
     foreach (owner; owners)
         assert(selected.canFind("vibe3d-" ~ owner),
                "root test ownership named selector " ~ owner);
-    assert(selected.length == 13 && selected == expected,
-           "root test ownership frozen thirteen selectors");
+    assert(selected.length == 28 && selected == expected,
+           "root test ownership frozen twenty-eight selectors");
     foreach (owner; owners) {
         const packageName = "vibe3d-" ~ owner;
-        const packagePath = "packages/" ~ owner;
+        const packagePath = (utilOwners.canFind(owner) ? "util/" : "packages/") ~ owner;
         assert(desktop["dependencies"][packageName]["path"].str == packagePath,
                "root test ownership dependency path " ~ owner);
         assert(tests["subConfigurations"][packageName].str == "root-tests",
@@ -45,7 +46,7 @@ unittest {
             assert(occurrences(tests[grant], packagePath ~ "/source") == 1,
                    "root test ownership explicit production grant " ~ owner ~ " " ~ grant);
         foreach (grant; ["sourcePaths", "importPaths"])
-            assert(occurrences(tests[grant], packagePath ~ "/tests/source") == 1,
+            assert(occurrences(tests[grant], packagePath ~ "/tests/source") == (noCarriers.canFind(owner) ? 0 : 1),
                    "root test ownership explicit carrier grant " ~ owner ~ " " ~ grant);
         auto raw = parseJSON(readText(buildPath(root, packagePath, "dub.json")));
         assert(raw["name"].str == packageName && raw["targetType"].str == "staticLibrary",
@@ -56,6 +57,11 @@ unittest {
         auto source = config(raw, "root-tests");
         assert(source["targetType"].str == "sourceLibrary",
                "root test ownership sourceLibrary " ~ owner);
+        if (fixtureOnlyVersions.canFind(owner)) {
+            assert(source["versions"].array.length == 0,
+                   "root test ownership lower fixture-only versions " ~ owner);
+            source["versions"] = modeling["versions"];
+        }
         source.object.remove("targetType");
         source["name"] = JSONValue("modeling");
         if (auto subs = "subConfigurations" in source.object) {

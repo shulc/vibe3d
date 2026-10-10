@@ -102,14 +102,9 @@ import census_contracts
 failures = census_contracts.production_lexer_census(root)
 if failures:
     raise SystemExit("prepared-protocol production lexer census: " + "; ".join(failures))
-owners = {"source": 436, "packages/common/source": 76,
-          "packages/mesh-ops/source": 17, "packages/interchange/source": 8,
-          "packages/interaction-query/source": 10, "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1, "packages/input-events/source": 6, "packages/display-policy/source": 8, "packages/viewport-gpu/source": 6, "packages/subpatch-preview/source": 5}
-# Wave6 composition conserves production ownership; test each owner at its
-# exact boundary with a floor-sized synthetic owner before omitting one file.
-floors = {"source": 436, "packages/common/source": 76,
-          "packages/mesh-ops/source": 17, "packages/interchange/source": 8,
-          "packages/interaction-query/source": 10, "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1, "packages/input-events/source": 6, "packages/display-policy/source": 8, "packages/viewport-gpu/source": 6, "packages/subpatch-preview/source": 5}
+owners = {'source': 436, 'packages/alignment-ops/source': 1, 'packages/common/source': 50, 'packages/creation-ops/source': 1, 'packages/display-policy/source': 8, 'packages/edit-contracts/source': 3, 'packages/input-events/source': 6, 'packages/interaction-query/source': 12, 'packages/interchange/source': 8, 'packages/mesh-change/source': 2, 'packages/mesh-contracts/source': 4, 'packages/mesh-edit-log/source': 1, 'packages/mesh-edit-replay/source': 1, 'packages/mesh-ops/source': 20, 'packages/mesh-snapshot/source': 1, 'packages/mesh-topology/source': 1, 'packages/mesh/source': 4, 'packages/pipe-evaluation/source': 12, 'packages/profiling/source': 1, 'packages/spatial/source': 5, 'packages/subpatch-preview/source': 5, 'packages/tool-state/source': 2, 'packages/transform-ops/source': 7, 'packages/viewport-gpu/source': 6, 'util/log/source': 1, 'util/math/source': 5, 'util/parallel/source': 1, 'util/plane-bytes/source': 1, 'util/screen-buckets/source': 1}
+# Independently frozen final physical owner populations, not reader discovery.
+floors = {'source': 436, 'packages/alignment-ops/source': 1, 'packages/common/source': 50, 'packages/creation-ops/source': 1, 'packages/display-policy/source': 8, 'packages/edit-contracts/source': 3, 'packages/input-events/source': 6, 'packages/interaction-query/source': 12, 'packages/interchange/source': 8, 'packages/mesh-change/source': 2, 'packages/mesh-contracts/source': 4, 'packages/mesh-edit-log/source': 1, 'packages/mesh-edit-replay/source': 1, 'packages/mesh-ops/source': 20, 'packages/mesh-snapshot/source': 1, 'packages/mesh-topology/source': 1, 'packages/mesh/source': 4, 'packages/pipe-evaluation/source': 12, 'packages/profiling/source': 1, 'packages/spatial/source': 5, 'packages/subpatch-preview/source': 5, 'packages/tool-state/source': 2, 'packages/transform-ops/source': 7, 'packages/viewport-gpu/source': 6, 'util/log/source': 1, 'util/math/source': 5, 'util/parallel/source': 1, 'util/plane-bytes/source': 1, 'util/screen-buckets/source': 1}
 for owner, population in owners.items():
     floor = floors[owner]
     with tempfile.TemporaryDirectory(prefix="protocol-owner-") as scratch:
@@ -134,7 +129,7 @@ for owner, population in owners.items():
             raise SystemExit(f"prepared-protocol synthetic owner baseline {owner}: {got!r}")
         (partial / owner / inputs[0].relative_to(root / owner)).unlink()
         got = census_contracts.production_lexer_census(partial)
-        complement = "dspans production complement read 594 files; floor 595"
+        complement = "dspans production complement read 605 files; floor 606"
         owner_refusal = f"dspans lexer census owner {owner} read {floor - 1} files; floor {floor} (materialized 2026-10-10)"
         if complement not in got:
             raise SystemExit(f"prepared-protocol COMPLEMENT omission guard {owner}: got {got!r}, missing {complement!r}")

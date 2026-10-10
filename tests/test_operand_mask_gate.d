@@ -222,6 +222,21 @@ unittest {
     hits ~= scanTree("packages/display-policy/source");
     hits ~= scanTree("packages/viewport-gpu/source");
     hits ~= scanTree("packages/subpatch-preview/source");
+    hits ~= scanTree("packages/edit-contracts/source");
+    hits ~= scanTree("packages/mesh-change/source");
+    hits ~= scanTree("packages/mesh-contracts/source");
+    hits ~= scanTree("packages/mesh-edit-log/source");
+    hits ~= scanTree("packages/mesh-edit-replay/source");
+    hits ~= scanTree("packages/mesh-snapshot/source");
+    hits ~= scanTree("packages/mesh-topology/source");
+    hits ~= scanTree("packages/mesh/source");
+    hits ~= scanTree("packages/profiling/source");
+    hits ~= scanTree("packages/spatial/source");
+    hits ~= scanTree("util/log/source");
+    hits ~= scanTree("util/math/source");
+    hits ~= scanTree("util/parallel/source");
+    hits ~= scanTree("util/plane-bytes/source");
+    hits ~= scanTree("util/screen-buckets/source");
 
     size_t[string] byFile;
     foreach (h; hits) byFile[h.file] = byFile.get(h.file, 0) + 1;

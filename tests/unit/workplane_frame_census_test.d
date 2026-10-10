@@ -70,9 +70,9 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
 {
     const all = sources(false), prod = sources(true);
     // Historical 2026-10-05: 587 production plus one source test. Wave6 moves
-    // that six-block carrier to transform tests; independent tracked union =595.
-    assert(prod.length == 595, format("%s production files scanned "
-        ~ "(materialized Wave6 population 595)", prod.length));
+    // that six-block carrier to transform tests; independent tracked union =606.
+    assert(prod.length == 606, format("%s production files scanned "
+        ~ "(materialized Wave8 population 606)", prod.length));
     assert(all.length == prod.length, format("%s source files, %s production; "
         ~ "Wave6 source test carrier belongs to transform tests", all.length, prod.length));
 

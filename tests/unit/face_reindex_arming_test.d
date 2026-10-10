@@ -1205,14 +1205,16 @@ private string[] productionTargets()
     // no batch is recording — so it is scanned as well: an arm appearing there
     // would mean a replay re-recording its own entry.
     targets ~= buildPath(repoRoot, "packages", "mesh-edit-log", "source", "mesh_edit_delta.d");
+    targets ~= buildPath(repoRoot, "packages", "mesh-edit-replay", "source", "mesh_edit_replay.d");
     targets ~= buildPath(repoRoot, "packages", "mesh", "source", "mesh_planes.d");
     // The satellites plan 2910 is carving out of `struct Mesh`, one per step.
     // `mesh_edge_slice.d` (step 3) holds `rebuildFacesWithChordSplits` and so
     // holds a real arm; `mesh_visibility.d` (step 2) holds none and is listed
     // so that the rule — every satellite is scanned — is what the list says,
     // not an accident of where the arms happen to be today.
-    foreach (sat; ["mesh_visibility.d", "mesh_edge_slice.d"]) {
-        immutable satPath = buildPath(repoRoot, "packages/common/source", sat);
+    foreach (sat; ["packages/interaction-query/source/mesh_visibility.d",
+                  "packages/mesh-ops/source/mesh_edge_slice.d"]) {
+        immutable satPath = buildPath(repoRoot, sat);
         assert(exists(satPath),
                "the census cannot find the struct-Mesh satellite " ~ satPath);
         targets ~= satPath;

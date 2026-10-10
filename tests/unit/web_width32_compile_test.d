@@ -73,8 +73,8 @@ case " $flags " in *" -version=web "*) ;; *)
 esac
 mapfile -t files < <(dub describe --config=web --data=source-files --data-list \
     2>>"$2" | sed '/^$/d' | grep '\.d$')
-for package in common mesh-ops interchange interaction-query pipe-evaluation tool-state transform-ops creation-ops alignment-ops input-events display-policy viewport-gpu subpatch-preview; do
-    mapfile -t package_files < <(dub describe --root="packages/$package" --config=web \
+for owner in packages/alignment-ops packages/common packages/creation-ops packages/display-policy packages/edit-contracts packages/input-events packages/interaction-query packages/interchange packages/mesh-change packages/mesh-contracts packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-ops packages/mesh-snapshot packages/mesh-topology packages/mesh packages/pipe-evaluation packages/profiling packages/spatial packages/subpatch-preview packages/tool-state packages/transform-ops packages/viewport-gpu util/log util/math util/parallel util/plane-bytes util/screen-buckets; do
+    mapfile -t package_files < <(dub describe --root="$owner" --config=web \
         --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
     files+=("${package_files[@]}")
 done
@@ -91,20 +91,7 @@ SH";
                inventory.status, inventory.output));
     string[][string] importsByModule;
     string[string] sourcePathByModule;
-    const sourcePrefix = buildPath(repoRoot, "source") ~ "/";
-    const commonPrefix = buildPath(repoRoot, "packages/common/source") ~ "/";
-    const meshPrefix = buildPath(repoRoot, "packages/mesh-ops/source") ~ "/";
-    const interchangePrefix = buildPath(repoRoot, "packages/interchange/source") ~ "/";
-    const queryPrefix = buildPath(repoRoot, "packages/interaction-query/source") ~ "/";
-    const evaluationPrefix = buildPath(repoRoot, "packages/pipe-evaluation/source") ~ "/";
-    const ownerPrefix0 = buildPath(repoRoot, "packages/tool-state/source") ~ "/";
-    const ownerPrefix1 = buildPath(repoRoot, "packages/transform-ops/source") ~ "/";
-    const ownerPrefix2 = buildPath(repoRoot, "packages/creation-ops/source") ~ "/";
-    const ownerPrefix3 = buildPath(repoRoot, "packages/alignment-ops/source") ~ "/";
-    const ownerPrefix4 = buildPath(repoRoot, "packages/input-events/source") ~ "/";
-    const ownerPrefix5 = buildPath(repoRoot, "packages/display-policy/source") ~ "/";
-    const ownerPrefix6 = buildPath(repoRoot, "packages/viewport-gpu/source") ~ "/";
-    const ownerPrefix7 = buildPath(repoRoot, "packages/subpatch-preview/source") ~ "/";
+    const productionPrefixes = [buildPath(repoRoot, "source") ~ "/", buildPath(repoRoot, "packages/alignment-ops/source") ~ "/", buildPath(repoRoot, "packages/common/source") ~ "/", buildPath(repoRoot, "packages/creation-ops/source") ~ "/", buildPath(repoRoot, "packages/display-policy/source") ~ "/", buildPath(repoRoot, "packages/edit-contracts/source") ~ "/", buildPath(repoRoot, "packages/input-events/source") ~ "/", buildPath(repoRoot, "packages/interaction-query/source") ~ "/", buildPath(repoRoot, "packages/interchange/source") ~ "/", buildPath(repoRoot, "packages/mesh-change/source") ~ "/", buildPath(repoRoot, "packages/mesh-contracts/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-log/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-replay/source") ~ "/", buildPath(repoRoot, "packages/mesh-ops/source") ~ "/", buildPath(repoRoot, "packages/mesh-snapshot/source") ~ "/", buildPath(repoRoot, "packages/mesh-topology/source") ~ "/", buildPath(repoRoot, "packages/mesh/source") ~ "/", buildPath(repoRoot, "packages/pipe-evaluation/source") ~ "/", buildPath(repoRoot, "packages/profiling/source") ~ "/", buildPath(repoRoot, "packages/spatial/source") ~ "/", buildPath(repoRoot, "packages/subpatch-preview/source") ~ "/", buildPath(repoRoot, "packages/tool-state/source") ~ "/", buildPath(repoRoot, "packages/transform-ops/source") ~ "/", buildPath(repoRoot, "packages/viewport-gpu/source") ~ "/", buildPath(repoRoot, "util/log/source") ~ "/", buildPath(repoRoot, "util/math/source") ~ "/", buildPath(repoRoot, "util/parallel/source") ~ "/", buildPath(repoRoot, "util/plane-bytes/source") ~ "/", buildPath(repoRoot, "util/screen-buckets/source") ~ "/"];
 
     foreach (line; readText(depsPath).splitLines)
     {
@@ -119,7 +106,7 @@ SH";
         if (!parseDepNode(tail[cast(size_t)secondRel + 3 .. $], imported)) continue;
         importsByModule[importer.moduleName] ~= imported.moduleName;
         foreach (node; [importer, imported])
-            if (node.path.startsWith(sourcePrefix, commonPrefix, meshPrefix, interchangePrefix, queryPrefix, evaluationPrefix, ownerPrefix0, ownerPrefix1, ownerPrefix2, ownerPrefix3, ownerPrefix4, ownerPrefix5, ownerPrefix6, ownerPrefix7) && node.path.endsWith(".d"))
+            if (productionPrefixes.canFind!(prefix => node.path.startsWith(prefix)) && node.path.endsWith(".d"))
                 sourcePathByModule[node.moduleName] = node.path;
     }
     bool[string] reached;
@@ -155,7 +142,7 @@ SH";
     write(buildPath(tempDir(), stem ~ ".modules"), selectedModules.join("\n") ~ "\n");
     const baseline = readText(buildPath(repoRoot, "tests", "unit",
         "web_width32_baseline_modules.txt")).strip.splitLines;
-    assert(baseline.length == 555, "web compiler baseline manifest population");
+    assert(baseline.length == 566, "web compiler baseline manifest population");
     string[] added, removed;
     foreach (name; selectedModules) if (!baseline.canFind(name)) added ~= name;
     foreach (name; baseline) if (!selectedModules.canFind(name)) removed ~= name;
@@ -166,9 +153,11 @@ SH";
     // successful dmd over fewer (or zero) files must not masquerade as a clean width pass.
     // Task 20261660: the compiler-selected web closure adds model_preview (+1).
     // Task 20261720: three literal-preserving lower-owner modules join the closure.
+    // Wave8: all555 prior identities retained, eleven split-owner identities added;
+    // mapping and actual native inventory: doc/application_layers_wave8_d_acceptance_fix_2026-10-10.md.
     // Wave5 compiler witness adds surface_pick, toolpipe.state_paths, workplane_basis.
     // Wave6A: the existing kernel reaches its extracted cluster_values leaf (+1).
-    enum expectedWebModules = 555; // +1 task 9504 evaluated_move_weld; +1 task 9449 tools.edit.haul_axis_latch; -1 task 9525 tools.edit.drag_weld; +1 task 9492 tool_attr_bounds; -5 wave-2 PRM2: five more param-update owner modules folded; +1 task 9429 tools.topology_step; -10 wave-2 PRM1: eleven param-update owner modules became one; +1 pen S1 tools.create.pen_geometry; +4: remesh job, stitch, command and modal state; +1 M5 toolpipe.attr_cache; +1 viewport_probe_sampling; +3 retopology S4 light_rig, retopology_line_shade, retopology_dot_cull; +1 retopology S5 retopology_order; +1 viewport shading S1a vertex_normals; +1 viewport shading SP gpu_pass_timer; +1 viewport shading S2b viewport_composite; +1 viewport shading S1e commands.mesh.surface_attr; +1 viewport shading S4b viewport_env
+    enum expectedWebModules = 566; // +1 task 9504 evaluated_move_weld; +1 task 9449 tools.edit.haul_axis_latch; -1 task 9525 tools.edit.drag_weld; +1 task 9492 tool_attr_bounds; -5 wave-2 PRM2: five more param-update owner modules folded; +1 task 9429 tools.topology_step; -10 wave-2 PRM1: eleven param-update owner modules became one; +1 pen S1 tools.create.pen_geometry; +4: remesh job, stitch, command and modal state; +1 M5 toolpipe.attr_cache; +1 viewport_probe_sampling; +3 retopology S4 light_rig, retopology_line_shade, retopology_dot_cull; +1 retopology S5 retopology_order; +1 viewport shading S1a vertex_normals; +1 viewport shading SP gpu_pass_timer; +1 viewport shading S2b viewport_composite; +1 viewport shading S1e commands.mesh.surface_attr; +1 viewport shading S4b viewport_env
     assert(closurePaths.length == expectedWebModules,
         format("W16-W web closure population changed: expected %d source modules to reach "
              ~ "the 32-bit compiler, got %d", expectedWebModules, closurePaths.length));

@@ -13,7 +13,7 @@ unittest {
     immutable string[] subjects = ["perf_probe"];
     string[] subjectTexts;
     foreach (subject; subjects) {
-        const path = buildPath(repoRoot, "packages", "common", "source", subject ~ ".d");
+        const path = buildPath(repoRoot, "packages", "profiling", "source", subject ~ ".d");
         if (exists(path)) subjectTexts ~= readText(path);
     }
 

@@ -198,10 +198,35 @@ unittest // K1-K9: whole-tree census
     Scan renderer, editorApp;
     size_t rendererSeen, editorAppSeen;
     foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"]) {
-        const production = root == "source" || root == "packages/common/source"
-            || root == "packages/mesh-ops/source" || root == "packages/interchange/source"
-            || root == "packages/interaction-query/source" || root == "packages/pipe-evaluation/source" || root == "packages/tool-state/source" || root == "packages/transform-ops/source" || root == "packages/creation-ops/source" || root == "packages/alignment-ops/source"
-            || root == "packages/input-events/source" || root == "packages/display-policy/source" || root == "packages/viewport-gpu/source" || root == "packages/subpatch-preview/source";
+        const production = root == "source"
+            || root == "packages/alignment-ops/source"
+            || root == "packages/common/source"
+            || root == "packages/creation-ops/source"
+            || root == "packages/display-policy/source"
+            || root == "packages/edit-contracts/source"
+            || root == "packages/input-events/source"
+            || root == "packages/interaction-query/source"
+            || root == "packages/interchange/source"
+            || root == "packages/mesh-change/source"
+            || root == "packages/mesh-contracts/source"
+            || root == "packages/mesh-edit-log/source"
+            || root == "packages/mesh-edit-replay/source"
+            || root == "packages/mesh-ops/source"
+            || root == "packages/mesh-snapshot/source"
+            || root == "packages/mesh-topology/source"
+            || root == "packages/mesh/source"
+            || root == "packages/pipe-evaluation/source"
+            || root == "packages/profiling/source"
+            || root == "packages/spatial/source"
+            || root == "packages/subpatch-preview/source"
+            || root == "packages/tool-state/source"
+            || root == "packages/transform-ops/source"
+            || root == "packages/viewport-gpu/source"
+            || root == "util/log/source"
+            || root == "util/math/source"
+            || root == "util/parallel/source"
+            || root == "util/plane-bytes/source"
+            || root == "util/screen-buckets/source";
         foreach (entry; dirEntries(buildPath(repoRoot, root), "*.d", SpanMode.depth)) {
             const rel = relativePath(entry.name, repoRoot).replace("\\", "/");
             if (production) ++sourceFiles; else ++testFiles;
