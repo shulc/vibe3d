@@ -1486,14 +1486,16 @@ bool isSourceBackedTest(string path) {
 string buildProjectLib(string scratch) {
     string[] srcs;
     bool[string] seen;
-    foreach (root; ["", " --root=packages/common"]) {
+    // Task 20262150: moved conditional helpers need the same unittest source
+    // grant as desktop/common; keep production package archives unchanged.
+    foreach (root; ["", " --root=packages/common", " --root=packages/tool-state", " --root=packages/transform-ops"]) {
         auto rr = executeShell("dub describe" ~ root
             ~ " --config=modeling --data=source-files --data-list 2>/dev/null");
         if (rr.status != 0) return "";
         foreach (line; rr.output.splitLines) {
             auto s = line.strip;
             // Exclude app.d: it carries the real `main`, which would clash with
-            // the test binary's own `main`. Keep both package source inventories.
+            // the test binary's own `main`. Keep the granted source inventories.
             if (s.length && !s.endsWith("/app.d") && !s.endsWith("\\app.d")
                     && s !in seen) {
                 seen[s] = true;
