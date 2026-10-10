@@ -26,8 +26,7 @@ private string[string] sourceCode() {
     string[string] out_;
     foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(root, "packages/display-policy/source")
-            && scanSourceRoot != buildPath(root, "packages/viewport-gpu/source")
+        || (scanSourceRoot != buildPath(root, "packages/viewport-gpu/source")
             && scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         out_[relativePath(e.name, buildPath(root, "source"))] = codeText(readText(e.name));
@@ -128,11 +127,11 @@ unittest { // (c) ONE policy builder, referenced only by the three producers' ho
         immutable n = identCount(c, "buildSmoothPolicy");
         if (n) refs[f] = n;
     }
-    foreach (f; ["vertex_normals.d", "mesh_gpu.d", "subpatch_osd.d"])
+    foreach (f; ["../packages/display-policy/source/vertex_normals.d", "mesh_gpu.d", "subpatch_osd.d"])
         assert(f in refs, "census floor: " ~ f ~ " no longer references buildSmoothPolicy");
     string[] outside;
     foreach (f, n; refs)
-        if (!["vertex_normals.d", "mesh_gpu.d", "subpatch_osd.d"].canFind(f)) outside ~= f;
+        if (!["../packages/display-policy/source/vertex_normals.d", "mesh_gpu.d", "subpatch_osd.d"].canFind(f)) outside ~= f;
     assert(outside.length == 0,
         format("buildSmoothPolicy is referenced in %s — a producer that derives the policy itself", outside));
     // Inside the two producer modules the reference sits in the named function
@@ -158,7 +157,7 @@ unittest { // (d) the lower-slot pair rule in BOTH producers, keyed on identifie
     assert(hasIdentSeq(gRule, ["u_slotCos", "min", "sf", "sg"]) && identCount(gRule, "u_faceSlot") == 1,
         "control: the GLSL needle misses the rule line");
     assert(identCount("p.slotCos[max(sf, sg)]", "max") == 1, "control: the `max` offender is not reported");
-    immutable vn  = codeText(readText(buildPath(root, "source", "vertex_normals.d")));
+    immutable vn  = codeText(readText(buildPath(root, "packages/display-policy/source", "vertex_normals.d")));
     immutable cpu = bodyAt(vn, "private Vec3 smoothCorner(");
     immutable fan = glslRegion(readText(buildPath(root, "source", "subpatch_osd.d")),
                                "private enum string FAN_OUT_VERT_SRC");

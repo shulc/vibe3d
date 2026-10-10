@@ -73,6 +73,13 @@ allow packages/common/source/toolpipe/subject.d 3
 allow packages/common/source/tsan_annotate.d 1
 allow packages/common/source/view.d 11
 allow packages/creation-ops/source/tools/create/pen_geometry.d 1
+allow packages/display-policy/source/camera_stamp.d 3
+allow packages/display-policy/source/display_state.d 14
+allow packages/display-policy/source/light_rig.d 1
+allow packages/display-policy/source/vertex_normals.d 1
+allow packages/display-policy/source/viewport_overlay_mode.d 6
+allow packages/display-policy/source/viewport_scheme.d 8
+allow packages/display-policy/source/weightmap_view.d 1
 allow packages/input-events/source/eventlog.d 1
 allow packages/input-events/source/input_context.d 3
 allow packages/input-events/source/input_zones.d 1
@@ -143,7 +150,6 @@ allow source/args_dialog.d 1
 allow source/bg_gpu_cache.d 1
 allow source/buttonset.d 1
 allow source/bvh_pick.d 11
-allow source/camera_stamp.d 3
 allow source/commands/ai3d/generate.d 1
 allow source/commands/ai3d/generate_open.d 3
 allow source/commands/ai3d/generate_test_hooks.d 1
@@ -291,7 +297,6 @@ allow source/copilot_overlay.d 2
 allow source/copilot_panel.d 2
 allow source/create_tool_registration.d 6
 allow source/deform_magnet.d 1
-allow source/display_state.d 14
 allow source/display_sync.d 5
 allow source/drag.d 12
 allow source/drag_identity.d 1
@@ -334,7 +339,6 @@ allow source/io/file_dialog_browser.d 2
 allow source/item_command_registration.d 2
 allow source/item_pick.d 3
 allow source/layout_reset_action.d 1
-allow source/light_rig.d 1
 allow source/live_registration_roles.d 1
 allow source/mesh_analysis.d 4
 allow source/mesh_command_registration.d 3
@@ -465,15 +469,11 @@ allow source/ui/viewport_render.d 39
 allow source/uv_relax.d 1
 allow source/uv_unwrap.d 2
 allow source/value_drag.d 2
-allow source/vertex_normals.d 1
 allow source/view_settings_registration.d 2
 allow source/viewport.d 41
 allow source/viewport_command_registration.d 1
 allow source/viewport_composite.d 1
 allow source/viewport_env.d 1
-allow source/viewport_overlay_mode.d 6
-allow source/viewport_scheme.d 8
-allow source/weightmap_view.d 1
 
 # Exact per-file counts of comment runs >= 40 lines, sorted by path.
 allow-runs packages/alignment-ops/source/tools/alignment/align_kernels.d 1
@@ -506,6 +506,9 @@ allow-runs packages/common/source/params.d 2
 allow-runs packages/common/source/perf_probe.d 2
 allow-runs packages/common/source/plane_bytes.d 1
 allow-runs packages/common/source/toolpipe/packets.d 2
+allow-runs packages/display-policy/source/camera_stamp.d 1
+allow-runs packages/display-policy/source/display_state.d 1
+allow-runs packages/display-policy/source/weightmap_view.d 1
 allow-runs packages/interaction-query/source/constraint.d 1
 allow-runs packages/interaction-query/source/snap.d 5
 allow-runs packages/interaction-query/source/snap_election.d 2
@@ -534,7 +537,6 @@ allow-runs packages/tool-state/source/tools/edit/preview_rebuild.d 1
 allow-runs packages/transform-ops/source/tools/transform/xform_kernels.d 1
 allow-runs source/ai/support_loop_candidates.d 1
 allow-runs source/app.d 7
-allow-runs source/camera_stamp.d 1
 allow-runs source/commands/image/commands.d 1
 allow-runs source/commands/mesh/axis_slice.d 1
 allow-runs source/commands/mesh/bevel.d 1
@@ -569,7 +571,6 @@ allow-runs source/commands/select/by_stat.d 1
 allow-runs source/commands/select/by_tag.d 1
 allow-runs source/commands/select/fill.d 1
 allow-runs source/commands/select/sets.d 2
-allow-runs source/display_state.d 1
 allow-runs source/drag.d 3
 allow-runs source/forms.d 1
 allow-runs source/forms_render.d 1
@@ -614,4 +615,3 @@ allow-runs source/ui/item_rows.d 2
 allow-runs source/ui/panels.d 1
 allow-runs source/ui/stat_rows.d 1
 allow-runs source/ui/viewport_render.d 1
-allow-runs source/weightmap_view.d 1

@@ -99,7 +99,7 @@ unittest // the face VBO has ONE normal home: no inline copy survives in mesh_gp
     // per-face results the smooth stream shares.
     assert(calls == 0, format("mesh_gpu.d: expected no faceNormalFirst3 call "
         ~ "(the flat normal comes from vertex_normals.faceUnitNormal), got %s", calls));
-    const vn = readText(buildPath(repoRoot, "source", "vertex_normals.d"));
+    const vn = readText(buildPath(repoRoot, "packages/display-policy/source", "vertex_normals.d"));
     assert(vn.count("faceNormalFirst3(") == 1 && vn.count("Vec3 faceUnitNormal(") == 1,
         "vertex_normals.d: faceUnitNormal must be the one faceNormalFirst3 caller");
     assert(src.count("1e-6f") == 0 && src.count("nlen") == 0,

@@ -220,7 +220,6 @@ unittest {
     hits ~= scanTree("packages/alignment-ops/source");
     if (exists("packages/input-events/source"))
     hits ~= scanTree("packages/input-events/source");
-    if (exists("packages/display-policy/source"))
     hits ~= scanTree("packages/display-policy/source");
     if (exists("packages/viewport-gpu/source"))
     hits ~= scanTree("packages/viewport-gpu/source");

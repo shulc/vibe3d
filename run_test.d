@@ -1354,8 +1354,7 @@ string sourceDigest() {
         foreach (pattern; ["*.d", "*.c"])
             foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
             if (exists(scanSourceRoot)
-                || (scanSourceRoot != "packages/display-policy/source"
-                    && scanSourceRoot != "packages/viewport-gpu/source"
+                || (scanSourceRoot != "packages/viewport-gpu/source"
                     && scanSourceRoot != "packages/subpatch-preview/source"))
             foreach (e; dirEntries(scanSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
@@ -1492,7 +1491,7 @@ string buildProjectLib(string scratch) {
     bool[string] seen;
     // Task 20262150: moved conditional helpers need the same unittest source
     // grant as desktop/common; keep production package archives unchanged.
-    foreach (root; ["", " --root=packages/common", " --root=packages/tool-state", " --root=packages/transform-ops", " --root=packages/input-events"]) {
+    foreach (root; ["", " --root=packages/common", " --root=packages/tool-state", " --root=packages/transform-ops", " --root=packages/input-events", " --root=packages/display-policy"]) {
         auto rr = executeShell("dub describe" ~ root
             ~ " --config=modeling --data=source-files --data-list 2>/dev/null");
         if (rr.status != 0) return "";

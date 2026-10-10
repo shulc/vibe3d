@@ -234,8 +234,7 @@ private string[] sourceTree() {
     if (!exists(root)) return r;
     foreach (scanSourceRoot; [root, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
-            && scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
+        || (scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
             && scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         r ~= relativePath(e.name, repoRoot);

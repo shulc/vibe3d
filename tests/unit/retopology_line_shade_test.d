@@ -17,7 +17,7 @@ import std.file : exists;
 import std.file   : dirEntries, readText, SpanMode;
 import std.format : format;
 import std.math   : abs, cos, sin, sqrt, PI;
-import std.path   : buildPath, dirName;
+import std.path   : buildPath, dirName, relativePath;
 import std.regex  : ctRegex, matchAll, matchFirst, replaceAll;
 import std.string : indexOf;
 
@@ -340,12 +340,11 @@ unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
     string[] files;
     foreach (scanSourceRoot; [src, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
-            && scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
+        || (scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
             && scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
-        immutable rel = de.name[src.length + 1 .. $].replace("\\", "/");
-        if (rel == "light_rig.d") continue;
+        immutable rel = relativePath(de.name, src).replace("\\", "/");
+        if (rel == "../packages/display-policy/source/light_rig.d") continue;
         immutable raw = readText(de.name);
         if (rel == "shader.d" || rel == "tools/create/pen.d"
             || countOccurrences(raw, "LitShader") > 0)
@@ -425,11 +424,10 @@ unittest { // 5a. the fence: rig locations are private, and nobody spells around
     string[] named;
     foreach (scanSourceRoot; [src, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
-            && scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
+        || (scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
             && scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
-        immutable rel = de.name[src.length + 1 .. $].replace("\\", "/");
+        immutable rel = relativePath(de.name, src).replace("\\", "/");
         if (rel == "shader.d") continue;
         ++scanned;
         immutable raw = readText(de.name);   // RAW: strings and comments too

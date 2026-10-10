@@ -830,8 +830,7 @@ unittest { // C13: production boundary, wiring, and private-reachability census
     size_t oldActionSignatures;
     foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source"), repoRoot.buildPath("packages/input-events/source"), repoRoot.buildPath("packages/display-policy/source"), repoRoot.buildPath("packages/viewport-gpu/source"), repoRoot.buildPath("packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != repoRoot.buildPath("packages/display-policy/source")
-            && scanSourceRoot != repoRoot.buildPath("packages/viewport-gpu/source")
+        || (scanSourceRoot != repoRoot.buildPath("packages/viewport-gpu/source")
             && scanSourceRoot != repoRoot.buildPath("packages/subpatch-preview/source")))
     foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                SpanMode.depth)) {

@@ -2,6 +2,7 @@
 active_mesh_resolver
 app_version
 argstring
+camera_stamp
 change_bus
 command
 command_args
@@ -23,6 +24,7 @@ commands.select.drop
 commands.select.element
 commands.select.invert
 constraint
+display_state
 document
 document_selection
 edit_target_contract
@@ -52,6 +54,7 @@ item_kinds
 item_xform
 json_num
 layer_params
+light_rig
 log
 math
 mesh
@@ -135,7 +138,12 @@ tools.transform.scale_input
 tools.transform.xform_kernels
 trackball
 tsan_annotate
+vertex_normals
 view
 viewgrid
+viewport_overlay_mode
+viewport_probe_sampling
+viewport_scheme
+weightmap_view
 workplane_basis
 workplane_fit

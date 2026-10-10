@@ -61,8 +61,7 @@ private string[] sourceFiles() {
     string[] o;
     foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(root, "packages/display-policy/source")
-            && scanSourceRoot != buildPath(root, "packages/viewport-gpu/source")
+        || (scanSourceRoot != buildPath(root, "packages/viewport-gpu/source")
             && scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         o ~= relativePath(e.name, buildPath(root, "source")).replace("\\", "/");
@@ -74,14 +73,14 @@ unittest { // (a) the cull POLICY reaches only the display: a picker reading it 
     // Polarity [E14]: stationary — TRUE before a mutation that makes a picker
     // (select_visibility, gpu_select, bvh_pick) read the display cull; the
     // offender list then names that file.
-    immutable string[] allowed = ["display_state.d", "http_providers.d", "shader.d", "ui/viewport_render.d"];
+    immutable string[] allowed = ["../packages/display-policy/source/display_state.d", "http_providers.d", "shader.d", "ui/viewport_render.d"];
     auto files = sourceFiles();
     assert(files.length > 300, format("census floor: %d source files", files.length));
     string[] holders;
     foreach (f; files)
         if (tokens(blankNonCode(readText(buildPath(root, "source", f))), "cullBySurface")) holders ~= f;
     // Floor: the policy's home and its one face-pass reader.
-    assert(holders.canFind("display_state.d") && holders.canFind("ui/viewport_render.d"),
+    assert(holders.canFind("../packages/display-policy/source/display_state.d") && holders.canFind("ui/viewport_render.d"),
         format("census floor: cullBySurface must live in display_state.d and be read by "
                ~ "ui/viewport_render.d; found in %s", holders));
     string[] offenders;

@@ -1,4 +1,3 @@
-
 ai.exploration
 ai3d.event_queue
 ai3d.worker_manager
@@ -233,6 +232,7 @@ tests.unit.dirty_key_stamp_census_test
 tests.unit.dirty_key_tool_preview_test
 tests.unit.dirty_key_weightmap_test
 tests.unit.display_payload_provenance_test
+tests.unit.display_policy_population_test
 tests.unit.display_refresh_mask_boundary_test
 tests.unit.display_refresh_mask_semantics_test
 tests.unit.display_state_test
@@ -706,6 +706,7 @@ tests.unit.web_width32_compile_test
 tests.unit.webgl2_picker_readback_test
 tests.unit.webgl2_shader_sources_test
 tests.unit.weightmap_color_test
+tests.unit.weightmap_state_test
 tests.unit.weld_remap_core_census_test
 tests.unit.weld_scope_test
 tests.unit.window_metrics_test
@@ -760,4 +761,3 @@ unit.bevel_cold_arm_param_image_test
 unit.prepared_param_update_test
 unit.prepared_tool_transition_test
 view
-weightmap_view

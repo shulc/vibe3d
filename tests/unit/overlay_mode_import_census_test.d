@@ -200,11 +200,9 @@ unittest // K1-K9: whole-tree census
     foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"]) {
         if (!exists(buildPath(repoRoot, root))
             && (root == "packages/input-events/source"
-                || root == "packages/display-policy/source"
                 || root == "packages/viewport-gpu/source"
                 || root == "packages/subpatch-preview/source"
                 || root == "packages/input-events/tests/source"
-                || root == "packages/display-policy/tests/source"
                 || root == "packages/viewport-gpu/tests/source"
                 || root == "packages/subpatch-preview/tests/source")) continue;
         const production = root == "source" || root == "packages/common/source"
@@ -258,9 +256,9 @@ unittest // K1-K9: whole-tree census
            format("named users missing: %s", users));
 
     // K2-K6: one definition, no re-export/foreign source, direct import identity.
-    assert(definers == ["source/viewport_overlay_mode.d"],
+    assert(definers == ["packages/display-policy/source/viewport_overlay_mode.d"],
            format("OverlayMode definitions: %s", definers));
-    assert(resolverDefiners == ["source/viewport_overlay_mode.d"],
+    assert(resolverDefiners == ["packages/display-policy/source/viewport_overlay_mode.d"],
            format("resolveOverlayMode definitions: %s", resolverDefiners));
     assert(publicImports.length == 0, format("public re-export: %s", publicImports));
     assert(foreign.length == 0, format("policy imported from elsewhere: %s", foreign));

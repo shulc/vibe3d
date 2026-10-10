@@ -185,7 +185,7 @@ unittest {
         import std.algorithm.iteration : filter;
         import std.conv : text;
         immutable src = readText(buildPath(
-            dirName(dirName(dirName(__FILE_FULL_PATH__))), "source",
+            dirName(dirName(dirName(__FILE_FULL_PATH__))), "packages/display-policy/source",
             "display_state.d")).filter!(ch => !isWhite(ch)).text;
         assert(src.count("p.faceAlpha=") == 1
             && src.count("p.faceAlpha=retopologyFaceAlpha(kRetopologyFillTransparency);") == 1,
