@@ -552,10 +552,16 @@ out=$(mktemp -d "/var/tmp/w16-a-web-probe.XXXXXX")
 trap 'rm -rf "$out"' EXIT
 # Describe lists ordinary STATIC archives but does not build them. Prepare
 # their declared web configurations before linking this host transport probe.
-for package in common mesh-ops interchange interaction-query pipe-evaluation \
-               tool-state transform-ops creation-ops alignment-ops input-events \
-               display-policy viewport-gpu subpatch-preview; do
-  dub build --root="packages/$package" --config=web --compiler=dmd
+for package in packages/common packages/mesh-ops packages/interchange \
+               packages/interaction-query packages/pipe-evaluation \
+               packages/tool-state packages/transform-ops packages/creation-ops \
+               packages/alignment-ops packages/input-events \
+               packages/display-policy packages/viewport-gpu packages/subpatch-preview \
+               packages/edit-contracts packages/mesh-change packages/mesh-contracts \
+               packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-snapshot \
+               packages/mesh-topology packages/mesh packages/profiling packages/spatial \
+               util/log util/math util/parallel util/plane-bytes util/screen-buckets; do
+  dub build --root="$package" --config=web --compiler=dmd
 done
 for data in import-paths versions linker-files libs lflags source-files dflags \
             string-import-paths; do
