@@ -529,6 +529,13 @@ def describe(project, owner, config, compiler, env, evidence, tests=False, recip
     return description
 
 
+def validate_staged_fixture(fixture, original, owner, archive):
+    expected = original
+    if owner in FIXTURES:
+        expected = dict(original, cwd=str(archive.resolve()))
+    require(fixture == expected, 'PREPARATION-REFUSED: fixture staging differs')
+
+
 def stage_archive(project, owner, evidence):
     require(not (evidence / 'archive').exists(), 'PREPARATION-REFUSED: archive directory already exists')
     require(subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=normal'], cwd=project, text=True).strip() == '',
@@ -549,7 +556,7 @@ def stage_archive(project, owner, evidence):
     require(not (archive / 'source').exists() and not (archive / 'tests/unit').exists() and not (archive / 'dub.json').exists(),
             'PREPARATION-REFUSED: archive includes desktop roots/descriptor')
     fixture = fixture_receipt(archive, owner)
-    require(fixture == dict(fixture_receipt(project, owner), cwd=str(archive.resolve())), 'PREPARATION-REFUSED: fixture staging differs')
+    validate_staged_fixture(fixture, fixture_receipt(project, owner), owner, archive)
     return archive, sha
 
 
@@ -965,6 +972,42 @@ def self_test():
             extra = root / 'tests/source/foreign.d'; extra.write_text('module foreign;\n')
             red(owner + '-extra-carrier', lambda: validate_sources(project, owner), 'public carrier identity')
             extra.unlink(); validate_sources(project, owner)
+        # Task 20262210: exercise the real committed archive path for each
+        # frozen no-fixture owner; neither may invent a cwd-only fixture.
+        for owner in ('display-policy', 'subpatch-preview'):
+            with tempfile.TemporaryDirectory(prefix='support-no-fixture-') as source_tmp:
+                source = Path(source_tmp)
+                for selected in SPECS[owner]['lower'] + (owner,):
+                    path = source / 'packages' / selected / 'source/probe.d'
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('module probe;\n')
+                subprocess.run(['git', 'init', '-q', str(source)], check=True)
+                subprocess.run(['git', 'add', 'packages'], cwd=source, check=True)
+                subprocess.run(['git', '-c', 'user.name=Boundary control', '-c',
+                                'user.email=boundary@localhost', 'commit', '-qm',
+                                'Create finite archive control'], cwd=source, check=True)
+                evidence = project / (owner + '-no-fixture')
+                evidence.mkdir()
+                archive, _ = stage_archive(source, owner, evidence)
+                require(fixture_receipt(archive, owner) == {},
+                        'support no-fixture archive receipt: ' + owner)
+                cells.append(owner + '-no-fixture-archive')
+                red(owner + '-unspecified-fixture',
+                    lambda: validate_staged_fixture({'cwd': str(archive)}, {}, owner, archive),
+                    'PREPARATION-REFUSED: fixture staging differs')
+        for owner in ('input-events', 'viewport-gpu'):
+            relative, sha = FIXTURES[owner]
+            original = {'path': relative, 'sha256': sha, 'cwd': str(project)}
+            archive = project / (owner + '-fixture-archive')
+            valid = {'path': relative, 'sha256': sha, 'cwd': str(archive.resolve())}
+            validate_staged_fixture(valid, original, owner, archive)
+            for field, value in (('path', 'foreign'), ('sha256', '0' * 64),
+                                 ('cwd', str(project))):
+                broken = dict(valid); broken[field] = value
+                red(owner + '-staged-fixture-' + field,
+                    lambda: validate_staged_fixture(broken, original, owner, archive),
+                    'PREPARATION-REFUSED: fixture staging differs')
+            validate_staged_fixture(valid, original, owner, archive)
         for owner, (relative, _) in FIXTURES.items():
             red(owner + '-fixture-missing', lambda: fixture_receipt(project, owner), 'PREPARATION-REFUSED')
             path = project / relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('changed fixture')
