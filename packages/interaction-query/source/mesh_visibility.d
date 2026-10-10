@@ -35,8 +35,8 @@ module mesh_visibility;
 // see the card's §Находки.
 
 import mesh : Mesh;
-import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
-              frontFacingLocal, pointInPolygon2D;
+import math : Vec3, frontFacingLocal, pointInPolygon2D;
+import spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull;
 import perf_probe : g_perf, Cat;
 import screen_buckets : ScreenBuckets, buildScreenBuckets, queryScreenCell,
                         OCCL_CELL_PX, MAX_OCCL_BUCKET_INTS;
@@ -469,8 +469,8 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
                                               const ModelSpace ms,
                                               float queryPadPx,
                                               bool exemptCoincidentSurfaces) {
-    import math : projectToWindowFull, projectionSpace, ModelSpace,
-                  frontFacingLocal;
+    import math : frontFacingLocal;
+    import spatial : projectToWindowFull, projectionSpace, ModelSpace;
     import std.math : isFinite;
 
     // DoS clamp on the one numeric that SCALES this call's allocation.

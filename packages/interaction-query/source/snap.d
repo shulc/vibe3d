@@ -11,7 +11,8 @@ import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
               isOrtho, viewPixelScale,
               perpendicularFrame, rayTriangleIntersect,
               closestPointOnTriangle2D, triangulatePolygonEarClip;
-import mesh : Mesh, VisibilityProbe, visibilityProbe;
+import mesh : Mesh;
+import mesh_visibility : VisibilityProbe, visibilityProbe;
 import mesh_dirty : MeshDirtyKey, g_geomEpochs, g_settledGeomEpochs;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
