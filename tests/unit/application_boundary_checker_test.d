@@ -1,5 +1,6 @@
 module tests.unit.application_boundary_checker_test;
 
+import std.algorithm : canFind;
 import std.path : buildPath, dirName;
 import std.process : execute;
 import std.stdio : writeln;
@@ -34,4 +35,9 @@ unittest {
     }
     auto tests = execute(["python3", buildPath(repoRoot, "tools", "test_standalone_boundary.py")]);
     assert(tests.status == 0, "boundary checker controls: " ~ tests.output);
+    auto support = execute(["python3", buildPath(repoRoot, "tools",
+        "check_package_support_boundary.py"), "--self-test"]);
+    assert(support.status == 0, "support package checker controls: " ~ support.output);
+    assert(support.output.canFind("PKG-BOUNDARY-VERDICT=GREEN"),
+        "support package checker missing terminal verdict");
 }
