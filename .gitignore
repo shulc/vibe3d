@@ -168,3 +168,9 @@ tools/cli/.boundary/
 /packages/interaction-query/vibe3d-interaction-query.lib
 /packages/pipe-evaluation/libvibe3d-pipe-evaluation.a
 /packages/pipe-evaluation/vibe3d-pipe-evaluation.lib
+/packages/tool-state/libvibe3d-tool-state.a
+/packages/tool-state/vibe3d-tool-state.lib
+/packages/creation-ops/libvibe3d-creation-ops.a
+/packages/creation-ops/vibe3d-creation-ops.lib
+/packages/alignment-ops/libvibe3d-alignment-ops.a
+/packages/alignment-ops/vibe3d-alignment-ops.lib
