@@ -200,7 +200,7 @@ unittest { // compile fence: the four plan-uniform locations are unreachable fro
 unittest { // raw-text census of the spellings that bypass private: names, getMember, mixin, tupleof
     import std.array : replace;
     import std.file : dirEntries, readText, SpanMode;
-    import std.path : buildPath, dirName;
+    import std.path : buildPath, dirName, relativePath;
     import tests.unit.census_symbols : countOccurrences;
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     immutable src = buildPath(root, "source");
@@ -216,7 +216,7 @@ unittest { // raw-text census of the spellings that bypass private: names, getMe
     if (exists(scanSourceRoot)
         || (scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
-        immutable rel = de.name[src.length + 1 .. $].replace("\\", "/");
+        immutable rel = relativePath(de.name, src).replace("\\", "/");
         if (rel == "../packages/viewport-gpu/source/shader.d") continue;
         ++scanned;
         immutable raw = readText(de.name);   // RAW: strings and comments included
