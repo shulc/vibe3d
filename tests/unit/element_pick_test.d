@@ -67,7 +67,7 @@ unittest { // clause 4 (inside its own tolerance -> win) is an early-out only fo
 unittest { // production-text census
     size_t files;
     string[] cmpDefs, electSites;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
 
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
@@ -120,7 +120,8 @@ unittest {
     import hover_state : ToolPressSource, toolPressAt, toolPressEdgeAdmitted,
         toolPressVertexAdmitted, toolPressFaceAdmitted;
     import mesh : Mesh, makeGridPlane;
-    import math : Vec3, Viewport, ModelSpace, lookAt, orthographicMatrix, projectToWindowFull;
+    import math : Vec3, lookAt, orthographicMatrix;
+import spatial : Viewport, ModelSpace, projectToWindowFull;
     import std.math : round;
     import std.algorithm : reverse;
     auto vp = Viewport(lookAt(Vec3(0, 5, 0), Vec3(0, 0, 0), Vec3(0, 0, -1)),
@@ -194,7 +195,8 @@ unittest {
 unittest {
     import hover_state : ToolPressSource, toolPressAt, toolPressSupport;
     import mesh : makeGridPlane;
-    import math : Vec3, Viewport, ModelSpace, lookAt, orthographicMatrix;
+    import math : Vec3, lookAt, orthographicMatrix;
+import spatial : Viewport, ModelSpace;
     import std.algorithm : reverse;
     import core.time : MonoTime;
     import core.memory : GC;

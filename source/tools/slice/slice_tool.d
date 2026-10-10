@@ -14,6 +14,7 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.cut;
 import math;
+import spatial : ModelSpace, Viewport, projectToWindowFull, screenPointToRay;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
 import shader : Shader, LitShader;

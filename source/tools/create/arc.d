@@ -8,6 +8,7 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : Viewport;
 import params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;

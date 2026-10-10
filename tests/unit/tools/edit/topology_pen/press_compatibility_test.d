@@ -3,8 +3,8 @@ module tools.edit.topology_pen.press_compatibility_test;
 import tools.edit.topology_pen;
 import hover_state;
 import mesh : Mesh, makeGridPlane;
-import math : Vec3, Viewport, ModelSpace, lookAt, orthographicMatrix,
-    screenPointToRay, projectToWindowFull;
+import math : Vec3, lookAt, orthographicMatrix;
+import spatial : Viewport, ModelSpace, screenPointToRay, projectToWindowFull;
 import std.math : abs;
 import std.format : format;
 import std.stdio : writefln;
@@ -600,7 +600,7 @@ version (PerspectivePenFocused) {} else unittest {
 version (PerspectivePenFocused) {} else unittest {
     import document : ItemXform, primaryModelSpaceResolver;
     import toolpipe.packets : SubjectPacket;
-    import math : aimSpace;
+    import spatial : aimSpace;
     const vp=viewport();ItemXform transform;transform.pos=Vec3(.5f,1,-.5f);transform.scl=Vec3(2,4,.5f);
     const ms=transform.modelSpace();const saved=primaryModelSpaceResolver;scope(exit)primaryModelSpaceResolver=saved;
     primaryModelSpaceResolver=()=>ms;
@@ -773,7 +773,8 @@ unittest {
     import toolpipe.packets : ConstrainGeom;
     import snap : setBackgroundSnapSources, backgroundSourcesFull;
     import view : View;
-    import math : Orientation, translationMatrix, orthographicMatrix;
+    import math : translationMatrix, orthographicMatrix;
+import spatial : Orientation;
     import drag : HandleDrag, DragFrame, DragKind;
     import bvh_pick : SurfaceHit;
     import std.file : readText;

@@ -45,6 +45,7 @@
 //
 // LANE: `dub test --config=tests` (lane U) — a `tests/unit/**` block.
 module tests.unit.l10_command_undo_census_test;
+import mesh_edit_replay : captureSelectedEdgeEnds;
 
 import std.file   : readText, exists;
 import std.path   : dirName, buildPath;

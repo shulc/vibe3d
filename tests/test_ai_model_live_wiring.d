@@ -19,7 +19,7 @@ import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
 import ai.onnx_backend : OnnxModelBackend;
 import handler : Handler, HandleState, ToolHandles,
     setHandleAiAdvisor, setHandleDecisionProvider;
-import math : Viewport;
+import spatial : Viewport;
 
 void main() {}
 

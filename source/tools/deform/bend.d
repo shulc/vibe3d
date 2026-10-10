@@ -8,8 +8,8 @@ import tools.transform.transform;
 import mesh;
 import mesh_gpu : GpuMesh;
 import editmode;
-import math : Vec3, Vec4, Viewport, dot, cross,
-              pivotRotationMatrix, mulMV;
+import math : Vec3, Vec4, dot, cross, pivotRotationMatrix, mulMV;
+import spatial : Viewport;
 import shader;
 
 import params : Param;

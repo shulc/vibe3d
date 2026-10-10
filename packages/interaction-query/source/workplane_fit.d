@@ -10,6 +10,7 @@
 /// (`laws.skew_edge_pair`); law and provenance in `doc/measured_laws.md` §23.
 /// The tie branch (square hull) is a static decode that was not driven.
 module workplane_fit;
+import spatial : Orientation;
 
 import math : Vec3;
 import std.math : sqrt, abs, atan2, sin, cos;

@@ -9,6 +9,12 @@
   "dependencies": {
     "vibe3d-common": {
       "path": "../common"
+    },
+    "vibe3d-mesh": {
+      "path": "../mesh"
+    },
+    "vibe3d-mesh-snapshot": {
+      "path": "../mesh-snapshot"
     }
   },
   "toolchainRequirements": {
@@ -154,14 +160,18 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "modeling"
+        "vibe3d-common": "modeling",
+        "vibe3d-mesh": "modeling",
+        "vibe3d-mesh-snapshot": "modeling"
       }
     },
     {
       "name": "modeling-noai",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-common": "modeling-noai"
+        "vibe3d-common": "modeling-noai",
+        "vibe3d-mesh": "modeling-noai",
+        "vibe3d-mesh-snapshot": "modeling-noai"
       }
     },
     {
@@ -171,7 +181,9 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "with-render"
+        "vibe3d-common": "with-render",
+        "vibe3d-mesh": "with-render",
+        "vibe3d-mesh-snapshot": "with-render"
       }
     },
     {
@@ -180,7 +192,9 @@
         "web"
       ],
       "subConfigurations": {
-        "vibe3d-common": "web"
+        "vibe3d-common": "web",
+        "vibe3d-mesh": "web",
+        "vibe3d-mesh-snapshot": "web"
       }
     },
     {
@@ -189,7 +203,19 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "root-tests"
+        "vibe3d-common": "root-tests",
+        "vibe3d-mesh": "root-tests",
+        "vibe3d-mesh-snapshot": "root-tests"
+      },
+      "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests",
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-mesh-snapshot": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

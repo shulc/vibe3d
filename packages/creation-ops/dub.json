@@ -12,6 +12,18 @@
     },
     "vibe3d-interaction-query": {
       "path": "../interaction-query"
+    },
+    "vibe3d-spatial": {
+      "path": "../spatial"
+    },
+    "vibe3d-mesh": {
+      "path": "../mesh"
+    },
+    "vibe3d-edit-contracts": {
+      "path": "../edit-contracts"
+    },
+    "vibe3d-math": {
+      "path": "../../util/math"
     }
   },
   "toolchainRequirements": {
@@ -158,7 +170,11 @@
       ],
       "subConfigurations": {
         "vibe3d-common": "modeling",
-        "vibe3d-interaction-query": "modeling"
+        "vibe3d-interaction-query": "modeling",
+        "vibe3d-spatial": "modeling",
+        "vibe3d-mesh": "modeling",
+        "vibe3d-edit-contracts": "modeling",
+        "vibe3d-math": "modeling"
       }
     },
     {
@@ -166,7 +182,11 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-common": "modeling-noai",
-        "vibe3d-interaction-query": "modeling-noai"
+        "vibe3d-interaction-query": "modeling-noai",
+        "vibe3d-spatial": "modeling-noai",
+        "vibe3d-mesh": "modeling-noai",
+        "vibe3d-edit-contracts": "modeling-noai",
+        "vibe3d-math": "modeling-noai"
       }
     },
     {
@@ -177,7 +197,11 @@
       ],
       "subConfigurations": {
         "vibe3d-common": "with-render",
-        "vibe3d-interaction-query": "with-render"
+        "vibe3d-interaction-query": "with-render",
+        "vibe3d-spatial": "with-render",
+        "vibe3d-mesh": "with-render",
+        "vibe3d-edit-contracts": "with-render",
+        "vibe3d-math": "with-render"
       }
     },
     {
@@ -187,7 +211,11 @@
       ],
       "subConfigurations": {
         "vibe3d-common": "web",
-        "vibe3d-interaction-query": "web"
+        "vibe3d-interaction-query": "web",
+        "vibe3d-spatial": "web",
+        "vibe3d-mesh": "web",
+        "vibe3d-edit-contracts": "web",
+        "vibe3d-math": "web"
       }
     },
     {
@@ -197,7 +225,24 @@
       ],
       "subConfigurations": {
         "vibe3d-common": "root-tests",
-        "vibe3d-interaction-query": "root-tests"
+        "vibe3d-interaction-query": "root-tests",
+        "vibe3d-spatial": "root-tests",
+        "vibe3d-mesh": "root-tests",
+        "vibe3d-edit-contracts": "root-tests",
+        "vibe3d-math": "root-tests"
+      },
+      "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests",
+        "vibe3d-interaction-query": "isolated-tests",
+        "vibe3d-spatial": "isolated-tests",
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-edit-contracts": "isolated-tests",
+        "vibe3d-math": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

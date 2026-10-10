@@ -232,7 +232,7 @@ private FileCount[] scanSourceTree(string root)
     if (!isDir(sourceDir)) return [];
 
     auto found = appender!(FileCount[]);
-    foreach (scanSourceRoot; [sourceDir, buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
+    foreach (scanSourceRoot; [sourceDir, buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source")])
 
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth))
     {
@@ -281,7 +281,7 @@ FIXTURE";
            "a path to a card under the tasks tree is the policy's pointer form");
     assert(censusOf("// tasks 0011 and 0012\n").citationLines == 1,
            "the plural spelling is a citation");
-    assert(toLedgerPath(`packages\common\source\mesh.d`) == "packages/common/source/mesh.d",
+    assert(toLedgerPath(`packages\common\source\mesh.d`) == "packages/mesh/source/mesh.d",
            "ledger paths must be normalised to `/`");
 }
 

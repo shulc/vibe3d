@@ -8,17 +8,16 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 595
-task-citation-lines 5180
-citing-files 459
-long-comment-runs 259
-files-with-long-runs 139
+source-files 606
+task-citation-lines 5179
+citing-files 468
+long-comment-runs 258
+files-with-long-runs 141
 
 # Exact per-file task-citation allowances, sorted by path.
 allow packages/alignment-ops/source/tools/alignment/align_kernels.d 6
 allow packages/common/source/app_version.d 1
 allow packages/common/source/argstring.d 5
-allow packages/common/source/change_bus.d 31
 allow packages/common/source/command.d 27
 allow packages/common/source/command_args.d 3
 allow packages/common/source/command_executor.d 7
@@ -41,36 +40,17 @@ allow packages/common/source/io/image_decode.d 3
 allow packages/common/source/io/image_path.d 5
 allow packages/common/source/io/native.d 56
 allow packages/common/source/item_kinds.d 12
-allow packages/common/source/item_xform.d 5
 allow packages/common/source/json_num.d 1
 allow packages/common/source/layer_params.d 19
-allow packages/common/source/log.d 1
-allow packages/common/source/math.d 27
-allow packages/common/source/mesh.d 487
-allow packages/common/source/mesh_corner_maps.d 17
-allow packages/common/source/mesh_dirty.d 18
-allow packages/common/source/mesh_edge_slice.d 28
-allow packages/common/source/mesh_edit_delta.d 141
-allow packages/common/source/mesh_morph.d 1
-allow packages/common/source/mesh_planes.d 39
-allow packages/common/source/mesh_selsets.d 3
-allow packages/common/source/mesh_topo.d 22
-allow packages/common/source/mesh_visibility.d 18
 allow packages/common/source/morph_target.d 4
 allow packages/common/source/params.d 20
-allow packages/common/source/perf_probe.d 54
-allow packages/common/source/plane_bytes.d 1
 allow packages/common/source/record_observer_hub.d 1
-allow packages/common/source/screen_buckets.d 1
-allow packages/common/source/seltype.d 3
 allow packages/common/source/session_owner.d 2
-allow packages/common/source/snapshot.d 12
 allow packages/common/source/tool_activation_ownership.d 6
 allow packages/common/source/toolpipe/packets.d 12
 allow packages/common/source/toolpipe/pipeline.d 9
 allow packages/common/source/toolpipe/stage.d 11
 allow packages/common/source/toolpipe/subject.d 3
-allow packages/common/source/tsan_annotate.d 1
 allow packages/common/source/view.d 11
 allow packages/creation-ops/source/tools/create/pen_geometry.d 1
 allow packages/display-policy/source/camera_stamp.d 3
@@ -80,12 +60,14 @@ allow packages/display-policy/source/vertex_normals.d 1
 allow packages/display-policy/source/viewport_overlay_mode.d 6
 allow packages/display-policy/source/viewport_scheme.d 8
 allow packages/display-policy/source/weightmap_view.d 1
+allow packages/edit-contracts/source/seltype.d 3
 allow packages/input-events/source/eventlog.d 1
 allow packages/input-events/source/input_context.d 3
 allow packages/input-events/source/input_zones.d 1
 allow packages/input-events/source/shortcuts.d 3
 allow packages/interaction-query/source/constraint.d 9
 allow packages/interaction-query/source/hover_state.d 5
+allow packages/interaction-query/source/mesh_visibility.d 18
 allow packages/interaction-query/source/snap.d 68
 allow packages/interaction-query/source/snap_election.d 11
 allow packages/interaction-query/source/surface_pick.d 6
@@ -98,6 +80,15 @@ allow packages/interchange/source/io/lwo_import.d 21
 allow packages/interchange/source/io/scene_export.d 6
 allow packages/interchange/source/io/scene_import.d 4
 allow packages/interchange/source/io/scene_ir.d 23
+allow packages/mesh-change/source/change_bus.d 31
+allow packages/mesh-change/source/mesh_dirty.d 18
+allow packages/mesh-contracts/source/mesh_corner_maps.d 17
+allow packages/mesh-contracts/source/mesh_plane_types.d 10
+allow packages/mesh-contracts/source/mesh_scope.d 4
+allow packages/mesh-contracts/source/mesh_types.d 7
+allow packages/mesh-edit-log/source/mesh_edit_delta.d 58
+allow packages/mesh-edit-replay/source/mesh_edit_replay.d 29
+allow packages/mesh-ops/source/mesh_edge_slice.d 28
 allow packages/mesh-ops/source/mesh_ops/bevel_curves.d 7
 allow packages/mesh-ops/source/mesh_ops/bevel_fin.d 7
 allow packages/mesh-ops/source/mesh_ops/bevel_vertex.d 11
@@ -109,11 +100,19 @@ allow packages/mesh-ops/source/mesh_ops/cut.d 23
 allow packages/mesh-ops/source/mesh_ops/decimate.d 7
 allow packages/mesh-ops/source/mesh_ops/edge_bevel.d 72
 allow packages/mesh-ops/source/mesh_ops/extrude.d 86
+allow packages/mesh-ops/source/mesh_ops/face_alignment.d 3
+allow packages/mesh-ops/source/mesh_ops/face_merge.d 3
 allow packages/mesh-ops/source/mesh_ops/loop_slice.d 95
 allow packages/mesh-ops/source/mesh_ops/poly_bevel.d 65
 allow packages/mesh-ops/source/mesh_ops/revolve.d 25
 allow packages/mesh-ops/source/mesh_ops/select_loop.d 6
 allow packages/mesh-ops/source/mesh_ops/thicken.d 4
+allow packages/mesh-snapshot/source/snapshot.d 12
+allow packages/mesh-topology/source/mesh_topo.d 23
+allow packages/mesh/source/mesh.d 522
+allow packages/mesh/source/mesh_morph.d 1
+allow packages/mesh/source/mesh_planes.d 29
+allow packages/mesh/source/mesh_selsets.d 3
 allow packages/pipe-evaluation/source/toolpipe/obbox.d 1
 allow packages/pipe-evaluation/source/toolpipe/package.d 1
 allow packages/pipe-evaluation/source/toolpipe/stages/actcenter.d 58
@@ -124,6 +123,9 @@ allow packages/pipe-evaluation/source/toolpipe/stages/path.d 1
 allow packages/pipe-evaluation/source/toolpipe/stages/snap.d 10
 allow packages/pipe-evaluation/source/toolpipe/stages/symmetry.d 17
 allow packages/pipe-evaluation/source/toolpipe/stages/workplane.d 12
+allow packages/profiling/source/perf_probe.d 54
+allow packages/spatial/source/item_xform.d 5
+allow packages/spatial/source/spatial.d 13
 allow packages/subpatch-preview/source/subpatch_osd.d 40
 allow packages/subpatch-preview/source/subpatch_preview.d 24
 allow packages/subpatch-preview/source/subpatch_worker.d 2
@@ -474,10 +476,16 @@ allow source/view_settings_registration.d 2
 allow source/viewport.d 41
 allow source/viewport_command_registration.d 1
 allow source/viewport_composite.d 1
+allow util/log/source/log.d 1
+allow util/math/source/math_geometry.d 12
+allow util/math/source/math_matrix.d 1
+allow util/math/source/math_vector.d 1
+allow util/parallel/source/tsan_annotate.d 1
+allow util/plane-bytes/source/plane_bytes.d 1
+allow util/screen-buckets/source/screen_buckets.d 1
 
 # Exact per-file counts of comment runs >= 40 lines, sorted by path.
 allow-runs packages/alignment-ops/source/tools/alignment/align_kernels.d 1
-allow-runs packages/common/source/change_bus.d 3
 allow-runs packages/common/source/command.d 2
 allow-runs packages/common/source/command_args.d 1
 allow-runs packages/common/source/command_executor.d 1
@@ -494,28 +502,24 @@ allow-runs packages/common/source/io/image_path.d 1
 allow-runs packages/common/source/io/native.d 1
 allow-runs packages/common/source/item_kinds.d 1
 allow-runs packages/common/source/layer_params.d 2
-allow-runs packages/common/source/math.d 4
-allow-runs packages/common/source/mesh.d 24
-allow-runs packages/common/source/mesh_dirty.d 3
-allow-runs packages/common/source/mesh_edge_slice.d 2
-allow-runs packages/common/source/mesh_edit_delta.d 7
-allow-runs packages/common/source/mesh_planes.d 3
-allow-runs packages/common/source/mesh_selsets.d 1
-allow-runs packages/common/source/mesh_visibility.d 1
 allow-runs packages/common/source/params.d 2
-allow-runs packages/common/source/perf_probe.d 2
-allow-runs packages/common/source/plane_bytes.d 1
 allow-runs packages/common/source/toolpipe/packets.d 2
 allow-runs packages/display-policy/source/camera_stamp.d 1
 allow-runs packages/display-policy/source/display_state.d 1
 allow-runs packages/display-policy/source/weightmap_view.d 1
 allow-runs packages/interaction-query/source/constraint.d 1
+allow-runs packages/interaction-query/source/mesh_visibility.d 1
 allow-runs packages/interaction-query/source/snap.d 5
 allow-runs packages/interaction-query/source/snap_election.d 2
 allow-runs packages/interaction-query/source/toolpipe/guide.d 1
 allow-runs packages/interaction-query/source/viewgrid.d 1
 allow-runs packages/interchange/source/io/scene_export.d 2
 allow-runs packages/interchange/source/io/scene_import.d 1
+allow-runs packages/mesh-change/source/change_bus.d 3
+allow-runs packages/mesh-change/source/mesh_dirty.d 3
+allow-runs packages/mesh-edit-log/source/mesh_edit_delta.d 4
+allow-runs packages/mesh-edit-replay/source/mesh_edit_replay.d 2
+allow-runs packages/mesh-ops/source/mesh_edge_slice.d 2
 allow-runs packages/mesh-ops/source/mesh_ops/bevel_fin.d 2
 allow-runs packages/mesh-ops/source/mesh_ops/bevel_vertex.d 2
 allow-runs packages/mesh-ops/source/mesh_ops/box_geom.d 2
@@ -528,10 +532,15 @@ allow-runs packages/mesh-ops/source/mesh_ops/extrude.d 8
 allow-runs packages/mesh-ops/source/mesh_ops/loop_slice.d 2
 allow-runs packages/mesh-ops/source/mesh_ops/poly_bevel.d 3
 allow-runs packages/mesh-ops/source/mesh_ops/revolve.d 4
+allow-runs packages/mesh/source/mesh.d 24
+allow-runs packages/mesh/source/mesh_planes.d 3
+allow-runs packages/mesh/source/mesh_selsets.d 1
 allow-runs packages/pipe-evaluation/source/toolpipe/obbox.d 2
 allow-runs packages/pipe-evaluation/source/toolpipe/stages/actcenter.d 2
 allow-runs packages/pipe-evaluation/source/toolpipe/stages/axis.d 1
 allow-runs packages/pipe-evaluation/source/toolpipe/stages/falloff.d 1
+allow-runs packages/profiling/source/perf_probe.d 2
+allow-runs packages/spatial/source/spatial.d 1
 allow-runs packages/subpatch-preview/source/subpatch_osd.d 3
 allow-runs packages/subpatch-preview/source/subpatch_preview.d 2
 allow-runs packages/tool-state/source/tools/common/session_mesh_key.d 1
@@ -615,3 +624,5 @@ allow-runs source/ui/item_rows.d 2
 allow-runs source/ui/panels.d 1
 allow-runs source/ui/stat_rows.d 1
 allow-runs source/ui/viewport_render.d 1
+allow-runs util/math/source/math_geometry.d 3
+allow-runs util/plane-bytes/source/plane_bytes.d 1

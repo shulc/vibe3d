@@ -5,6 +5,8 @@
 // module and its contract is written down -- a fixture layer that accumulates
 // one-off helpers is just a second god-file.
 module tests.unit.fixtures;
+import mesh_ops.face_alignment : alignFacesByMask;
+import mesh_scope : MeshEditScope;
 
 import mesh;
 import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
@@ -843,7 +845,7 @@ unittest // makeTaggedGridBent: BOTH additions are live, asserted BY NAME
 
         bool[] all = new bool[](flat.faces.length);
         all[] = true;
-        assert(flat.alignFacesByMask(all) == 0,
+        assert(alignFixture(flat, all) == 0,
             "the CONTROL moved: makeTaggedGridFull(3) is no longer planar, so "
           ~ "`mesh.align` no longer refuses it and addition 2 is no longer a "
           ~ "finding");
@@ -876,7 +878,7 @@ unittest // makeTaggedGridBent: BOTH additions are live, asserted BY NAME
         auto a = makeTaggedGridBent(3);
         bool[] all = new bool[](a.faces.length);
         all[] = true;
-        immutable size_t moved = a.alignFacesByMask(all);
+        immutable size_t moved = alignFixture(a, all);
         assert(moved > 0,
             format("makeTaggedGridBent: alignFacesByMask moved %d vertices on "
                  ~ "the whole-mesh operand, expected > 0 — mesh.align REFUSES "
@@ -887,7 +889,7 @@ unittest // makeTaggedGridBent: BOTH additions are live, asserted BY NAME
         auto a = makeTaggedGridBent(3);
         bool[] one = new bool[](a.faces.length);
         one[4] = true;          // interior face, carries vertex 5
-        assert(a.alignFacesByMask(one) > 0,
+        assert(alignFixture(a, one) > 0,
             "makeTaggedGridBent: a ONE-FACE operand must also be non-planar — "
           ~ "the second lifted vertex is what buys this, and polygon_align's "
           ~ "parity cell drives exactly this operand");
@@ -1349,7 +1351,7 @@ string[string] dumpMeshPlanes(ref Mesh m)
     // not to the table below — the diff then keeps answering "the planes
     // agree" about a plane it never read. 24 is the 23 state planes plus
     // `filled`. Precedent for the shape of this guard: `MeshMap.dup`'s own
-    // field-count assert (`packages/common/source/mesh.d`) and the two in `packages/common/source/snapshot.d`.
+    // field-count assert (`packages/mesh/source/mesh.d`) and the two in `packages/mesh-snapshot/source/snapshot.d`.
     static assert(MeshSnapshot.tupleof.length == 24,
         "MeshSnapshot gained or lost a field — add the plane to "
       ~ "dumpMeshPlanes below, or write here why it is not restorable state, "
@@ -1423,7 +1425,7 @@ string[string] dumpMeshPlanes(ref Mesh m)
         // revert that dropped the presence channel outright yields a legal,
         // WRONG map — not garbage, not a crash — and a values-only dump reads
         // it as identical. That is the same trap `MeshMap.dup` guards with its
-        // own field-count assert (`packages/common/source/mesh.d`).
+        // own field-count assert (`packages/mesh/source/mesh.d`).
         string s = format("dim=%d dom=%s kind=%s present=%s len=%d:",
                           mm.dim, mm.domain, mm.kind, mm.present,
                           mm.data.length);
@@ -1569,4 +1571,10 @@ private ulong edgeKeyOf(uint a, uint b)
 {
     import mesh : edgeKey;
     return edgeKey(a, b);
+}
+
+private size_t alignFixture(ref Mesh m, in bool[] mask) {
+    auto batch = MeshEditBatch.unrecorded(m, MeshEditScope.Position);
+    scope(exit) batch.close();
+    return batch.alignFacesByMask(mask);
 }

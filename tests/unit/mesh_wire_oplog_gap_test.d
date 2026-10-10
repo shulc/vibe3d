@@ -1,4 +1,5 @@
 module tests.unit.mesh_wire_oplog_gap_test;
+import mesh_edit_replay : apply, revert;
 
 import math : Vec3;
 import mesh : Mesh;

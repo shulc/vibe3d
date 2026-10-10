@@ -16,6 +16,7 @@ import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : Viewport;
 import editmode : EditMode;
 import drag : HandleDrag, DragFrame, DragKind;
 import overlay_space : OverlaySpace;

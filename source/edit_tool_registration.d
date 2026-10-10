@@ -1,4 +1,5 @@
 module edit_tool_registration;
+import mesh_edge_slice : edgeSlice;
 
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;

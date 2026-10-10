@@ -29,6 +29,7 @@
 // the task card (2260).
 // ===========================================================================
 module tests.unit.mesh_winding_writer_test;
+import mesh_edit_replay : apply, revert;
 
 import std.algorithm.mutation : reverse;
 import std.exception : assertThrown;

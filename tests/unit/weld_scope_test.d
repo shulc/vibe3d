@@ -16,7 +16,8 @@ import std.math   : PI, abs;
 import std.path   : buildPath, dirName;
 
 import mesh;
-import math : ModelSpace, Vec3;
+import math : Vec3;
+import spatial : ModelSpace;
 import tools.alignment.mirror : MirrorParams, mirrorInPlace;
 import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
 
@@ -307,14 +308,14 @@ unittest { // census: one coincidence search, and the mask weld holds no copy of
                ~ "            foreach (j; i + 1 .. n) {}\n    }\n}\n";
     assert(declsOf(probe, "foreach (j; i + 1") == ["Mesh.w"], "scanner control");
 
-    const src = readText(buildPath(repoRoot, "packages", "common", "source", "mesh.d"));
+    const src = readText(buildPath(repoRoot, "packages", "mesh", "source", "mesh.d"));
     const nested = declsOf(src, "foreach (j; i + 1");
     assert(nested.count("Mesh.weldVerticesByMask") == 0, format(
         "Mesh.weldVerticesByMask carries its own O(n^2) seed walk again: %s", nested));
     // Keyed on the bare identifier so an address or a template call counts too.
     const callers = declsOf(src, "computeWeldRemap");
     const string[] want = ["Mesh", "Mesh.weldCoincidentVertices", "Mesh.weldVerticesByMask"];
-    assert(callers == want, format("computeWeldRemap roster in packages/common/source/mesh.d: expected %s, found %s",
+    assert(callers == want, format("computeWeldRemap roster in packages/mesh/source/mesh.d: expected %s, found %s",
                                    want, callers));
 }
 

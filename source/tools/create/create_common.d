@@ -1,8 +1,8 @@
 module tools.create.create_common;
 
 import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
-import math : Vec3, Viewport, dot, isOrtho, matMul4, matrixMirrorsWinding, normalize,
-              projectToWindowFull, rayPlaneIntersect, screenPointToRay;
+import math : Vec3, dot, matMul4, matrixMirrorsWinding, normalize, rayPlaneIntersect;
+import spatial : Viewport, isOrtho, projectToWindowFull, screenPointToRay;
 import std.math : abs;
 public import workplane_basis : BuildPlane, mostFacingAxis, pickMostFacingPlane;
 import viewgrid : vectorSnap, viewVectorQuantum, viewWorkPlaneAnchor;
@@ -354,7 +354,7 @@ void pickWorkplaneGizmoBasis(const ref Viewport vp,
 // their own `localEye()` + `localRay()` pair built from `vp.eye` and
 // `screenRay`, and that pair is the PERSPECTIVE law: one common apex, with the
 // direction fanning out from it. It is the only construction of a cursor ray
-// left in the tree that does not go through `math.screenPointToRay`, which has
+// left in the tree that does not go through `spatial.screenPointToRay`, which has
 // carried the orthographic arm all along.
 //
 // Under an orthographic projection the rays are PARALLEL — each starts at its
@@ -647,7 +647,7 @@ unittest { // ortho: the plane's DEPTH is the focus snapped to q (K-W2 finding 2
 
 unittest { // the placement click is TOTAL where the old floor plane refused
     import std.math : abs;
-    import math : screenPointToRay;
+    import spatial : screenPointToRay;
 
     immutable float dist  = 3.0f;
     // The focus is deliberately OFF the world origin on all three axes. With

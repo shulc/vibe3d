@@ -11,7 +11,7 @@
 // This is a SOURCE-BACKED test (imports `math` and `document` at column 0,
 // see run_test.d:isSourceBackedTest) so it can build the exact composed
 // matrix the app itself uses (`document.ItemXform.composedMatrix()`) and
-// project with the app's own `math.projectToWindow`/`transformPoint` rather
+// project with the app's own `spatial.projectToWindow`/`transformPoint` rather
 // than a hand-duplicated formula that could quietly drift from the app's.
 //
 // Every case authors its transform through `layer.attr` (the well-behaved,
@@ -31,8 +31,8 @@ import std.algorithm : canFind;
 import core.thread    : Thread;
 import core.time      : dur;
 
-import math     : Vec3, Viewport, ModelSpace, transformPoint, projectToWindow,
-                  lookAt, perspectiveMatrix, matMul4, dot, cross;
+import math : Vec3, transformPoint, lookAt, perspectiveMatrix, matMul4, dot, cross;
+import spatial : Viewport, ModelSpace, projectToWindow;
 import document : ItemXform;
 
 // buildDragLog/playAndWait pulled in by NAME only — drag_helpers also

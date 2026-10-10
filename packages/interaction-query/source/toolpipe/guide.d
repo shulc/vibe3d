@@ -1,6 +1,8 @@
 module toolpipe.guide;
+static import spatial;
 
-import math             : Vec3, Viewport;
+import math : Vec3;
+import spatial : Viewport;
 import toolpipe.packets : SnapPacket, SnapType;
 
 // ---------------------------------------------------------------------------
@@ -128,7 +130,7 @@ abstract class SnapGuide {
     /// Deliberately NOT `nothrow`, where the sibling seam `snap.SnapAdmit`
     /// is. The difference is not an oversight: an admission predicate answers
     /// from data it already has, while a guide's proximity is a PROJECTION,
-    /// and the projection helper this tree ships (`math.projectToWindowFull`)
+    /// and the projection helper this tree ships (`spatial.projectToWindowFull`)
     /// carries no attributes — so `nothrow` here would push a `try`/`catch`
     /// into the body of every real guide. It is affordable because the
     /// candidate walk consults nothing while the grid mutex is held: every

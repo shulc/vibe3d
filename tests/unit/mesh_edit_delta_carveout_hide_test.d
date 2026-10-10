@@ -22,6 +22,7 @@
 // says this cell measures the DERIVE and not the branch.
 // ===========================================================================
 module tests.unit.mesh_edit_delta_carveout_hide_test;
+import mesh_edit_replay : apply, revert;
 
 import std.algorithm.searching : canFind;
 import std.format : format;

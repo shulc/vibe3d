@@ -1,4 +1,6 @@
 module app;
+import mesh_visibility : visibleVertices;
+import mesh_edit_replay : apply, revert;
 
 import subpatch_preview : SubpatchPreview;
 import bindbc.sdl;
@@ -87,6 +89,7 @@ import imgui_impl_opengl3;
 
 import app_version      : appAboutLines;
 import math;
+import spatial : ModelSpace, Viewport;
 import mesh;
 import mesh_gpu : DisplayPayloadBasis, DisplayPayloadWriter, GpuMesh;
 import mesh_ops.loop_slice : loopSliceRingEdges;

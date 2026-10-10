@@ -277,7 +277,8 @@ class SnapStage : Stage, Operator {
         import toolpipe.packets : SubjectPacket;
         import snap             : snapCursor, SnapResult,
                                   backgroundSourceLayerIndices;
-        import math             : Vec3, projectToWindowFull;
+        import math : Vec3;
+import spatial : projectToWindowFull;
         import std.math         : sqrt;
         // Task 0617 Stage 4: `subj.mesh` is the active/primary layer's mesh
         // (the toolpipe addresses the foreground mesh transparently, per

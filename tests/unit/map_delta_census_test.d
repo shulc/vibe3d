@@ -128,7 +128,7 @@ private string sourceFile(string rel) {
 // ===========================================================================
 unittest
 {
-    const string code = sourceFile("packages/common/source/mesh_edit_delta.d");
+    const string code = sourceFile("packages/mesh-edit-log/source/mesh_edit_delta.d");
 
     // NON-VACUITY, FIRST. A stripper that lost its place eats the rest of the
     // file, and every count below then reads 0 and passes.
@@ -144,7 +144,7 @@ unittest
 
     const size_t raw = countOccurrences(code, "log_ ~=");
     assert(raw == 1, format(
-        "census: `log_ ~=` occurs %d times in packages/common/source/mesh_edit_delta.d, "
+        "census: `log_ ~=` occurs %d times in packages/mesh-edit-log/source/mesh_edit_delta.d, "
       ~ "expected exactly 1 (inside MeshEditTracker.append). A recorder that "
       ~ "appends DIRECTLY bypasses both adjacency latches, produces a "
       ~ "perfectly valid-looking delta, and nothing at runtime would notice. "
@@ -177,7 +177,7 @@ unittest
 // ===========================================================================
 unittest
 {
-    const string code = sourceFile("packages/common/source/mesh_edit_delta.d");
+    const string code = (sourceFile("packages/mesh-edit-log/source/mesh_edit_delta.d") ~ sourceFile("packages/mesh-edit-replay/source/mesh_edit_replay.d") ~ coreReplaySwitches());
     const size_t n = countOccurrences(code, "final switch");
     enum size_t kExpected = 10;   // 6 over Kind, 1 over SelDomain, 3 over the
                                   // MapValueDelta sub-enums
@@ -258,7 +258,7 @@ unittest
     size_t scannedFiles = 0, scannedBytes = 0;
     LedgerHit[] hits;
 
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
 
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
@@ -495,7 +495,7 @@ unittest
     foreach (ref r; args) recorderSet[r.sym] = true;
     CallSite[][string] bySymbol;
     size_t scannedFiles;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const code = codeView(readText(de.name));
@@ -574,4 +574,19 @@ unittest // the extractor's OWN probe — the half that is live before L1-a
         "the extractor reported `%s` for a substituted before-image — if it "
       ~ "cannot tell `pre` from `live.data` the whole row is a decoy",
         c2.length ? c2[0].args[1] : "<none>"));
+}
+
+// Wave8: the original delta's two write switches now reside in named core doors.
+// Reuse the existing symbol walker; unrelated Mesh switches are outside this guard.
+private string coreReplaySwitches() {
+    const code = sourceFile("packages/mesh/source/mesh.d");
+    const symbols = enclosingSymbols(code);
+    string result;
+    foreach (i, line; code.splitLines) {
+        const owner = symbolAt(symbols, i);
+        if (owner == "Mesh.restoreSelectionValues" || owner == "Mesh.restoreMapValues")
+            result ~= line ~ "\n";
+    }
+    assert(result.length > 1000, "Wave8 core replay switch owner bodies missing");
+    return result;
 }

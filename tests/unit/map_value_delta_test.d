@@ -18,6 +18,7 @@
 // across the step, never an absolute.
 // ===========================================================================
 module tests.unit.map_value_delta_test;
+import mesh_edit_replay : apply, revert;
 
 import std.algorithm.searching : canFind;
 import std.format : format;

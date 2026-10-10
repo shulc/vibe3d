@@ -3,8 +3,8 @@ module toolpipe.stages.axis;
 import std.format : format;
 import std.math   : abs, sqrt, isFinite;
 
-import math    : Vec3, Viewport, cross, dot, normalize, frameMatrix, frameMatrixInverse,
-                 applyAffine, ModelSpace;
+import math : Vec3, cross, dot, normalize, frameMatrix, frameMatrixInverse, applyAffine;
+import spatial : Viewport, ModelSpace;
 import mesh    : Mesh;
 import editmode : EditMode;
 import seltype : SelType;

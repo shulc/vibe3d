@@ -1,7 +1,7 @@
 // Trackball MOMENTUM SPIN (task 0582) — the END-TO-END half.
 //
 // The profiles are pinned in closed form by the module unittests in
-// `packages/common/source/trackball.d` (both time constants, the 4000 ms termination, the
+// `packages/spatial/source/trackball.d` (both time constants, the 4000 ms termination, the
 // 1600 ms period, the post-end clamp) and the camera arithmetic by those in
 // `packages/common/source/view.d` (the rate is the last step's, a still release leaves nothing,
 // a cancel freezes mid-profile, the total does not depend on how the frames

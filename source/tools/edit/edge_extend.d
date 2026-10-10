@@ -9,6 +9,7 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.extrude;
 import math;
+import spatial : ModelSpace, Viewport, screenPointToRay;
 import editmode : EditMode;
 import params : Param;
 import shader : Shader, LitShader;

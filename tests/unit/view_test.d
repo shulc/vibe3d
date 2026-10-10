@@ -4,6 +4,7 @@
 module tests.unit.view_test;
 
 import math;
+import spatial : Orientation, Viewport, isOrtho, sphericalToCartesian;
 import std.math : sqrt, tan, PI;
 import std.json : JSONValue, JSONType;
 import trackball : TrackballOption, resolveTrackball, trackballRadius,

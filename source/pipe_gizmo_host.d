@@ -2,7 +2,7 @@ module pipe_gizmo_host;
 
 import bindbc.sdl;
 
-import math    : Viewport;
+import spatial : Viewport;
 import shader  : Shader;
 import handler : ToolHandles;
 import eventlog : queryMouse;

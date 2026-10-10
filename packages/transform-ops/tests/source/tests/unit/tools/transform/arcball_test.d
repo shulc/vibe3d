@@ -4,7 +4,8 @@
 module tests.unit.tools.transform.arcball_test;
 
 import std.math : sqrt, atan2;
-import math : Vec3, Viewport, cross, dot;
+import math : Vec3, cross, dot;
+import spatial : Viewport;
 import std.math : PI, abs, sin, cos;
 import tools.transform.arcball;
 

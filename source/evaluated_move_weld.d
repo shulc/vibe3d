@@ -4,7 +4,8 @@ import mesh : Mesh, MeshEditBatch;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshOpEntry;
 import change_bus : MeshEditScope;
-import math : Vec3, Viewport, ModelSpace, dot, cross;
+import math : Vec3, dot, cross;
+import spatial : Viewport, ModelSpace;
 import toolpipe.packets : SnapType, SymmetryPacket;
 import symmetry : symmetricWeldPairs, writeMovePositions, mirrorPosition, moveMirrorCenter;
 

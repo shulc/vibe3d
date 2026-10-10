@@ -2,6 +2,7 @@
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.mesh_ops.decimate_test;
+import mesh_edit_replay : apply, revert;
 
 import subpatch_factories : subdivideCube;
 import mesh;

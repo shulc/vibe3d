@@ -12,6 +12,7 @@ import mesh;
 import editmode;
 import seltype : SelType;
 import math;
+import spatial : Viewport, projectToWindowFull;
 import shader;
 import toolpipe.packets : FalloffPacket;
 import std.math;

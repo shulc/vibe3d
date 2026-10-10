@@ -8,8 +8,8 @@
 module tools.create.pen_geometry;
 
 import toolpipe.guide : SnapPurpose;
-import math : Vec3, Viewport, closestPointOnLineToRay, cross, dot, eyeVectorAt,
-    faceNormalFirst3, normalize, projectToWindowFull;
+import math : Vec3, closestPointOnLineToRay, cross, dot, faceNormalFirst3, normalize;
+import spatial : Viewport, eyeVectorAt, projectToWindowFull;
 import mesh : Mesh;
 import std.math : abs;
 import seltype : SelType;

@@ -13,6 +13,7 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.revolve;
 import math;
+import spatial : Viewport;
 import editmode : EditMode;
 import params : Param, IntEnumEntry;
 import command_history : CommandHistory;

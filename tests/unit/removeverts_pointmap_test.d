@@ -23,6 +23,7 @@
 /// (what the pre-op mesh had and the revert did not bring back, and what the
 /// revert put there instead). The forward carry says nothing about the reverse.
 module tests.unit.removeverts_pointmap_test;
+import mesh_edit_replay : apply, revert;
 
 import std.format : format;
 import std.math : isNaN;
@@ -767,7 +768,7 @@ unittest // W-7-P3-h: the unarmed weld TWIN — what this closes, what L10 still
     // `rebuildEdges` re-derived the edge array from the POST-weld faces —
     // **11 edges against a pre-op 12**, a deficit of exactly the one edge the
     // weld collapsed. Stage L10 wrapped that rewrite in `faceReindexScope()`
-    // (`packages/common/source/mesh.d:applyVertexRemapAndRebuild`), the log became
+    // (`packages/mesh/source/mesh.d:applyVertexRemapAndRebuild`), the log became
     // `[FaceReindex RemoveVerts Reindex]`, and E came back **12 of 12**.
     // The pin reddened BY DESIGN in that commit, exactly as the sentence it
     // replaced predicted, and this is its armed expectation.

@@ -25,6 +25,7 @@
 // `session_edit.d`'s own unittest used to claim the opposite and steered the
 // next reader away from writing this file; it has been corrected.
 module tests.unit.session_edit_payload_test;
+import mesh_edit_replay : apply, revert;
 
 import mesh      : Mesh, makeCube;
 import view      : View;

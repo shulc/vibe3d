@@ -19,6 +19,7 @@ import bindbc.sdl;
 import tool;
 import mesh;
 import math;
+import spatial : Viewport;
 import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize,
                  axisFacesViewer, ToolHandles;
 import viewport_scheme : axisColor, schemeColor, SchemeColor;

@@ -120,7 +120,7 @@ import seltype             : SelType, currentSelType, viewportPickType,
 import d_imgui.imgui_h    : ImVec2;
 // Task 0781 step 1c -- the pick family's own dependencies. All of these were
 // already reachable from main()'s scope; none of them imports this module
-// back, so no cycle appears. `math.Viewport` is the per-cell snapshot every
+// back, so no cycle appears. `spatial.Viewport` is the per-cell snapshot every
 // picker takes by `ref`; `eventlog.queryMouse` is the replay-aware cursor
 // read; `document.primaryModelSpace` is the primary layer's pose (task 0617),
 // which both engines pick against.
@@ -129,7 +129,7 @@ import gpu_select         : SelectMode;
 import item_pick          : ItemRayPicker, ItemHit;
 import symmetry_pick      : symmetricSelectVertex, symmetricSelectEdge,
                             symmetricSelectFace;
-import math               : Viewport;
+import spatial : Viewport;
 import eventlog           : queryMouse;
 import document           : primaryModelSpace;
 
@@ -333,7 +333,7 @@ final class InputFrameState {
     /// not over a live subpatch preview (its drawn positions are the limit's).
     void selectVertexTieGroup(ref Viewport vp, int mx, int my) {
         import hover_state : kElementPickRadiusPx, kVertexPointSizePx;
-        import math : projectionSpace, projectToWindowFull;
+        import spatial : projectionSpace, projectToWindowFull;
         import mesh_visibility : VisibilityProbe, regionVisibilityProbe;
         import std.algorithm : min;
         // The id is this frame's only under the vertex type (a type switch
@@ -482,7 +482,7 @@ final class InputFrameState {
     /// so the cursor's own pixel centre stands in (the comparator then keeps
     /// V > E > F); so does a point that does not project.
     private void noteHoverPoints(EditMode em)(ref Viewport vp, int mx, int my) {
-        import math : projectionSpace, projectToWindowFull;
+        import spatial : projectionSpace, projectToWindowFull;
         const Viewport vl = projectionSpace(vp, primaryModelSpace());
         const m = &app.mesh();
         float[2] at(uint v) {

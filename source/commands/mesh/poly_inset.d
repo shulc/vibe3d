@@ -1,4 +1,5 @@
 module commands.mesh.poly_inset;
+import mesh_edit_replay : apply, revert;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;

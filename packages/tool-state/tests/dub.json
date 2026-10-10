@@ -2,14 +2,14 @@
   "name": "vibe3d-tool-state-tests",
   "license": "MIT",
   "targetType": "executable",
-  "sourcePaths": [
-    "../source"
-  ],
+  "sourcePaths": [],
   "importPaths": [
     "source",
     "../source"
   ],
   "sourceFiles": [
+    "../source/tools/common/session_mesh_key.d",
+    "../source/tools/edit/preview_rebuild.d",
     "source/tests/unit/session_mesh_key_stamp_as_test.d",
     "source/tests/unit/tool_state_population_test.d",
     "source/tests/unit/tools/common/session_mesh_key_test.d",
@@ -18,10 +18,19 @@
   "dependencies": {
     "vibe3d-common": {
       "path": "../../common"
+    },
+    "vibe3d-math": {
+      "path": "../../../util/math"
+    },
+    "vibe3d-mesh": {
+      "path": "../../mesh"
+    },
+    "vibe3d-mesh-edit-log": {
+      "path": "../../mesh-edit-log"
+    },
+    "vibe3d-mesh-snapshot": {
+      "path": "../../mesh-snapshot"
     }
-  },
-  "subConfigurations": {
-    "vibe3d-common": "modeling-noai"
   },
   "toolchainRequirements": {
     "dmd": ">=2.111.0",
@@ -161,10 +170,15 @@
   },
   "configurations": [
     {
-      "name": "algorithm"
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-mesh-edit-log": "isolated-tests",
+        "vibe3d-mesh-snapshot": "isolated-tests"
+      }
     }
   ],
-  "dflags": [
-    "-i"
-  ]
+  "dflags": []
 }

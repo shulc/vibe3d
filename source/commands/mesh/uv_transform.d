@@ -1,4 +1,5 @@
 module commands.mesh.uv_transform;
+import mesh_edit_replay : apply, revert;
 
 /// Commands `uv.flip`, `uv.mirror`, `uv.rotate` — batch affine transforms
 /// on the active UV map (`kUvMapName`, MapDomain.PolyVertex, dim==2).

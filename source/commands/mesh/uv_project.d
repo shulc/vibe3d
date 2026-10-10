@@ -1,4 +1,5 @@
 module commands.mesh.uv_project;
+import mesh_edit_replay : apply, revert;
 
 /// `uv.project` — generate or overwrite the active "uv" PolyVertex MeshMap
 /// from one of four standard projections: planar, box, cylindrical, spherical.

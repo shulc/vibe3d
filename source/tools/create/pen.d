@@ -10,6 +10,7 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : Viewport, eyeVectorAt, projectToWindowFull;
 import params : Param;
 import handler : BoxHandler, gizmoSize, ToolHandles;
 import viewport_scheme : schemeColor, SchemeColor;

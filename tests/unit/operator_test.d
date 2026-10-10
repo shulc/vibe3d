@@ -3,7 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.operator_test;
 
-import math : Viewport;
+import spatial : Viewport;
 import toolpipe.packets : SubjectPacket, WorkplanePacket, SymmetryPacket,
                           SnapPacket, ActionCenterPacket, AxisPacket,
                           FalloffPacket, ConstrainPacket, ConstrainHitPacket,

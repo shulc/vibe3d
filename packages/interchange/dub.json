@@ -146,6 +146,15 @@
     "lwo2-writer": {
       "version": "6d35b70a2a23c16c5b6cc19ea3e2d05a99eb0061",
       "repository": "git+https://github.com/shulc/D-Lwo2Writer.git"
+    },
+    "vibe3d-math": {
+      "path": "../../util/math"
+    },
+    "vibe3d-log": {
+      "path": "../../util/log"
+    },
+    "vibe3d-mesh": {
+      "path": "../mesh"
     }
   },
   "subConfigurations": {
@@ -156,7 +165,10 @@
       "name": "modeling",
       "subConfigurations": {
         "vibe3d-common": "modeling",
-        "bindbc-assimp6": "static"
+        "bindbc-assimp6": "static",
+        "vibe3d-math": "modeling",
+        "vibe3d-log": "modeling",
+        "vibe3d-mesh": "modeling"
       },
       "dependencies": {
         "bindbc-assimp6": {
@@ -169,7 +181,10 @@
       "name": "modeling-noai",
       "subConfigurations": {
         "vibe3d-common": "modeling-noai",
-        "bindbc-assimp6": "static"
+        "bindbc-assimp6": "static",
+        "vibe3d-math": "modeling-noai",
+        "vibe3d-log": "modeling-noai",
+        "vibe3d-mesh": "modeling-noai"
       },
       "dependencies": {
         "bindbc-assimp6": {
@@ -182,7 +197,10 @@
       "name": "with-render",
       "subConfigurations": {
         "vibe3d-common": "with-render",
-        "bindbc-assimp6": "static"
+        "bindbc-assimp6": "static",
+        "vibe3d-math": "with-render",
+        "vibe3d-log": "with-render",
+        "vibe3d-mesh": "with-render"
       },
       "dependencies": {
         "bindbc-assimp6": {
@@ -194,7 +212,10 @@
     {
       "name": "web",
       "subConfigurations": {
-        "vibe3d-common": "web"
+        "vibe3d-common": "web",
+        "vibe3d-math": "web",
+        "vibe3d-log": "web",
+        "vibe3d-mesh": "web"
       },
       "versions": [
         "web"
@@ -204,7 +225,27 @@
       "name": "root-tests",
       "subConfigurations": {
         "vibe3d-common": "root-tests",
-        "bindbc-assimp6": "static"
+        "bindbc-assimp6": "static",
+        "vibe3d-math": "root-tests",
+        "vibe3d-log": "root-tests",
+        "vibe3d-mesh": "root-tests"
+      },
+      "dependencies": {
+        "bindbc-assimp6": {
+          "version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
+          "repository": "git+https://github.com/shulc/bindbc-assimp6.git"
+        }
+      },
+      "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests",
+        "bindbc-assimp6": "static",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-log": "isolated-tests",
+        "vibe3d-mesh": "isolated-tests"
       },
       "dependencies": {
         "bindbc-assimp6": {

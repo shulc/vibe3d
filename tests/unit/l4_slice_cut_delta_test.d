@@ -16,6 +16,7 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — run the blocks in
 // isolation when scoring a mutation.
 module tests.unit.l4_slice_cut_delta_test;
+import mesh_edit_replay : apply, revert;
 
 import std.conv   : to;
 import std.format : format;

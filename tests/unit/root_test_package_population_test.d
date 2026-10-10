@@ -2,7 +2,32 @@ module tests.unit.root_test_package_population_test;
 
 // Task 20262150: frozen source identities judge the root binary without importing
 // any judged module. Runtime cell execution remains ut_runner's separate authority.
+// Wave8 D: this names the existing private snapshot fixture, not a new cell.
+// getUnitTests observes emitted functions under the actual fixture version.
+private template SnapshotFixturePopulation() {
+    import mesh;
+    enum coreCells = __traits(getUnitTests, mesh).length;
+    static assert(coreCells >= 2, "ROOT-SNAPSHOT-CELL core unittest population floor");
+    enum mappedCells = () {
+        size_t count;
+        static foreach (cell; __traits(getUnitTests, mesh)) {
+            static foreach (attribute; __traits(getAttributes, cell)) {
+                static if (is(typeof(attribute) == string)) {
+                    static if (attribute == "mesh-snapshot-private-cells") ++count;
+                }
+            }
+        }
+        return count;
+    }();
+    static assert(mappedCells == 1,
+        "ROOT-SNAPSHOT-CELL mapped private fixture must be compiled exactly once");
+    static assert(coreCells > mappedCells,
+        "ROOT-SNAPSHOT-CELL ordinary core unittest complement floor");
+    enum SnapshotFixturePopulation = true;
+}
+
 unittest {
+    static assert(SnapshotFixturePopulation!());
     import std.file : readText;
     import std.path : buildPath, dirName;
     import std.string : splitLines, strip;
@@ -12,7 +37,7 @@ unittest {
     string[] expected;
     foreach (line; readText(buildPath(root, "tests/unit/root_test_package_module_roster.txt")).splitLines)
         if (line.strip.length && line.strip[0] != '#') expected ~= line.strip;
-    assert(expected.length == 159, "root package ModuleInfo frozen population 159");
+    assert(expected.length == 170, "root package ModuleInfo frozen population 170");
     auto ordered = expected.dup;
     ordered.sort();
     assert(ordered == expected, "root package ModuleInfo manifest sorted");
@@ -33,7 +58,7 @@ unittest {
     foreach (name; ["subpatch_preview", "subpatch_osd", "subpatch_worker", "subpatch_worker_web", "subpatch_factories"])
         assert(occurrences.get(name, 0) == 1,
                "ROOT-PACKAGE-MODULE-subpatch-preview must occur exactly once: " ~ name);
-    assert(occurrences.length == 159, "root package ModuleInfo selected population 159");
+    assert(occurrences.length == 170, "root package ModuleInfo selected population 170");
     foreach (name; expected)
         assert(occurrences.get(name, 0) == 1,
                "root package ModuleInfo must occur exactly once: " ~ name);

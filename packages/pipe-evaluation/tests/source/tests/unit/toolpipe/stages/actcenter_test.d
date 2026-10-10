@@ -4,8 +4,8 @@
 module tests.unit.toolpipe.stages.actcenter_test;
 
 import std.format : format;
-import math    : Vec3, Pin, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine,
-                 ModelSpace;
+import math : Vec3, rayPlaneIntersect, applyAffine;
+import spatial : Pin, Viewport, screenRay, screenPointToRay, ModelSpace;
 import mesh    : Mesh, MeshCacheKey;
 import editmode : EditMode;
 import seltype : SelType;
@@ -466,7 +466,8 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : Mesh;
-    import math : Vec3, ModelSpace;
+    import math : Vec3;
+import spatial : ModelSpace;
 
     // A stand with an ORPHAN vertex: two quads sharing an edge, plus vertex 6
     // at (100, 100, 100), which no edge and no face reference. Every

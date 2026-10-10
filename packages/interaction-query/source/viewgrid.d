@@ -46,7 +46,8 @@ module viewgrid;
 
 import std.math : log10, floor, ceil, pow, fabs, isFinite, sqrt, isNaN;
 
-import math : Vec3, Viewport, isOrtho;
+import math : Vec3;
+import spatial : Viewport, isOrtho;
 
 // ---------------------------------------------------------------------------
 // The mantissa ladder

@@ -1,4 +1,6 @@
 module commands.mesh.quadruple;
+import mesh_edit_replay : apply, revert;
+import mesh_ops.face_merge : quadrupleFacesByMask;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;

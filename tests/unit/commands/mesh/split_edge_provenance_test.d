@@ -44,6 +44,7 @@
 // the tree's own behaviour, not a planted mutation.
 // ===========================================================================
 module tests.unit.commands.mesh.split_edge_provenance_test;
+import mesh_edge_slice : addEdgePoint;
 
 import std.format : format;
 import std.math   : abs;

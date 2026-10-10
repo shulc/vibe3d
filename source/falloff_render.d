@@ -2,7 +2,8 @@ module falloff_render;
 
 import std.math : sin, cos, sqrt, PI;
 
-import math : Vec3, Viewport, projectToWindowFull;
+import math : Vec3;
+import spatial : Viewport, projectToWindowFull;
 import toolpipe.packets : FalloffPacket, FalloffType, LassoStyle;
 import falloff : applyShape;
 

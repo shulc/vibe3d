@@ -2,14 +2,19 @@
   "name": "vibe3d-transform-ops-tests",
   "license": "MIT",
   "targetType": "executable",
-  "sourcePaths": [
-    "../source"
-  ],
+  "sourcePaths": [],
   "importPaths": [
     "source",
     "../source"
   ],
   "sourceFiles": [
+    "../source/tools/transform/arcball.d",
+    "../source/tools/transform/cluster_values.d",
+    "../source/tools/transform/item_xform_kernels.d",
+    "../source/tools/transform/morph_route.d",
+    "../source/tools/transform/relocate_plane.d",
+    "../source/tools/transform/scale_input.d",
+    "../source/tools/transform/xform_kernels.d",
     "source/tests/unit/ortho_relocate_prior_test.d",
     "source/tests/unit/tools/transform/arcball_regression_test.d",
     "source/tests/unit/tools/transform/arcball_test.d",
@@ -27,11 +32,22 @@
     },
     "vibe3d-interaction-query": {
       "path": "../../interaction-query"
+    },
+    "vibe3d-math": {
+      "path": "../../../util/math"
+    },
+    "vibe3d-mesh": {
+      "path": "../../mesh"
+    },
+    "vibe3d-mesh-edit-log": {
+      "path": "../../mesh-edit-log"
+    },
+    "vibe3d-profiling": {
+      "path": "../../profiling"
+    },
+    "vibe3d-spatial": {
+      "path": "../../spatial"
     }
-  },
-  "subConfigurations": {
-    "vibe3d-common": "modeling-noai",
-    "vibe3d-interaction-query": "modeling-noai"
   },
   "toolchainRequirements": {
     "dmd": ">=2.111.0",
@@ -171,10 +187,17 @@
   },
   "configurations": [
     {
-      "name": "algorithm"
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests",
+        "vibe3d-interaction-query": "isolated-tests",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-mesh-edit-log": "isolated-tests",
+        "vibe3d-profiling": "isolated-tests",
+        "vibe3d-spatial": "isolated-tests"
+      }
     }
   ],
-  "dflags": [
-    "-i"
-  ]
+  "dflags": []
 }

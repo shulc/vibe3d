@@ -16646,6 +16646,7 @@ version (unittest) private Mesh makeGridWithLooseGeometry(int n) {
 // drives the SCRIPTED half, which is the half the re-key is about.
 // ---------------------------------------------------------------------------
 version (unittest) version (MeshSnapshotFixtures) {
+@("mesh-snapshot-private-cells")
 unittest {
     import change_bus : MeshEditScope;
     import std.conv   : to;

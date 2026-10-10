@@ -2,7 +2,7 @@ module ui.viewport_render_plan_test;
 
 import display_state : DrawPlan;
 import viewport_overlay_mode : OverlayMode;
-import math : Viewport;
+import spatial : Viewport;
 import operator : VectorStack;
 import shader : Shader;
 import tool : Tool;

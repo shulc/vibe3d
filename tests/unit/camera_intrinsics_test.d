@@ -2,7 +2,8 @@ module tests.unit.camera_intrinsics_test;
 
 import view : View, ProjKind, ViewPreset;
 import viewport : ViewportManager, LayoutPreset, applyCellViewPreset;
-import math : Vec3, Orientation, perspectiveMatrix, projectToWindowFull;
+import math : Vec3, perspectiveMatrix;
+import spatial : Orientation, projectToWindowFull;
 import drag : preparePlaneDrag, HandleDrag, DragFrame, DragKind;
 import std.math : PI, tan, abs, isFinite;
 import std.json : parseJSON;

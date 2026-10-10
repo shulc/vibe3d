@@ -1,6 +1,7 @@
 module toolpipe.packets;
 
-import math : Vec3, Viewport;
+import math : Vec3;
+import spatial : Viewport;
 import mesh : Mesh, MapKind;
 import editmode : EditMode;
 import seltype : SelType;

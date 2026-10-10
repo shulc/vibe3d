@@ -11,7 +11,7 @@ import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
 import bindbc.sdl : SDL_BUTTON_LEFT, SDL_MouseButtonEvent;
 import editmode : EditMode;
 import handler : Handler, HandleState, ToolHandles, setHandleAiAdvisor;
-import math : Viewport;
+import spatial : Viewport;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import operator : VectorStack;

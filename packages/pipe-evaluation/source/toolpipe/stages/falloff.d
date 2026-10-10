@@ -1,13 +1,15 @@
 module toolpipe.stages.falloff;
+import mesh_bbox : layerBBoxMinMax;
 
 import std.format    : format;
 import std.conv      : to;
 import std.string    : split, strip;
 import std.math      : abs, sqrt;
 
-import math : Vec3, Viewport, dot, projectToWindowFull, aimSpace, ModelSpace;
+import math : Vec3, dot;
+import spatial : Viewport, projectToWindowFull, aimSpace, ModelSpace;
 import document : primaryModelSpace;
-import mesh : Mesh, MapDomain, layerBBoxMinMax;
+import mesh : Mesh, MapDomain;
 import mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 14)
 import editmode : EditMode;
 import tool_policy_values : Rollover;
@@ -2156,7 +2158,7 @@ unittest {
 //     block already noted, which would break the collision the block needs.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh       : Mesh;
+    import mesh : Mesh;
     import mesh_dirty : g_topoEpochs;
 
     Mesh* a = new Mesh;
@@ -2223,7 +2225,7 @@ unittest {
 // code the app's hub reaches.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh       : Mesh;
+    import mesh : Mesh;
     import mesh_dirty : noteMeshChange;
     import mesh_edit_delta : MeshEditScope;
 

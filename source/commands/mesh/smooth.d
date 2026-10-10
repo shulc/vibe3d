@@ -4,8 +4,8 @@ import command;
 import mesh;
 import view;
 import editmode;
-import math : Vec3, Viewport, AimViewport, aimSpace, cross, dot,
-    triangulatePolygonEarClip;
+import math : Vec3, cross, dot, triangulatePolygonEarClip;
+import spatial : Viewport, AimViewport, aimSpace;
 import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;

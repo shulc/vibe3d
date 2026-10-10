@@ -1,4 +1,5 @@
 module commands.mesh.edge_crease;
+import mesh_edit_replay : apply, revert;
 
 import command;
 import mesh;

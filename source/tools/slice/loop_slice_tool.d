@@ -11,6 +11,7 @@ import tools.common.session_mesh_key : SessionMeshKey;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : Viewport, screenPointToRay;
 // Task 1054 Phase 4: the band-aware ring preview (`selectionRingPreviewMask`)
 // and the fallback-case scrub rail (`bandFirstRail`) both need to run the
 // SAME `bandWalk` law the kernel commits (`insertEdgeLoopsMulti`'s

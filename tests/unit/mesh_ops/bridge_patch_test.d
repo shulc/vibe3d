@@ -1,4 +1,5 @@
 module tests.unit.mesh_ops.bridge_patch_test;
+import mesh_edit_replay : apply, revert;
 import mesh;
 import math;
 import mesh_ops.bridge;

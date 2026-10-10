@@ -65,6 +65,7 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : Viewport;
 import handler : MoveHandler, BoxHandler, gizmoSize, axisFacesViewer, ToolHandles;
 import viewport_scheme : axisColor;
 import eventlog : queryMouse;

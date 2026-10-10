@@ -1,4 +1,6 @@
 module commands.mesh.polygon_align;
+import mesh_edit_replay : apply, revert;
+import mesh_ops.face_alignment : alignFacesByMask;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -79,7 +81,7 @@ class MeshAlign : Command, Operator {
         // might need an explicit `delta.revert` on refusal; measured, none of
         // the four does.
         const bool applied_ = runMapEdit(this, mesh, undo_, MeshEditScope.Position,
-                              (ref MeshEditBatch ed) => ed.mesh.alignFacesByMask(sel) != 0);
+                              (ref MeshEditBatch ed) => ed.alignFacesByMask(sel) != 0);
         return applied_;
     }
 

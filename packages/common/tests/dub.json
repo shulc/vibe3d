@@ -5,28 +5,96 @@
   "targetType": "executable",
   "sourcePaths": [],
   "importPaths": [
-    "source"
+    "source",
+    "../source"
   ],
   "sourceFiles": [
-    "source/tests/unit/math_test.d",
-    "source/tests/unit/params_test.d",
+    "../source/active_mesh_resolver.d",
+    "../source/app_version.d",
+    "../source/argstring.d",
+    "../source/command.d",
+    "../source/command_args.d",
+    "../source/command_executor.d",
+    "../source/command_history.d",
+    "../source/command_invocation.d",
+    "../source/command_registry.d",
+    "../source/command_tool_policy.d",
+    "../source/commands/history/redo.d",
+    "../source/commands/history/undo.d",
+    "../source/commands/mesh/gesture_payload.d",
+    "../source/commands/mesh/mesh_edit_payload.d",
+    "../source/commands/mesh/select.d",
+    "../source/commands/mesh/selection_undo.d",
+    "../source/commands/mesh/session_edit.d",
+    "../source/commands/mesh/triple.d",
+    "../source/commands/mesh/vertex_edit.d",
+    "../source/commands/select/drop.d",
+    "../source/commands/select/element.d",
+    "../source/commands/select/invert.d",
+    "../source/document.d",
+    "../source/document_selection.d",
+    "../source/edit_target_contract.d",
+    "../source/falloff.d",
+    "../source/history_lifecycle_contract.d",
+    "../source/http_json.d",
+    "../source/image_data.d",
+    "../source/io/file_model.d",
+    "../source/io/image_decode.d",
+    "../source/io/image_path.d",
+    "../source/io/native.d",
+    "../source/item_kinds.d",
+    "../source/json_num.d",
+    "../source/layer_params.d",
+    "../source/morph_target.d",
+    "../source/operator.d",
+    "../source/params.d",
+    "../source/pilot_command_registration.d",
+    "../source/record_observer_hub.d",
+    "../source/session_owner.d",
+    "../source/standalone_application.d",
+    "../source/tool_activation_ownership.d",
+    "../source/tool_policy_values.d",
+    "../source/toolpipe/packets.d",
+    "../source/toolpipe/pipeline.d",
+    "../source/toolpipe/stage.d",
+    "../source/toolpipe/subject.d",
+    "../source/view.d",
+    "source/tests/common_execution_roster_test.d",
     "source/tests/unit/document_test.d",
-    "source/tests/unit/mesh_edit_delta_test.d",
-    "source/tests/unit/mesh_key_test.d",
-    "source/tests/unit/mesh_map_kind_test.d",
-    "source/tests/unit/mesh_selsets_test.d",
-    "source/tests/unit/seltype_test.d",
-    "source/tests/unit/snapshot_test.d",
-    "source/tests/unit/mesh_wire_snapshot_test.d",
     "source/tests/unit/io/native_test.d",
-    "source/tests/common_execution_roster_test.d"
+    "source/tests/unit/params_test.d"
   ],
-  "dflags": [
-    "-i"
-  ],
+  "dflags": [],
   "dependencies": {
-    "vibe3d-common": {
-      "path": ".."
+    "vibe3d-edit-contracts": {
+      "path": "../../edit-contracts"
+    },
+    "vibe3d-log": {
+      "path": "../../../util/log"
+    },
+    "vibe3d-math": {
+      "path": "../../../util/math"
+    },
+    "vibe3d-mesh": {
+      "path": "../../mesh"
+    },
+    "vibe3d-mesh-change": {
+      "path": "../../mesh-change"
+    },
+    "vibe3d-mesh-edit-log": {
+      "path": "../../mesh-edit-log"
+    },
+    "vibe3d-mesh-edit-replay": {
+      "path": "../../mesh-edit-replay"
+    },
+    "vibe3d-mesh-snapshot": {
+      "path": "../../mesh-snapshot"
+    },
+    "vibe3d-profiling": {
+      "path": "../../profiling"
+    },
+    "vibe3d-spatial": {
+      "path": "../../spatial"
     }
   },
   "toolchainRequirements": {
@@ -35,10 +103,19 @@
   },
   "configurations": [
     {
-      "name": "algorithm"
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d-edit-contracts": "isolated-tests",
+        "vibe3d-log": "isolated-tests",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-mesh-change": "isolated-tests",
+        "vibe3d-mesh-edit-log": "isolated-tests",
+        "vibe3d-mesh-edit-replay": "isolated-tests",
+        "vibe3d-mesh-snapshot": "isolated-tests",
+        "vibe3d-profiling": "isolated-tests",
+        "vibe3d-spatial": "isolated-tests"
+      }
     }
-  ],
-  "subConfigurations": {
-    "vibe3d-common": "modeling-noai"
-  }
+  ]
 }

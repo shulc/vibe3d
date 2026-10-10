@@ -559,7 +559,7 @@ unittest { // branch 5/6 — Edges, subpatch preview
 //      numbers in the right order, and the two spellings agree on WHEN to
 //      draw                                   → `source/ui/panels.d` unittest
 //   3b. those counts are three separate per-plane popcounts, not one number
-//      read three times                       → `packages/common/source/mesh.d` unittest, on
+//      read three times                       → `packages/mesh/source/mesh.d` unittest, on
 //      a cube with one corner's three faces hidden (3 faces / 1 vertex /
 //      3 edges — three different numbers)
 //   4. the line actually reaches the screen   → NOT AUTOMATED, and it cannot

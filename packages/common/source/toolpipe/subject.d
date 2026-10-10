@@ -39,7 +39,7 @@ module toolpipe.subject;
 import mesh             : Mesh, MapKind;
 import editmode          : EditMode;
 import seltype            : SelType;
-import math                : Viewport;
+import spatial : Viewport;
 import toolpipe.packets    : SubjectPacket, GesturePacket;
 import operator            : VectorStack;
 import toolpipe.pipeline   : g_pipeCtx;

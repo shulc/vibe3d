@@ -19,6 +19,7 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : AimViewport, Viewport, aimSpace, screenPointToLocalRay;
 import editmode : EditMode;
 import params : Param;
 import shader : Shader;

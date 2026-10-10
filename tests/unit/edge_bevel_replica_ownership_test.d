@@ -9,8 +9,8 @@ import editmode : EditMode;
 import eventlog : parkOverrideMouse, setOverrideMouse;
 import handler : CubicArrow, gizmoPixelSize, gizmoBoxHalfPx, GIZMO_ALPHA_ARM,
     GIZMO_STROKE_SCALE_SHAFT_PX, HandleState, getGizmoPixels, setGizmoPixels;
-import math : Vec3, Viewport, isOrtho, lookAt, orthographicMatrix,
-    projectToWindowFull;
+import math : Vec3, lookAt, orthographicMatrix;
+import spatial : Viewport, isOrtho, projectToWindowFull;
 import mesh : Mesh, edgeKey;
 import mesh_gpu : GpuMesh;
 import operator : VectorStack;

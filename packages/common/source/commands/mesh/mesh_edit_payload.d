@@ -1,4 +1,5 @@
 module commands.mesh.mesh_edit_payload;
+import mesh_edit_replay : apply, revert;
 
 import mesh : Mesh;
 import snapshot : MeshSnapshot;

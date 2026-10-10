@@ -1,6 +1,6 @@
 module operator;
 
-import math : Viewport;
+import spatial : Viewport;
 import toolpipe.packets : SubjectPacket, WorkplanePacket, SymmetryPacket,
                           SnapPacket, ActionCenterPacket, AxisPacket,
                           FalloffPacket, ConstrainPacket, ConstrainHitPacket,

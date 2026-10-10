@@ -1,4 +1,4 @@
-// Module unittests for `snapshot`, moved verbatim out of packages/common/source/snapshot.d by task 0706.
+// Module unittests for `snapshot`, moved verbatim out of packages/mesh-snapshot/source/snapshot.d by task 0706.
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.snapshot_test;

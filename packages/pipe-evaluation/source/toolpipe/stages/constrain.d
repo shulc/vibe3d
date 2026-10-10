@@ -7,7 +7,8 @@ import operator         : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths      : setStatePath, installPreparedStatePath;
 import params           : Param, IntEnumEntry, wireTagForValue;
 import surface_pick     : BackgroundRayPicker, SurfaceHit;
-import math             : Vec3, Viewport;
+import math : Vec3;
+import spatial : Viewport;
 import constraint        : BackgroundSource;
 import snap             : backgroundSourcesFull;
 
@@ -74,7 +75,7 @@ struct GuideEnvironment {
     ConstrainGeom geometry;
     Viewport viewport;
     bool supported() const {
-        import math : isOrtho, lockedViewAxis;
+        import spatial : isOrtho, lockedViewAxis;
         return requested && (isOrtho(viewport)
             ? geometry == ConstrainGeom.Off && lockedViewAxis(viewport) >= 0
             : geometry == ConstrainGeom.Point);
@@ -140,7 +141,7 @@ public:
     // (9528, doc/tool_perspective_component_guide_amendment_2026-10-06.md).
     auto componentGuide(Vec3 incoming, const ref GuideEnvironment env) {
         import toolpipe.packets : ComponentGuide;
-        import math : lockedViewAxis, eyeVectorAt, isOrtho, projectToWindowFull, screenPointToRay;
+        import spatial : lockedViewAxis, eyeVectorAt, isOrtho, projectToWindowFull, screenPointToRay;
         import constraint : surfaceComponentMask;
         ComponentGuide result;
         if (!env.supported()) return result;
@@ -197,7 +198,7 @@ public:
     }
 
     private static void pixelRay(int x, int y, const ref Viewport vp, out Vec3 org, out Vec3 dir) {
-        import math : screenPointToRay;
+        import spatial : screenPointToRay;
         screenPointToRay(x + 0.5f, y + 0.5f, vp, org, dir);
     }
 

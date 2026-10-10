@@ -1,7 +1,8 @@
 module surface_pick;
 
 import bvh.c;
-import math : Vec3, Viewport, screenPointToRay, cross, ModelSpace;
+import math : Vec3, cross;
+import spatial : Viewport, screenPointToRay, ModelSpace;
 import mesh : Mesh;
 import perf_probe : g_perf, Cat, g_fc;
 import mesh_dirty : MeshDirtyKey, g_geomEpochs;

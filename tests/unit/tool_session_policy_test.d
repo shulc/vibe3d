@@ -939,7 +939,7 @@ unittest { // (4c)
     string[] raw;
     size_t scanned;
     bool sessionScanned;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const name = e.name;
@@ -979,11 +979,11 @@ unittest { // (4c)
         "raw:packages/common/source/document.d:0/1/0",
         "raw:packages/common/source/http_json.d:2/0/0",
         "raw:packages/common/source/io/native.d:4/9/0",
-        "raw:packages/common/source/mesh.d:17/0/2",
-        "raw:packages/common/source/mesh_edit_delta.d:1/2/0",
-        "raw:packages/common/source/mesh_planes.d:11/21/1",
-        "raw:packages/common/source/perf_probe.d:0/5/0",
-        "raw:packages/common/source/snapshot.d:2/0/0",
+        "raw:packages/mesh/source/mesh.d:17/0/2",
+        "raw:packages/mesh-edit-log/source/mesh_edit_delta.d:1/2/0",
+        "raw:packages/mesh/source/mesh_planes.d:11/21/1",
+        "raw:packages/profiling/source/perf_probe.d:0/5/0",
+        "raw:packages/mesh-snapshot/source/snapshot.d:2/0/0",
         "raw:packages/common/source/toolpipe/packets.d:4/0/0",
         "raw:source/commands/mesh/surface_attr.d:0/4/0",
         "raw:source/create_tool_registration.d:0/1/0",
@@ -1073,7 +1073,7 @@ unittest { // (4c)
     // orchestrateParameterChange; the preview gate's link is set at the arm only;
     // the one tool reading the gate in S2b is Mirror's evaluate (S6: 12 sites).
     string[] mps;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         auto code = blankUnittestBodies(blankNonCode(readText(e.name)));
         foreach (site; identSites(code, "scriptedWriteEndsOperation", false))
@@ -1238,7 +1238,7 @@ unittest { // (4e)
     // composing the topology-step client mixin» (task 9429; the pen keeps its own
     // block) — 12, the table's files.
     string[] model;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         if (blankNonCode(readText(e.name)).canFind("mixin TopologyStepClientBody!"))
             model ~= e.name;
@@ -1720,7 +1720,7 @@ unittest { // (4k)
     // the datum, every word occurrence in `source` (form item 12: a rule, not a list)
     string[] datum;
     size_t scanned;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source"])
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
@@ -2599,7 +2599,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
                       identSites(esU, "invalidateRedo", false)));
         string[] cuts;
         size_t files;
-        foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
+        foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source"])
         foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++files;
             foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),

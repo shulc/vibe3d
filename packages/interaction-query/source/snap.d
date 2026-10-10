@@ -3,14 +3,8 @@ module snap;
 import std.math : sqrt, round, floor, isNaN;
 import core.sync.mutex : Mutex;
 
-import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
-              frontFacingLocal,
-              screenRay, screenPointToRay,
-              rayPlaneIntersect, pointInPolygon2D,
-              closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot,
-              isOrtho, viewPixelScale,
-              perpendicularFrame, rayTriangleIntersect,
-              closestPointOnTriangle2D, triangulatePolygonEarClip;
+import math : Vec3, frontFacingLocal, rayPlaneIntersect, pointInPolygon2D, closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot, perpendicularFrame, rayTriangleIntersect, closestPointOnTriangle2D, triangulatePolygonEarClip;
+import spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull, screenRay, screenPointToRay, isOrtho, viewPixelScale;
 import mesh : Mesh;
 import mesh_visibility : VisibilityProbe, visibilityProbe;
 import mesh_dirty : MeshDirtyKey, g_geomEpochs, g_settledGeomEpochs;
@@ -2858,7 +2852,8 @@ unittest {
 // distinguishes "the rank decided" from "the enumeration decided".
 // ---------------------------------------------------------------------------
 unittest {
-    import math     : lookAt, perspectiveMatrix, viewPixelScale;
+    import math : lookAt, perspectiveMatrix;
+import spatial : viewPixelScale;
     import std.math : PI, abs;
 
     Viewport vp;
@@ -3068,7 +3063,8 @@ unittest {
 // blocks above deliberately break each of these three properties in turn.
 // ---------------------------------------------------------------------------
 unittest {
-    import math     : lookAt, perspectiveMatrix, viewPixelScale;
+    import math : lookAt, perspectiveMatrix;
+import spatial : viewPixelScale;
     import std.math : PI, abs;
 
     Viewport vp;

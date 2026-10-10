@@ -24,13 +24,14 @@
 // side, and in the split case from BOTH sides, because "visible from both
 // sides" is the visible consequence of the zero normal this rule produces.
 module tests.unit.facing_predicate_test;
+import mesh_visibility : visibleVertices;
 
 import std.format : format;
 import std.math : PI;
 
-import math : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix,
-              frontFacingLocal;
-import mesh : Mesh, makeCube, visibleVertices;
+import math : Vec3, lookAt, perspectiveMatrix, frontFacingLocal;
+import spatial : Viewport, ModelSpace;
+import mesh : Mesh, makeCube;
 
 // ---------------------------------------------------------------------------
 // The three candidate rules, spelled out here so the assertions can name them.

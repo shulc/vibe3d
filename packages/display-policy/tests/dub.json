@@ -1,9 +1,7 @@
 {
   "name": "vibe3d-display-policy-tests",
   "targetType": "executable",
-  "sourcePaths": [
-    "../source"
-  ],
+  "sourcePaths": [],
   "toolchainRequirements": {
     "dmd": ">=2.111.0",
     "ldc": ">=1.41.0"
@@ -143,6 +141,12 @@
   "dependencies": {
     "vibe3d-common": {
       "path": "../../common"
+    },
+    "vibe3d-math": {
+      "path": "../../../util/math"
+    },
+    "vibe3d-mesh": {
+      "path": "../../mesh"
     }
   },
   "importPaths": [
@@ -151,17 +155,28 @@
   ],
   "configurations": [
     {
-      "name": "algorithm"
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-mesh": "isolated-tests"
+      }
     }
   ],
   "sourceFiles": [
+    "../source/camera_stamp.d",
+    "../source/display_state.d",
+    "../source/light_rig.d",
+    "../source/vertex_normals.d",
+    "../source/viewport_overlay_mode.d",
+    "../source/viewport_probe_sampling.d",
+    "../source/viewport_scheme.d",
+    "../source/weightmap_view.d",
     "source/tests/unit/camera_stamp_test.d",
     "source/tests/unit/display_policy_population_test.d",
     "source/tests/unit/vertex_normals_test.d",
     "source/tests/unit/viewport_scheme_test.d",
     "source/tests/unit/weightmap_state_test.d"
   ],
-  "subConfigurations": {
-    "vibe3d-common": "modeling-noai"
-  }
+  "dflags": []
 }

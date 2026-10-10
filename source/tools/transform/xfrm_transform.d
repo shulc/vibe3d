@@ -99,10 +99,8 @@ import std.traits : FieldNameTuple, FieldTypeTuple;
 import operator : VectorStack;
 
 import ai.interaction : AiInteractionPhase;
-import math : Vec3, Pin, Viewport, translationMatrix,
-               pivotRotationMatrix, pivotScaleMatrixBasis, dot,
-               identityMatrix, matMul4, wrapAboutPivot, wrapAboutPivotStable, eulerZYXFromMatrix,
-               frameMatrix, frameMatrixInverse, ModelSpace, normalize;
+import math : Vec3, translationMatrix, pivotRotationMatrix, pivotScaleMatrixBasis, dot, identityMatrix, matMul4, wrapAboutPivot, wrapAboutPivotStable, eulerZYXFromMatrix, frameMatrix, frameMatrixInverse, normalize;
+import spatial : Pin, Viewport, ModelSpace;
 import editmode : EditMode;
 import seltype : SelType;
 import mesh;

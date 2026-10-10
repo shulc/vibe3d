@@ -19,7 +19,8 @@ import std.regex : matchAll, regex;
 import tests.unit.census_symbols : blankNonCode, containsWord, countOccurrences;
 
 import handler : Handler, HandlePart, firstHitPart, BoxHandler;
-import math : Vec3, Viewport, lookAt, orthographicMatrix;
+import math : Vec3, lookAt, orthographicMatrix;
+import spatial : Viewport;
 import drag : ctrlLockPending, kCtrlLockWaitPx, screenAxisFraction;
 import tools.transform.move : MoveTool;
 import tools.transform.scale : ScaleTool;
@@ -49,7 +50,7 @@ static assert([__traits(allMembers, Handler)].canFind("onKeyDown"));
 
 unittest {
     string[] files;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) files ~= e.name;
     string[string] code;
     foreach (f; files) code[f] = blankNonCode(readText(f));
@@ -140,7 +141,8 @@ unittest {
     import mesh_gpu : GpuMesh;
     import editmode : EditMode;
     import view : View;
-    import math : Orientation, cross, dot;
+    import math : cross, dot;
+import spatial : Orientation;
     import handler : ToolHandles, HitRule;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto mv = new MoveTool(() => &mesh, &gpu, &mode);

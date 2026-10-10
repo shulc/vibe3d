@@ -3,7 +3,7 @@ module mesh_command_registration;
 import command : Command;
 import editmode : EditMode;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
-import math : Viewport;
+import spatial : Viewport;
 import registry : Registry;
 import remesh.remesh_job : RemeshJob;
 import commands.mesh.subdivide;

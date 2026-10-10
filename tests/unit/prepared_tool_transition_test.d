@@ -58,7 +58,7 @@ import view : View;
 // What did NOT move: the fixtures also pinned the diagnostic TEXT
 // ("prepared effect field is not owned"). `__traits(compiles)` cannot see a
 // message, so that string is pinned by `token_census_gate` in
-// tools/check_prepared_protocol.py against packages/common/source/prepared_tool_effect.d.
+// tools/check_prepared_protocol.py against packages/edit-contracts/source/prepared_tool_effect.d.
 private class PreparedEffectBorrowedClass { int value; }          // _class.d
 private alias PreparedEffectDelegate = void delegate();           // _delegate.d
 private alias PreparedEffectFunctionPointer = void function();    // _function_pointer.d

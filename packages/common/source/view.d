@@ -1,6 +1,7 @@
 module view;
 
 import math;
+import spatial : Orientation, Viewport, isOrtho, viewMatrixFrom;
 import std.math : sqrt, tan, PI, isFinite;
 import std.json : JSONValue, JSONType;
 import trackball : TrackballOption, resolveTrackball, trackballRadius,
@@ -129,7 +130,7 @@ class View {
     }
     void setFovY(double supplied) { fovY_ = validatedFovY(supplied); }
 
-    /// **The camera's rotational truth.** A full 3x3 (see `math.Orientation`),
+    /// **The camera's rotational truth.** A full 3x3 (see `spatial.Orientation`),
     /// not three angles: only a matrix can carry a rotation reached by
     /// composing increments about arbitrary axes, and only a matrix is defined
     /// at the poles. `azimuth` / `elevation` / `roll` below are DERIVED views

@@ -101,8 +101,8 @@ unittest { // The snap config is ONE declaration — and `enabled` is the
 // packet is decided by one candidate walk with no grid / workplane traffic.
 // ---------------------------------------------------------------------------
 unittest {
-    import math             : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix,
-                              projectToWindowFull;
+    import math : Vec3, lookAt, perspectiveMatrix;
+import spatial : Viewport, ModelSpace, projectToWindowFull;
     import mesh             : Mesh;
     import toolpipe.packets : SubjectPacket;
     import snap             : snapCursor, SnapResult, invalidateSnapGrids;

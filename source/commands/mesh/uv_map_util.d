@@ -1,4 +1,5 @@
 module commands.mesh.uv_map_util;
+import mesh_edit_replay : apply, revert;
 
 import command;
 import mesh            : Mesh, MapDomain, MapKind, MeshMap, MeshEditBatch,

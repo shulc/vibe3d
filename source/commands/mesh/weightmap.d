@@ -1,4 +1,5 @@
 module commands.mesh.weightmap;
+import mesh_edit_replay : apply, revert;
 
 import command;
 import mesh;

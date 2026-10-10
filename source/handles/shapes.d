@@ -2,6 +2,7 @@ module handles.shapes;
 
 import handles.gl_util;
 import math;
+import spatial : Viewport, isOrtho, lockedViewAxis, projectToWindowFull;
 import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import shader;
 import viewport_scheme;

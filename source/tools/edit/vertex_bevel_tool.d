@@ -13,6 +13,7 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
 import math;
+import spatial : Viewport;
 import editmode : EditMode;
 import params : Param;
 import handler : Arrow, ToolHandles, HandleState, gizmoSize;

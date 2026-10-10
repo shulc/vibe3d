@@ -1,4 +1,5 @@
 module commands.mesh.uv_relax;
+import mesh_edit_replay : apply, revert;
 
 /// Command `uv.relax` — N Jacobi uniform-Laplacian passes over the per-corner
 /// UV map.  Interior UV vertices move toward the mean of their UV neighbours;

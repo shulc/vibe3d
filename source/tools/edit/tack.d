@@ -10,6 +10,7 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : Viewport, screenPointToLocalRay;
 import change_bus : MeshEditScope;
 import params : Param;
 import command_history : CommandHistory;

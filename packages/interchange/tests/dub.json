@@ -5,19 +5,37 @@
   "targetType": "executable",
   "sourcePaths": [],
   "importPaths": [
-    "source"
+    "source",
+    "../source"
   ],
   "sourceFiles": [
+    "../source/io/assimp_runtime.d",
+    "../source/io/assimp_wire.d",
+    "../source/io/formats.d",
+    "../source/io/lwo_export.d",
+    "../source/io/lwo_import.d",
+    "../source/io/scene_export.d",
+    "../source/io/scene_import.d",
+    "../source/io/scene_ir.d",
     "source/tests/unit/assimp_wire_test.d",
-    "source/tests/unit/io/lwo_import_test.d",
-    "source/tests/unit/io/lwo_export_test.d",
     "source/tests/unit/io/lwo_export_ptag_census_test.d",
+    "source/tests/unit/io/lwo_export_test.d",
+    "source/tests/unit/io/lwo_import_test.d",
     "source/tests/unit/io/lwo_ptag_fixture.d"
   ],
   "dflags": [],
   "dependencies": {
-    "vibe3d-interchange": {
-      "path": ".."
+    "vibe3d-common": {
+      "path": "../../common"
+    },
+    "vibe3d-log": {
+      "path": "../../../util/log"
+    },
+    "vibe3d-math": {
+      "path": "../../../util/math"
+    },
+    "vibe3d-mesh": {
+      "path": "../../mesh"
     }
   },
   "toolchainRequirements": {
@@ -26,10 +44,13 @@
   },
   "configurations": [
     {
-      "name": "interchange"
+      "name": "interchange",
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests",
+        "vibe3d-log": "isolated-tests",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-mesh": "isolated-tests"
+      }
     }
-  ],
-  "subConfigurations": {
-    "vibe3d-interchange": "modeling-noai"
-  }
+  ]
 }

@@ -252,6 +252,21 @@
         "vibe3d-screen-buckets": "root-tests"
       },
       "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests",
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-spatial": "isolated-tests",
+        "vibe3d-profiling": "isolated-tests",
+        "vibe3d-edit-contracts": "isolated-tests",
+        "vibe3d-mesh-change": "isolated-tests",
+        "vibe3d-screen-buckets": "isolated-tests"
+      },
+      "targetType": "sourceLibrary"
     }
   ]
 }

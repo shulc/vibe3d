@@ -76,6 +76,7 @@
 // stamp OR a bit, not only the selected ones, and it makes the edge half say
 // what the other two already said: NO LESS THAN THE SNAPSHOT.
 module commands.mesh.selection_undo;
+import mesh_edit_replay : restoreSelectedEdgeEnds;
 
 import mesh     : Mesh, edgeKey;
 import snapshot : SelectionSnapshot;

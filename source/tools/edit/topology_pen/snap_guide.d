@@ -12,12 +12,14 @@
 // guide answers from what it was told"), which is what made it liftable at
 // all; the dependency runs one way, tool.d -> here.
 module tools.edit.topology_pen.snap_guide;
+import mesh_visibility : visibleVertices;
 
 import toolpipe.guide : SnapPurpose;
 import std.math          : hypot;
 
 import mesh              : Mesh, MeshTopoKey;
-import math              : Vec3, Viewport, dot, screenPointToRay, projectToWindowFull;
+import math : Vec3, dot;
+import spatial : Viewport, screenPointToRay, projectToWindowFull;
 import document          : primaryModelSpace;
 import toolpipe.guide    : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import toolpipe.packets  : SnapType, SymmetryPacket;

@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import unittest
 import check_standalone_boundary as boundary
+import check_package_support_boundary as support
 
 
 class BoundaryControls(unittest.TestCase):
@@ -26,7 +27,11 @@ class BoundaryControls(unittest.TestCase):
                                if relative == 'tests/core' else 'application'),
                 '--compiler=dmd', '--quiet'], text=True, capture_output=True, check=True)
             cls.descriptions[relative] = json.loads(result.stdout.replace(str(actual), str(cls.project)))
-        for path in (actual / 'packages/common/source').rglob('*.d'):
+        for spec in support.SPECS.values():
+            target=cls.project/spec['root']/'dub.json'
+            target.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(actual/spec['root']/'dub.json',target)
+        for path in (p for spec in support.SPECS.values() for p in (actual/spec['root']/'source').rglob('*.d')):
             target = cls.project / path.relative_to(actual)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
@@ -71,7 +76,7 @@ class BoundaryControls(unittest.TestCase):
                 (lambda d: d['packages'].append(copy.deepcopy(d['packages'][0])), 'package population'),
                 (lambda d: d['packages'][0]['dependencies'].append('vibe3d'), 'dependencies'),
                 (lambda d: d['packages'][0].update(path='/outside'), 'package path'),
-                (lambda d: d['packages'][-1].update(path='/outside/image'), 'image revision'),
+                (lambda d: next(p for p in d['packages'] if p['name']=='d-stb-image').update(path='/outside/image'), 'image revision'),
                 (lambda d: d['targets'].pop(), 'target population'),
                 (lambda d: d['targets'].append(copy.deepcopy(d['targets'][0])), 'target population'),
             ]:
@@ -95,10 +100,25 @@ class BoundaryControls(unittest.TestCase):
             with self.assertRaisesRegex(boundary.BoundaryError, 'resolved sourceFiles'):
                 boundary.validate_package_settings(original, root)
             changed = copy.deepcopy(original)
-            changed['targets'][0]['buildSettings']['sourceFiles'].append(str(path))
+            next(t for t in changed['targets'] if t['rootPackage']=='vibe3d-common')['buildSettings']['sourceFiles'].append(str(path))
             boundary.validate_package_settings(changed, root)
         finally:
             path.unlink()
+
+    def test_actual_ldc_alias_argv_and_unknown_leaf(self):
+        # DUB's actual unprefixed alias shape uses the invocation cwd; keep
+        # printed argv rather than rewriting it to the symlink destination.
+        cwd = self.project / 'tests/core'
+        output = '/compiler/ldc -c ../source/mesh.d -ofcore.o\n/compiler/ldc core.o native.a -ofcore-tests\n'
+        commands = support.compiler_commands(output, cwd)
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(commands[0]['argv'][0], '/compiler/ldc')
+        self.assertEqual(commands[0]['cwd'], str(cwd.resolve()))
+        self.assertEqual(commands[0]['sourceInputs'], [str((cwd/'../source/mesh.d').resolve())])
+        self.assertEqual(commands[1]['archiveInputs'], [str((cwd/'native.a').resolve())])
+        self.assertEqual(commands[1]['objectInputs'], [str((cwd/'core.o').resolve())])
+        with self.assertRaisesRegex(support.BoundaryError, 'actual compiler argv/cwd missing'):
+            support.compiler_commands(output.replace('/compiler/ldc ', '/compiler/ldc3 '), cwd)
 
     def test_runtime_population(self):
         good = '25 modules passed unittests\n' + ''.join('CORE-CELL passed=' + name + '\n' for name in boundary.CORE_CELLS)

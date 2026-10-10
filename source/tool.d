@@ -3,6 +3,7 @@ module tool;
 import bindbc.sdl;
 
 import math;
+import spatial : Viewport;
 import shader;
 import params : Param, ParamProvider;
 import editmode : EditMode;

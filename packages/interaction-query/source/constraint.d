@@ -2,8 +2,8 @@ module constraint;
 
 import std.math : sqrt;
 
-import math : Vec3, Viewport, ModelSpace, dot, cross, normalize,
-              projectToWindowFull, closestOnSegment2D;
+import math : Vec3, dot, cross, normalize, closestOnSegment2D;
+import spatial : Viewport, ModelSpace, projectToWindowFull;
 import mesh : Mesh, edgeKey;
 import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           HoverTarget, HoverTargetKind, SnapPacket;

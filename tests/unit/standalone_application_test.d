@@ -1,4 +1,5 @@
 module tests.unit.standalone_application_test;
+import mesh_edit_replay : apply, revert;
 
 import active_mesh_resolver : activeMeshResolver;
 import change_bus : changeBus;

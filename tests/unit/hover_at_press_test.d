@@ -7,6 +7,7 @@ import bindbc.sdl;
 import editmode : EditMode;
 import hover_state;
 import math;
+import spatial : Viewport;
 import mesh;
 import mesh_gpu : GpuMesh;
 import operator : VectorStack;

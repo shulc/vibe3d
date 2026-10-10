@@ -11,12 +11,14 @@
 // a back-facing open triangle (so neither its own face nor its facing decides
 // anything); C2 sits on the SAME ray between the eye and Q.
 module tests.unit.snap_near_occluder_test;
+import mesh_visibility : visibilityProbe;
 
 import std.format : format;
 import std.math : PI, sqrt, abs;
-import math : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix,
-              frontFacingLocal, projectToWindowFull;
-import mesh : Mesh, g_visCounters, visibilityProbe;
+import math : Vec3, lookAt, perspectiveMatrix, frontFacingLocal;
+import spatial : Viewport, ModelSpace, projectToWindowFull;
+import mesh : Mesh;
+import mesh_visibility : g_visCounters;
 
 private Viewport eyeViewport() {
     Viewport vp;

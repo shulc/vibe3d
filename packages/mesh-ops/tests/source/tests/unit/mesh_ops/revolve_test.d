@@ -743,7 +743,7 @@ unittest { // extrudeAlongPath: ARMED at Stage K — its revert no longer faults
     // to walk straight off the end inside `MeshEditDelta.finalize`'s
     // `buildLoops()`:
     //
-    //     core.exception.ArrayIndexError@packages/common/source/mesh.d(13841):
+    //     core.exception.ArrayIndexError@packages/mesh/source/mesh.d(13841):
     //     index [8] is out of bounds for array of length 8
     //
     // That was plan §5.5's L8 BLOCKING PREREQUISITE, and Stage K discharged

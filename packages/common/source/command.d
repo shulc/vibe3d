@@ -1,10 +1,11 @@
 module command;
+import mesh_edit_replay : apply, revert;
 
 import mesh;
 import view;
 import editmode;
 import seltype : SelType, geometrySelType;
-import math : Viewport;
+import spatial : Viewport;
 import params : Param, ParamHints;
 import mesh_edit_delta : MeshEditScope;
 import std.json : JSONValue;

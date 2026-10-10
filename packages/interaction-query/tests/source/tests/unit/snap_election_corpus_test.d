@@ -37,8 +37,8 @@
 module tests.unit.snap_election_corpus_test;
 
 import std.math : PI, sqrt, round, isNaN;
-import math : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix,
-              orthographicMatrix, projectToWindowFull;
+import math : Vec3, lookAt, perspectiveMatrix, orthographicMatrix;
+import spatial : Viewport, ModelSpace, projectToWindowFull;
 import mesh : Mesh, makeCube;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, GuideDrawState, kGuidePrioritySeed;

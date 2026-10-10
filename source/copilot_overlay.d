@@ -35,7 +35,7 @@ import bindbc.opengl : GLuint, glEnable, glDisable, GL_DEPTH_TEST;
 
 import mesh    : Mesh;
 import math    : Vec3;
-import math    : Viewport;
+import spatial : Viewport;
 import handler : drawWorldSegment;
 import ai.analysis : Finding;
 

@@ -18,7 +18,8 @@ import std.math : abs, round;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, containsWord,
     isIdentChar, symbolTokenHits;
 
-import math : Vec3, Viewport, lookAt, orthographicMatrix, perspectiveMatrix, projectToWindow;
+import math : Vec3, lookAt, orthographicMatrix, perspectiveMatrix;
+import spatial : Viewport, projectToWindow;
 import drag : ComponentGuide, HandleDrag, DragFrame, DragKind, screenAxisDelta, planeDragDelta, planeJacobian;
 import viewgrid : vectorSnap;
 import tools.transform.move : MoveTool;
@@ -222,7 +223,7 @@ unittest {
 
 unittest {
     string[string] code;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         code[e.name] = blankUnittestBodies(blankNonCode(readText(e.name)));
     foreach (f; ["source/drag.d", "source/tools/transform/move.d", "source/tools/create/box.d",
@@ -328,7 +329,7 @@ unittest {
 // separate from the real View so a projection discrepancy remains visible.
 unittest {
     import view : View;
-    import math : Orientation, projectToWindowFull, screenPointToRay;
+    import spatial : Orientation, projectToWindowFull, screenPointToRay;
     import drag : preparePlaneDrag;
     import viewgrid : viewWorldPerPixel, viewVectorQuantum;
     import std.math : atan;

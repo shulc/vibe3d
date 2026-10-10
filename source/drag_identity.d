@@ -28,6 +28,7 @@ version (unittest):
 
 import std.math : sqrt, PI, tan;
 import math;
+import spatial : Viewport, projectToWindowFull;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
 import drag : axisDragDelta, screenAxisDelta, haulWorldPerPixel;
 

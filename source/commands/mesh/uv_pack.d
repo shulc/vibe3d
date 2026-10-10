@@ -1,4 +1,5 @@
 module commands.mesh.uv_pack;
+import mesh_edit_replay : apply, revert;
 
 /// `uv.fit` — translate+scale all affected UV corners so their combined
 /// bounding box exactly fills [0,1]² (both bbox edges touch 0 and 1).

@@ -2,7 +2,7 @@
 // with ZERO vibe3d feature surface in the loop (task 1069, plan Stage 2).
 //
 // A red here is the LAW being wrong, not the wiring: the only code under test
-// is `packages/common/source/mesh_morph.d`'s two pure functions. Everything that needs a
+// is `packages/mesh/source/mesh_morph.d`'s two pure functions. Everything that needs a
 // `Mesh`, a command, a file or a drag is asserted in Stage 3-7's own tests.
 //
 // Every number comes from `tests/fixtures/morph_maps.json`, which is the

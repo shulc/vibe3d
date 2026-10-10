@@ -11,6 +11,7 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.extrude;
 import math;
+import spatial : Viewport;
 import editmode : EditMode;
 import params : Param;
 import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;

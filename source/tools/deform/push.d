@@ -7,7 +7,8 @@ import tools.transform.transform;
 import mesh;
 import mesh_gpu : GpuMesh;
 import editmode;
-import math : Vec3, Viewport, dot;
+import math : Vec3, dot;
+import spatial : Viewport;
 import shader;
 
 import params : Param;

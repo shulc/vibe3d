@@ -1,7 +1,8 @@
 module tools.transform.arcball;
 
 import std.math : sqrt, atan2;
-import math : Vec3, Viewport, cross, dot;
+import math : Vec3, cross, dot;
+import spatial : Viewport;
 
 // ---------------------------------------------------------------------------
 // THE OFF-GIZMO ROTATE GESTURE — a screen-space ball, and ONE law on it.

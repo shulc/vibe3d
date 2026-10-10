@@ -35,11 +35,8 @@ import std.math : hypot, SQRT2;
 import tool;
 import mesh                : Mesh, MeshCacheKey;
 import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder, isVertexBorder;
-import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
-                             screenPointToRay, closestPointOnSegmentToRay, dot,
-                             pointInPolygon2D, rayPlaneIntersect,
-                             AimViewport, aimSpace, ModelSpace,
-                             screenPointToLocalRay;
+import math : Vec3, closestOnSegment2D, closestPointOnSegmentToRay, dot, pointInPolygon2D, rayPlaneIntersect;
+import spatial : Viewport, projectToWindowFull, screenPointToRay, AimViewport, aimSpace, ModelSpace, screenPointToLocalRay;
 import document             : primaryModelSpace;
 import shader              : Shader;
 import operator            : VectorStack, viewportOf;
@@ -2956,7 +2953,7 @@ unittest {
     bg.vertices = [Vec3(-10, -10, -5), Vec3(10, -10, -5), Vec3(10, 10, -5), Vec3(-10, 10, -5)];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    import math : ModelSpace;
+    import spatial : ModelSpace;
     setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
     scope(exit) setBackgroundSnapSources(null, null);   // don't leak into later dub-test unittests
 
@@ -4436,7 +4433,7 @@ unittest {
     bg.rebuildEdges();
     bg.buildLoops();
     const(Mesh)*[] sources = [cast(const(Mesh)*)&bg];
-    import math : ModelSpace;
+    import spatial : ModelSpace;
     setBackgroundSnapSources(sources, new ModelSpace[](sources.length));
     scope(exit) setBackgroundSnapSources(null, null);
 
@@ -5025,7 +5022,7 @@ unittest {
                        bgPt + inU * H + inW * H, bgPt - inU * H + inW * H];
         bg.faces    = [[0u, 1u, 2u, 3u]];
         const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-        import math : ModelSpace;
+        import spatial : ModelSpace;
         setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
 
         Vec3 got0, got1;
@@ -5101,7 +5098,7 @@ unittest {
                    bgPt + camRight * H + camUp * H, bgPt - camRight * H + camUp * H];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    import math : ModelSpace;
+    import spatial : ModelSpace;
     setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
 
     ImVec2 p0, p1;
@@ -5176,7 +5173,7 @@ unittest {
                    bgPt + camRight * half + camUp * half, bgPt - camRight * half + camUp * half];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    import math : ModelSpace;
+    import spatial : ModelSpace;
     setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
 
     auto targets = t.perVertexTargets([0u, 1u], 0, 0, vp);
@@ -5394,7 +5391,7 @@ unittest {
                    Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    import math : ModelSpace;
+    import spatial : ModelSpace;
     setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
     scope(exit) setBackgroundSnapSources(null, null);
 
@@ -6383,7 +6380,7 @@ unittest {
                    Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    import math : ModelSpace;
+    import spatial : ModelSpace;
     setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
     scope(exit) setBackgroundSnapSources(null, null);
 
@@ -6577,7 +6574,7 @@ unittest { // applySmoothLoopPasses — interior relax + nearest-foot re-snap,
                    Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    import math : ModelSpace;
+    import spatial : ModelSpace;
     setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
     scope(exit) setBackgroundSnapSources(null, null);
 
@@ -7041,7 +7038,7 @@ unittest {
                    Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    import math : ModelSpace;
+    import spatial : ModelSpace;
     setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
     scope(exit) setBackgroundSnapSources(null, null);
 
@@ -12600,7 +12597,8 @@ unittest {
 // banked, orbited one (the C3 orbit basis), including the perspective term
 // that is the whole image of an end-on axis.
 unittest {
-    import math : Orientation, viewMatrixFrom, perspectiveMatrix;
+    import math : perspectiveMatrix;
+import spatial : Orientation, viewMatrixFrom;
     import std.format : format;
     import std.math : PI, abs, sqrt;
     Viewport mk(Vec3 r, Vec3 u, Vec3 b) {

@@ -79,7 +79,8 @@ import std.math   : fabs, sqrt, abs;
 import std.format : format;
 import std.algorithm : max, min;
 
-import math     : Vec3, ModelSpace, normalize, dot;
+import math : Vec3, normalize, dot;
+import spatial : ModelSpace;
 import mesh     : Mesh;
 import document : ItemXform;
 import toolpipe.obbox : ObbFrame, ObbSource, obbFromPoints;

@@ -38,6 +38,7 @@
 // any command body. The per-command arm is gone with the predicate that
 // reached it.
 module commands.mesh.position_undo;
+import mesh_edit_replay : apply, revert;
 
 import command         : Command;
 import mesh            : Mesh;

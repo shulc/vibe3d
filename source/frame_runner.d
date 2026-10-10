@@ -13,7 +13,7 @@ import eventlog : queryMouse;
 import input_frame_state : InputFrameState;
 import ImGui = d_imgui;
 import imgui_impl_opengl3 : ImGui_ImplOpenGL3_RenderDrawData;
-import math : Viewport;
+import spatial : Viewport;
 import perf_probe : g_fc, g_frames, Phase;
 import tool : Tool;
 import ui.viewport_render : ViewportSceneRenderer, SceneInputs,

@@ -13,7 +13,7 @@
 // in the same log, and `recordSelectionDelta` / `recordSubpatchDelta` /
 // `recordHideDelta` / `recordMaterialDelta` have no production caller at all.
 // So the cells in this file, its two siblings and the two in-module blocks in
-// `packages/common/source/mesh_edit_delta.d` are the ONLY things that drive the fast branch
+// `packages/mesh-edit-log/source/mesh_edit_delta.d` are the ONLY things that drive the fast branch
 // today. That is a declared prerequisite step, not an oversight.
 //
 // WHY W2 RUNS THREE KINDS AND NOT TWO. A drop-free `Reindex` — a pure
@@ -24,6 +24,7 @@
 // here, through the same instrument, or W1's zeros are a dead cell.
 // ===========================================================================
 module tests.unit.mesh_edit_delta_carveout_test;
+import mesh_edit_replay : apply, revert;
 
 import std.algorithm.searching : count, canFind;
 import std.file   : readText;
@@ -581,7 +582,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest // W7-TEXT — no `debug assert` in finalize's fast branch
 {
-    const src = readText(buildPath(repoRoot, "packages", "common", "source", "mesh_edit_delta.d"));
+    const src = readText(buildPath(repoRoot, "packages", "mesh-edit-replay", "source", "mesh_edit_replay.d"));
 
     // The fast branch: from `finalize`'s signature to the end of the
     // `if (fast) { … }` block, which the `// Per-corner (PolyVertex) map carry`
@@ -590,7 +591,7 @@ unittest // W7-TEXT — no `debug assert` in finalize's fast branch
     enum string kClose = "    // Per-corner (PolyVertex) map carry (task 0689) — FIRST,";
     const size_t a = src.canFind(kOpen) ? src.indexOfSub(kOpen) : size_t.max;
     assert(a != size_t.max, format(
-        "W7-TEXT: `%s` is no longer in packages/common/source/mesh_edit_delta.d — the scanner "
+        "W7-TEXT: `%s` is no longer in packages/mesh-edit-log/source/mesh_edit_delta.d — the scanner "
       ~ "has lost its place and this cell is vacuous. Fix the anchor, do not "
       ~ "delete the cell.", kOpen));
     const size_t b = src[a .. $].canFind(kClose)

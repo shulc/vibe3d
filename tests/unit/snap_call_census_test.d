@@ -53,7 +53,7 @@ private void scanCalls(string file, string code, string id, string declType,
 
 private string[2][] productionSources() {
     string[2][] files;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         files ~= [de.name[repoRoot.length + 1 .. $], readText(de.name)];
@@ -266,7 +266,8 @@ unittest // one vertex finder for the topology tools (tasks 9407, 9437); the pen
 unittest // the signatures the clients rely on (compiler pins)
 {
     import operator : VectorStack;
-    import math : Vec3, Viewport;
+    import math : Vec3;
+import spatial : Viewport;
     import snap : snapPacketOf;
     import toolpipe.packets : SnapPacket, SnapType;
     import toolpipe.guide : SnapGuide, SnapQueryPolicy;
@@ -286,8 +287,8 @@ unittest // the signatures the clients rely on (compiler pins)
 
 unittest // a guide registered on the live stage reaches a create tool's query
 {
-    import math             : Vec3, Viewport, lookAt, perspectiveMatrix,
-                              projectToWindowFull, identityMatrix;
+    import math : Vec3, lookAt, perspectiveMatrix, identityMatrix;
+import spatial : Viewport, projectToWindowFull;
     import mesh             : Mesh;
     import editmode         : EditMode;
     import snap             : invalidateSnapGrids;

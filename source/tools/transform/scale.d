@@ -32,6 +32,7 @@ import document : Layer;
 import seltype : SelType;
 import tool : Tool;
 import math;
+import spatial : Viewport, isOrtho, projectToWindowFull;
 import shader;
 import toolpipe.packets : FalloffPacket;
 
@@ -757,7 +758,7 @@ public:
                                out int hIdx, out int vIdx)
     {
         import tools.transform.xform_kernels : pickScalePlaneAxes;
-        import math : isOrtho;
+        import spatial : isOrtho;
         Vec3 bX, bY, bZ;
         currentBasis(bX, bY, bZ, vts);
         immutable Vec3 camRight = Vec3(cachedVp.view[0], cachedVp.view[4],

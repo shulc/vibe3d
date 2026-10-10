@@ -8,6 +8,7 @@ private struct SpherePreparedParamHandle {
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : Viewport;
 import params : Param;
 import shader : LitShader;
 import tools.create.primitive_create_tool : SizedRadialCreateTool;

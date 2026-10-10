@@ -23,6 +23,7 @@
 // present — by comparing the whole flag word.
 // ===========================================================================
 module tests.unit.mesh_edit_delta_carveout_delivery_test;
+import mesh_edit_replay : apply, revert;
 
 import std.format : format;
 

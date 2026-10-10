@@ -147,7 +147,22 @@
     "vibe3d-display-policy": {
       "path": "../display-policy"
     },
-    "bindbc-opengl": "~>1.1.1"
+    "bindbc-opengl": "~>1.1.1",
+    "vibe3d-spatial": {
+      "path": "../spatial"
+    },
+    "vibe3d-mesh": {
+      "path": "../mesh"
+    },
+    "vibe3d-mesh-change": {
+      "path": "../mesh-change"
+    },
+    "vibe3d-math": {
+      "path": "../../util/math"
+    },
+    "vibe3d-profiling": {
+      "path": "../profiling"
+    }
   },
   "versions": [
     "GL_33"
@@ -163,7 +178,12 @@
       ],
       "subConfigurations": {
         "vibe3d-common": "modeling",
-        "vibe3d-display-policy": "modeling"
+        "vibe3d-display-policy": "modeling",
+        "vibe3d-spatial": "modeling",
+        "vibe3d-mesh": "modeling",
+        "vibe3d-mesh-change": "modeling",
+        "vibe3d-math": "modeling",
+        "vibe3d-profiling": "modeling"
       }
     },
     {
@@ -171,7 +191,12 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-common": "modeling-noai",
-        "vibe3d-display-policy": "modeling-noai"
+        "vibe3d-display-policy": "modeling-noai",
+        "vibe3d-spatial": "modeling-noai",
+        "vibe3d-mesh": "modeling-noai",
+        "vibe3d-mesh-change": "modeling-noai",
+        "vibe3d-math": "modeling-noai",
+        "vibe3d-profiling": "modeling-noai"
       }
     },
     {
@@ -182,7 +207,12 @@
       ],
       "subConfigurations": {
         "vibe3d-common": "with-render",
-        "vibe3d-display-policy": "with-render"
+        "vibe3d-display-policy": "with-render",
+        "vibe3d-spatial": "with-render",
+        "vibe3d-mesh": "with-render",
+        "vibe3d-mesh-change": "with-render",
+        "vibe3d-math": "with-render",
+        "vibe3d-profiling": "with-render"
       }
     },
     {
@@ -192,7 +222,12 @@
       ],
       "subConfigurations": {
         "vibe3d-common": "web",
-        "vibe3d-display-policy": "web"
+        "vibe3d-display-policy": "web",
+        "vibe3d-spatial": "web",
+        "vibe3d-mesh": "web",
+        "vibe3d-mesh-change": "web",
+        "vibe3d-math": "web",
+        "vibe3d-profiling": "web"
       }
     },
     {
@@ -202,7 +237,12 @@
       ],
       "subConfigurations": {
         "vibe3d-common": "root-tests",
-        "vibe3d-display-policy": "root-tests"
+        "vibe3d-display-policy": "root-tests",
+        "vibe3d-spatial": "root-tests",
+        "vibe3d-mesh": "root-tests",
+        "vibe3d-mesh-change": "root-tests",
+        "vibe3d-math": "root-tests",
+        "vibe3d-profiling": "root-tests"
       },
       "targetType": "sourceLibrary"
     },
@@ -211,7 +251,12 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-common": "isolated-tests",
-        "vibe3d-display-policy": "isolated-tests"
+        "vibe3d-display-policy": "isolated-tests",
+        "vibe3d-spatial": "isolated-tests",
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-mesh-change": "isolated-tests",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-profiling": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

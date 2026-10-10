@@ -29,8 +29,10 @@
 import std.format : format;
 import std.math : PI, sqrt, fabs;
 
-import math : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix;
-import mesh : Mesh, visibleVertices;
+import math : Vec3, lookAt, perspectiveMatrix;
+import spatial : Viewport, ModelSpace;
+import mesh : Mesh;
+import mesh_visibility : visibleVertices;
 
 void main() {}
 
@@ -220,7 +222,7 @@ unittest {
 //     anywhere in picking". That is also false. It is right about the pickers
 //     it grepped (`bvh_pick.d`, `gpu_select.d`) and wrong about the rest of the
 //     tree: the front-facing dot below is live in `Mesh.visibleVertices`
-//     (`packages/common/source/mesh.d`, feeding snap via `packages/interaction-query/source/snap.d`), is repeated verbatim
+//     (`packages/mesh/source/mesh.d`, feeding snap via `packages/interaction-query/source/snap.d`), is repeated verbatim
 //     at `packages/interaction-query/source/snap.d`'s own `faceVisible`, and again — twice — in the LASSO
 //     POLYGON branch of `source/app.d`.
 //
@@ -294,7 +296,7 @@ unittest {
     // not. Driven through `snapCursor` itself, cursor on the quad's centre.
     import snap : snapCursor, SnapResult, invalidateSnapGrids;
     import toolpipe.packets : SnapPacket, SnapType, SnapMode;
-    import math : projectToWindowFull;
+    import spatial : projectToWindowFull;
     float cx, cy, cz;
     assert(projectToWindowFull(Vec3(0.2f, 0.1f, 0), vp, cx, cy, cz),
         "fixture: the quad's interior must project");

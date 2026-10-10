@@ -13,7 +13,8 @@ module tests.unit.toolpipe.view_only_subject_pin_test;
 import toolpipe.subject : viewOnlySubject;
 import editmode          : EditMode;
 import seltype            : SelType;
-import math                : Viewport, Vec3;
+import math : Vec3;
+import spatial : Viewport;
 
 unittest {
     // Every field set explicitly, none left at `.init` -- `Viewport.init`

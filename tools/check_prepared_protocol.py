@@ -703,7 +703,7 @@ def installer_image_writes(pt, fields):
                       + r")\s*=(?!=)", body)
 
 prepared_source_texts = {path: path.read_text()
-                         for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d"))}
+                         for path in (path for sub in ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source') for path in (ROOT / sub).rglob("*.d"))}
 for path, text in prepared_source_texts.items():
     module = source_module_name(path, text)
     if imports_prepared_module(text, "prepared_record_context") and module not in b3d_modules | {
@@ -939,7 +939,7 @@ for label, contract, wrong in observer_prepare_mutations:
 
 # P1.0b.3b history owner infrastructure remains unreachable from production.
 history_source = (ROOT / "packages/common/source/command_history.d").read_text()
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source') for path in (ROOT / sub).rglob("*.d")):
     if path.name != "command_history.d" and ".prepareRecordBatch(" in path.read_text():
         fail("P1.0b.3b prepared history gained a pre-cutover caller")
 
@@ -996,7 +996,7 @@ for relative, fingerprints in coalescing_doors.items():
         if source.count(fingerprint) != 1:
             fail("P1.0b.3b exact legacy coalescing door census changed")
 if sum(len(re.findall(r"[\w.]+\.recordCoalescing\(cmd\);", path.read_text()))
-       for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d"))
+       for path in (path for sub in ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source') for path in (ROOT / sub).rglob("*.d"))
        if path.name != "command_history.d") != 2:
     fail("P1.0b.3b direct legacy coalescing callsite set changed")
 coalescing_pairs = (
@@ -1029,7 +1029,7 @@ except SystemExit as error:
 else:
     fail("P1.0b.3b live-top merge mutation did not RED")
 
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source') for path in (ROOT / sub).rglob("*.d")):
     source = path.read_text()
     if not path.as_posix().endswith("command_history.d") and \
        "prepared_tool" in path.name and re.search(
@@ -1073,9 +1073,9 @@ for label, contract, wrong in history_mutations:
         fail(f"P1.0b.3b {label} mutation did not RED")
 
 # P1.0b.3c Layer-owned whole-Mesh image, still unreachable from production.
-mesh_source = (ROOT / "packages/common/source/mesh.d").read_text()
+mesh_source = (ROOT / "packages/mesh/source/mesh.d").read_text()
 document_source = (ROOT / "packages/common/source/document.d").read_text()
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source') for path in (ROOT / sub).rglob("*.d")):
     if path.name != "document.d" and ".beginPreparedMesh(" in path.read_text():
         fail("P1.0b.3c prepared Mesh owner gained a pre-cutover caller")
 
@@ -1104,7 +1104,7 @@ if not re.search(r"struct\s+PreparedLayerMeshToken\s*\{\s*private:\s*ulong\s+bir
                  document_source):
     fail("P1.0b.3c prepared Mesh token stopped being scalar-only")
 if "static foreach (i; 0 .. R.tupleof.length)" not in mesh_source or \
-   "static assert(Mesh.tupleof.length == 55" not in (ROOT / "packages/common/source/mesh_planes.d").read_text():
+   "static assert(Mesh.tupleof.length == 55" not in (ROOT / "packages/mesh/source/mesh_planes.d").read_text():
     fail("P1.0b.3c complete Mesh field ownership census changed")
 if not re.search(r"void\s+installPreparedMeshImage\s*\([^)]*\)\s*nothrow\s+@nogc", mesh_source) or \
    not re.search(r"void\s+installPreparedMesh\s*\([^)]*\)\s*nothrow\s+@nogc", document_source):
@@ -1134,7 +1134,7 @@ for label, mutated_mesh, mutated_document in mesh_mutations:
 # P1.0b.4a dormant GL-resource owner. Raw GLuint sets stay owner-private;
 # production doors may carry only scalar identity/generation tokens.
 gpu_source = (ROOT / "packages/viewport-gpu/source/mesh_gpu.d").read_text()
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source') for path in (ROOT / sub).rglob("*.d")):
     if path.name != "mesh_gpu.d" and ".beginPreparedDestroy(" in path.read_text():
         fail("P1.0b.4a prepared GPU owner gained a pre-cutover caller")
 
@@ -1747,7 +1747,7 @@ if found != MANIFEST:
 
 # P1.0a's call-site census is intentionally empty. This detects an early
 # behavioral cutover or an unreviewed bypassing caller by exact file/line.
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source') for path in (ROOT / sub).rglob("*.d")):
     if path.name == "prepared_tool_transition.d":
         continue
     text = path.read_text()
@@ -1878,7 +1878,7 @@ def prepared_token_declarations():
     own predicate, spelled here over the tree instead of over one module."""
     rows = {}
     sources = [(path, path.read_text())
-               for path in sorted(path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d"))]
+               for path in sorted(path for sub in ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source') for path in (ROOT / sub).rglob("*.d"))]
     pair_uses = [(path, text, use.group(1)) for path, text in sources
                  for use in TOKEN_PAIR_MIXIN_RE.finditer(mask_d_comments(text))]
     pair_template_disabled = False
@@ -1936,7 +1936,7 @@ def prepared_non_token_noncopyable():
     """{(module, TypeName)} for every non-copyable Prepared*/Validated* struct
     under source/ that is NOT spelled `*Token`."""
     rows = set()
-    for path in sorted(path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d")):
+    for path in sorted(path for sub in ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source') for path in (ROOT / sub).rglob("*.d")):
         text = path.read_text()
         head = re.search(r"^\s*module\s+([\w.]+)\s*;", text, re.M)
         if not head:
@@ -2058,7 +2058,7 @@ def token_census_gate(source, declared, stray_fixtures, non_token):
     effect = prepared_module_source("prepared_tool_effect")
     if "prepared effect field is not owned" not in effect:
         bad.append("the prepared-effect diagnostic text is gone from "
-                   "packages/common/source/prepared_tool_effect.d")
+                   "packages/edit-contracts/source/prepared_tool_effect.d")
     for shape in ("PreparedEffectBorrowedClass", "PreparedEffectDelegate",
                   "PreparedEffectFunctionPointer", "PreparedEffectNestedPointer",
                   "PreparedEffectNestedSlice", "PreparedEffectBorrowingView",
@@ -2183,7 +2183,7 @@ upload_contracts = (
 for contract in upload_contracts:
     if mesh_gpu.count(contract) != 1:
         fail(f"P1.0b.4b upload-owner contract drift: {contract}")
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source') for path in (ROOT / sub).rglob("*.d")):
     if path.name == "mesh_gpu.d" and path.parent == ROOT / "packages/viewport-gpu/source":
         continue
     if re.search(r"\.beginPreparedUpload\s*\(", path.read_text()):
@@ -2371,8 +2371,8 @@ for relative, old, new, label in (
 # both upload and suppress branches without entering a legacy hook.
 b5_sources = {
     "effect": prepared_module_source("prepared_tool_effect"),
-    "bus": (ROOT / "packages/common/source/change_bus.d").read_text(),
-    "mesh": (ROOT / "packages/common/source/mesh.d").read_text(),
+    "bus": (ROOT / "packages/mesh-change/source/change_bus.d").read_text(),
+    "mesh": (ROOT / "packages/mesh/source/mesh.d").read_text(),
     "document": (ROOT / "packages/common/source/document.d").read_text(),
     "context": record_context,
     "transform": (ROOT / "source/tools/transform/transform.d").read_text(),
@@ -3474,7 +3474,7 @@ for name, old, new, label in (
 stroke_activation_owner = prepared_module_source("prepared_stroke_extrude_activation")
 stroke_activation_tool = (ROOT /
     "source/tools/deform/stroke_extrude_tool.d").read_text()
-stroke_activation_snapshot = (ROOT / "packages/common/source/snapshot.d").read_text()
+stroke_activation_snapshot = (ROOT / "packages/mesh-snapshot/source/snapshot.d").read_text()
 stroke_snapshot_match_checks = (
     "vertices != mesh.vertices", "edges != mesh.edges",
     "vertexMarks != mesh.vertexMarks", "edgeMarks != mesh.edgeMarks",
@@ -6200,7 +6200,7 @@ b5e_tools = {
         "reduction": "source/tools/edit/reduce.d",
     }.items()
 }
-b5e_snapshot = (ROOT / "packages/common/source/snapshot.d").read_text()
+b5e_snapshot = (ROOT / "packages/mesh-snapshot/source/snapshot.d").read_text()
 def b5e_gate(owner, context, sources, snapshot=b5e_snapshot):
     return (all(kind in owner for kind in
                 ("ArraySession", "CloneSession", "MagnetSession", "ReductionSession")) and
@@ -6569,7 +6569,7 @@ for target, old, new, label in (
     else: context = context.replace(old, new, 1)
     if (target == "gpu" and pos < 0) or combined_upload_gate(gpu, context):
         fail(f"combined GPU create-upload mutation did not RED: {label}")
-for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d")):
+for path in (path for sub in ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source') for path in (ROOT / sub).rglob("*.d")):
     caller_text = path.read_text()
     caller_module = source_module_name(path, caller_text)
     if caller_module in ("mesh_gpu", "prepared_record_context",

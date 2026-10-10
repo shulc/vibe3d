@@ -148,6 +148,9 @@
     "dyaml": {
       "version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
       "repository": "git+https://github.com/shulc/D-YAML.git"
+    },
+    "vibe3d-log": {
+      "path": "../../util/log"
     }
   },
   "versions": [
@@ -160,14 +163,16 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "modeling"
+        "vibe3d-common": "modeling",
+        "vibe3d-log": "modeling"
       }
     },
     {
       "name": "modeling-noai",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-common": "modeling-noai"
+        "vibe3d-common": "modeling-noai",
+        "vibe3d-log": "modeling-noai"
       }
     },
     {
@@ -177,7 +182,8 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "with-render"
+        "vibe3d-common": "with-render",
+        "vibe3d-log": "with-render"
       }
     },
     {
@@ -187,7 +193,8 @@
       ],
       "subConfigurations": {
         "vibe3d-common": "web",
-        "bindbc-sdl": "static"
+        "bindbc-sdl": "static",
+        "vibe3d-log": "web"
       }
     },
     {
@@ -196,7 +203,17 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "root-tests"
+        "vibe3d-common": "root-tests",
+        "vibe3d-log": "root-tests"
+      },
+      "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests",
+        "vibe3d-log": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

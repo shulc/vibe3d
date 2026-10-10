@@ -1,7 +1,8 @@
 module snap_election;
 
 import std.math : sqrt, isNaN;
-import math : Vec3, Viewport, ModelSpace, projectToWindowFull;
+import math : Vec3;
+import spatial : Viewport, ModelSpace, projectToWindowFull;
 import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;

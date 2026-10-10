@@ -1,4 +1,5 @@
 module commands.mesh.morph;
+import mesh_edit_replay : apply, revert;
 
 import command;
 import mesh;

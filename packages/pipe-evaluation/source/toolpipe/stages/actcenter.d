@@ -2,8 +2,8 @@ module toolpipe.stages.actcenter;
 
 import std.format : format;
 
-import math    : Vec3, Pin, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine,
-                 ModelSpace;
+import math : Vec3, rayPlaneIntersect, applyAffine;
+import spatial : Pin, Viewport, screenRay, screenPointToRay, ModelSpace;
 import mesh    : Mesh, edgeKey, MeshKey, MeshTermMarks;
 import mesh_dirty : MeshDirtyKey, MeshTermTopoEpoch, g_topoEpochs;  // task 1906 stage 2d (row 15)
 import editmode : EditMode;

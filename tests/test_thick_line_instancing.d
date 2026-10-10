@@ -12,7 +12,8 @@ import bindbc.sdl;
 import core.exception : AssertError;
 import handles.gl_util : drawThickLinesExt, initThickLineProgram,
     setThickLineScreenSize, shutdownThickLineProgram;
-import math : Vec3, Viewport, identityMatrix, perspectiveMatrix;
+import math : Vec3, identityMatrix, perspectiveMatrix;
+import spatial : Viewport;
 import shader : createProgram, thickLineFragSrc, thickLineVertexSrc;
 import std.conv : to;
 import std.format : format;

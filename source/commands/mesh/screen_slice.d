@@ -1,4 +1,5 @@
 module commands.mesh.screen_slice;
+import mesh_edit_replay : apply, revert;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -7,7 +8,8 @@ import mesh_ops.cut;
 import view;
 import editmode;
 import params : Param;
-import math : Vec3, cameraPlaneFromScreenLine;
+import math : Vec3;
+import spatial : cameraPlaneFromScreenLine;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 

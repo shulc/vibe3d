@@ -70,7 +70,7 @@ package immutable string[] kVarAttrKeywords = [
     // NOT attributes — conditional-compilation guards. They are here because
     // they occupy the SAME SLOT in front of a declaration
     // (`version (unittest) private Mesh buildRawMesh(…)` is a real line in
-    // `packages/common/source/mesh.d`), and a chain walker that stops at them drops whatever
+    // `packages/mesh/source/mesh.d`), and a chain walker that stops at them drops whatever
     // stands behind them. Stopping there is the same silent under-read this
     // module exists to end, only spelled with a different keyword.
     "version", "debug",
@@ -217,7 +217,7 @@ package string declaredVarName(string line, string typeToken) {
     while (j < t.length && isIdentChar(t[j])) ++j;
     // A `(` behind the name makes this a FUNCTION, not a variable — measured,
     // not anticipated: `private MeshEditTracker* editRecorder_() const` in
-    // `packages/common/source/mesh.d` is the ACCESSOR that replaced the field, and the first
+    // `packages/mesh/source/mesh.d` is the ACCESSOR that replaced the field, and the first
     // draft of this predicate reported it as the field coming back. That is
     // the over-count this module prefers to an under-count, and it showed up
     // where over-counts are supposed to: in a red run, with the line in hand.
@@ -261,7 +261,7 @@ package string[][] funcDeclAttrChains(string code, string name) {
         if (i == 0 || i >= t.length) continue;
         // A STATEMENT keyword in the return-type slot is not a declaration.
         // Measured: `    return buildRawMesh(verts, faceList);` in
-        // `packages/common/source/mesh.d` otherwise parses as "type `return`, name
+        // `packages/mesh/source/mesh.d` otherwise parses as "type `return`, name
         // `buildRawMesh`" and reports a second, attribute-free declaration of
         // a name that has one. Over-counting is this module's preferred
         // direction, but a census that asks "is every declaration public?"
@@ -341,7 +341,7 @@ package bool hasUnknownDeclPrefix(string line, string typeToken) {
 //
 // This is the FUNCTION-declaration chain, so it carries `ref` / `auto` /
 // `scope` / `return` as well: `ref inout(Mesh) mesh() inout return { … }` in
-// `packages/common/source/mesh.d` is a real declaration, and the predicate it replaces read
+// `packages/mesh/source/mesh.d` is a real declaration, and the predicate it replaces read
 // its owner as `inout`. It matches a chain of ZERO OR MORE attributes, each
 // followed by at least one space — the `?` in `(?:private |public |package )?`
 // was half the four-lane defect and is not repeated here.
@@ -574,7 +574,7 @@ unittest // the function-declaration chain, and what "private again" really asks
     assert(funcDeclAttrChains("    return smoothstep01(t);\n", "smoothstep01")
              .length == 0,
         "a `return f(x);` statement was read as a DECLARATION of `f` — "
-      ~ "measured on packages/common/source/mesh.d, where `return buildRawMesh(verts, "
+      ~ "measured on packages/mesh/source/mesh.d, where `return buildRawMesh(verts, "
       ~ "faceList);` produced a second, attribute-free declaration of a name "
       ~ "that has exactly one.");
 }
@@ -600,7 +600,7 @@ unittest // the declared NAME, so a census can key on the field it means
 unittest // a method is not a field, however much its head looks like one
 {
     // Measured 2026-08-29 while wiring `commit_seam_census_test.d`'s
-    // `editRecorder_` row onto this predicate: `packages/common/source/mesh.d` declares the
+    // `editRecorder_` row onto this predicate: `packages/mesh/source/mesh.d` declares the
     // ACCESSOR that replaced the field, and without the `(` test the row
     // reddened saying the field was back.
     assert(declaredVarName("    private MeshEditTracker* editRecorder_() const {",

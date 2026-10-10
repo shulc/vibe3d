@@ -7,7 +7,8 @@ module tests.unit.tools.create.pen_geometry_test;
 
 import std.format : format;
 
-import math : Vec3, Viewport, cross, dot, eyeVectorAt;
+import math : Vec3, cross, dot;
+import spatial : Viewport, eyeVectorAt;
 import mesh : Mesh;
 import seltype : SelType;
 import toolpipe.packets : SymmetryPacket;

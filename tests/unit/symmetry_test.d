@@ -201,7 +201,7 @@ unittest {
     // (c) `mirrorElement(` is called (outside its declaration) exactly in the
     // three pointer-gesture files — the set is EQUAL, not "at least".
     string[] callers;
-    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source")])
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source"), buildPath(kRepoRoot, "packages/edit-contracts/source"), buildPath(kRepoRoot, "packages/mesh-change/source"), buildPath(kRepoRoot, "packages/mesh-contracts/source"), buildPath(kRepoRoot, "packages/mesh-edit-log/source"), buildPath(kRepoRoot, "packages/mesh-edit-replay/source"), buildPath(kRepoRoot, "packages/mesh-snapshot/source"), buildPath(kRepoRoot, "packages/mesh-topology/source"), buildPath(kRepoRoot, "packages/mesh/source"), buildPath(kRepoRoot, "packages/profiling/source"), buildPath(kRepoRoot, "packages/spatial/source"), buildPath(kRepoRoot, "util/log/source"), buildPath(kRepoRoot, "util/math/source"), buildPath(kRepoRoot, "util/parallel/source"), buildPath(kRepoRoot, "util/plane-bytes/source"), buildPath(kRepoRoot, "util/screen-buckets/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[kRepoRoot.length + 1 .. $];
@@ -371,7 +371,7 @@ unittest {
     // primary layer moved +2 in X a world point at x 1.5 is local x -0.5.
     {
         import document : primaryModelSpaceResolver;
-        import math : ModelSpace;
+        import spatial : ModelSpace;
         ModelSpace moved;
         moved.m    = [1,0,0,0, 0,1,0,0, 0,0,1,0,  2,0,0,1];
         moved.mInv = [1,0,0,0, 0,1,0,0, 0,0,1,0, -2,0,0,1];
@@ -436,7 +436,7 @@ unittest {
         int[string] got;
         string[] needles = ["placeAuthoringBase(", "notePlacementAt(", "notePlacement()",
                             "placeActionCentreOnInstall("];
-        foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source")])
+        foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source"), buildPath(kRepoRoot, "packages/edit-contracts/source"), buildPath(kRepoRoot, "packages/mesh-change/source"), buildPath(kRepoRoot, "packages/mesh-contracts/source"), buildPath(kRepoRoot, "packages/mesh-edit-log/source"), buildPath(kRepoRoot, "packages/mesh-edit-replay/source"), buildPath(kRepoRoot, "packages/mesh-snapshot/source"), buildPath(kRepoRoot, "packages/mesh-topology/source"), buildPath(kRepoRoot, "packages/mesh/source"), buildPath(kRepoRoot, "packages/profiling/source"), buildPath(kRepoRoot, "packages/spatial/source"), buildPath(kRepoRoot, "util/log/source"), buildPath(kRepoRoot, "util/math/source"), buildPath(kRepoRoot, "util/parallel/source"), buildPath(kRepoRoot, "util/plane-bytes/source"), buildPath(kRepoRoot, "util/screen-buckets/source")])
 
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             const rel = de.name[kRepoRoot.length + 1 .. $];
@@ -593,7 +593,8 @@ unittest {
 
 // (u8) the production kernel `applyXformMatrix` in the authoring frame, both loops.
 unittest {
-    import math : AimViewport, Viewport, lookAt, perspectiveMatrix, aimSpace, ModelSpace;
+    import math : lookAt, perspectiveMatrix;
+import spatial : AimViewport, Viewport, aimSpace, ModelSpace;
     import std.math : PI;
     import toolpipe.packets : FalloffPacket, FalloffType;
     import tools.transform.transform : TransformTool;

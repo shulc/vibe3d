@@ -102,8 +102,8 @@ import viewport             : Viewport3D, ViewportManager;
 // `GesturePacket` (the cooked 2D event), `setOverrideMouse` (eventlog's
 // replay-time cursor override), `Viewport`/`Vec3` (the camera-drag math)
 // and `ImVec2` (the lasso trail's element type).
-import math                 : Viewport, Vec3, ModelSpace, projectionSpace,
-                              projectToWindow, pointInPolygon2D, frontFacingLocal;
+import math : Vec3, pointInPolygon2D, frontFacingLocal;
+import spatial : Viewport, ModelSpace, projectionSpace, projectToWindow;
 import d_imgui.imgui_h      : ImVec2;
 import pie_state            : g_pie, closePie, PieKeyUp, pieKeyUpEffect;
 import pie_geometry         : PIE_SLOTS, pieHoverAt;

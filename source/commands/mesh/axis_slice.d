@@ -1,4 +1,5 @@
 module commands.mesh.axis_slice;
+import mesh_edit_replay : apply, revert;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;

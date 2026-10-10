@@ -1,9 +1,7 @@
 {
   "name": "vibe3d-input-events-tests",
   "targetType": "executable",
-  "sourcePaths": [
-    "../source"
-  ],
+  "sourcePaths": [],
   "toolchainRequirements": {
     "dmd": ">=2.111.0",
     "ldc": ">=1.41.0"
@@ -148,6 +146,9 @@
     "dyaml": {
       "version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
       "repository": "git+https://github.com/shulc/D-YAML.git"
+    },
+    "vibe3d-log": {
+      "path": "../../../util/log"
     }
   },
   "versions": [
@@ -159,18 +160,26 @@
   ],
   "configurations": [
     {
-      "name": "algorithm"
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests",
+        "vibe3d-log": "isolated-tests"
+      }
     }
   ],
   "sourceFiles": [
+    "../source/eventlog.d",
+    "../source/held_gesture_buttons.d",
+    "../source/input_context.d",
+    "../source/input_zones.d",
+    "../source/shortcuts.d",
+    "../source/tool_input.d",
     "source/tests/unit/binding_resolve_test.d",
     "source/tests/unit/eventlog_parser_test.d",
     "source/tests/unit/eventlog_test.d",
     "source/tests/unit/input_events_population_test.d",
     "source/tests/unit/tool_input_test.d"
   ],
-  "subConfigurations": {
-    "vibe3d-common": "modeling-noai"
-  },
-  "workingDirectory": "../../../"
+  "workingDirectory": "../../../",
+  "dflags": []
 }

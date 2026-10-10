@@ -12,6 +12,7 @@ import ai.debug_trace : publishHandleDebugTrace;
 import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiInteractionPhase, AiIntent;
 import math;
+import spatial : Viewport;
 import std.json : JSONValue;
 
 private AiAdvisor g_handleAiAdvisor;

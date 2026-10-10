@@ -1,4 +1,5 @@
 module commands.mesh.cleanup;
+import mesh_edit_replay : captureSelectedEdgeEnds, restoreSelectedEdgeEnds, apply, revert;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -7,9 +8,7 @@ import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
 import view;
 import editmode;
 import snapshot : SelectionSnapshot;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope,
-                        captureSelectedEdgeEnds, restoreSelectedEdgeEnds,
-                        acceptRecordedEdit;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
 import params : Param;
 
 /// Sequential mesh hygiene sweep: optionally weld coincident vertices, drop

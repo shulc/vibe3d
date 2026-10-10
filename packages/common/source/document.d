@@ -11,7 +11,7 @@ import document_selection : DocumentSelection;
 // `ItemXform.composedMatrix`/`modelSpace` compose from, and they left with it
 // (`item_xform.d`); `ModelSpace` stays because `primaryModelSpaceResolver` at
 // the bottom of this module is typed on it.
-import math    : ModelSpace;
+import spatial : ModelSpace;
 
 // Modeling-only document/layer model: no GL, render, or UI imports. Selection,
 // foreground/background, activeIndex, and the edit target are all derived from

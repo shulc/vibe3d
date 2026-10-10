@@ -19,7 +19,8 @@ module ui.viewport_render;
 // added in answer to a named error from a semantic-only pass over this single
 // module -- which is why the list is short.
 
-import math;                 // Vec3, Viewport, ModelSpace, identityMatrix, matMul4
+import math;
+import spatial : ModelSpace, Orientation, Viewport, isOrtho;                 // Vec3, Viewport, ModelSpace, identityMatrix, matMul4
 import bg_gpu_cache          : BgGpuDrawCache;
 import mesh;                 // Mesh, MeshStructKey, MeshTopoKey
 import mesh_ops.loop_slice   : loopSliceRingEdges;

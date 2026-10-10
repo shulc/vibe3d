@@ -13,7 +13,8 @@ import params : Param;
 import pilot_command_registration;
 import seltype : SelType;
 import view : View;
-import math : Viewport, Vec3;
+import math : Vec3;
+import spatial : Viewport;
 import change_bus : changeBus, ChangeBus;
 import std.stdio : writeln;
 

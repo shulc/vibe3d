@@ -6,7 +6,8 @@
 // tests/test_view_grid_facing.d.
 module ui.grid_plane_test;
 
-import math : Vec3, Viewport, lookAt, normalize, orthographicMatrix, perspectiveMatrix;
+import math : Vec3, lookAt, normalize, orthographicMatrix, perspectiveMatrix;
+import spatial : Viewport;
 import toolpipe.stages.workplane : WorkplaneStage;
 import ui.viewport_render : gridPlaneModel, workPlaneLatticeModel;
 

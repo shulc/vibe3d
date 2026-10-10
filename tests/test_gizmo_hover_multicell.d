@@ -39,7 +39,8 @@
 import std.math : PI, abs, cos, sin;
 
 import handler : RotateHandler, ScaleHandler;
-import math : Vec3, Viewport, cross, normalize, projectToWindowFull, Orientation;
+import math : Vec3, cross, normalize;
+import spatial : Viewport, projectToWindowFull, Orientation;
 import view : View;
 
 void main() {}

@@ -1,4 +1,5 @@
 module commands.mesh.uv_unwrap;
+import mesh_edit_replay : apply, revert;
 
 /// `uv.unwrap` — cotangent-weighted harmonic UV layout.
 ///

@@ -1,6 +1,7 @@
 module tools.edit.topology_pen.move_protocol_test;
 import mesh : Mesh;
-import math : Vec3, Viewport, ModelSpace;
+import math : Vec3;
+import spatial : Viewport, ModelSpace;
 import toolpipe.packets : SnapType, SymmetryPacket;
 import tools.edit.topology_pen.snap_guide : admitsMoveElement;
 import evaluated_move_weld : EvaluatedMoveWeld, searchMoveElement, pairedMoveEnds, moveFaceNormal, MoveElementHit, evaluatedMoveHandle, heldMoveEngages;
@@ -310,7 +311,8 @@ unittest {
     import operator : VectorStack;
     import bindbc.sdl;
     loadSDL(); SDL_SetModState(cast(SDL_Keymod)0);
-    import math : lookAt, perspectiveMatrix, projectToWindowFull;
+    import math : lookAt, perspectiveMatrix;
+import spatial : projectToWindowFull;
     import std.math : PI;
     auto m=rig(); Viewport vp; vp.width=800;vp.height=800;vp.eye=Vec3(0,0,5);
     vp.view=lookAt(vp.eye,Vec3(0,0,0),Vec3(0,1,0));
@@ -597,7 +599,8 @@ unittest {
     import tools.edit.topology_pen.defs : MoveElem;
     import document : ItemXform, primaryModelSpaceResolver;
     import snap : setBackgroundSnapSources;
-    import math : lookAt, orthographicMatrix, projectToWindowFull;
+    import math : lookAt, orthographicMatrix;
+import spatial : projectToWindowFull;
     import tool : ToolFlag;
     ItemXform xf; xf.pos=Vec3(.3,0,0); xf.scl=Vec3(2,1,1);
     const ms=xf.modelSpace();

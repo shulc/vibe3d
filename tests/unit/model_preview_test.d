@@ -153,7 +153,8 @@ private Mesh primitiveSource() {
 }
 
 private void drawIdle(Tool tool) {
-    import math : Viewport, lookAt, perspectiveMatrix;
+    import math : lookAt, perspectiveMatrix;
+import spatial : Viewport;
     import shader : Shader;
     import display_state : DrawPlan;
     import operator : VectorStack;

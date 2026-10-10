@@ -1,6 +1,7 @@
 module symmetry_pick;
 
-import math    : Vec3, Viewport;
+import math : Vec3;
+import spatial : Viewport;
 import mesh    : Mesh;
 import editmode : EditMode;
 import seltype  : SelType;

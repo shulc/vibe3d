@@ -26,6 +26,7 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — when scoring a
 // mutation that should redden two cells for two reasons, stub the earlier one.
 module tests.unit.flip_and_spin_delta_test;
+import mesh_edit_replay : apply, revert;
 
 import std.conv   : to;
 import std.format : format;

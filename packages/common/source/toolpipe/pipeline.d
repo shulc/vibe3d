@@ -4,7 +4,7 @@ import std.algorithm : sort, remove, SwapStrategy;
 import std.array     : array;
 import std.conv      : to;
 
-import math : Viewport;
+import spatial : Viewport;
 import toolpipe.stage   : Stage, TaskCode;
 import editmode : EditMode;
 static import tool_policy_values;

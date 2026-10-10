@@ -53,7 +53,7 @@ private string[] filesWith(string needle, out size_t scanned) {
     import std.file : dirEntries, SpanMode;
     import std.path : buildPath;
     string[] hits;
-    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source")])
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source"), buildPath(kRepoRoot, "packages/edit-contracts/source"), buildPath(kRepoRoot, "packages/mesh-change/source"), buildPath(kRepoRoot, "packages/mesh-contracts/source"), buildPath(kRepoRoot, "packages/mesh-edit-log/source"), buildPath(kRepoRoot, "packages/mesh-edit-replay/source"), buildPath(kRepoRoot, "packages/mesh-snapshot/source"), buildPath(kRepoRoot, "packages/mesh-topology/source"), buildPath(kRepoRoot, "packages/mesh/source"), buildPath(kRepoRoot, "packages/profiling/source"), buildPath(kRepoRoot, "packages/spatial/source"), buildPath(kRepoRoot, "util/log/source"), buildPath(kRepoRoot, "util/math/source"), buildPath(kRepoRoot, "util/parallel/source"), buildPath(kRepoRoot, "util/plane-bytes/source"), buildPath(kRepoRoot, "util/screen-buckets/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
@@ -101,11 +101,11 @@ unittest { // (c1) ONE mirror walker
 unittest { // (c2) ONE side test
     size_t scanned;
     const users = filesWith("symmetrySide(", scanned);
-    assert(users == ["packages/common/source/symmetry_plane.d",
+    assert(users == ["packages/spatial/source/symmetry_plane.d",
                      "packages/interaction-query/source/symmetry.d", "packages/mesh-ops/source/mesh_ops/extrude.d",
                      "packages/pipe-evaluation/source/toolpipe/stages/symmetry.d", "source/tools/edit/edge_extend.d"],
            "(c2) symmetrySide( users: " ~ users.to!string);
-    const lower = codeOf("packages/common/source/symmetry_plane.d");
+    const lower = codeOf("packages/spatial/source/symmetry_plane.d");
     const desktop = codeOf("packages/interaction-query/source/symmetry.d");
     assert(countOccurrences(lower,
         "int symmetrySide(Vec3 planePoint, Vec3 planeNormal, Vec3 p, float eps) pure nothrow @nogc @safe") == 1,

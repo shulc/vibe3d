@@ -31,6 +31,7 @@
 // 2060's (2b) is not re-measured; it is named.
 // ===========================================================================
 module tests.unit.mesh_edit_delta_carveout_preview_test;
+import mesh_edit_replay : apply, revert;
 
 import subpatch_preview : SubpatchPreview;
 import std.format : format;

@@ -14,6 +14,7 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — score a mutation that
 // reddens two of these cells by running them in isolation.
 module tests.unit.l8_extrude_delta_test;
+import mesh_edit_replay : apply, revert;
 
 import std.conv   : to;
 import std.format : format;

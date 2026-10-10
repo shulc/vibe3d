@@ -5,7 +5,7 @@
 // proposed a RATIO OF TIMES as the discriminator: run each candidate with one
 // face hidden and without, and read the ratio. That was refuted on the code
 // before it was ever run. `Mesh.beginHideDeriveBatch` arms deferral with
-// `g_hideDeriveDeferSafe = !anyHideBitSet()` (packages/common/source/mesh.d), and the comment
+// `g_hideDeriveDeferSafe = !anyHideBitSet()` (packages/mesh/source/mesh.d), and the comment
 // beside it says outright that with anything hidden "every commit derives
 // eagerly, exactly as before this change — correct, and still quadratic in
 // that state". So with a face hidden the batch defers nothing for ANY
@@ -262,7 +262,7 @@ unittest { // (2) the derive count for ONE apply does not grow with the mesh
 
 unittest { // (2b) with a face hidden the deferral is OFF — record what that costs
     // Not a bound, a measurement. `beginHideDeriveBatch` arms deferral only
-    // when nothing is hidden (packages/common/source/mesh.d), so here every commit derives
+    // when nothing is hidden (packages/mesh/source/mesh.d), so here every commit derives
     // eagerly and the count IS the number of commits the command makes. That
     // is the number a profile would otherwise have to be read for.
     //

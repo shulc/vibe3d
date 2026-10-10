@@ -15,7 +15,7 @@
 // This is a SOURCE-BACKED test (it imports `math` and `document` at column 0,
 // see run_test.d:isSourceBackedTest) so it can build the exact composed matrix
 // the app itself uses (`document.ItemXform.composedMatrix()`) and project with
-// the app's own `math.projectToWindowFull` — the SAME function the tool calls
+// the app's own `spatial.projectToWindowFull` — the SAME function the tool calls
 // internally — rather than a hand-duplicated formula that could drift.
 //
 // Run via: ./run_test.d tool_aim_item_transform
@@ -30,10 +30,8 @@ import std.format    : format;
 import core.thread   : Thread;
 import core.time     : dur;
 
-import math     : Vec3, Viewport, transformPoint, projectToWindow,
-                  projectToWindowFull, lookAt, perspectiveMatrix,
-                  ModelSpace, screenPointToRay, rayPlaneIntersect,
-                  closestPointOnSegmentToRay, dot, cross, normalize;
+import math : Vec3, transformPoint, lookAt, perspectiveMatrix, rayPlaneIntersect, closestPointOnSegmentToRay, dot, cross, normalize;
+import spatial : Viewport, projectToWindow, projectToWindowFull, ModelSpace, screenPointToRay;
 import document : ItemXform;
 
 // buildDragLog/playAndWait pulled in by NAME only — drag_helpers defines its

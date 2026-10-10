@@ -2,7 +2,8 @@ module overlay_space;
 
 import std.math : sqrt, isNaN;
 
-import math     : Vec3, ModelSpace;
+import math : Vec3;
+import spatial : ModelSpace;
 import document : primaryModelSpace;
 import tools.create.create_common : axisUnit;
 
@@ -144,7 +145,7 @@ struct OverlaySpace {
         return active ? ms.toLocalPoint(world) : world;
     }
 
-    /// The `ModelSpace` to carry a whole RAY into (`math.screenPointToLocalRay`),
+    /// The `ModelSpace` to carry a whole RAY into (`spatial.screenPointToLocalRay`),
     /// honouring the same `active` gate every accessor here does — identity
     /// whenever this space declines to convert, so a caller cannot pick up an
     /// `mInv` that `active` has already declared meaningless. At identity the

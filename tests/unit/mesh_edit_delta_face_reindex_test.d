@@ -38,6 +38,7 @@
 // correspondence. "Redo is byte-exact" is a property of THESE STANDS, not of
 // the mechanism; the mechanism's redo remainder is recorded in the task card.
 module tests.unit.mesh_edit_delta_face_reindex_test;
+import mesh_edit_replay : apply, revert;
 
 import mesh;
 import mesh_planes;

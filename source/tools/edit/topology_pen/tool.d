@@ -4,6 +4,7 @@
 // `package` here means the PEN's package and nothing wider -- see
 // `package.d` for why that distinction is the point.
 module tools.edit.topology_pen.tool;
+import mesh_edge_slice : splitFaceByVertices;
 
 import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import hover_state;
@@ -20,7 +21,7 @@ import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;
 import mesh_ops.extrude : extendEdgesByMask, kExtrudeEditScope;
 import mesh_ops.loop_slice : insertEdgeLoops, collectEdgeRing,
                              loopSliceRingEdges, kLoopSliceEditScope;
-import mesh                : Mesh, MeshCacheKey, MeshEditBatch,
+import mesh                : Mesh, MeshCacheKey, MeshEditBatch;
                              // task 3240 (plan 2910 step 3) — the edge-slice
                              // family is free functions now, same reason
                              // again: `splitFaceByVertices` is reached
@@ -29,13 +30,9 @@ import mesh                : Mesh, MeshCacheKey, MeshEditBatch,
                              // `import mesh : …` does not see a
                              // `public import`'s free names unless it
                              // names them.
-                             splitFaceByVertices;
 import mesh_gpu            : GpuMesh;
-import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
-                             screenPointToRay, closestPointOnSegmentToRay, dot, cross,
-                             pointInPolygon2D, rayPlaneIntersect,
-                             AimViewport, aimSpace, ModelSpace,
-                             screenPointToLocalRay;
+import math : Vec3, closestOnSegment2D, closestPointOnSegmentToRay, dot, cross, pointInPolygon2D, rayPlaneIntersect;
+import spatial : Viewport, projectToWindowFull, screenPointToRay, AimViewport, aimSpace, ModelSpace, screenPointToLocalRay;
 import document             : Layer, primaryModelSpace;
 import shader              : Shader;
 import operator            : VectorStack, viewportOf, pickOcclusionOf;
@@ -4198,7 +4195,7 @@ public:
         bool skip;
         auto cs = liveConstrainStage();
         import drag : ComponentGuideResolver;
-        import math : isOrtho;
+        import spatial : isOrtho;
         const env = cs is null ? typeof(cs.guideEnvironment(false, vp)).init
                                : cs.guideEnvironment(moveAxisLock_ && (isOrtho(vp) || perspectiveGuideRequested), vp);
         const guidedRoute = cs !is null && env.supported();

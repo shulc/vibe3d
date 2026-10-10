@@ -1,13 +1,16 @@
-// Module unittests for `mesh`, moved verbatim out of packages/common/source/mesh.d by task 0706.
+// Module unittests for `mesh`, moved verbatim out of packages/mesh/source/mesh.d by task 0706.
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.mesh_test;
+import mesh_visibility : visibleVertices;
+import mesh_edge_slice : addEdgePoint, splitFaceByVertices;
 
 import subpatch_factories : subdivideCube;
 import std.math : sqrt, abs;
 import std.parallelism : parallel;
 import std.range : iota;
 import math;
+import spatial : Viewport;
 import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope;
 import mesh_ops.bridge : kBridgeEditScope;
@@ -104,7 +107,7 @@ unittest // buildLoops: native parallel and browser serial runners are byte-iden
     assert(diffs.length == 0,
         format("6950 buildLoops parallel/serial mesh planes differ: %s", diffs));
 
-    const runnerSource = blankNonCode(readText("packages/common/source/tsan_annotate.d"));
+    const runnerSource = blankNonCode(readText("util/parallel/source/tsan_annotate.d"));
     const nativeParallelLoops = runnerSource.split("parallel(iota(count))").length - 1;
     assert(nativeParallelLoops == 2,
         format("6950 native runner must keep both parallel(iota(count)) arms; got %d",
@@ -855,7 +858,8 @@ private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args
 // every side — must read hidden.
 // ---------------------------------------------------------------------------
 unittest {
-    import math : lookAt, perspectiveMatrix, ModelSpace;
+    import math : lookAt, perspectiveMatrix;
+import spatial : ModelSpace;
     import std.math : PI;
 
     Mesh m;
@@ -4969,7 +4973,7 @@ unittest {
 // `[1..6]`).
 unittest {
     import symmetry_pick : symmetricSelectFace;
-    import math : Viewport;
+    import spatial : Viewport;
 
     Mesh m = makeCube();
     m.resetSelection();

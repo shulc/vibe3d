@@ -3,7 +3,8 @@ module gpu_select;
 import bindbc.opengl;
 import std.string : toStringz;
 
-import math   : Viewport, ModelSpace, matMul4;
+import math : matMul4;
+import spatial : Viewport, ModelSpace;
 import mesh : Mesh;
 import mesh_gpu : GpuMesh, kFaceStride;
 import shader : compileShader;

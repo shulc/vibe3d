@@ -1,4 +1,6 @@
 module commands.mesh.add_point;
+import mesh_edit_replay : apply, revert;
+import mesh_edge_slice : addEdgePoint;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;

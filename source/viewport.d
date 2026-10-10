@@ -2,7 +2,8 @@ module viewport;
 
 import view          : View, ProjKind, ViewPreset;
 import gpu_select    : GpuSelectBuffer;
-import math          : Viewport, Vec3, Orientation;
+import math : Vec3;
+import spatial : Viewport, Orientation;
 import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim, CompositePlan;
 import select_visibility : SelectVisibility, SelectVisibilityTerms,
                            resolveSelectVisibility, kSelectVisibilityDefault;

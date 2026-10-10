@@ -36,16 +36,8 @@ CONTRACT_CELLS = 21
 # independently inventoried as common76 (task 20262020, same date).
 # Final Wave5 tracked membership: desktop472/common76/mesh17/interchange8/query10/evaluation12.
 # Wave6 construction, 2026-10-10: desktop436 plus thirteen libraries159 =595.
-PRODUCTION_ROOTS = ("source", "packages/common/source", "packages/mesh-ops/source",
-                    "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source")
-PRODUCTION_OWNER_FLOORS = {
-    "source": 436,
-    "packages/common/source": 76,
-    "packages/mesh-ops/source": 17,
-    "packages/interchange/source": 8,
-    "packages/interaction-query/source": 10,
-    "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1, "packages/input-events/source": 6, "packages/display-policy/source": 8, "packages/viewport-gpu/source": 6, "packages/subpatch-preview/source": 5
-}
+PRODUCTION_ROOTS = ('source', 'packages/alignment-ops/source', 'packages/common/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source')
+PRODUCTION_OWNER_FLOORS = {'source': 436, 'packages/alignment-ops/source': 1, 'packages/common/source': 50, 'packages/creation-ops/source': 1, 'packages/display-policy/source': 8, 'packages/edit-contracts/source': 3, 'packages/input-events/source': 6, 'packages/interaction-query/source': 12, 'packages/interchange/source': 8, 'packages/mesh-change/source': 2, 'packages/mesh-contracts/source': 4, 'packages/mesh-edit-log/source': 1, 'packages/mesh-edit-replay/source': 1, 'packages/mesh-ops/source': 20, 'packages/mesh-snapshot/source': 1, 'packages/mesh-topology/source': 1, 'packages/mesh/source': 4, 'packages/pipe-evaluation/source': 12, 'packages/profiling/source': 1, 'packages/spatial/source': 5, 'packages/subpatch-preview/source': 5, 'packages/tool-state/source': 2, 'packages/transform-ops/source': 7, 'packages/viewport-gpu/source': 6, 'util/log/source': 1, 'util/math/source': 5, 'util/parallel/source': 1, 'util/plane-bytes/source': 1, 'util/screen-buckets/source': 1}
 
 
 def production_lexer_census(root):

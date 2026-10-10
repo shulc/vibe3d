@@ -1,4 +1,5 @@
 module commands.mesh.vert_merge;
+import mesh_edit_replay : captureSelectedEdgeEnds, restoreSelectedEdgeEnds, apply, revert;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -7,9 +8,7 @@ import view;
 import editmode;
 import change_bus : MeshEditScope;
 import snapshot : SelectionSnapshot;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope,
-                        captureSelectedEdgeEnds, restoreSelectedEdgeEnds,
-                        acceptRecordedEdit;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
 import params : Param;
 
 /// Tier 1.2: `vert.merge`. Welds selected vertices that are within

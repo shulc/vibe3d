@@ -1,7 +1,8 @@
 module tests.unit.snap_regression_test;
 
 import snap;
-import math : Vec3, Viewport, ModelSpace, projectToWindowFull, closestOnSegment2DSquared;
+import math : Vec3, closestOnSegment2DSquared;
+import spatial : Viewport, ModelSpace, projectToWindowFull;
 import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide : SnapGuide, kGuidePrioritySeed;

@@ -1,6 +1,6 @@
 // The `MarkView` lifetime-contract guard (task 0585, review SF-2).
 //
-// WHAT THE CONTRACT IS. `MarkView` (packages/common/source/mesh.d) is a BORROWED slice of a
+// WHAT THE CONTRACT IS. `MarkView` (packages/mesh/source/mesh.d) is a BORROWED slice of a
 // mesh's live `vertexMarks`/`edgeMarks`/`faceMarks` array. Anything that
 // changes that array's length invalidates it, which every topological
 // operation does. So a `MarkView` is a one-draw-call value: it must never be
@@ -338,7 +338,7 @@ unittest {
 
     size_t filesScanned;
     string[] found;
-    foreach (scanSourceRoot; [dir, buildPath(guardRepoRoot, "packages/common/source"), buildPath(guardRepoRoot, "packages/mesh-ops/source"), buildPath(guardRepoRoot, "packages/interchange/source"), buildPath(guardRepoRoot, "packages/interaction-query/source"), buildPath(guardRepoRoot, "packages/pipe-evaluation/source"), buildPath(guardRepoRoot, "packages/tool-state/source"), buildPath(guardRepoRoot, "packages/transform-ops/source"), buildPath(guardRepoRoot, "packages/creation-ops/source"), buildPath(guardRepoRoot, "packages/alignment-ops/source"), buildPath(guardRepoRoot, "packages/input-events/source"), buildPath(guardRepoRoot, "packages/display-policy/source"), buildPath(guardRepoRoot, "packages/viewport-gpu/source"), buildPath(guardRepoRoot, "packages/subpatch-preview/source")])
+    foreach (scanSourceRoot; [dir, buildPath(guardRepoRoot, "packages/common/source"), buildPath(guardRepoRoot, "packages/mesh-ops/source"), buildPath(guardRepoRoot, "packages/interchange/source"), buildPath(guardRepoRoot, "packages/interaction-query/source"), buildPath(guardRepoRoot, "packages/pipe-evaluation/source"), buildPath(guardRepoRoot, "packages/tool-state/source"), buildPath(guardRepoRoot, "packages/transform-ops/source"), buildPath(guardRepoRoot, "packages/creation-ops/source"), buildPath(guardRepoRoot, "packages/alignment-ops/source"), buildPath(guardRepoRoot, "packages/input-events/source"), buildPath(guardRepoRoot, "packages/display-policy/source"), buildPath(guardRepoRoot, "packages/viewport-gpu/source"), buildPath(guardRepoRoot, "packages/subpatch-preview/source"), buildPath(guardRepoRoot, "packages/edit-contracts/source"), buildPath(guardRepoRoot, "packages/mesh-change/source"), buildPath(guardRepoRoot, "packages/mesh-contracts/source"), buildPath(guardRepoRoot, "packages/mesh-edit-log/source"), buildPath(guardRepoRoot, "packages/mesh-edit-replay/source"), buildPath(guardRepoRoot, "packages/mesh-snapshot/source"), buildPath(guardRepoRoot, "packages/mesh-topology/source"), buildPath(guardRepoRoot, "packages/mesh/source"), buildPath(guardRepoRoot, "packages/profiling/source"), buildPath(guardRepoRoot, "packages/spatial/source"), buildPath(guardRepoRoot, "util/log/source"), buildPath(guardRepoRoot, "util/math/source"), buildPath(guardRepoRoot, "util/parallel/source"), buildPath(guardRepoRoot, "util/plane-bytes/source"), buildPath(guardRepoRoot, "util/screen-buckets/source")])
 
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile || entry.name.length < 2
@@ -357,7 +357,7 @@ unittest {
 
     assert(found.length == 0,
            "a `MarkView` is being STORED, which the type's lifetime contract "
-           ~ "(packages/common/source/mesh.d) forbids: it is a borrowed slice of the mesh's live "
+           ~ "(packages/mesh/source/mesh.d) forbids: it is a borrowed slice of the mesh's live "
            ~ "marks array and is invalidated by any change to that array's "
            ~ "length, so it may not outlive the draw call that took it. Read "
            ~ "the marks through `Mesh.is*Selected(i)` or re-take the view at "

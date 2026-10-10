@@ -10,7 +10,7 @@ import command_invocation : CommandInvocationService, CommandInvocationContext,
 import command_registry : CommandRegistry;
 import document : Document, primaryModelSpaceResolver;
 import http_json : meshPlanesJson;
-import math : ModelSpace, Viewport;
+import spatial : ModelSpace, Viewport;
 import mesh : Mesh, g_isDocumentMesh;
 import mesh_dirty : noteMeshChange;
 import pilot_command_registration : PilotCommandDeps, registerTripleCommand,

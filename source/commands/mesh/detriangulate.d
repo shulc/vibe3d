@@ -1,4 +1,6 @@
 module commands.mesh.detriangulate;
+import mesh_edit_replay : apply, revert;
+import mesh_ops.face_merge : detriangulateFacesByMask;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;

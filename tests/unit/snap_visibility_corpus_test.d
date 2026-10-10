@@ -37,13 +37,14 @@
 // than contributing to a total: a fixture whose expected path is not asserted
 // is a fixture that proves nothing.
 module tests.unit.snap_visibility_corpus_test;
+import mesh_visibility : visibilityProbe, visibleVertices;
 
 import subpatch_factories : subdivideCube;
 import std.math : PI, sin, sqrt;
-import math : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix,
-              orthographicMatrix;
-import mesh : Mesh, makeGridPlane, makeCube,  g_visCounters,
-              visibilityProbe, visibleVertices;
+import math : Vec3, lookAt, perspectiveMatrix, orthographicMatrix;
+import spatial : Viewport, ModelSpace;
+import mesh : Mesh, makeGridPlane, makeCube;
+import mesh_visibility : g_visCounters;
 
 // ---------------------------------------------------------------------------
 // The dump format: one line per case, `key|nVerts|<mask as hex nibbles>`.

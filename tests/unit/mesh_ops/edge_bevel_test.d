@@ -16,12 +16,14 @@
 // are public factories. That is why the whole test region could move; a block
 // that needed a private member would have had to stay behind.
 module tests.unit.mesh_ops.edge_bevel_test;
+import mesh_edit_replay : apply, revert;
 
 import subpatch_factories : subdivideCube;
 import mesh;
 import mesh_ops.edge_bevel;
 import mesh_ops.bevel_vertex;
 import math;
+import spatial : Pin;
 import tests.unit.fixtures;
 
 // ===========================================================================
@@ -608,7 +610,7 @@ unittest { // Case C (task 0436, clamp_findings.md follow-up pass): two
 // face collapsed below 3 corners (Case C)`) used to TRUNCATE faceMaterial /
 // facePart / Subpatch from the front instead of gathering them by the
 // `faceRemap` it already builds — the verbatim twin of `Mesh.applyVertexRemap`
-// (packages/common/source/mesh.d), closed the identical way (task 0921).
+// (packages/mesh/source/mesh.d), closed the identical way (task 0921).
 //
 // Reuses Case C's exact geometry (two disjoint top-face edges of a unit cube
 // at w=0.5, where the shared top-face quad vanishes ENTIRELY — not from the

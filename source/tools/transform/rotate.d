@@ -22,6 +22,7 @@ import document : Layer;
 import seltype : SelType;
 import tool : Tool;
 import math;
+import spatial : Viewport, projectToWindowFull, screenPointToRay;
 import shader;
 import toolpipe.packets : FalloffPacket;
 

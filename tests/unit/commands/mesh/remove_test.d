@@ -2,6 +2,7 @@
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.commands.mesh.remove_test;
+import mesh_edit_replay : captureSelectedEdgeEnds, restoreSelectedEdgeEnds, apply, revert;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -13,8 +14,7 @@ import snapshot : MeshSnapshot, SelectionSnapshot;
 // it named: `mesh.delete` and `mesh.remove` are unconditionally on the delta
 // path now, so importing the toggle here would suggest these blocks select
 // between two of them.
-import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
-                        captureSelectedEdgeEnds, restoreSelectedEdgeEnds;
+import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope;
 import commands.mesh.delete_ : MeshDelete;
 import math : Vec3;
 import mesh : makeGridPlane;

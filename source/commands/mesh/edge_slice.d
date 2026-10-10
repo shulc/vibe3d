@@ -1,4 +1,6 @@
 module commands.mesh.edge_slice;
+import mesh_edit_replay : apply, revert;
+import mesh_edge_slice : EdgeSliceResult, edgeSliceEx;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;

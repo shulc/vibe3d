@@ -67,7 +67,7 @@ private string arraySnapshotSite(bool replacement) {
     import std.file : readText;
     import std.string : indexOf, split;
     import std.array : join;
-    auto source = readText("packages/common/source/mesh.d");
+    auto source = readText("packages/mesh/source/mesh.d");
     auto arrayStart = source.indexOf("size_t arrayFacesGrid(");
     assert(arrayStart >= 0, "snapshot read guard: arrayFacesGrid owner exists");
     auto body = source[cast(size_t)arrayStart .. $];
@@ -143,7 +143,7 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// SECOND SITE — the weld/dedup tail of `arrayFacesGrid`, packages/common/source/mesh.d.
+// SECOND SITE — the weld/dedup tail of `arrayFacesGrid`, packages/mesh/source/mesh.d.
 //
 // WHY A SEPARATE CELL. The fix landed in two places and the cell above drives
 // only one of them: with the array site reverted to its

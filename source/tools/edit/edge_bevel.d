@@ -13,6 +13,7 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
 import math;
+import spatial : Viewport;
 import editmode : EditMode;
 import params : Param;
 import handler : CubicArrow, ToolHandles, HandleState, HandlePart, firstHitPart,

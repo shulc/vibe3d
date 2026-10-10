@@ -16,7 +16,8 @@ import display_sync : activeMeshResolver;
 import document : primaryModelSpaceResolver;
 import editmode : EditMode;
 import falloff : evaluateFalloff;
-import math : ModelSpace, Vec3, aimSpace, projectToWindowFull;
+import math : Vec3;
+import spatial : ModelSpace, aimSpace, projectToWindowFull;
 import mesh : Mesh, makeCube;
 import operator : VectorStack;
 import toolpipe.packets : FalloffPacket, FalloffShape, FalloffType,

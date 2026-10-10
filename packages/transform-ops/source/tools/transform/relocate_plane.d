@@ -4,7 +4,8 @@ module tools.transform.relocate_plane;
 // create click law (`create_common.screenToPlacementWorld`): pinned K-W W2a,
 // unpinned K-W3 (task 9476, `tests/test_create_click_plane_rule.d` W3a / W3b).
 
-import math : Vec3, Viewport, isAxisView, dot;
+import math : Vec3, dot;
+import spatial : Viewport, isAxisView;
 import std.math : abs;
 
 import viewgrid : vectorSnap, axisComp, withAxisComp;

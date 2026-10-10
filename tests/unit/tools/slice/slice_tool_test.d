@@ -14,6 +14,7 @@ import tool;
 import mesh;
 import mesh_ops.cut;
 import math;
+import spatial : ModelSpace;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
 import shader : Shader, LitShader;

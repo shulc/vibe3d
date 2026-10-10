@@ -32,6 +32,7 @@
 // exactly one vertex on the +X side and asserts, FIRST, that its partner is
 // unselected and that the forward moved it anyway.
 module tests.unit.commands.mesh.symmetry_delta_test;
+import mesh_edit_replay : apply, revert;
 
 import std.format : format;
 
@@ -426,15 +427,15 @@ unittest {
         assert(armedOf(c), name ~ ": nothing recorded");
         auto d = recordedOf(c);
 
-        assert(d.revert(*m), name ~ ": delta.revert");
+        assert((*d).revert(*m), name ~ ": delta.revert");
         assert(planes(m) == pre, name ~ ": delta.revert must land on pre");
-        assert(d.apply(*m), name ~ ": delta.apply");
+        assert((*d).apply(*m), name ~ ": delta.apply");
         assert(planes(m) == post,
             name ~ ": replaying the recorded delta FORWARD does not land on "
           ~ "the post-op mesh. `posAfter` is wrong. No cell on the command "
           ~ "path can see this — redo re-runs the kernel — so without this "
           ~ "assert `posAfter` is a presence bit.");
-        assert(d.revert(*m), name ~ ": delta.revert (second)");
+        assert((*d).revert(*m), name ~ ": delta.revert (second)");
         assert(planes(m) == pre,
             name ~ ": the delta is not idempotent under apply/revert.");
     }

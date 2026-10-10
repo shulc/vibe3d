@@ -1,7 +1,8 @@
 module bvh_pick;
 
 import bvh.c;
-import math : Vec3, Viewport, screenRay, screenPointToRay, cross, ModelSpace;
+import math : Vec3, cross;
+import spatial : Viewport, screenRay, screenPointToRay, ModelSpace;
 import mesh : Mesh;
 import mesh_gpu : GpuMesh;
 import perf_probe : g_perf, Cat, g_fc;

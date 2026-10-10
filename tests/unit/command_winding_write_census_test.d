@@ -5,7 +5,7 @@
 // WHY THIS CENSUS EXISTS AND WHY IT IS A NEW ZONE. §5.3's "other audit" — six
 // rows, three revisions — enumerates the raw `faces._store = …` / `faces = …` /
 // `faces[fi] = …` sites that reach no op-log hook, and its needle scans
-// `packages/common/source/mesh.d` and `source/mesh_ops/**`. It NEVER LOOKED IN
+// `packages/mesh/source/mesh.d` and `source/mesh_ops/**`. It NEVER LOOKED IN
 // `source/commands/**`. `mesh.split_edge` carried its own open-coded splice
 // (`face = face[0 .. k + 1] ~ vm ~ face[k + 1 .. $]`) inside `evaluate` for the
 // whole life of that audit, and no row named it; the audit's own claim to be
@@ -182,7 +182,7 @@ unittest // no command writes a face winding by hand
              ~ "which reads its own before-image and pairs the per-corner "
              ~ "payload.\n"
              ~ "  §5.3's other audit CANNOT see this: its needle scans "
-             ~ "packages/common/source/mesh.d and source/mesh_ops/** only, which is how "
+             ~ "packages/mesh/source/mesh.d and source/mesh_ops/** only, which is how "
              ~ "split_edge's splice survived three revisions of it.",
                indexed, firstIndexed, indexedFile.baseName));
 

@@ -10,7 +10,8 @@ module tests.unit.snap_guide_registry_test;
 import std.math : PI, round, sqrt;
 import std.format : format;
 
-import math : ModelSpace, Vec3, Viewport, lookAt, perspectiveMatrix, projectToWindowFull;
+import math : Vec3, lookAt, perspectiveMatrix;
+import spatial : ModelSpace, Viewport, projectToWindowFull;
 import mesh : Mesh;
 import snap : SnapResult, invalidateSnapGrids, snapCursor;
 import toolpipe.guide : GuideDrawState, SnapGuide;

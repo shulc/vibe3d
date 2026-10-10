@@ -63,6 +63,7 @@
 //
 // LANE: `dub test --config=tests`.
 module tests.unit.gesture_carrier_interface_test;
+import mesh_edit_replay : apply, revert;
 
 import change_bus      : changeBus;
 import command         : Command;

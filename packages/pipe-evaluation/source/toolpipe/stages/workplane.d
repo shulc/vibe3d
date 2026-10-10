@@ -4,7 +4,8 @@ import std.math : sin, cos, PI, abs;
 import std.conv : to;
 import std.format : format;
 
-import math : Vec3, Viewport;
+import math : Vec3;
+import spatial : Viewport;
 import toolpipe.stage    : Stage, TaskCode, ordWork;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : WorkplanePacket;

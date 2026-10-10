@@ -8,8 +8,8 @@ module tests.unit.document_test;
 
 import mesh    : Mesh;
 import seltype : SelMode;
-import math    : Vec3, identityMatrix, translationMatrix, matrixFromEulerZYX,
-                 pivotScaleMatrix, matMul4, ModelSpace;
+import math : Vec3, identityMatrix, translationMatrix, matrixFromEulerZYX, pivotScaleMatrix, matMul4;
+import spatial : ModelSpace;
 import std.conv : to;
 import document;
 
@@ -426,7 +426,8 @@ unittest {  // projectionSpace's forward-projection identity, exercised through
     // the PRODUCTION factory (math.d's own unittest covers the general
     // primitive; this pins document.ItemXform.modelSpace() specifically).
     import std.math : PI, isClose;
-    import math : projectionSpace, projectToWindow, lookAt, perspectiveMatrix, Viewport;
+    import math : lookAt, perspectiveMatrix;
+import spatial : projectionSpace, projectToWindow, Viewport;
 
     ItemXform x;
     x.pos = Vec3(2, 0, -1);
@@ -540,7 +541,7 @@ unittest {  // the quadratic-oracle regression. `foregroundLayersInto` used to
 // ===========================================================================
 // TASK 1906 STAGE 3 — `Layer` MINTS AN IDENTITY AND REGISTERS IT.
 //
-// `packages/common/source/mesh_dirty.d`'s own ABA cell proves the LAW (a changed birth at an
+// `packages/mesh-change/source/mesh_dirty.d`'s own ABA cell proves the LAW (a changed birth at an
 // address advances every watcher for it). This proves the other half — that
 // the law is actually wired to the object whose address reuse is the hazard —
 // and it is a separate cell because the two fail for different reasons: the

@@ -4,7 +4,7 @@
 // T-junction, a cut across one shared face, endpoint reuse, the mixed
 // endpoint/interior pair, the KEPT degenerate-chain split, the TRUE no-op
 // with its rollback, the out-of-range guards, and the points-only arm. Task
-// 2910 step 3 moves the CODE to `packages/common/source/mesh_edge_slice.d`; these tests are
+// 2910 step 3 moves the CODE to `packages/mesh-ops/source/mesh_edge_slice.d`; these tests are
 // already where they will still belong.
 //
 // These blocks stood in the body of `struct Mesh` until task 3160 -- step 1

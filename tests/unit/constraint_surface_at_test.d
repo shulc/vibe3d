@@ -14,7 +14,8 @@ import std.format : format;
 import std.math   : fabs;
 
 import bvh_pick   : SurfaceHit;
-import math       : Vec3, Viewport, ModelSpace, lookAt, orthographicMatrix, screenPointToRay;
+import math : Vec3, lookAt, orthographicMatrix;
+import spatial : Viewport, ModelSpace, screenPointToRay;
 import mesh       : Mesh;
 import snap       : setBackgroundSnapSources;
 import toolpipe.stages.constrain : ConstrainStage;
@@ -314,7 +315,7 @@ version (PerspectiveGuideFocused) {} else unittest {
 // Perspective point guide: original rolled camera and faceted surface (9528).
 unittest {
     import view : View;
-    import math : Orientation;
+    import spatial : Orientation;
     import drag : HandleDrag, DragFrame, DragKind;
     import toolpipe.packets : ConstrainGeom;
     import std.file : readText;
@@ -366,7 +367,7 @@ unittest {
         cs.handle=true;cs.enabled=false;assert(cs.componentGuide(u,vp).acceptedMask==0,"ORBIT_DISABLED: same hittable guide declines");
     }
     cs.enabled=true;
-    import math : projectToWindowFull, screenPointToRay;
+    import spatial : projectToWindowFull, screenPointToRay;
     const missInput=Vec3(2,0,0);float mx,my,mz;
     assert(projectToWindowFull(missInput,vp,mx,my,mz),"ORBIT_MISS_PREMISE: visible input reaches the provider");
     Vec3 missOrg,missDir;screenPointToRay(mx,my,vp,missOrg,missDir);SurfaceHit missHit;

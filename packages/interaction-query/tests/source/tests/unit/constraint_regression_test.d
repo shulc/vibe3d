@@ -1,7 +1,8 @@
 module tests.unit.constraint_regression_test;
 
 import constraint;
-import math : Vec3, Viewport;
+import math : Vec3;
+import spatial : Viewport;
 import toolpipe.packets : SnapPacket, ConstrainHitPacket, HoverTargetKind;
 
 

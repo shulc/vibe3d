@@ -3,8 +3,8 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.tools.create.create_common_test;
 
-import math : Vec3, Viewport, dot, isOrtho, matrixMirrorsWinding, rayPlaneIntersect,
-              screenPointToRay;
+import math : Vec3, dot, matrixMirrorsWinding, rayPlaneIntersect;
+import spatial : Viewport, isOrtho, screenPointToRay;
 import std.math : abs, cos, sin;
 import toolpipe.pipeline       : g_pipeCtx;
 import toolpipe.packets        : SubjectPacket, WorkplanePacket, SnapPacket;
@@ -19,7 +19,7 @@ import document : primaryModelSpace;
 import tools.create.create_common;
 
 unittest {
-    import math : Viewport;
+    import spatial : Viewport;
 
     // Helper: build a Viewport whose view matrix has given column-major
     // elements. Only elements [2], [6], [10] (the forward-vector components)
@@ -128,7 +128,8 @@ unittest {
 
 unittest { // perspective is untouched: the ray still leaves the eye
     import std.math : abs;
-    import math : perspectiveMatrix, screenRay;
+    import math : perspectiveMatrix;
+import spatial : screenRay;
 
     Viewport vp;
     vp.width = 640; vp.height = 480;

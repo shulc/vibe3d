@@ -119,6 +119,8 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — run the cells in
 // isolation when scoring a mutation.
 module tests.unit.undo_parity_l4_test;
+import mesh_edit_replay : apply, revert;
+import mesh_edge_slice : edgeIndexOfVerts, edgeSliceEx;
 
 import std.format : format;
 import std.json   : JSONValue, parseJSON;

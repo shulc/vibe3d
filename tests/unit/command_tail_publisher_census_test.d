@@ -2,8 +2,8 @@
 // be a DELIVERING one (task 1932, closing task 1906 stage 2a review item 1).
 //
 // WHAT THIS GATE IS FOR. `Mesh` has TWO accumulate-only funnels —
-// `noteChange` (`packages/common/source/mesh.d:2246`) and `noteSelectionChange`
-// (`packages/common/source/mesh.d:2610`, "the SECOND of two funnels", `:2625`) — and neither
+// `noteChange` (`packages/mesh/source/mesh.d:2246`) and `noteSelectionChange`
+// (`packages/mesh/source/mesh.d:2610`, "the SECOND of two funnels", `:2625`) — and neither
 // one registers with `deliverPending`/the batch close on its own. A command
 // whose only mesh-side calls are accumulate-only therefore delivers NOTHING
 // on its own commits and rides only the once-per-frame drain (or, since task

@@ -56,7 +56,8 @@ module tests.unit.facing_mirror_determinant_test;
 
 import std.format : format;
 
-import math       : Vec3, ModelSpace, transformPoint, frontFacingLocal;
+import math : Vec3, transformPoint, frontFacingLocal;
+import spatial : ModelSpace;
 import item_xform : ItemXform;
 
 // ---------------------------------------------------------------------------

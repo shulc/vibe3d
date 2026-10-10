@@ -4,7 +4,8 @@
 module tests.unit.bvh_pick_test;
 
 import bvh.c;
-import math : Vec3, Viewport, screenRay, screenPointToRay, cross, ModelSpace;
+import math : Vec3, cross;
+import spatial : Viewport, screenRay, screenPointToRay, ModelSpace;
 import mesh : Mesh;
 import mesh_gpu : GpuMesh;
 import perf_probe : g_perf, Cat, g_fc;
@@ -182,8 +183,8 @@ unittest {
     // independent of `document.ItemXform.modelSpace()` (this module must not
     // import document.d — see the module header note).
     import std.math : PI;
-    import math : lookAt, perspectiveMatrix, translationMatrix,
-                  pivotRotationMatrix, matMul4, projectToWindow;
+    import math : lookAt, perspectiveMatrix, translationMatrix, pivotRotationMatrix, matMul4;
+import spatial : projectToWindow;
 
     Mesh src;
     src.vertices = [

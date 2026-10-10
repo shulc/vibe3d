@@ -135,7 +135,7 @@ private DependencyGraph readDependencyGraph(string path)
         if (importerField[$ - 1] == ')' && pathStart < importerField.length - 1)
         {
             const sourcePath = importerField[pathStart .. $ - 1];
-            if (sourcePath.startsWith("source/", "packages/common/source/", "packages/mesh-ops/source/", "packages/interchange/source/", "packages/interaction-query/source/", "packages/pipe-evaluation/source/", "packages/tool-state/source/", "packages/transform-ops/source/", "packages/creation-ops/source/", "packages/alignment-ops/source/", "packages/input-events/source/", "packages/display-policy/source/", "packages/viewport-gpu/source/", "packages/subpatch-preview/source/"))
+            if (sourcePath.startsWith("source/", "packages/common/source/", "packages/mesh-ops/source/", "packages/interchange/source/", "packages/interaction-query/source/", "packages/pipe-evaluation/source/", "packages/tool-state/source/", "packages/transform-ops/source/", "packages/creation-ops/source/", "packages/alignment-ops/source/", "packages/input-events/source/", "packages/display-policy/source/", "packages/viewport-gpu/source/", "packages/subpatch-preview/source/", "packages/edit-contracts/source/", "packages/mesh-change/source/", "packages/mesh-contracts/source/", "packages/mesh-edit-log/source/", "packages/mesh-edit-replay/source/", "packages/mesh-snapshot/source/", "packages/mesh-topology/source/", "packages/mesh/source/", "packages/profiling/source/", "packages/spatial/source/", "util/log/source/", "util/math/source/", "util/parallel/source/", "util/plane-bytes/source/", "util/screen-buckets/source/"))
             {
                 result.ours[importer] = true;
                 result.sourcePath[importer] = sourcePath.idup;
@@ -382,7 +382,7 @@ set -o pipefail
 cd "$1"
 flags=$(dub describe --config=web \
   --data=import-paths,string-import-paths,versions,debug-versions 2>"$2")
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/common/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/common/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source packages/edit-contracts/source packages/mesh-change/source packages/mesh-contracts/source packages/mesh-edit-log/source packages/mesh-edit-replay/source packages/mesh-snapshot/source packages/mesh-topology/source packages/mesh/source packages/profiling/source packages/spatial/source util/log/source util/math/source util/parallel/source util/plane-bytes/source util/screen-buckets/source -name '*.d' -print)
 SH";
     const run = execute(["bash", "-c", compileGraph, "w16-ld-deps",
                          repoRoot, errPath, depsPath],

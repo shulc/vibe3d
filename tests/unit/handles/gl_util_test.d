@@ -9,6 +9,7 @@ import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import gl_thread_guard : glThreadGuard;
 import shader : seedSharedFragUniforms;
 import math;
+import spatial : Viewport, isAxisView, lockedViewAxis;
 import handles.gl_util;
 
 unittest {

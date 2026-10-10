@@ -9,6 +9,7 @@ version (web) {
 }
 import shader : seedSharedFragUniforms;
 import math;
+import spatial : Viewport;
 
 // ---------------------------------------------------------------------------
 // Thick-line shader state — set once from app.d via initThickLineProgram().

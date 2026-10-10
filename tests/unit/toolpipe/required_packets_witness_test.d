@@ -18,7 +18,7 @@
 // de-spam gate in `checkRequiredPackets` is keyed by
 // `typeid(op).name ~ "|" ~ kind.to!string` in a PROCESS-WIDE `bool[string]`
 // (`log.g_seenOnce`), reset only by the test-only `resetLogForTest()`
-// (packages/common/source/log.d — made non-private for this Stage, still compiled only
+// (util/log/source/log.d — made non-private for this Stage, still compiled only
 // under `version (unittest)`). Reusing one class across cases would let a
 // later case silently ride an earlier case's already-consumed key and pass
 // for the wrong reason — the shape CLAUDE.md's "a check that cannot come
@@ -57,7 +57,7 @@ unittest {
     // This case deliberately provokes the WARNING `checkRequiredPackets`
     // logs — expected, asserted on below via `snapshot()`. Raise the
     // stderr floor so it doesn't also echo to the test-run console
-    // (precedent: packages/common/source/log.d's own unittests, e.g. around line 228).
+    // (precedent: util/log/source/log.d's own unittests, e.g. around line 228).
     auto savedLevel = g_stderrMinLevel;
     g_stderrMinLevel = LogLevel.Error;
     scope(exit) g_stderrMinLevel = savedLevel;

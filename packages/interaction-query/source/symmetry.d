@@ -1,4 +1,5 @@
 module symmetry;
+static import spatial;
 
 import std.algorithm : sort, max;
 import std.math      : abs;
@@ -717,8 +718,8 @@ void writeMovePositions(ref Mesh mesh, const(SymmetryPacket)* sp,
 // 9504: own-partner hit uses the current reflected point, then the existing
 // symmetric weld owns absorption on the plane. The query retains client reach.
 bool moveMirrorCenter(const ref SymmetryPacket sp,uint source,Vec3 point,
-        math.ModelSpace space,const ref math.Viewport view,float reach,ref Vec3 center) {
-    import math : projectToWindowFull;
+        spatial.ModelSpace space,const ref spatial.Viewport view,float reach,ref Vec3 center) {
+    import spatial : projectToWindowFull;
     if(source>=sp.pairOf.length || sp.pairOf[source]<0) return false;
     float ax,ay,az,bx,by,bz;
     if(!projectToWindowFull(space.toWorldPoint(point),view,ax,ay,az)

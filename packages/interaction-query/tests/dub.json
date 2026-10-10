@@ -2,24 +2,34 @@
   "name": "vibe3d-interaction-query-tests",
   "license": "MIT",
   "targetType": "executable",
-  "sourcePaths": [
-    "../source"
-  ],
+  "sourcePaths": [],
   "importPaths": [
     "source",
     "../source"
   ],
   "sourceFiles": [
-    "source/tests/unit/snap_test.d",
-    "source/tests/unit/snap_election_corpus_test.d",
+    "../source/constraint.d",
+    "../source/hover_state.d",
+    "../source/mesh_bbox.d",
+    "../source/mesh_visibility.d",
+    "../source/path.d",
+    "../source/snap.d",
+    "../source/snap_election.d",
+    "../source/surface_pick.d",
+    "../source/symmetry.d",
+    "../source/toolpipe/guide.d",
+    "../source/viewgrid.d",
+    "../source/workplane_fit.d",
+    "source/tests/unit/constraint_regression_test.d",
     "source/tests/unit/constraint_test.d",
     "source/tests/unit/path_test.d",
-    "source/tests/unit/workplane_fit_test.d",
-    "source/tests/unit/viewgrid_test.d",
-    "source/tests/unit/constraint_regression_test.d",
+    "source/tests/unit/snap_election_corpus_test.d",
+    "source/tests/unit/snap_regression_test.d",
+    "source/tests/unit/snap_test.d",
     "source/tests/unit/symmetry_regression_test.d",
     "source/tests/unit/viewgrid_regression_test.d",
-    "source/tests/unit/snap_regression_test.d"
+    "source/tests/unit/viewgrid_test.d",
+    "source/tests/unit/workplane_fit_test.d"
   ],
   "dependencies": {
     "vibe3d-common": {
@@ -28,10 +38,28 @@
     "d-bvh": {
       "version": "e1a8f41501f94a28dbac99efbea850ed098fa728",
       "repository": "git+https://github.com/shulc/D-BVH.git"
+    },
+    "vibe3d-edit-contracts": {
+      "path": "../../edit-contracts"
+    },
+    "vibe3d-math": {
+      "path": "../../../util/math"
+    },
+    "vibe3d-mesh": {
+      "path": "../../mesh"
+    },
+    "vibe3d-mesh-change": {
+      "path": "../../mesh-change"
+    },
+    "vibe3d-profiling": {
+      "path": "../../profiling"
+    },
+    "vibe3d-screen-buckets": {
+      "path": "../../../util/screen-buckets"
+    },
+    "vibe3d-spatial": {
+      "path": "../../spatial"
     }
-  },
-  "subConfigurations": {
-    "vibe3d-common": "modeling-noai"
   },
   "toolchainRequirements": {
     "dmd": ">=2.111.0",
@@ -171,7 +199,18 @@
   },
   "configurations": [
     {
-      "name": "query"
+      "name": "query",
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests",
+        "vibe3d-edit-contracts": "isolated-tests",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-mesh-change": "isolated-tests",
+        "vibe3d-profiling": "isolated-tests",
+        "vibe3d-screen-buckets": "isolated-tests",
+        "vibe3d-spatial": "isolated-tests"
+      }
     }
-  ]
+  ],
+  "dflags": []
 }

@@ -136,8 +136,8 @@ drop 0 1 4066 the assert(hub !is null) added by row 8's MacroRecorder constructo
 drop 0 3 4062 the oneStringArg unittest in source/http_providers.d, deleted with the helper when the viewport commands began declaring their own argument; every spelling it pinned is re-pinned over the real commands in tests/unit/command_bindargs_{,parity_}test.d
 
 # TASK 4100 (review round). `commit_seam_census_test.d`'s §2.6 widening block
-# used to name each row's declaring file as a literal path — a `"packages/common/source/mesh.d"`
-# default on the row struct plus three `"packages/common/source/mesh_edge_slice.d"` overrides —
+# used to name each row's declaring file as a literal path — a `"packages/mesh/source/mesh.d"`
+# default on the row struct plus three `"packages/mesh-ops/source/mesh_edge_slice.d"` overrides —
 # which is the move-fragility the rest of this task removed everywhere else.
 # The file is now DERIVED from the row's own `publicDecl`, so three asserts go
 # (`exists(meshPath)`, `exists(esPath)`, and `w.declFile in declSrc`, which only

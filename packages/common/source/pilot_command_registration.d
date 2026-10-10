@@ -10,7 +10,7 @@ import commands.select.invert : SelectInvert;
 import commands.history.undo : HistoryUndo;
 import commands.history.redo : HistoryRedo;
 import editmode : EditMode;
-import math : Viewport;
+import spatial : Viewport;
 import mesh : Mesh;
 import view : View;
 

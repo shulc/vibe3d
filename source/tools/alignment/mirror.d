@@ -11,6 +11,7 @@ import tools.topology_step;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : ModelSpace, Viewport, screenPointToRay;
 import params : Param, IntEnumEntry;
 import command : Command, CmdFlags;
 import command_history : CommandHistory;

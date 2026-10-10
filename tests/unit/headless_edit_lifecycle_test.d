@@ -1,4 +1,5 @@
 module tests.unit.headless_edit_lifecycle_test;
+import mesh_edit_replay : apply, revert;
 
 import command : Command;
 import command_history;

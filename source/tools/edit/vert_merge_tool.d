@@ -12,6 +12,7 @@ import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : Viewport;
 import editmode : EditMode;
 import params : Param;
 import drag : viewWorldPerPixel;

@@ -45,6 +45,7 @@ import d_imgui.imgui_h;
 import imgui_impl_sdl2;
 import imgui_impl_opengl3;
 import math;
+import spatial : ModelSpace, Orientation, Viewport, aimSpace, isOrtho;
 import mesh;
 import mesh_gpu : DisplayPayloadBasis, kFaceStride, kFaceFlatNormalOffset,
     kFaceSmoothNormalOffset;

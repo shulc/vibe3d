@@ -13,6 +13,7 @@
 ///     boundary so the result stays manifold (no T-junctions across
 ///     refined/un-refined faces).
 module subpatch_osd;
+import mesh_visibility : visibleVertices;
 
 import std.math : sqrt;
 import math : Vec3;

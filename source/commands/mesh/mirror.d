@@ -1,4 +1,5 @@
 module commands.mesh.mirror_;
+import mesh_edit_replay : apply, revert;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;

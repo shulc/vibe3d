@@ -21,9 +21,10 @@ module tools.transform.xform_kernels;
 // "snapshot at drag start" invariant the tools already maintain via
 // captureFalloffForDrag / captureSymmetryForDrag.
 
-import math    : Vec3, Viewport, dot, cross, AimViewport, rotateAboutPivot;
-import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
-                 matMul4, identityMatrix, ModelSpace, pivotRotationMatrix;
+import math : Vec3, dot, cross, rotateAboutPivot;
+import spatial : Viewport, AimViewport;
+import math : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine, matMul4, identityMatrix, pivotRotationMatrix;
+import spatial : ModelSpace;
 import mesh    : Mesh, MeshMap;
 import tools.transform.morph_route : MorphRoute, storeRouted;
 import falloff : evaluateFalloff;

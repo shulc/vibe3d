@@ -1,4 +1,5 @@
 module commands.mesh.remove_;
+import mesh_edit_replay : captureSelectedEdgeEnds, restoreSelectedEdgeEnds, apply, revert;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -6,9 +7,7 @@ import mesh;
 import view;
 import editmode;
 import snapshot : SelectionSnapshot;
-import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
-                        captureSelectedEdgeEnds, restoreSelectedEdgeEnds,
-                        acceptRecordedEdit;
+import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope, acceptRecordedEdit;
 
 /// Tier 1.1: "Remove" for vertices / edges without dissolve /
 /// `poly.remove`, dispatched by edit mode). Remove and Delete are

@@ -12,16 +12,42 @@
     "../unit/standalone_application_test.d"
   ],
   "importPaths": [],
-  "dflags": [
-    "-i"
-  ],
+  "dflags": [],
   "dependencies": {
     "vibe3d-common": {
       "path": "../../packages/common"
+    },
+    "vibe3d-mesh": {
+      "path": "../../packages/mesh"
+    },
+    "vibe3d-mesh-change": {
+      "path": "../../packages/mesh-change"
+    },
+    "vibe3d-mesh-edit-log": {
+      "path": "../../packages/mesh-edit-log"
+    },
+    "vibe3d-mesh-edit-replay": {
+      "path": "../../packages/mesh-edit-replay"
+    },
+    "vibe3d-mesh-snapshot": {
+      "path": "../../packages/mesh-snapshot"
+    },
+    "vibe3d-edit-contracts": {
+      "path": "../../packages/edit-contracts"
+    },
+    "vibe3d-mesh-topology": {
+      "path": "../../packages/mesh-topology"
+    },
+    "vibe3d-math": {
+      "path": "../../util/math"
+    },
+    "vibe3d-spatial": {
+      "path": "../../packages/spatial"
     }
   },
   "toolchainRequirements": {
-    "dmd": ">=2.111.0"
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
   },
   "configurations": [
     {
@@ -29,6 +55,15 @@
     }
   ],
   "subConfigurations": {
-    "vibe3d-common": "modeling-noai"
+    "vibe3d-common": "isolated-tests",
+    "vibe3d-mesh": "isolated-tests",
+    "vibe3d-mesh-change": "isolated-tests",
+    "vibe3d-mesh-edit-log": "isolated-tests",
+    "vibe3d-mesh-edit-replay": "isolated-tests",
+    "vibe3d-mesh-snapshot": "isolated-tests",
+    "vibe3d-edit-contracts": "isolated-tests",
+    "vibe3d-mesh-topology": "isolated-tests",
+    "vibe3d-math": "isolated-tests",
+    "vibe3d-spatial": "isolated-tests"
   }
 }

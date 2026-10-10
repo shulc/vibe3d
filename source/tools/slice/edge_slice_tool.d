@@ -1,4 +1,5 @@
 module tools.slice.edge_slice_tool;
+import mesh_edge_slice : EdgeSliceResult, addEdgePoint, edgeIndexOf, edgeSliceEx, edgeSliceReachable;
 import display_state : DrawPlan;
 
 import bindbc.sdl;
@@ -13,6 +14,7 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : AimViewport, Viewport, aimSpace, projectToWindowFull, screenPointToRay;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
 import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale, hoverAtPress;

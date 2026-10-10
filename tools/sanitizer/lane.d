@@ -1820,7 +1820,7 @@ void cmdTsanParallelCompletion() {
     // The behavioural probe imports the production wrapper. This source census
     // closes the other half: a green helper test must not survive production
     // being rewired around it.
-    auto meshSource = readText("packages/common/source/mesh.d");
+    auto meshSource = readText("packages/mesh/source/mesh.d");
     auto begin = meshSource.indexOf("    void buildLoops() {");
     auto end = meshSource.indexOf("    // Make Polygon", begin);
     if (begin < 0 || end < 0 || end <= begin)
@@ -1860,7 +1860,7 @@ void cmdTsanParallelCompletion() {
     run([ldc, "-g", "-O0", "--fsanitize=thread",
          "--enable-asserts=false", "--frame-pointer=all",
          "--d-version=SanitizerThreadPreinit", "-Isource",
-         "-of=" ~ probeBinary, probeSource, "packages/common/source/tsan_annotate.d",
+         "-of=" ~ probeBinary, probeSource, "util/parallel/source/tsan_annotate.d",
          "source/tsan_preinit.d"], env);
     if (!exists(probeBinary))
         fail("tsan-parallel-completion: compiler produced no " ~ probeBinary);

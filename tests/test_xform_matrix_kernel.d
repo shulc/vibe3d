@@ -24,9 +24,8 @@
 import std.stdio;
 import std.math : PI, fabs, sqrt;
 
-import math : Vec3, Viewport, identityMatrix, translationMatrix,
-              pivotRotationMatrix, pivotScaleMatrixBasis, normalize, lookAt,
-              perspectiveMatrix, AimViewport, aimSpace, ModelSpace;
+import math : Vec3, identityMatrix, translationMatrix, pivotRotationMatrix, pivotScaleMatrixBasis, normalize, lookAt, perspectiveMatrix;
+import spatial : Viewport, AimViewport, aimSpace, ModelSpace;
 import mesh : Mesh;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform.transform : TransformTool;

@@ -21,6 +21,7 @@ import mesh_gpu : GpuMesh;
 import editmode;
 import seltype : SelType;
 import math;
+import spatial : ModelSpace, Viewport, projectToWindowFull;
 import shader;
 
 import ImGui = d_imgui;

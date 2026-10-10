@@ -7,6 +7,7 @@ import std.format : format;
 import std.stdio : writeln, stderr;
 import std.process : environment;
 import math;
+import spatial : ModelSpace, Viewport, projectToWindow;
 import mesh : Mesh;
 import document : primaryModelSpaceResolver, Layer, ItemXform;
 import seltype : SelMode;

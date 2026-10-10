@@ -15,6 +15,7 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.revolve;
 import math;
+import spatial : Viewport, screenPointToLocalRay;
 import editmode : EditMode;
 import params : Param;
 import shader : Shader, LitShader;

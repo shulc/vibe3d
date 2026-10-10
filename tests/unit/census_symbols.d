@@ -1336,7 +1336,7 @@ unittest {
     // GREEN FIRST, so the reddening cells below are read against a baseline
     // that is known to agree.
     LedgerHit[] exact = [
-        LedgerHit("Mesh.publishConfinedChange", "packages/common/source/mesh.d", 10, "x"),
+        LedgerHit("Mesh.publishConfinedChange", "packages/mesh/source/mesh.d", 10, "x"),
         LedgerHit("XfrmApplyImpl.applyFold", "source/tools/x.d", 20, "y"),
     ];
     assert(reconcile(rows, exact) == "", reconcile(rows, exact));
@@ -1371,7 +1371,7 @@ unittest {
     //    migration is caught; see the header for the wholesale case, which
     //    is a stated and accepted residual rather than a covered one.
     LedgerHit[] split = [
-        LedgerHit("Mesh.publishConfinedChange", "packages/common/source/mesh.d", 10, "x"),
+        LedgerHit("Mesh.publishConfinedChange", "packages/mesh/source/mesh.d", 10, "x"),
         LedgerHit("XfrmApplyImpl.applyFold", "source/tools/a.d", 20, "y"),
         LedgerHit("XfrmApplyImpl.applyFold", "source/tools/b.d", 30, "y"),
     ];
@@ -1480,7 +1480,7 @@ unittest {
 
     size_t nFiles = 0, nWithMembers = 0, nLines = 0;
     auto bad = appender!string;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++nFiles;

@@ -59,6 +59,7 @@
 // cell, in isolation.
 // ===========================================================================
 module tests.unit.uv_weight_delta_test;
+import mesh_edit_replay : apply, revert;
 
 import std.format : format;
 import std.json   : parseJSON;

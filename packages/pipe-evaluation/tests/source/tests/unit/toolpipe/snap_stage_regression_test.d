@@ -34,8 +34,8 @@ import operator : VectorStack;
 //      IS cleared there, and the difference has to be deliberate.
 // ---------------------------------------------------------------------------
 unittest {
-    import math             : Vec3, Viewport, lookAt, perspectiveMatrix,
-                              projectToWindowFull;
+    import math : Vec3, lookAt, perspectiveMatrix;
+import spatial : Viewport, projectToWindowFull;
     import mesh             : Mesh;
     import toolpipe.packets : SubjectPacket;
     import snap             : invalidateSnapGrids;

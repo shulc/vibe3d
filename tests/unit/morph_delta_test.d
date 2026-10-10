@@ -48,6 +48,7 @@
 // cell, in isolation.
 // ===========================================================================
 module tests.unit.morph_delta_test;
+import mesh_edit_replay : apply, revert;
 
 import std.format : format;
 import std.json   : parseJSON, JSONValue;

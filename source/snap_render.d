@@ -1,7 +1,7 @@
 module snap_render;
 
-import math : Vec3, Viewport, projectToWindowFull, ModelSpace,
-              AimViewport, aimSpace;
+import math : Vec3;
+import spatial : Viewport, projectToWindowFull, ModelSpace, AimViewport, aimSpace;
 import mesh : Mesh;
 import snap : SnapResult, snapSource, snapSourceSpace;
 import document : primaryModelSpace;

@@ -1,4 +1,6 @@
 module commands.mesh.split_face;
+import mesh_edit_replay : apply, revert;
+import mesh_edge_slice : splitFaceByVertices;
 
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;

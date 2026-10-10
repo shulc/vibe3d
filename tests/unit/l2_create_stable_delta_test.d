@@ -36,6 +36,9 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — when scoring a
 // mutation that should redden two cells for two reasons, stub the earlier one.
 module tests.unit.l2_create_stable_delta_test;
+import mesh_edit_replay : apply, revert;
+import mesh_ops.face_alignment : alignFacesByMask;
+import mesh_edge_slice : addEdgePoint, splitFaceByVertices;
 
 import std.conv   : to;
 import std.format : format;
@@ -845,7 +848,7 @@ unittest
     size_t moved;
     {
         auto ed = MeshEditBatch(m, MeshEditScope.Position);   // RECORDING
-        moved = ed.mesh.alignFacesByMask(all);
+        moved = ed.alignFacesByMask(all);
         d = ed.close();
     }
     assert(moved > 0,

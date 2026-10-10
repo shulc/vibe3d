@@ -56,7 +56,8 @@ unittest {
     import core.exception : AssertError;
     import std.exception  : assertThrown, assertNotThrown;
     import handles.gl_util : drawWorldSegments;
-    import math : Vec3, Viewport;
+    import math : Vec3;
+import spatial : Viewport;
     Viewport vp;
     Vec3[3] odd;
     assertNotThrown!AssertError(drawWorldSegments(odd[0 .. 2], vp, Vec3(1, 1, 1), 1.0f, 0));

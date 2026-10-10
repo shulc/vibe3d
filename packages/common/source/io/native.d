@@ -9,6 +9,7 @@ import std.algorithm : sort;
 import mesh;
 static import mesh_ = mesh;   // disambiguates mesh.kindInfo(MapKind) from document.kindInfo(LayerKind)
 import math;
+import spatial : ModelSpace;
 import document : Document, Layer, ItemXform, sanitizeItemXform,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
                   ItemKind, ImageData, ImagePlaneData,

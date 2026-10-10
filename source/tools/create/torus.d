@@ -6,6 +6,7 @@ import operator : VectorStack;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : Viewport;
 import params : Param;
 import handler : gizmoSize;
 import shader : LitShader;

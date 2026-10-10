@@ -2,6 +2,7 @@
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.tools.edit.bridge_tool_test;
+import mesh_edit_replay : apply, revert;
 
 import bindbc.opengl;
 import bindbc.sdl;

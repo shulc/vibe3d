@@ -13,6 +13,7 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.poly_bevel;
 import math;
+import spatial : Viewport;
 import editmode : EditMode;
 import params : Param;
 import drag : viewWorldPerPixel;

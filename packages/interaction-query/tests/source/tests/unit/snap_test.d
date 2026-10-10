@@ -5,13 +5,8 @@ module tests.unit.snap_test;
 
 import std.math : sqrt, round, floor, isNaN;
 import core.sync.mutex : Mutex;
-import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
-              screenRay, screenPointToRay,
-              rayPlaneIntersect, pointInPolygon2D,
-              closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot,
-              closestPointOnLineToRay, isOrtho, viewPixelScale,
-              perpendicularFrame, rayTriangleIntersect,
-              closestPointOnTriangle2D, triangulatePolygonEarClip;
+import math : Vec3, rayPlaneIntersect, pointInPolygon2D, closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot, closestPointOnLineToRay, perpendicularFrame, rayTriangleIntersect, closestPointOnTriangle2D, triangulatePolygonEarClip;
+import spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull, screenRay, screenPointToRay, isOrtho, viewPixelScale;
 import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
@@ -1920,7 +1915,8 @@ unittest {
 // call site drives), not a white-box test of the closure itself.
 // ---------------------------------------------------------------------------
 unittest {
-    import math             : lookAt, perspectiveMatrix, translationMatrix, ModelSpace;
+    import math : lookAt, perspectiveMatrix, translationMatrix;
+import spatial : ModelSpace;
     import toolpipe.packets : SnapPacket, SnapType, SnapMode;
     import std.math         : PI, round, sqrt;
 

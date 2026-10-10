@@ -11,6 +11,7 @@ import tools.topology_step;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
+import spatial : ModelSpace, Viewport, screenPointToLocalRay, screenPointToRay;
 import editmode : EditMode;
 import params : Param;
 import handler : Arrow, BoxHandler, ToolHandles, gizmoSize;

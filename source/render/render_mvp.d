@@ -27,7 +27,8 @@ import d_imgui.imgui_h;
 import mesh : Mesh, Surface;
 import subpatch_preview : SubpatchPreview;
 import view : View, ProjKind;
-import math : Vec3, Viewport;
+import math : Vec3;
+import spatial : Viewport;
 // Modeling-side bus constants and the watcher masks (boundary-safe: render
 // may read modeling, never the reverse).
 import change_bus : MeshChangeAll, MeshEditScope;

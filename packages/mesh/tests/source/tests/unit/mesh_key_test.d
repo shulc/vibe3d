@@ -1,7 +1,7 @@
 // Cells for `mesh.MeshKey` and its terms (task 4060) — the type that folded
 // `MeshCacheKey` / `MeshStructKey` / `MeshTopoKey` into one template.
 //
-// OUT OF `packages/common/source/mesh.d` ON PURPOSE: neither cell needs a `private` symbol of
+// OUT OF `packages/mesh/source/mesh.d` ON PURPOSE: neither cell needs a `private` symbol of
 // that module, which is the only admission ticket an in-module unittest has
 // (CLAUDE.md, "Running Tests"; `tests/unit/unittest_source_ceiling_test.d`
 // enforces it and reddened when these two blocks were first written there).

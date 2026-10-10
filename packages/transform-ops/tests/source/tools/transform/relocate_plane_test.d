@@ -27,8 +27,8 @@ module tools.transform.relocate_plane_test;
 
 version (unittest) {
 
-import math : Vec3, Viewport, lookAt, perspectiveMatrix, orthographicMatrix,
-              normalize, lockedViewAxis;
+import math : Vec3, lookAt, perspectiveMatrix, orthographicMatrix, normalize;
+import spatial : Viewport, lockedViewAxis;
 import tools.transform.relocate_plane;
 import viewgrid : axisComp, dnint, niceOrigin;
 import std.math : abs, PI, tan;
@@ -262,7 +262,7 @@ unittest {
 }
 
 // -------------------------------------------------------------------------
-// 3. The axis-view recogniser (`math.lockedViewAxis`).
+// 3. The axis-view recogniser (`spatial.lockedViewAxis`).
 // -------------------------------------------------------------------------
 
 unittest { // the six axis presets are recognised, perspective is not

@@ -3,7 +3,8 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.toolpipe.packets_test;
 
-import math : Vec3, Viewport;
+import math : Vec3;
+import spatial : Viewport;
 import mesh : Mesh;
 import editmode : EditMode;
 import seltype : SelType;

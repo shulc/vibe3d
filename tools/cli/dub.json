@@ -11,12 +11,16 @@
   "dependencies": {
     "vibe3d-common": {
       "path": "../../packages/common"
+    },
+    "vibe3d-log": {
+      "path": "../../util/log"
     }
   },
   "toolchainRequirements": {
     "dmd": ">=2.111.0"
   },
   "subConfigurations": {
-    "vibe3d-common": "modeling-noai"
+    "vibe3d-common": "modeling-noai",
+    "vibe3d-log": "modeling-noai"
   }
 }
