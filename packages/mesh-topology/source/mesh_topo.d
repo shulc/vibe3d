@@ -17,15 +17,11 @@ module mesh_topo;
 // `import mesh : Loop;` / `mesh.VertexEdgeRange` and every other existing
 // spelling resolves unchanged. mesh_gpu is imported directly by its consumers.
 //
-// The only import back into mesh.d is `version (unittest)`: the two blocks at
-// the bottom (EdgeFaceRange's other-endpoint retry on a corrupted fan) build
-// a Mesh to reproduce the corruption, and they must live in THIS module
-// because they read EdgeFaceRange's private `_tryFrom`. Production code here
-// depends on nothing but the language.
+// Private corruption witnesses own Loop/adjacency slices (task 20262330);
+// the live Mesh integration witnesses transfer to core/tests. The only
+// downward dependency is log for the existing one-shot warning.
 // ---------------------------------------------------------------------------
 
-version (unittest) import mesh;
-version (unittest) import math : Vec3;
 
 /// Canonical UNDIRECTED edge key: the two vertex indices packed (min, max)
 /// into one ulong, min in the high word — so `key >> 32` is the smaller index
@@ -589,78 +585,140 @@ struct EdgeFaceRange {
 // no-op. The retry from the OTHER endpoint (whose own fan is untouched)
 // recovers the correct, verified-against-ground-truth face set.
 
-unittest { // corrupted fan elsewhere in the SAME hub vertex recovers a clean
-           // bystander edge's incident faces via the other-endpoint retry
-    Mesh m;
-    m.vertices = [
-        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,2,0), Vec3(-1,1,0), Vec3(-1,-1,0),
-        Vec3(1,-1,0), Vec3(9,9,0),
+unittest { // task 0394: private corrupted-fan witness uses owned slices.
+    const Loop[] loops = [
+        Loop(0u, 0u, 1u, 2u, 17u),
+        Loop(1u, 0u, 2u, 0u, ~0u),
+        Loop(2u, 0u, 0u, 1u, 3u),
+        Loop(0u, 1u, 4u, 5u, 2u),
+        Loop(2u, 1u, 5u, 3u, ~0u),
+        Loop(3u, 1u, 3u, 4u, ~0u),
+        Loop(0u, 2u, 7u, 8u, ~0u),
+        Loop(3u, 2u, 8u, 6u, ~0u),
+        Loop(4u, 2u, 6u, 7u, 9u),
+        Loop(0u, 3u, 10u, 11u, 8u),
+        Loop(4u, 3u, 11u, 9u, ~0u),
+        Loop(5u, 3u, 9u, 10u, 12u),
+        Loop(0u, 4u, 13u, 14u, 11u),
+        Loop(5u, 4u, 14u, 12u, ~0u),
+        Loop(6u, 4u, 12u, 13u, 15u),
+        Loop(0u, 5u, 16u, 17u, 14u),
+        Loop(6u, 5u, 17u, 15u, ~0u),
+        Loop(1u, 5u, 15u, 16u, 0u),
+        Loop(3u, 6u, 19u, 20u, ~0u),
+        Loop(0u, 6u, 20u, 18u, ~0u),
+        Loop(7u, 6u, 18u, 19u, ~0u),
     ];
-    m.faces = [
-        [0u,1u,2u],   // face0 -- query edge (0,1) lives here
-        [0u,2u,3u],   // face1
-        [0u,3u,4u],   // face2
-        [0u,4u,5u],   // face3
-        [0u,5u,6u],   // face4
-        [0u,6u,1u],   // face5 -- closes the fan back to vertex1
-        [3u,0u,7u],   // faceBad -- reuses spoke (0,3) in the SAME direction (3→0)
-                      // as face1's (3,0): a genuine same-direction shared edge,
-                      // corrupting the vertex-0 half-edge fan elsewhere.
+    const uint[2][] edges = [
+        [0u, 1u],
+        [1u, 2u],
+        [0u, 2u],
+        [2u, 3u],
+        [0u, 3u],
+        [3u, 4u],
+        [0u, 4u],
+        [4u, 5u],
+        [0u, 5u],
+        [5u, 6u],
+        [0u, 6u],
+        [1u, 6u],
+        [0u, 7u],
+        [3u, 7u],
     ];
-    m.rebuildEdgesFromFaces();
-    m.buildLoops();
-    m.resetSelection();
-
-    uint ei01 = m.edgeIndex(0, 1);
+    const uint[] vertLoop = [19u, 1u, 4u, 18u, 10u, 13u, 16u, 20u];
+    assert(loops.length == 21 && edges.length == 14,
+        "corrupted-fan fixture must contain all seven triangles and fourteen edges");
+    const uint ei01 = 0;
     assert(ei01 != ~0u, "edge (0,1) must exist");
-    assert(m.edges[ei01][] == [0u, 1u], "sanity: default direction is va=0, vb=1");
+    assert(edges[ei01][] == [0u, 1u], "sanity: default direction is va=0, vb=1");
 
-    // Non-vacuous: the OLD single-direction lookup (default endpoint only,
-    // no retry) genuinely fails on this corrupted fan -- the bug this fixes.
-    {
-        EdgeFaceRange pOld;
-        bool okOld = pOld._tryFrom(m.loops, m.vertLoop, m.edges[ei01][0], m.edges[ei01][1]);
-        assert(!okOld, "sanity: single-direction lookup from the default endpoint "
-            ~ "must fail on this corrupted fan -- otherwise this test proves nothing");
-    }
+    EdgeFaceRange pOld;
+    bool okOld = pOld._tryFrom(loops, vertLoop, edges[ei01][0], edges[ei01][1]);
+    assert(!okOld, "sanity: single-direction lookup from the default endpoint "
+        ~ "must fail on this corrupted fan -- otherwise this test proves nothing");
 
-    // The retry-equipped public API must recover both true incident faces.
+    // Force the ordered path to exercise the other-endpoint retry itself.
+    const bool[] ordered = [true, true, true, true, true, true, true, true];
     uint[] found;
-    foreach (fi; m.facesAroundEdge(ei01)) found ~= fi;
-    import std.algorithm : sort, canFind;
+    foreach (fi; EdgeFaceRange(loops, edges, vertLoop, ordered, null, null, ei01))
+        found ~= fi;
+    import std.algorithm : sort;
     sort(found);
     assert(found == [0u, 5u],
-        "facesAroundEdge must recover both faces incident on edge (0,1) via the "
+        "EdgeFaceRange must recover both faces incident on edge (0,1) via the "
         ~ "other-endpoint retry, not silently report zero");
 
-    // collectEdgeRing (the direct cause of the Loop Slice no-op) is a thin
-    // wrapper over facesAroundEdge (mesh.d ~9949) -- it inherits this fix
-    // automatically. Not separately re-derived here: constructing a corrupted
-    // fan where the retry ALSO recovers a clean quad-quad ring (rather than
-    // just triangle incidence) needs a larger fixture without adding coverage
-    // over what's proven above; see the follow-up note in the task file.
+    // Actual unordered-fan gate uses CSR and preserves the same incidence.
+    const bool[] unordered = [false, true, true, false, true, true, true, true];
+    const uint[] vertDartStart = [0u, 7u, 9u, 11u, 14u, 16u, 18u, 20u, 21u];
+    const uint[] vertDartAdj = [0u, 3u, 6u, 9u, 12u, 15u, 19u, 1u, 17u, 2u, 4u, 5u, 7u, 18u, 8u, 10u, 11u, 13u, 14u, 16u, 20u];
+    uint[] viaCsr;
+    foreach (fi; EdgeFaceRange(loops, edges, vertLoop, unordered,
+                              vertDartStart, vertDartAdj, ei01)) viaCsr ~= fi;
+    sort(viaCsr);
+    assert(viaCsr == [0u, 5u], "unordered-fan CSR must retain both incident faces");
 }
 
-unittest { // well-formed mesh: retry is inert (never fires; the default
-           // single-direction lookup always succeeds on its own, so
-           // facesAroundEdge's result is byte-identical to before this fix)
-    Mesh m = makeCube();
-    m.buildLoops();
-    foreach (ei; 0 .. cast(uint)m.edges.length) {
+unittest { // well-formed cube: private single-direction lookup succeeds.
+    const Loop[] loops = [
+        Loop(0u, 0u, 1u, 3u, 11u),
+        Loop(3u, 0u, 2u, 0u, 19u),
+        Loop(2u, 0u, 3u, 1u, 12u),
+        Loop(1u, 0u, 0u, 2u, 20u),
+        Loop(4u, 1u, 5u, 7u, 22u),
+        Loop(5u, 1u, 6u, 4u, 14u),
+        Loop(6u, 1u, 7u, 5u, 17u),
+        Loop(7u, 1u, 4u, 6u, 9u),
+        Loop(0u, 2u, 9u, 11u, 23u),
+        Loop(4u, 2u, 10u, 8u, 7u),
+        Loop(7u, 2u, 11u, 9u, 16u),
+        Loop(3u, 2u, 8u, 10u, 0u),
+        Loop(1u, 3u, 13u, 15u, 2u),
+        Loop(2u, 3u, 14u, 12u, 18u),
+        Loop(6u, 3u, 15u, 13u, 5u),
+        Loop(5u, 3u, 12u, 14u, 21u),
+        Loop(3u, 4u, 17u, 19u, 10u),
+        Loop(7u, 4u, 18u, 16u, 6u),
+        Loop(6u, 4u, 19u, 17u, 13u),
+        Loop(2u, 4u, 16u, 18u, 1u),
+        Loop(0u, 5u, 21u, 23u, 3u),
+        Loop(1u, 5u, 22u, 20u, 15u),
+        Loop(5u, 5u, 23u, 21u, 4u),
+        Loop(4u, 5u, 20u, 22u, 8u),
+    ];
+    const uint[2][] edges = [
+        [0u, 3u],
+        [2u, 3u],
+        [1u, 2u],
+        [0u, 1u],
+        [4u, 5u],
+        [5u, 6u],
+        [6u, 7u],
+        [4u, 7u],
+        [0u, 4u],
+        [3u, 7u],
+        [2u, 6u],
+        [1u, 5u],
+    ];
+    const uint[] vertLoop = [20u, 21u, 19u, 16u, 23u, 22u, 18u, 17u];
+    const bool[] ordered = [true, true, true, true, true, true, true, true];
+    assert(loops.length == 24 && edges.length == 12,
+        "clean cube fixture must contain all six quads and twelve edges");
+    foreach (ei; 0 .. cast(uint)edges.length) {
         EdgeFaceRange direct;
-        bool okDirect = direct._tryFrom(m.loops, m.vertLoop, m.edges[ei][0], m.edges[ei][1]);
+        bool okDirect = direct._tryFrom(loops, vertLoop, edges[ei][0], edges[ei][1]);
         assert(okDirect, "well-formed mesh: default single-direction lookup must "
             ~ "already succeed on every edge -- the retry must never be needed here");
-
         uint[] viaPublicApi;
-        foreach (fi; m.facesAroundEdge(ei)) viaPublicApi ~= fi;
+        foreach (fi; EdgeFaceRange(loops, edges, vertLoop, ordered, null, null, ei))
+            viaPublicApi ~= fi;
         import std.algorithm : sort;
         auto direct2 = direct._faces[0 .. direct._count].dup;
         sort(direct2);
         auto viaSorted = viaPublicApi.dup;
         sort(viaSorted);
         assert(direct2 == viaSorted,
-            "well-formed mesh: facesAroundEdge result must match the plain "
+            "well-formed mesh: EdgeFaceRange result must match the plain "
             ~ "single-direction lookup exactly -- the retry must not alter it");
     }
 }

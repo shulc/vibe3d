@@ -194,7 +194,7 @@ ulong foldSubpatchKeyMember(T)(ulong state, auto ref const T value)
 // the HTTP thread must see the same object, not a zeroed copy of it.
 // ---------------------------------------------------------------------------
 
-import mesh_edit_delta : MeshEditScope, DisplayRefreshMask;
+import mesh_scope : MeshEditScope, DisplayRefreshMask;
 import change_bus      : changeBus;
 
 /// A watcher over ONE change-class group. Instances are module-level globals

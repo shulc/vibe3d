@@ -1,5 +1,7 @@
 module mesh_selsets;
 
+public import mesh_plane_types : WireKeyPolicy;
+
 // ---------------------------------------------------------------------------
 // mesh_selsets — named, typed, per-mesh SELECTION SETS (task 1060).
 //
@@ -75,11 +77,6 @@ enum SetApplyMode { select, deselect, replace }
 /// `select.set.edit`'s three laws (measured, `toolcards/selection_sets/`):
 /// union / subtract / replace the SET's membership from the live selection.
 enum SetEditMode { add, remove, replace }
-
-/// Authored-wire handling for a vertex-index remap. Compaction carries keys;
-/// a non-injective weld drops every key whose endpoint moved because that
-/// merge is not invertible in the current operation log.
-enum WireKeyPolicy { carry, dropMoved }
 
 // ---------------------------------------------------------------------------
 // Name validation — every creating/renaming verb calls this first.

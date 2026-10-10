@@ -22,7 +22,7 @@ module change_bus;
 // with NO subject. Both those fields are gone with it.
 //
 // The change-class vocabulary IS the existing `MeshEditScope` enum from
-// mesh_edit_delta.d — re-exported here, NOT redefined. The selection-domain
+// mesh_scope.d — re-exported here, NOT redefined. The selection-domain
 // vocabulary mirrors `MeshOpEntry.SelDomain` (Vertex / Edge / Face), promoted
 // here to a small bitfield so a single flush can carry several domains.
 //
@@ -56,7 +56,7 @@ module change_bus;
 // own comment for why double-counting would dirty a clean document.
 // ---------------------------------------------------------------------------
 
-public import mesh_edit_delta : MeshEditScope;
+public import mesh_scope : MeshEditScope;
 import prepared_tool_effect : PreparedSubjectToken;
 import seltype : SelType;
 import core.atomic : atomicOp;
