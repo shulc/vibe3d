@@ -558,7 +558,7 @@ unittest { // Task 20261040: private radialAlignStart, original first equal-key 
     import std.path : buildPath, dirName;
     enum root = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));
     auto fixture = parseJSON(readText(buildPath(root,
-        "packages/alignment-ops/tests/fixtures/radial_nsided_original.json")));
+        "tests/fixtures/radial_nsided_original.json")));
     assert(fixture["model"]["vertices"].array.length == 90 &&
         fixture["orderedIds"].array.length == 18, "full original population");
     D3[] p;
