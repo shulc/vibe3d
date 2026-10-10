@@ -64,14 +64,17 @@ version (web)
     import std.string : toStringz;
     import log : logWarn;
 
+    version (WebAssembly) {
     extern(C) int vibe3d_web_assimp_import(const(char)* path, void** data, uint* length);
     extern(C) void vibe3d_web_assimp_free(void* data);
+    }
 
     /// The browser target deliberately carries no assimp package. Keep the
     /// command-facing API available so direct file-command calls refuse
     /// cleanly instead of turning this native-only dependency into a web edge.
     bool importViaAssimp(string path, ref ImportedScene scene)
     {
+        version (WebAssembly) {
         void* data;
         uint length;
         if (!vibe3d_web_assimp_import(path.toStringz, &data, &length)) {
@@ -81,6 +84,7 @@ version (web)
         }
         scope(exit) vibe3d_web_assimp_free(data);
         return decodeAssimpWire((cast(const(ubyte)*)data)[0 .. length], scene);
+        } else return false;
     }
 }
 else

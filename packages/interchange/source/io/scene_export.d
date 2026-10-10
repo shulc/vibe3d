@@ -58,6 +58,7 @@ version (web)
     import io.assimp_wire : encodeAssimpWire;
     import std.string : toStringz;
 
+    version (WebAssembly)
     extern(C) int vibe3d_web_assimp_export(const(ubyte)* data, uint length,
                                            const(char)* formatId, const(char)* path);
 
@@ -78,6 +79,7 @@ version (web)
     bool exportDocumentViaAssimp(ref const Document document, string path,
                                  string formatId)
     {
+        version (WebAssembly) {
         auto wire = encodeAssimpWire(document);
         if (wire.length == 0) return false;
         if (vibe3d_web_assimp_export(wire.ptr, cast(uint)wire.length,
@@ -85,6 +87,7 @@ version (web)
         try logWarn("io", "assimp export failed: " ~ path);
         catch (Exception) {}
         return false;
+        } else return false;
     }
 }
 else

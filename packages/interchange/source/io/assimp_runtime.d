@@ -18,11 +18,16 @@ module io.assimp_runtime;
 version (web)
 {
     import log : logWarn;
-    extern(C) int vibe3d_web_assimp_available() nothrow @nogc;
+    version (WebAssembly)
+        extern(C) int vibe3d_web_assimp_available() nothrow @nogc;
 
     /// Web builds have no assimp dependency. Preserve the runtime-loader API
     /// for composition roots while reporting the unavailable capability.
-    bool isAssimpAvailable() nothrow @nogc { return vibe3d_web_assimp_available() != 0; }
+    bool isAssimpAvailable() nothrow @nogc
+    {
+        version (WebAssembly) { return vibe3d_web_assimp_available() != 0; }
+        else return false;
+    }
 
     void initAssimp() nothrow
     {

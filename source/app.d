@@ -13,7 +13,8 @@ import std.json : JSONValue, JSONType;
 
 version (web) {
     import web_gl_loader : loadWebOpenGL;
-    private extern(C) void vibe3d_web_set_dirty(int) nothrow @nogc;
+    version (WebAssembly)
+        private extern(C) void vibe3d_web_set_dirty(int) nothrow @nogc;
 
     private alias EmscriptenMainLoopArg = extern(C) void function(void*);
     version (Emscripten) {
@@ -6399,7 +6400,7 @@ void main(string[] args) {
             const fname = p.length ? baseName(p) : "untitled";
             const dirty = docDirty();
             version (web) if (dirty != webLastDirty) {
-                vibe3d_web_set_dirty(dirty ? 1 : 0);
+                version (WebAssembly) vibe3d_web_set_dirty(dirty ? 1 : 0);
                 webLastDirty = dirty;
             }
             string title = (dirty ? "*" : "") ~ fname ~ " - Vibe3d";
