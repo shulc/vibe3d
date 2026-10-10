@@ -184,6 +184,14 @@
       "subConfigurations": {
         "vibe3d-common": "web"
       }
+    },
+    {
+      "name": "root-tests",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d-common": "root-tests"
+      },
+      "targetType": "sourceLibrary"
     }
   ]
 }

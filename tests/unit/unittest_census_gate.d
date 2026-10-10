@@ -508,7 +508,7 @@ private size_t skipDelimited(const(char)[] s, size_t i) @safe pure nothrow @nogc
 /// are inside `source/` and therefore counted, even though the `tests`
 /// configuration does not compile them: the point is that a block cannot vanish
 /// unnoticed, and a block nobody compiles is the easiest kind to lose.
-immutable string[] censusRoots = ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "tests/unit", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source"];
+immutable string[] censusRoots = ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "tests/unit", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source"];
 
 /// One file's contribution, keyed by its repo-relative path with `/` separators.
 struct FileCensus
@@ -1593,28 +1593,37 @@ unittest
     collectException(rmdirRecurse(sandbox));
     scope(exit) collectException(rmdirRecurse(sandbox));
     foreach (owner; ["packages/mesh-ops/source", "packages/interchange/source",
-                    "packages/interaction-query/source", "packages/pipe-evaluation/source",
-                    "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source"])
+                    "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source",
+                    "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source"])
     {
         mkdirRecurse(buildPath(sandbox, owner));
         write(buildPath(sandbox, owner, "probe.d"),
             "unittest { assert(1); assert(2); }\n");
     }
     const owners = scanWorkingTree(sandbox);
-    assert(owners.length == 8, "Wave5 census observes all eight package production/test roots");
+    assert(owners.length == 17, "Wave5 census observes all seventeen package production/test roots");
     string[] ownerPaths;
     foreach (file; owners) ownerPaths ~= file.path;
-    assert(ownerPaths == ["packages/interaction-query/source/probe.d",
+    assert(ownerPaths == ["packages/alignment-ops/source/probe.d",
+                          "packages/alignment-ops/tests/source/probe.d",
+                          "packages/common/tests/source/probe.d",
+                          "packages/creation-ops/source/probe.d",
+                          "packages/creation-ops/tests/source/probe.d",
+                          "packages/interaction-query/source/probe.d",
                           "packages/interaction-query/tests/source/probe.d",
                           "packages/interchange/source/probe.d",
                           "packages/interchange/tests/source/probe.d",
                           "packages/mesh-ops/source/probe.d",
                           "packages/mesh-ops/tests/source/probe.d",
                           "packages/pipe-evaluation/source/probe.d",
-                          "packages/pipe-evaluation/tests/source/probe.d"],
+                          "packages/pipe-evaluation/tests/source/probe.d",
+                          "packages/tool-state/source/probe.d",
+                          "packages/tool-state/tests/source/probe.d",
+                          "packages/transform-ops/source/probe.d",
+                          "packages/transform-ops/tests/source/probe.d"],
         "Wave4 census exact independent ownership membership");
     const ownershipTotal = total(owners);
-    assert(ownershipTotal.blocks == 8 && ownershipTotal.asserts == 16,
+    assert(ownershipTotal.blocks == 17 && ownershipTotal.asserts == 34,
         "Wave4 census preserves each owner's nonzero block/assert contribution");
 }
 

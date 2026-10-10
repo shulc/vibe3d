@@ -98,7 +98,7 @@ private enum string[] kNamedMembers = [
 
 private string[] familyPaths() {
     string[] r;
-    foreach (f; kCreateDirFiles) r ~= buildPath("source", "tools", "create", f);
+    foreach (f; kCreateDirFiles) r ~= buildPath(f == "pen_geometry.d" ? "packages/creation-ops/source/tools/create" : "source/tools/create", f);
     foreach (f; kNamedMembers)   r ~= f;
     return r;
 }
@@ -112,7 +112,8 @@ private string[] familyPaths() {
 // ---------------------------------------------------------------------------
 unittest {
     string[] found;
-    foreach (e; dirEntries(buildPath(repoRoot, "source", "tools", "create"),
+    foreach (familyDir; [buildPath(repoRoot, "source", "tools", "create"), buildPath(repoRoot, "packages/creation-ops/source/tools/create")])
+    foreach (e; dirEntries(familyDir,
                            "*.d", SpanMode.breadth))
         found ~= baseName(e.name);
     found.sort();
@@ -385,7 +386,8 @@ unittest {
     string[] offenders;
     size_t scanned = 0;
 
-    foreach (e; dirEntries(buildPath(repoRoot, "source", "tools"), "*.d", SpanMode.depth)) {
+    foreach (toolRoot; [buildPath(repoRoot, "source/tools"), buildPath(repoRoot, "packages/tool-state/source/tools"), buildPath(repoRoot, "packages/transform-ops/source/tools"), buildPath(repoRoot, "packages/creation-ops/source/tools"), buildPath(repoRoot, "packages/alignment-ops/source/tools")])
+    foreach (e; dirEntries(toolRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         auto src = stripCommentsAndStrings(readText(e.name));
         // A FIELD declaration, not a parameter: `CommandHistory <ident> ;`.

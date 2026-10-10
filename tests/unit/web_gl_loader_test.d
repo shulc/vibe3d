@@ -382,7 +382,7 @@ set -o pipefail
 cd "$1"
 flags=$(dub describe --config=web \
   --data=import-paths,string-import-paths,versions,debug-versions 2>"$2")
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/common/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/common/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source -name '*.d' -print)
 SH";
     const run = execute(["bash", "-c", compileGraph, "w16-ld-deps",
                          repoRoot, errPath, depsPath],

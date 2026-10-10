@@ -132,7 +132,7 @@ unittest // pen.d appends no geometry except through the one builder
 unittest // the builder module is where the adders went (control of the above)
 {
     string raw;
-    const code = codeOf("source/tools/create/pen_geometry.d", raw);
+    const code = codeOf("packages/creation-ops/source/tools/create/pen_geometry.d", raw);
     assert(code.length > 1_000, "pen_geometry.d code view is a stub");
     foreach (a; ["addVertex", "addEdge", "addFace"])
         assert(countIdent(code, a) >= 1, "builder no longer calls " ~ a
@@ -190,7 +190,7 @@ unittest // the facing is decided at one site; the builder orders every ring ali
     // sub-minimum Commit face) besides its declaration. State: RED before S4
     // (3: the transitional `purpose == Commit && flip` term).
     string graw;
-    const gcode = codeOf("source/tools/create/pen_geometry.d", graw);
+    const gcode = codeOf("packages/creation-ops/source/tools/create/pen_geometry.d", graw);
     assert(countOccurrences("a PenBuildPurpose.Commit && b",
         "PenBuildPurpose.Commit &&") == 1, "literal counter is blind");
     assert(countOccurrences(gcode, "PenBuildPurpose.Commit &&") == 0,

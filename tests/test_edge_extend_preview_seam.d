@@ -1,7 +1,7 @@
 // test_edge_extend_preview_seam.d — task 1903 Stage M, the preview PIN (M-P).
 //
 // THE THIRD ROW, and the only one that was missing. Three tools go through
-// `source/tools/edit/preview_rebuild.d` — Poly Bevel (Stage F2), Edge Bevel
+// `packages/tool-state/source/tools/edit/preview_rebuild.d` — Poly Bevel (Stage F2), Edge Bevel
 // (Stage G) and Edge Extend (Stage H). The first two already carry the §9 pin
 // in `tests/test_poly_bevel_seam_counters.d` (block 5) and
 // `tests/test_edge_bevel_seam_counters.d` (block 4). Edge Extend carried none:

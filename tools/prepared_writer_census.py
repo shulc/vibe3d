@@ -137,7 +137,7 @@ def module_path(root, *module_names):
     accepted = set(module_names)
     if root not in _MODULE_INDEX_CACHE:
         index = {}
-        for path in sorted(path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (root / sub).rglob("*.d")):
+        for path in sorted(path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source") for path in (root / sub).rglob("*.d")):
             # Module identity is a closed census, so its declaration cannot be
             # hidden by an arbitrary byte window (4051).
             source = path.read_text(errors="replace")
@@ -227,7 +227,7 @@ def scan(root):
     # root gives 2 / 2 — the internal-publisher arm never fired, so a
     # publisher inside the transition module read as an unreviewed bypass.
     root = Path(root).resolve()
-    tool_files = sorted((root / "source/tools").rglob("*.d"))
+    tool_files = sorted((path for sub in ('source/tools', 'packages/tool-state/source/tools', 'packages/transform-ops/source/tools', 'packages/creation-ops/source/tools', 'packages/alignment-ops/source/tools') for path in (root / sub).rglob("*.d")))
     hooks = []
     for p in [root / "source/tool.d", *tool_files]:
         hooks += _methods(p, ("activate", "update", "onParamChanged", "deactivate"))
@@ -452,7 +452,7 @@ def scan(root):
     # reviews. A pattern that matches nothing is normally a defect; this one
     # is a guard, and saying so is what makes the difference checkable.
     bypass_pattern = re.compile(r"\b(?:prepareArm|commitPreparedArm|prepareDrop|commitPreparedDrop|producePreparedEffects|installLegacyPreparedEffects)\s*\(")
-    for path in sorted(path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source") for path in (root / sub).rglob("*.d")):
+    for path in sorted(path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source") for path in (root / sub).rglob("*.d")):
         text = _mask_comments(path.read_text())
         for match in bypass_pattern.finditer(text):
             row = {"path": transition_manifest_path if path == transition_path

@@ -275,7 +275,7 @@ unittest {
     size_t filesScanned;
     size_t scopeModulesScanned;
     const sourceDir = buildPath(gateRepoRoot, "source");
-    foreach (scanSourceRoot; [sourceDir, buildPath(gateRepoRoot, "packages/common/source"), buildPath(gateRepoRoot, "packages/mesh-ops/source"), buildPath(gateRepoRoot, "packages/interchange/source"), buildPath(gateRepoRoot, "packages/interaction-query/source"), buildPath(gateRepoRoot, "packages/pipe-evaluation/source")])
+    foreach (scanSourceRoot; [sourceDir, buildPath(gateRepoRoot, "packages/common/source"), buildPath(gateRepoRoot, "packages/mesh-ops/source"), buildPath(gateRepoRoot, "packages/interchange/source"), buildPath(gateRepoRoot, "packages/interaction-query/source"), buildPath(gateRepoRoot, "packages/pipe-evaluation/source"), buildPath(gateRepoRoot, "packages/tool-state/source"), buildPath(gateRepoRoot, "packages/transform-ops/source"), buildPath(gateRepoRoot, "packages/creation-ops/source"), buildPath(gateRepoRoot, "packages/alignment-ops/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         filesScanned++;
         const rel = relativePath(de.name, gateRepoRoot);

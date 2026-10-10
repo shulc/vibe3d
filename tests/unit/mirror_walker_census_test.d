@@ -51,7 +51,7 @@ private string[] filesWith(string needle, out size_t scanned) {
     import std.file : dirEntries, SpanMode;
     import std.path : buildPath;
     string[] hits;
-    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source")])
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const rel = de.name[kRepoRoot.length + 1 .. $];
@@ -78,8 +78,8 @@ unittest { // (c1) ONE mirror walker
     string[2][] passes = [
         ["packages/interaction-query/source/symmetry.d", "void applySymmetryMirror(Mesh* mesh,"],
         ["packages/interaction-query/source/symmetry.d", "void applySymmetryMirrorDelta(Mesh* mesh,"],
-        ["source/tools/transform/morph_route.d", "void applySymmetryMirrorRouted("],
-        ["source/tools/transform/morph_route.d", "void applySymmetryMirrorDeltaRouted("],
+        ["packages/transform-ops/source/tools/transform/morph_route.d", "void applySymmetryMirrorRouted("],
+        ["packages/transform-ops/source/tools/transform/morph_route.d", "void applySymmetryMirrorDeltaRouted("],
     ];
     int found;
     foreach (p; passes) {

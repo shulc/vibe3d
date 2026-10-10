@@ -11,8 +11,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 private string codeAt(string leaf)
 {
-    return blankNonCode(readText(buildPath(repoRoot, "source", "tools",
-                                           "transform", leaf)));
+    return blankNonCode(readText(buildPath(repoRoot, leaf == "item_xform_kernels.d" ? "packages/transform-ops/source/tools/transform" : "source/tools/transform", leaf)));
 }
 
 private string compact(string code)

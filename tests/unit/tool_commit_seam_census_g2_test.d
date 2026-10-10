@@ -129,7 +129,7 @@ private enum string[2][] kSilentFiles = [
 private string[] familyPaths() {
     string[] r;
     foreach (f; kRecorderFiles)  r ~= buildPath(kG2Dir, f);
-    foreach (row; kSilentFiles)  r ~= buildPath(kG2Dir, row[0]);
+    foreach (row; kSilentFiles)  r ~= buildPath(row[0] == "align_kernels.d" ? "packages/alignment-ops/source/tools/alignment" : kG2Dir, row[0]);
     r ~= kSeamFile;
     return r;
 }
@@ -180,7 +180,8 @@ unittest {
       ~ "this directory, so every member below is measuring nothing");
 
     string[] onDisk;
-    foreach (e; dirEntries(dir, SpanMode.shallow))
+    foreach (familyDir; [dir, buildPath(repoRoot, "packages/alignment-ops/source/tools/alignment")])
+    foreach (e; dirEntries(familyDir, SpanMode.shallow))
         if (e.isFile && e.name.extension == ".d") onDisk ~= e.name.baseName;
     onDisk.sort();
 

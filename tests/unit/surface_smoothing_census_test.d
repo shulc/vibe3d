@@ -22,7 +22,7 @@ private string codeText(string src) { return blankUnittestBodies(blankNonCode(sr
 /// Every `source/**/*.d` file: relative path → code text.
 private string[string] sourceCode() {
     string[string] out_;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         out_[relativePath(e.name, buildPath(root, "source"))] = codeText(readText(e.name));
     return out_;

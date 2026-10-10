@@ -182,6 +182,16 @@
       "subConfigurations": {
         "vibe3d-common": "web"
       }
+    },
+    {
+      "name": "root-tests",
+      "versions": [
+        "WithAI"
+      ],
+      "subConfigurations": {
+        "vibe3d-common": "root-tests"
+      },
+      "targetType": "sourceLibrary"
     }
   ]
 }

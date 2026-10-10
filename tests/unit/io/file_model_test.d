@@ -91,7 +91,7 @@ unittest {
            !compactCode("packages/common/source/io/image_path.d").canFind("io.file_dialog"),
         "file model image paths import lower owner directly");
     size_t sourceFiles;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source")])
     foreach (file; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         if (file.name == buildPath(root, "packages/common/source/io/file_model.d")) continue;
@@ -102,7 +102,7 @@ unittest {
             "file model setter has only its lower production owner: " ~ file.name);
     }
     // Independent tracked six-owner membership: 473/76/17/8/10/12 (Wave6A cluster_values).
-    assert(sourceFiles == 596, "file model production source population");
+    assert(sourceFiles == 595, "file model production source population");
 }
 
 unittest {

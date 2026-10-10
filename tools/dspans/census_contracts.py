@@ -35,15 +35,16 @@ CONTRACT_CELLS = 21
 # ownership moves, the independent 2026-10-09 inventory is 492/75/17/8. The Wave5 prerequisite adds workplane_basis,
 # independently inventoried as common76 (task 20262020, same date).
 # Final Wave5 tracked membership: desktop472/common76/mesh17/interchange8/query10/evaluation12.
+# Wave6 construction, 2026-10-10: desktop461 plus nine libraries134 =595.
 PRODUCTION_ROOTS = ("source", "packages/common/source", "packages/mesh-ops/source",
-                    "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source")
+                    "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source")
 PRODUCTION_OWNER_FLOORS = {
-    "source": 472,
+    "source": 461,
     "packages/common/source": 76,
     "packages/mesh-ops/source": 17,
     "packages/interchange/source": 8,
     "packages/interaction-query/source": 10,
-    "packages/pipe-evaluation/source": 12,
+    "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1
 }
 
 
@@ -58,7 +59,7 @@ def production_lexer_census(root):
         count = sum(path.is_relative_to(root / owner) for path in files)
         if count < floor:
             failures.append(f"dspans lexer census owner {owner} read {count} files; "
-                            f"floor {floor} (measured 2026-10-09)")
+                            f"floor {floor} (materialized 2026-10-10)")
     for path in files:
         rel = path.relative_to(root).as_posix()
         sp = dspans_client.spans(path.read_text(), parse=True)

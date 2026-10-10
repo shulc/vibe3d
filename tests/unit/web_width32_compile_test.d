@@ -97,6 +97,11 @@ SH";
     const interchangePrefix = buildPath(repoRoot, "packages/interchange/source") ~ "/";
     const queryPrefix = buildPath(repoRoot, "packages/interaction-query/source") ~ "/";
     const evaluationPrefix = buildPath(repoRoot, "packages/pipe-evaluation/source") ~ "/";
+    const ownerPrefix0 = buildPath(repoRoot, "packages/tool-state/source") ~ "/";
+    const ownerPrefix1 = buildPath(repoRoot, "packages/transform-ops/source") ~ "/";
+    const ownerPrefix2 = buildPath(repoRoot, "packages/creation-ops/source") ~ "/";
+    const ownerPrefix3 = buildPath(repoRoot, "packages/alignment-ops/source") ~ "/";
+
     foreach (line; readText(depsPath).splitLines)
     {
         const first = line.indexOf(" : ");
@@ -110,7 +115,7 @@ SH";
         if (!parseDepNode(tail[cast(size_t)secondRel + 3 .. $], imported)) continue;
         importsByModule[importer.moduleName] ~= imported.moduleName;
         foreach (node; [importer, imported])
-            if (node.path.startsWith(sourcePrefix, commonPrefix, meshPrefix, interchangePrefix, queryPrefix, evaluationPrefix) && node.path.endsWith(".d"))
+            if (node.path.startsWith(sourcePrefix, commonPrefix, meshPrefix, interchangePrefix, queryPrefix, evaluationPrefix, ownerPrefix0, ownerPrefix1, ownerPrefix2, ownerPrefix3) && node.path.endsWith(".d"))
                 sourcePathByModule[node.moduleName] = node.path;
     }
     bool[string] reached;

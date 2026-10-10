@@ -160,7 +160,7 @@ private enum NonMember[] kEditDirNonMembers = [
 
 private string[] populationPaths() {
     string[] r;
-    foreach (f; kG4Files) r ~= buildPath("source", "tools", "edit", f);
+    foreach (f; kG4Files) r ~= buildPath(f == "preview_rebuild.d" ? "packages/tool-state/source/tools/edit" : "source/tools/edit", f);
     r ~= "source/tool.d";
     return r;
 }
@@ -190,7 +190,8 @@ unittest {
                   ~ "then pass by never running";
 
     string[] found;
-    foreach (e; dirEntries(buildPath(repoRoot, "source", "tools", "edit"),
+    foreach (familyDir; [buildPath(repoRoot, "source", "tools", "edit"), buildPath(repoRoot, "packages/tool-state/source/tools/edit")])
+    foreach (e; dirEntries(familyDir,
                            "*.d", SpanMode.shallow))
         found ~= baseName(e.name);
     found.sort();

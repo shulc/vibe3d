@@ -31,7 +31,8 @@ unittest {
         assert(names(home, id), format("control: gl_util.d must name %s", id));
 
     string[] callers, owners;
-    foreach (de; dirEntries(buildPath(repoRoot, "source/tools"), "*.d", SpanMode.depth)) {
+    foreach (toolRoot; [buildPath(repoRoot, "source/tools"), buildPath(repoRoot, "packages/tool-state/source/tools"), buildPath(repoRoot, "packages/transform-ops/source/tools"), buildPath(repoRoot, "packages/creation-ops/source/tools"), buildPath(repoRoot, "packages/alignment-ops/source/tools")])
+    foreach (de; dirEntries(toolRoot, "*.d", SpanMode.depth)) {
         immutable rel = de.name[repoRoot.length + 1 .. $];
         immutable text = readText(de.name);
         if (!matchFirst(text, regex(`\bdrawWorldSegments\s*\(`)).empty) callers ~= rel;

@@ -26,9 +26,9 @@ private string rawBody(string source, string declaration) {
 unittest {
     const runner = file("run_test.d");
     const digest = rawBody(runner, "string sourceDigest()");
-    assert(digest.count("foreach (scanSourceRoot; [\"source\", \"packages/common/source\", \"packages/mesh-ops/source\", \"packages/interchange/source\", \"packages/interaction-query/source\", \"packages/pipe-evaluation/source\"])") == 1
+    assert(digest.count("foreach (scanSourceRoot; [\"source\", \"packages/common/source\", \"packages/mesh-ops/source\", \"packages/interchange/source\", \"packages/interaction-query/source\", \"packages/pipe-evaluation/source\", \"packages/tool-state/source\", \"packages/transform-ops/source\", \"packages/creation-ops/source\", \"packages/alignment-ops/source\"])") == 1
         && digest.count("dirEntries(scanSourceRoot, pattern, SpanMode.depth)") == 1,
-        "standalone-wiring: freshness scans all six production ownership roots");
+        "standalone-wiring: freshness scans all ten production ownership roots");
 
 }
 

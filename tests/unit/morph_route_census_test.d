@@ -2,8 +2,8 @@ module tests.unit.morph_route_census_test;
 
 /// The files allowed to mention `MorphRoute`, repo-relative with `/`.
 private static immutable string[] morphRouteHomes = [
-    "source/tools/transform/morph_route.d",
-    "source/tools/transform/xform_kernels.d",
+    "packages/transform-ops/source/tools/transform/morph_route.d",
+    "packages/transform-ops/source/tools/transform/xform_kernels.d",
     "source/tools/transform/xfrm_apply.d",
     "source/tools/transform/xfrm_transform.d",
 ];
@@ -33,9 +33,10 @@ version (unittest) {
         import std.array     : array, replace;
         import std.string    : endsWith;
 
-        const dir = buildPath(root, "source");
-        if (!exists(dir) || !isDir(dir)) return null;
         string[] hits;
+        foreach (owner; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source"]) {
+        const dir = buildPath(root, owner);
+        if (!exists(dir) || !isDir(dir)) continue;
         foreach (entry; dirEntries(dir, SpanMode.depth)) {
             if (!entry.isFile || !entry.name.endsWith(".d")) continue;
             auto text = cast(const(char)[]) read(entry.name);
@@ -43,6 +44,7 @@ version (unittest) {
             auto rel = relativePath(entry.name, root);
             version (Windows) rel = rel.replace("\\", "/");
             hits ~= rel;
+        }
         }
         sort(hits);
         return hits;

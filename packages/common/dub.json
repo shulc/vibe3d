@@ -168,6 +168,13 @@
       "versions": [
         "web"
       ]
+    },
+    {
+      "name": "root-tests",
+      "versions": [
+        "WithAI"
+      ],
+      "targetType": "sourceLibrary"
     }
   ]
 }

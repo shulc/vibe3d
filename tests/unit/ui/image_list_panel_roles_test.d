@@ -760,7 +760,7 @@ unittest { // 6040 census: production binder, call sites, retired EditorApp path
         && panels.count("import ui.item_rename") == 0,
         "6040 retired panel path: ui.panels still defines or feeds the Images rename owner");
     size_t sourceFiles, oldSig;
-    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source")])
+    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source")])
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         oldSig += blankNonCode(readText(entry.name)).count("drawImageListPanel(EditorApp");

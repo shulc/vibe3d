@@ -511,7 +511,7 @@ unittest { // every consumer site of the array kinds has a PodArray arm (opponen
     import tests.unit.census_symbols : blankNonCode;
     size_t vec3Sites, podSites;
     string[] missing;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const code = blankNonCode(readText(e.name));
         const v = code.count("Kind.Vec3Array"), pd = code.count("Kind.PodArray");

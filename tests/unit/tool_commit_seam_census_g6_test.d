@@ -92,7 +92,7 @@ private enum string[] kNamedMembers = [
 
 private string[] familyPaths() {
     string[] r;
-    foreach (f; kCommonDirFiles) r ~= buildPath("source", "tools", "common", f);
+    foreach (f; kCommonDirFiles) r ~= buildPath(f == "session_mesh_key.d" ? "packages/tool-state/source/tools/common" : "source/tools/common", f);
     foreach (f; kNamedMembers)   r ~= f;
     return r;
 }
@@ -102,7 +102,8 @@ private string[] familyPaths() {
 // ---------------------------------------------------------------------------
 unittest {
     string[] found;
-    foreach (e; dirEntries(buildPath(repoRoot, "source", "tools", "common"),
+    foreach (familyDir; [buildPath(repoRoot, "source", "tools", "common"), buildPath(repoRoot, "packages/tool-state/source/tools/common")])
+    foreach (e; dirEntries(familyDir,
                            "*.d", SpanMode.breadth))
         found ~= baseName(e.name);
     found.sort();

@@ -10,7 +10,7 @@
 // comparing the reference against a stationary mesh because of it.
 //
 // What the gesture is. An arcball in screen pixels, centred on the action
-// centre's screen projection, radius 200 px (`source/tools/transform/arcball.d`
+// centre's screen projection, radius 200 px (`packages/transform-ops/source/tools/transform/arcball.d`
 // carries the law and its measured rows). Its two limits are the two behaviours
 // the corpus shows: a pinned pivot leaves the press hundreds of pixels out, so
 // both lifted points sit on the rim and the model turns about the VIEW axis by

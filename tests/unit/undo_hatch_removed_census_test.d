@@ -60,7 +60,7 @@ private static immutable string[] kTokens = [
 /// The roots the census walks. Enumerated per-root rather than swept from the
 /// repo top, so a root that stops existing is a red rather than a silently
 /// smaller scan.
-private static immutable string[] kDirRoots = ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source"];
+private static immutable string[] kDirRoots = ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source"];
 private static immutable string[] kFileRoots = ["run_all.d", "run_test.d"];
 
 private size_t countIn(string hay, string needle) {

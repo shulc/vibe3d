@@ -20,7 +20,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 /// "file:count" for every source file whose code text contains `needle`.
 private string[] roster(string needle) {
     string[] r;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/transform-ops/tests/source")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const n = blankNonCode(readText(e.name)).count(needle);
         if (n) r ~= format("%s:%d", relativePath(e.name, buildPath(repoRoot, "source")), n);
@@ -53,17 +53,16 @@ unittest {
     // Task 9415 (P1): the pen's first point is the create click; its own
     // anchor rounding, quantum and the temporary re-export are gone. Polarity:
     // before P1 pen.d held niceOrigin 1 / relocateQuantum 1 / placementQuantum 3.
-    assert(roster("niceOrigin(") == ["../packages/interaction-query/source/viewgrid.d:2", "tools/transform/relocate_plane_test.d:9"],
+    assert(roster("niceOrigin(") == ["../packages/interaction-query/source/viewgrid.d:2", "../packages/transform-ops/tests/source/tools/transform/relocate_plane_test.d:9"],
         format("niceOrigin( roster: %s", roster("niceOrigin(")));
-    assert(roster("relocateQuantum(") == ["../packages/interaction-query/source/viewgrid.d:2", "tools/transform/relocate_plane_test.d:2"],
+    assert(roster("relocateQuantum(") == ["../packages/interaction-query/source/viewgrid.d:2", "../packages/transform-ops/tests/source/tools/transform/relocate_plane_test.d:2"],
         format("relocateQuantum( roster: %s", roster("relocateQuantum(")));
     assert(roster("placementQuantum") == [] && roster("clickAnchor") == [],
         format("the pen's own click anchor returned: %s %s", roster("placementQuantum"),
                roster("clickAnchor")));
     assert(roster("screenToPlacementLocal(").count!(r => r == "tools/create/pen.d:1") == 1,
         format("the pen's first point must be the create click: %s", roster("screenToPlacementLocal(")));
-    const rp = blankNonCode(readText(buildPath(repoRoot, "source", "tools", "transform",
-                                               "relocate_plane.d")));
+    const rp = blankNonCode(readText(buildPath(repoRoot, "packages/transform-ops/source/tools/transform", "relocate_plane.d")));
     assert(rp.indexOf("public import") < 0, "relocate_plane re-exports viewgrid names again");
     assert(rp.indexOf("bool orthoRelocateThroughPrior(") >= 0, "control: relocate_plane read");
     assert(rp.indexOf("lockedViewAxis") < 0,

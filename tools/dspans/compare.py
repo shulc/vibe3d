@@ -957,7 +957,7 @@ def label_texts(texts):
     from (a census mutant or an intermediate of a primitive shares that file's
     longest prefix), else the file it is a slice of."""
     files = {}
-    for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source"):
+    for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source"):
         for p in sorted((ROOT / sub).rglob("*.d")):
             try:
                 files[p.relative_to(ROOT).as_posix()] = p.read_text()

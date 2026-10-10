@@ -44,7 +44,7 @@ private enum size_t kLegacyDrops = 12;   // task 9402: + primaryMoveDrop; task 9
 
 private string[] productionSources() {
     string[] files;
-    foreach (scanSourceRoot; [repoRoot ~ "/source", repoRoot ~ "/packages/common/source", repoRoot ~ "/packages/mesh-ops/source", repoRoot ~ "/packages/interchange/source", repoRoot ~ "/packages/interaction-query/source", repoRoot ~ "/packages/pipe-evaluation/source"])
+    foreach (scanSourceRoot; [repoRoot ~ "/source", repoRoot ~ "/packages/common/source", repoRoot ~ "/packages/mesh-ops/source", repoRoot ~ "/packages/interchange/source", repoRoot ~ "/packages/interaction-query/source", repoRoot ~ "/packages/pipe-evaluation/source", repoRoot ~ "/packages/tool-state/source", repoRoot ~ "/packages/transform-ops/source", repoRoot ~ "/packages/creation-ops/source", repoRoot ~ "/packages/alignment-ops/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         files ~= e.name;
     sort(files);

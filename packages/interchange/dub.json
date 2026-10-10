@@ -199,6 +199,20 @@
       "versions": [
         "web"
       ]
+    },
+    {
+      "name": "root-tests",
+      "subConfigurations": {
+        "vibe3d-common": "root-tests",
+        "bindbc-assimp6": "static"
+      },
+      "dependencies": {
+        "bindbc-assimp6": {
+          "version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
+          "repository": "git+https://github.com/shulc/bindbc-assimp6.git"
+        }
+      },
+      "targetType": "sourceLibrary"
     }
   ]
 }

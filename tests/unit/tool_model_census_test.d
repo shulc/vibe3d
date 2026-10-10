@@ -330,7 +330,7 @@ private struct SrcFile { string path; string mod; string src; }
 /// modules here declare a name that is not their path).
 private SrcFile[] sourceFiles(out size_t withoutModuleLine) {
     SrcFile[] files;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const src = readText(de.name);
         const rel = de.name[repoRoot.length + 1 .. $];
@@ -921,7 +921,7 @@ unittest {
     // Axis 2 needle controls.
     size_t[2][string] keyMeasured;
     foreach (f; files) {
-        if (!f.path.startsWith("source/tools/")) continue;
+        if (!f.path.startsWith("source/tools/", "packages/tool-state/source/tools/", "packages/transform-ops/source/tools/", "packages/creation-ops/source/tools/", "packages/alignment-ops/source/tools/")) continue;
         const c = keyCountsOf(f.src);
         if (c[0] || c[1]) keyMeasured[f.path] = c;
     }
@@ -943,7 +943,7 @@ unittest {
     {
         string[] escaped;
         foreach (f; files)
-            if (f.path.startsWith("source/tools/") && keyEscapesOf(f.src) > 0)
+            if (f.path.startsWith("source/tools/", "packages/tool-state/source/tools/", "packages/transform-ops/source/tools/", "packages/creation-ops/source/tools/", "packages/alignment-ops/source/tools/") && keyEscapesOf(f.src) > 0)
                 escaped ~= f.path;
         assert(escaped.length == 0,
                format("tool census: axis 2 key type spelled through an alias or MeshKey! in %s",
@@ -957,7 +957,7 @@ unittest {
                   surface.length, kHistorySurface, surface));
     size_t[string][string] writeMeasured;
     foreach (f; files) {
-        if (!f.path.startsWith("source/tools/")) continue;
+        if (!f.path.startsWith("source/tools/", "packages/tool-state/source/tools/", "packages/transform-ops/source/tools/", "packages/creation-ops/source/tools/", "packages/alignment-ops/source/tools/")) continue;
         auto c = writeCountsOf(f.src, surface);
         if (c.length) writeMeasured[f.path] = c;
     }
@@ -1046,7 +1046,7 @@ unittest {
             branchSites[f.path][t] = n;
             branchTotal += n;
         }
-        if (f.path.startsWith("source/tools/")) continue;
+        if (f.path.startsWith("source/tools/", "packages/tool-state/source/tools/", "packages/transform-ops/source/tools/", "packages/creation-ops/source/tools/", "packages/alignment-ops/source/tools/")) continue;
         const admitted = ownedDiagnosticProjections(f.path, f.src);
         ownedDiagnosticTotal += admitted;
         foreach (t, raw; castTargetsOf(f.src, toolClasses)) {

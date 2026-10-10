@@ -86,6 +86,18 @@
 		},
 		"vibe3d-pipe-evaluation": {
 			"path": "packages/pipe-evaluation"
+		},
+		"vibe3d-tool-state": {
+			"path": "packages/tool-state"
+		},
+		"vibe3d-transform-ops": {
+			"path": "packages/transform-ops"
+		},
+		"vibe3d-creation-ops": {
+			"path": "packages/creation-ops"
+		},
+		"vibe3d-alignment-ops": {
+			"path": "packages/alignment-ops"
 		}
 	},
 	"_comment-onnx-per-config": "d-onnxruntime (AI candidate ranker backend) is NOT a base dependency \u2014 it is added per-configuration alongside the `WithAI` version so the `modeling-noai` build can omit it entirely. onnxruntime.dll statically imports api-ms-win-core-path (Windows 8+), so dropping it is what makes a Windows 7-capable build possible. Only source/ai/onnx_backend.d touches the binding; all of it is gated by version(WithAI).",
@@ -256,7 +268,11 @@
 				"vibe3d-mesh-ops": "modeling",
 				"vibe3d-interchange": "modeling",
 				"vibe3d-interaction-query": "modeling",
-				"vibe3d-pipe-evaluation": "modeling"
+				"vibe3d-pipe-evaluation": "modeling",
+				"vibe3d-tool-state": "modeling",
+				"vibe3d-transform-ops": "modeling",
+				"vibe3d-creation-ops": "modeling",
+				"vibe3d-alignment-ops": "modeling"
 			}
 		},
 		{
@@ -272,7 +288,11 @@
 				"vibe3d-mesh-ops": "modeling-noai",
 				"vibe3d-interchange": "modeling-noai",
 				"vibe3d-interaction-query": "modeling-noai",
-				"vibe3d-pipe-evaluation": "modeling-noai"
+				"vibe3d-pipe-evaluation": "modeling-noai",
+				"vibe3d-tool-state": "modeling-noai",
+				"vibe3d-transform-ops": "modeling-noai",
+				"vibe3d-creation-ops": "modeling-noai",
+				"vibe3d-alignment-ops": "modeling-noai"
 			}
 		},
 		{
@@ -304,7 +324,11 @@
 				"vibe3d-mesh-ops": "with-render",
 				"vibe3d-interchange": "with-render",
 				"vibe3d-interaction-query": "with-render",
-				"vibe3d-pipe-evaluation": "with-render"
+				"vibe3d-pipe-evaluation": "with-render",
+				"vibe3d-tool-state": "with-render",
+				"vibe3d-transform-ops": "with-render",
+				"vibe3d-creation-ops": "with-render",
+				"vibe3d-alignment-ops": "with-render"
 			}
 		},
 		{
@@ -332,7 +356,16 @@
 				"packages/interaction-query/source",
 				"packages/pipe-evaluation/source",
 				"packages/interaction-query/tests/source",
-				"packages/pipe-evaluation/tests/source"
+				"packages/pipe-evaluation/tests/source",
+				"packages/common/tests/source",
+				"packages/tool-state/source",
+				"packages/tool-state/tests/source",
+				"packages/transform-ops/source",
+				"packages/transform-ops/tests/source",
+				"packages/creation-ops/source",
+				"packages/creation-ops/tests/source",
+				"packages/alignment-ops/source",
+				"packages/alignment-ops/tests/source"
 			],
 			"sourceFiles": [
 				"tools/harness/hostspace.d",
@@ -355,7 +388,16 @@
 				"packages/interaction-query/source",
 				"packages/pipe-evaluation/source",
 				"packages/interaction-query/tests/source",
-				"packages/pipe-evaluation/tests/source"
+				"packages/pipe-evaluation/tests/source",
+				"packages/common/tests/source",
+				"packages/tool-state/source",
+				"packages/tool-state/tests/source",
+				"packages/transform-ops/source",
+				"packages/transform-ops/tests/source",
+				"packages/creation-ops/source",
+				"packages/creation-ops/tests/source",
+				"packages/alignment-ops/source",
+				"packages/alignment-ops/tests/source"
 			],
 			"_comment-perf-portpolicy": "Task 9220. tools/perf/lib/portpolicy.d decides which port the perf harness may clear and launch on (refuses a run_test.d worker window, derived from tools/harness/runslots.d, which rdmd reaches through the tracked symlink tools/perf/tools/harness/runslots.d). lib/lifecycle.d is compiled here only so tests/unit/perf_port_policy_test.d can pin, by type, that its kill and launch seams take an admitted PerfPort. Test-only, like the other tools/perf entries.",
 			"_comment-hostspace": "Task 5630. tools/harness/hostspace.d is the one owner of scratch-root and available-space policy for the standalone test runner and sanitizer lane. Both scripts import module tools.harness.hostspace; rdmd gives lane.d only tools/sanitizer as its import root, so the tracked file symlink under that root preserves absolute-script invocation from a foreign cwd. The real file is listed explicitly in sourceFiles, which keeps it test-only: modeling and with-render do not compile harness policy. importPaths still repeats source because declaring this array replaces dub's derived default.",
@@ -363,14 +405,18 @@
 			"_comment-perf-ledger": "The two `tools/perf/lib` modules are compiled INTO this configuration on purpose (task 1460). The perf debt ledger's law -- `judge` / `debtImproved` / `reconcileDebt` in `lib.baseline` -- is pure arithmetic over recorded numbers, so it must be provable without launching vibe3d, and `dub test --config=tests` only looks at these source paths. `tools/perf/run.d` itself stays OUT: it is a script with a `main()`, not a library. Nothing here reaches a shipped binary -- `modeling` / `modeling-noai` / `with-render` carry neither entry, and dub merges configuration settings on top of the root rather than the other way round (see _comment-sourcepaths).",
 			"_comment": "The module-unittest gate (task 0706): `dub test --config=tests`. It exists so unittest blocks have somewhere to live OTHER than source/ -- measured by audit 4, 25% of source/ was test code and the god-files were 48-96% tests, with no lever to shrink them while the only source path was `source`. See tests/unit/README.md for what may move there.",
 			"_comment-name": "The name is `tests` and NOT `unittest`, and that is load-bearing. dub gives a configuration literally named `unittest` a special branch: it uses that configuration VERBATIM and skips its own test-main injection. Measured here on dub 1.41 -- with the name `unittest`, `dub test` printed `Linking vibe3d` / `Running vibe3d`: it built the EDITOR with -unittest, overwrote ./vibe3d (the binary `run_test.d --no-build` reuses), ran the unittest blocks, and then whether it terminated at all depended on druntime returning runMain=false. Under any other name dub injects dub_test_root.d, builds a separate `vibe3d-test-<config>` binary, leaves ./vibe3d alone, and -- the part that matters most for this task -- `static import`s EVERY module of the target, which is what guarantees a tests/unit/ module that nothing imports still registers its ModuleInfo and actually runs. Cost of not using the magic name: a bare `dub test` falls back to the default configuration (`modeling`) and silently omits tests/unit/. That is why every caller passes --config=tests explicitly; a wrong one is visible in the run's own output as `Running vibe3d-test-modeling` and a lower `N modules passed unittests`.",
-			"_comment-sourcepaths": "All six production owners compile directly under root unittest flags, preserving private blocks. Desktop and all four package public test roots register through the generated test main. Dependency libraries keep production flags, so the linker does not add duplicate unittest archives.",
+			"_comment-sourcepaths": "All ten production owners compile directly under root unittest flags in one compiler target, preserving private blocks. Desktop and all nine package public test roots register through the generated test main. Test-only sourceLibrary selections prevent package D archive links; native and external archives remain declared.",
 			"_comment-duplication": "`WithAI` + d-onnxruntime are copied from `modeling` rather than hoisted to the root ON PURPOSE: `modeling-noai` deliberately omits both (Windows 7 target -- onnxruntime.dll needs Win8+ APIs), so hoisting them would silently un-do that build. Keep this block in sync with `modeling` by hand; there are only two lines of it.",
 			"subConfigurations": {
-				"vibe3d-common": "modeling",
-				"vibe3d-mesh-ops": "modeling",
-				"vibe3d-interchange": "modeling",
-				"vibe3d-interaction-query": "modeling",
-				"vibe3d-pipe-evaluation": "modeling"
+				"vibe3d-common": "root-tests",
+				"vibe3d-mesh-ops": "root-tests",
+				"vibe3d-interchange": "root-tests",
+				"vibe3d-interaction-query": "root-tests",
+				"vibe3d-pipe-evaluation": "root-tests",
+				"vibe3d-tool-state": "root-tests",
+				"vibe3d-transform-ops": "root-tests",
+				"vibe3d-creation-ops": "root-tests",
+				"vibe3d-alignment-ops": "root-tests"
 			}
 		},
 		{
@@ -384,7 +430,11 @@
 				"vibe3d-mesh-ops": "web",
 				"vibe3d-interchange": "web",
 				"vibe3d-interaction-query": "web",
-				"vibe3d-pipe-evaluation": "web"
+				"vibe3d-pipe-evaluation": "web",
+				"vibe3d-tool-state": "web",
+				"vibe3d-transform-ops": "web",
+				"vibe3d-creation-ops": "web",
+				"vibe3d-alignment-ops": "web"
 			},
 			"libs-wasm": [
 				"dbvh_c",

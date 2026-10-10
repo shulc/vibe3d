@@ -36,7 +36,7 @@
 // MUTATIONS, each in isolation:
 //   * add a call to any seam reader from a second test module ⇒ the caller-set
 //     assertion reddens, naming that file;
-//   * delete the last call to one reader from `tests/unit/document_test.d`
+//   * delete the last call to one reader from `packages/common/tests/source/tests/unit/document_test.d`
 //     ⇒ the population floor reddens, naming that reader;
 //   * add a seventh reader to the seam ⇒ the declaration-set assertion reddens,
 //     and it reddens whether the reader is spelled at indent 4 or at column 0;
@@ -59,7 +59,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 /// The file that DECLARES the seam, and the one file allowed to call it.
 private enum seamDecl = "packages/common/source/document.d";
-private enum seamCaller = "tests/unit/document_test.d";
+private enum seamCaller = "packages/common/tests/source/tests/unit/document_test.d";
 
 /// The six accessors. Data, deliberately: spelled as string literals so that
 /// this census is not itself a caller of the thing it is counting.
@@ -289,7 +289,7 @@ unittest
     // ---- (3) THE LAW. Nothing outside the declaring file and that one caller
     //          may name a seam reader.
     string[] strays;
-    foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source"])
+    foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source"])
     {
         const dir = buildPath(repoRoot, root);
         if (!isDir(dir)) continue;
