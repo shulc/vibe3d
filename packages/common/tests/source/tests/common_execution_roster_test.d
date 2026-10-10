@@ -24,5 +24,7 @@ unittest
             actual ~= info.name;
     actual.sort;
     assert(actual == expected, "common frozen execution population changed");
+    foreach (name; actual)
+        writeln("COMMON-EXECUTION-MODULE ", name);
     writeln("COMMON-EXECUTION-ROSTER carriers=11 lower=12 population=23");
 }
