@@ -765,6 +765,11 @@ def self_test():
                 broken = copy.deepcopy(valid)
                 next(p for p in broken['packages'] if p['name'] == 'd-stb-image')['targetType'] = 'sourceLibrary'
                 red(owner + '-external-static', lambda: validate_description(broken, project, owner, config, tests), 'native archive target')
+                for native in sorted({p['name'] for p in valid['packages']} & REVISIONS.keys()):
+                    marker = project / 'dependencies' / native / '.boundary-revision'
+                    marker.write_text('0' * 40 + '\n')
+                    red(owner + '-source-revision-' + native, lambda: validate_description(valid, project, owner, config, tests), 'repository revision')
+                    marker.write_text(REVISIONS[native][0] + '\n')
                 broken = copy.deepcopy(valid); broken['packages'].append(copy.deepcopy(broken['packages'][0]))
                 red(owner + '-active-duplicate', lambda: validate_description(broken, project, owner, config, tests), 'active package population')
                 if tests and owner == 'subpatch-preview':
