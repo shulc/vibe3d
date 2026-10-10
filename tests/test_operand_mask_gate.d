@@ -213,7 +213,11 @@ unittest {
     hits ~= scanTree("packages/mesh-ops/source");
     hits ~= scanTree("packages/interchange/source");
     hits ~= scanTree("packages/interaction-query/source");
-    hits ~= scanTree("packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source");
+    hits ~= scanTree("packages/pipe-evaluation/source");
+    hits ~= scanTree("packages/tool-state/source");
+    hits ~= scanTree("packages/transform-ops/source");
+    hits ~= scanTree("packages/creation-ops/source");
+    hits ~= scanTree("packages/alignment-ops/source");
 
     size_t[string] byFile;
     foreach (h; hits) byFile[h.file] = byFile.get(h.file, 0) + 1;

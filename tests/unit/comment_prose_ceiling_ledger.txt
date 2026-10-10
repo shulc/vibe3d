@@ -475,7 +475,7 @@ allow source/viewport_overlay_mode.d 6
 allow source/viewport_scheme.d 8
 allow source/weightmap_view.d 1
 
-# Exact per-file long-comment run allowances, sorted by path.
+# Exact per-file counts of comment runs >= 40 lines, sorted by path.
 allow-runs packages/alignment-ops/source/tools/alignment/align_kernels.d 1
 allow-runs packages/common/source/change_bus.d 3
 allow-runs packages/common/source/command.d 2
