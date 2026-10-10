@@ -15,6 +15,8 @@
 // a time.
 module tests.unit.workplane_frame_census_test;
 
+import std.file : exists;
+
 import std.algorithm : canFind, endsWith, sort;
 import std.array : array, join;
 import std.file : dirEntries, readText, SpanMode;
@@ -42,7 +44,8 @@ private struct Src { string rel, raw, code; }
 /// Every `source/**/*.d`; `production` drops the in-source `*_test.d` modules.
 private Src[] sources(bool production) {
     Src[] r;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (production && e.name.endsWith("_test.d")) continue;
         auto raw = readText(e.name);

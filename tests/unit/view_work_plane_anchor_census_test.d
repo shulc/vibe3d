@@ -6,6 +6,8 @@
 // changed roster, not as a silent pass.
 module tests.unit.view_work_plane_anchor_census_test;
 
+import std.file : exists;
+
 import std.algorithm : count, sort;
 import std.array     : array;
 import std.file      : SpanMode, dirEntries, readText;
@@ -20,7 +22,8 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 /// "file:count" for every source file whose code text contains `needle`.
 private string[] roster(string needle) {
     string[] r;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/transform-ops/tests/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/transform-ops/tests/source")])
+    if (exists(scanSourceRoot))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const n = blankNonCode(readText(e.name)).count(needle);
         if (n) r ~= format("%s:%d", relativePath(e.name, buildPath(repoRoot, "source")), n);

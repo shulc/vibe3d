@@ -13,6 +13,8 @@
 // Order per block: floor -> needles -> structure, each with a positive control.
 module tests.unit.face_stride_census_test;
 
+import std.file : exists;
+
 import std.algorithm : sort, endsWith;
 import std.array     : array, replace;
 import std.file      : dirEntries, readText, SpanMode;
@@ -123,7 +125,8 @@ unittest { // the rule's own controls [E5]: the app.d shape is rejected, a real 
 
 unittest { // the layout census: four files, one stride constant, no other spelling
     string[] files;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = relativePath(de.name, buildPath(root, "source")).replace("\\", "/");
         if (bindsFaceVbo(blankUnittestBodies(blankNonCode(readText(de.name))))) files ~= rel;

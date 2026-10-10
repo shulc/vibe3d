@@ -87,7 +87,7 @@
 module tests.unit.unittest_census_gate;
 
 import std.array      : appender, array, join;
-import std.algorithm  : sort, filter, map, endsWith, startsWith;
+import std.algorithm  : count, sort, filter, map, endsWith, startsWith;
 import std.conv       : to;
 import std.exception  : collectException;
 import std.file       : dirEntries, exists, isDir, read, SpanMode, tempDir, remove;
@@ -508,7 +508,7 @@ private size_t skipDelimited(const(char)[] s, size_t i) @safe pure nothrow @nogc
 /// are inside `source/` and therefore counted, even though the `tests`
 /// configuration does not compile them: the point is that a block cannot vanish
 /// unnoticed, and a block nobody compiles is the easiest kind to lose.
-immutable string[] censusRoots = ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "tests/unit", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source"];
+immutable string[] censusRoots = ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "tests/unit", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"];
 
 /// One file's contribution, keyed by its repo-relative path with `/` separators.
 struct FileCensus
@@ -1593,22 +1593,33 @@ unittest
     collectException(rmdirRecurse(sandbox));
     scope(exit) collectException(rmdirRecurse(sandbox));
     foreach (owner; ["packages/mesh-ops/source", "packages/interchange/source",
-                    "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source",
-                    "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source"])
+                    "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source",
+                    "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"])
     {
         mkdirRecurse(buildPath(sandbox, owner));
         write(buildPath(sandbox, owner, "probe.d"),
             "unittest { assert(1); assert(2); }\n");
     }
     const owners = scanWorkingTree(sandbox);
-    assert(owners.length == 17, "Wave5 census observes all seventeen package production/test roots");
+    assert(owners.length >= 17, "census materialized owner complement floor seventeen");
     string[] ownerPaths;
     foreach (file; owners) ownerPaths ~= file.path;
+    foreach (owner; ["packages/input-events/source", "packages/display-policy/source",
+                    "packages/viewport-gpu/source", "packages/subpatch-preview/source",
+                    "packages/input-events/tests/source", "packages/display-policy/tests/source",
+                    "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"])
+        assert(ownerPaths.count(buildPath(owner, "probe.d")) == 1,
+            "SCAN-OWNER-" ~ owner ~ ": synthetic owner must be observed exactly once");
+    assert(owners.length == 25, "Wave7 census observes all twenty-five package production/test roots");
     assert(ownerPaths == ["packages/alignment-ops/source/probe.d",
                           "packages/alignment-ops/tests/source/probe.d",
                           "packages/common/tests/source/probe.d",
                           "packages/creation-ops/source/probe.d",
                           "packages/creation-ops/tests/source/probe.d",
+                          "packages/display-policy/source/probe.d",
+                          "packages/display-policy/tests/source/probe.d",
+                          "packages/input-events/source/probe.d",
+                          "packages/input-events/tests/source/probe.d",
                           "packages/interaction-query/source/probe.d",
                           "packages/interaction-query/tests/source/probe.d",
                           "packages/interchange/source/probe.d",
@@ -1617,14 +1628,18 @@ unittest
                           "packages/mesh-ops/tests/source/probe.d",
                           "packages/pipe-evaluation/source/probe.d",
                           "packages/pipe-evaluation/tests/source/probe.d",
+                          "packages/subpatch-preview/source/probe.d",
+                          "packages/subpatch-preview/tests/source/probe.d",
                           "packages/tool-state/source/probe.d",
                           "packages/tool-state/tests/source/probe.d",
                           "packages/transform-ops/source/probe.d",
-                          "packages/transform-ops/tests/source/probe.d"],
-        "Wave4 census exact independent ownership membership");
+                          "packages/transform-ops/tests/source/probe.d",
+                          "packages/viewport-gpu/source/probe.d",
+                          "packages/viewport-gpu/tests/source/probe.d"],
+        "Wave7 census exact independent ownership membership");
     const ownershipTotal = total(owners);
-    assert(ownershipTotal.blocks == 17 && ownershipTotal.asserts == 34,
-        "Wave4 census preserves each owner's nonzero block/assert contribution");
+    assert(ownershipTotal.blocks == 25 && ownershipTotal.asserts == 50,
+        "Wave7 census preserves each owner's nonzero block/assert contribution");
 }
 
 unittest

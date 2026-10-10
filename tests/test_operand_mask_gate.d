@@ -218,6 +218,10 @@ unittest {
     hits ~= scanTree("packages/transform-ops/source");
     hits ~= scanTree("packages/creation-ops/source");
     hits ~= scanTree("packages/alignment-ops/source");
+    hits ~= scanTree("packages/input-events/source");
+    hits ~= scanTree("packages/display-policy/source");
+    hits ~= scanTree("packages/viewport-gpu/source");
+    hits ~= scanTree("packages/subpatch-preview/source");
 
     size_t[string] byFile;
     foreach (h; hits) byFile[h.file] = byFile.get(h.file, 0) + 1;

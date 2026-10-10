@@ -5,6 +5,8 @@
 // list, then a census of the production text.
 module tests.unit.snap_overlay_test;
 
+import std.file : exists;
+
 import std.algorithm : canFind, filter, sort;
 import std.array     : array;
 import std.file      : dirEntries, readText, SpanMode;
@@ -132,7 +134,8 @@ unittest // the mark law, its captured colours and shapes
 unittest
 {
     string[2][] files;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         files ~= [de.name[repoRoot.length + 1 .. $],
                   blankUnittestBodies(blankNonCode(readText(de.name)))];

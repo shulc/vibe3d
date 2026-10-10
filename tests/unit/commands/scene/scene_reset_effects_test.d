@@ -3,6 +3,8 @@
 // scene_file_lifecycle_registration_test (task 6480).
 module tests.unit.commands.scene.scene_reset_effects_test;
 
+import std.file : exists;
+
 import core.exception : AssertError;
 import mesh : MapKind, Mesh, SubpatchTrace, makeCube;
 import prefs : Prefs;
@@ -134,7 +136,8 @@ unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneRe
     const root = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..", "..", "..", "..");
     size_t loops, retiredIdent;
     string[] sites;
-    foreach (scanSourceRoot; [buildNormalizedPath(root, "source"), buildNormalizedPath(root, "packages/common/source"), buildNormalizedPath(root, "packages/mesh-ops/source"), buildNormalizedPath(root, "packages/interchange/source"), buildNormalizedPath(root, "packages/interaction-query/source"), buildNormalizedPath(root, "packages/pipe-evaluation/source"), buildNormalizedPath(root, "packages/tool-state/source"), buildNormalizedPath(root, "packages/transform-ops/source"), buildNormalizedPath(root, "packages/creation-ops/source"), buildNormalizedPath(root, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildNormalizedPath(root, "source"), buildNormalizedPath(root, "packages/common/source"), buildNormalizedPath(root, "packages/mesh-ops/source"), buildNormalizedPath(root, "packages/interchange/source"), buildNormalizedPath(root, "packages/interaction-query/source"), buildNormalizedPath(root, "packages/pipe-evaluation/source"), buildNormalizedPath(root, "packages/tool-state/source"), buildNormalizedPath(root, "packages/transform-ops/source"), buildNormalizedPath(root, "packages/creation-ops/source"), buildNormalizedPath(root, "packages/alignment-ops/source"), buildNormalizedPath(root, "packages/input-events/source"), buildNormalizedPath(root, "packages/display-policy/source"), buildNormalizedPath(root, "packages/viewport-gpu/source"), buildNormalizedPath(root, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (de.name.endsWith("_test.d")) continue;
         const code = blankNonCode(readText(de.name));

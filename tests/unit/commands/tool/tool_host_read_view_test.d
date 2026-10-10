@@ -1,5 +1,7 @@
 module tests.unit.commands.tool.tool_host_read_view_test;
 
+import std.file : exists;
+
 import commands.tool.host : ToolHost, ToolHostReadView;
 import core.exception : AssertError;
 import std.algorithm : count, sort;
@@ -200,7 +202,8 @@ unittest { // V4a: a null binding is rejected
 
 unittest { // V5: the owner address is confined to ToolHostReadView
     string[] paths;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                SpanMode.depth))
         paths ~= entry.name;

@@ -6,6 +6,8 @@
 // Sites are keyed by their enclosing declaration (census_symbols).
 module tests.unit.hover_stale_writer_census_test;
 
+import std.file : exists;
+
 import std.algorithm : canFind, endsWith, sort, startsWith;
 import std.file      : dirEntries, readText, SpanMode;
 import std.format    : format;
@@ -42,7 +44,8 @@ unittest {
     immutable press = ["TackTool.onMouseButtonDown", "MagnetTool.onMouseButtonDown",
         "LoopSliceTool.onMouseButtonDown", "EdgeSliceTool.onMouseButtonDown",
         "XfrmTransformTool.tryPickElement"];
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
         const rel = f.name[repoRoot.length + 1 .. $];

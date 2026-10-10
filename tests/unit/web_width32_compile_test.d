@@ -100,7 +100,7 @@ SH";
     const ownerPrefix0 = buildPath(repoRoot, "packages/tool-state/source") ~ "/";
     const ownerPrefix1 = buildPath(repoRoot, "packages/transform-ops/source") ~ "/";
     const ownerPrefix2 = buildPath(repoRoot, "packages/creation-ops/source") ~ "/";
-    const ownerPrefix3 = buildPath(repoRoot, "packages/alignment-ops/source") ~ "/";
+    const ownerPrefix3 = buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source") ~ "/";
 
     foreach (line; readText(depsPath).splitLines)
     {

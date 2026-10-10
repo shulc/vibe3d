@@ -9,6 +9,8 @@
 // 13 `dragRaw_`, 4 `handleMoverDrag`, 3 + 2 `moverHitTest` code tokens).
 module tests.unit.handle_drag_test;
 
+import std.file : exists;
+
 import std.algorithm : canFind, sort;
 import std.array : array, join;
 import std.file : dirEntries, readText, SpanMode;
@@ -220,7 +222,8 @@ unittest {
 
 unittest {
     string[string] code;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
+    if (exists(scanSourceRoot))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         code[e.name] = blankUnittestBodies(blankNonCode(readText(e.name)));
     foreach (f; ["source/drag.d", "source/tools/transform/move.d", "source/tools/create/box.d",

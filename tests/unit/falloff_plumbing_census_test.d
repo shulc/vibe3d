@@ -6,6 +6,8 @@
 // hand-rolled copy; this reads the text.
 module tests.unit.falloff_plumbing_census_test;
 
+import std.file : exists;
+
 import std.file      : dirEntries, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
@@ -20,7 +22,8 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 /// bodies blanked; whitespace runs collapsed), keyed by repo-relative path.
 private string[string] sourceCode() {
     string[string] code;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         code[f.name[repoRoot.length + 1 .. $]] =
             blankUnittestBodies(blankNonCode(readText(f.name)))

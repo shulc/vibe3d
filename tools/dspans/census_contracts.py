@@ -37,7 +37,7 @@ CONTRACT_CELLS = 21
 # Final Wave5 tracked membership: desktop472/common76/mesh17/interchange8/query10/evaluation12.
 # Wave6 construction, 2026-10-10: desktop461 plus nine libraries134 =595.
 PRODUCTION_ROOTS = ("source", "packages/common/source", "packages/mesh-ops/source",
-                    "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source")
+                    "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source")
 PRODUCTION_OWNER_FLOORS = {
     "source": 461,
     "packages/common/source": 76,
@@ -55,6 +55,8 @@ def production_lexer_census(root):
     files = sorted(path for sub in PRODUCTION_ROOTS
                    for path in (root / sub).rglob("*.d"))
     failures = []
+    if len(files) < 595:
+        failures.append(f"dspans production complement read {len(files)} files; floor 595")
     for owner, floor in PRODUCTION_OWNER_FLOORS.items():
         count = sum(path.is_relative_to(root / owner) for path in files)
         if count < floor:

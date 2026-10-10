@@ -92,7 +92,9 @@
 // module there, so the assertion carrying the LAW never ran and its
 // explanation was never printed. A count that says "found 3" is a worse
 // failure message than one that says which declaration is unsound and why.
-// The counts now sit below the predicate; the only floor above it is
+// The counts now sit below the predicate;
+
+import std.file : exists; the only floor above it is
 // non-emptiness, which is all that is needed to kill the vacuous pass.
 //
 // THE DEFECT IS REAL AND NOT MERELY DETECTED, which the same run also shows:
@@ -177,7 +179,8 @@ package LedgerHit[] scanEdgeSeamSource(string label, string src) {
 
 private LedgerHit[] scanTree() {
     auto hits = appender!(LedgerHit[]);
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         hits.put(scanEdgeSeamSource(de.name[repoRoot.length + 1 .. $],
                                     readText(de.name)));

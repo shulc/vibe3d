@@ -1,5 +1,7 @@
 module tests.unit.ui.layer_list_panel_roles_test;
 
+import std.file : exists;
+
 import std.algorithm : canFind, count, sort;
 import core.exception : AssertError;
 import std.conv : to;
@@ -1089,7 +1091,8 @@ unittest { // production binder, call sites and the retired EditorApp path
 
     size_t sourceFiles;
     size_t oldSignatures;
-    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source"), repoRoot.buildPath("packages/input-events/source"), repoRoot.buildPath("packages/display-policy/source"), repoRoot.buildPath("packages/viewport-gpu/source"), repoRoot.buildPath("packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (entry; dirEntries(scanSourceRoot, "*.d",
                                SpanMode.depth)) {
         ++sourceFiles;

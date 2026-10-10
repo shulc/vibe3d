@@ -4,6 +4,8 @@
 // restore path (presets, the attribute cache, remembered defaults, undo).
 module tests.unit.tool_attr_bounds_test;
 
+import std.file : exists;
+
 import params : Param, ParamFlags;
 import tool_attr_bounds : applyToolAttrBound, clampStoredToBounds, kToolAttrBounds;
 import toolpipe.stages.constrain;
@@ -84,7 +86,8 @@ unittest { // the doors that read the table — and nothing else (a restore
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     size_t[string] uses, reclamps;
     size_t scanned;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const code = blankNonCode(readText(de.name));

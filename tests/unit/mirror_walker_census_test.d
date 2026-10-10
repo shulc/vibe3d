@@ -15,6 +15,8 @@
 // module at its first red).
 module tests.unit.mirror_walker_census_test;
 
+import std.file : exists;
+
 import std.conv : to;
 import std.algorithm : sort;
 import std.string : indexOf;
@@ -51,7 +53,8 @@ private string[] filesWith(string needle, out size_t scanned) {
     import std.file : dirEntries, SpanMode;
     import std.path : buildPath;
     string[] hits;
-    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const rel = de.name[kRepoRoot.length + 1 .. $];

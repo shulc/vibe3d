@@ -574,7 +574,8 @@ unittest { // production census: one owner, live provider, no pointer-era path
 
     size_t sourceFiles;
     string allSource;
-    foreach (scanSourceRoot; [root.buildPath("source"), root.buildPath("packages/common/source"), root.buildPath("packages/mesh-ops/source"), root.buildPath("packages/interchange/source"), root.buildPath("packages/interaction-query/source"), root.buildPath("packages/pipe-evaluation/source"), root.buildPath("packages/tool-state/source"), root.buildPath("packages/transform-ops/source"), root.buildPath("packages/creation-ops/source"), root.buildPath("packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [root.buildPath("source"), root.buildPath("packages/common/source"), root.buildPath("packages/mesh-ops/source"), root.buildPath("packages/interchange/source"), root.buildPath("packages/interaction-query/source"), root.buildPath("packages/pipe-evaluation/source"), root.buildPath("packages/tool-state/source"), root.buildPath("packages/transform-ops/source"), root.buildPath("packages/creation-ops/source"), root.buildPath("packages/alignment-ops/source"), root.buildPath("packages/input-events/source"), root.buildPath("packages/display-policy/source"), root.buildPath("packages/viewport-gpu/source"), root.buildPath("packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         allSource ~= blankNonCode(readText(entry.name));

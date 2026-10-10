@@ -2,6 +2,8 @@
 // capability fence and its bounded bypass census (task 6510).
 module tests.unit.registry_construction_authority_test;
 
+import std.file : exists;
+
 import std.algorithm : canFind, count, sort;
 import std.array : array;
 import std.exception : assertThrown;
@@ -316,7 +318,8 @@ unittest {
     size_t registryTuple;
     size_t mixes;
     size_t privateNames;
-    foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source"]) {
+    foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"]) {
+        if (!exists(buildPath(repoRoot, root))) continue;
         foreach (de; dirEntries(buildPath(repoRoot, root), "*.d", SpanMode.depth)) {
             const relative = buildNormalizedPath(de.name[repoRoot.length + 1 .. $]);
             const raw = readText(de.name);

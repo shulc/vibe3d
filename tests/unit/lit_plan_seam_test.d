@@ -13,6 +13,8 @@
 // spellings that bypass `private`).
 module tests.unit.lit_plan_seam_test;
 
+import std.file : exists;
+
 import std.format : format;
 import std.regex  : ctRegex, matchAll;
 
@@ -210,7 +212,8 @@ unittest { // raw-text census of the spellings that bypass private: names, getMe
     size_t scanned, litFiles;
     string[] named;          // files outside shader.d naming a plan-uniform location
     string[string] reflect;  // LitShader-mentioning files with a bypass spelling -> counts
-    foreach (scanSourceRoot; [src, buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [src, buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = de.name[src.length + 1 .. $].replace("\\", "/");
         if (rel == "shader.d") continue;

@@ -10,6 +10,8 @@
 // in move.d and slice_tool.d) and green after.
 module tests.unit.handle_hit_census_test;
 
+import std.file : exists;
+
 import std.algorithm : canFind;
 import std.array : array;
 import std.file : dirEntries, readText, SpanMode;
@@ -47,7 +49,8 @@ static assert([__traits(allMembers, Handler)].canFind("onKeyDown"));
 
 unittest {
     string[] files;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
+    if (exists(scanSourceRoot))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) files ~= e.name;
     string[string] code;
     foreach (f; files) code[f] = blankNonCode(readText(f));

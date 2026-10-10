@@ -1,5 +1,7 @@
 module tests.unit.ui.image_list_panel_roles_test;
 
+import std.file : exists;
+
 import std.algorithm : canFind, count;
 import std.file : SpanMode, dirEntries, readText;
 import std.path : buildNormalizedPath, buildPath, dirName;
@@ -760,7 +762,8 @@ unittest { // 6040 census: production binder, call sites, retired EditorApp path
         && panels.count("import ui.item_rename") == 0,
         "6040 retired panel path: ui.panels still defines or feeds the Images rename owner");
     size_t sourceFiles, oldSig;
-    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source"), repoRoot.buildPath("packages/input-events/source"), repoRoot.buildPath("packages/display-policy/source"), repoRoot.buildPath("packages/viewport-gpu/source"), repoRoot.buildPath("packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         oldSig += blankNonCode(readText(entry.name)).count("drawImageListPanel(EditorApp");

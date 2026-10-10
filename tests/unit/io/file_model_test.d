@@ -1,5 +1,7 @@
 module tests.unit.io.file_model_test;
 
+import std.file : exists;
+
 import io.file_model : browserFileModel, selectBrowserBackendForTest;
 static import io.file_dialog;
 import std.algorithm : canFind, startsWith;
@@ -91,7 +93,8 @@ unittest {
            !compactCode("packages/common/source/io/image_path.d").canFind("io.file_dialog"),
         "file model image paths import lower owner directly");
     size_t sourceFiles;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (file; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         if (file.name == buildPath(root, "packages/common/source/io/file_model.d")) continue;

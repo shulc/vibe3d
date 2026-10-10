@@ -28,6 +28,8 @@
 // Fast loop: tools/local/ut-standalone.sh tests/unit/tool_model_census_test.d
 module tests.unit.tool_model_census_test;
 
+import std.file : exists;
+
 // Pulls every production tool module into the import closure, so the runtime
 // population is the same under `dmd -i` (ut-standalone) as in the full gate.
 // Floor 5(i) makes any divergence loud: a class that falls out of the closure
@@ -330,7 +332,8 @@ private struct SrcFile { string path; string mod; string src; }
 /// modules here declare a name that is not their path).
 private SrcFile[] sourceFiles(out size_t withoutModuleLine) {
     SrcFile[] files;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const src = readText(de.name);
         const rel = de.name[repoRoot.length + 1 .. $];

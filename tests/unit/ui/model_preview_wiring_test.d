@@ -1,5 +1,7 @@
 module tests.unit.ui.model_preview_wiring_test;
 
+import std.file : exists;
+
 import std.file : readText, dirEntries, SpanMode;
 import std.algorithm : count, endsWith;
 import tests.unit.census_symbols : blankNonCode, symbolTokenHits;
@@ -18,7 +20,8 @@ unittest {
     assert(has(capability, "tool !is null && tool.modelPreview(candidate)"),
            "production queries final Tool operation");
     size_t files, adopters;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile || !entry.name.endsWith(".d")) continue;
         ++files;

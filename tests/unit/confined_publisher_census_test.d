@@ -40,7 +40,9 @@
 // `tests/test_snap_grid_drag_rate.d`. The failure of one that is too NARROW is
 // a stale answer, and a stale bucket grid does not crash, does not change a
 // draw call, and returns a plausible vertex. `test_bus_snap_grid_after_drag.d`
-// catches the one shape of it we already knew about; a NEW confined publisher
+// catches the one shape of it we already knew about;
+
+import std.file : exists; a NEW confined publisher
 // would be a new shape, with no fixture written for it. So the gate is on the
 // caller set, where the invariant actually lives.
 //
@@ -217,7 +219,8 @@ package Hit[] scanConfinedSource(string label, string src) {
 
 private Hit[] scanTree() {
     auto hits = appender!(Hit[]);
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
+    if (exists(scanSourceRoot))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         hits.put(scanConfinedSource(de.name[repoRoot.length + 1 .. $],
                                     readText(de.name)));
