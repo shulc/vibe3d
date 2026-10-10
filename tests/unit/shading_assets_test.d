@@ -19,7 +19,7 @@ import io.image_decode : decodePng16;
 import viewport_env : kEnvAssets, kMatcapAssets, kEnvTargetMeanLuma, decodeShadingImage;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-private enum assetDir = buildPath(repoRoot, "assets", "shading");
+private enum assetDir = buildPath(repoRoot, "packages", "viewport-gpu", "assets", "shading");
 
 private struct Row {
     string output, input, inputSha, outputSha, pixelsSha;
