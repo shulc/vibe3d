@@ -199,15 +199,6 @@ private struct Found { string zone; string file; string symbol; string ident; si
 private Found[] scanDormant() {
     auto found = appender!(Found[]);
     foreach (zone; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"]) {
-        if (!exists(buildPath(repoRoot, zone))
-            && (zone == "packages/input-events/source"
-                || zone == "packages/display-policy/source"
-                || zone == "packages/viewport-gpu/source"
-                || zone == "packages/subpatch-preview/source"
-                || zone == "packages/input-events/tests/source"
-                || zone == "packages/display-policy/tests/source"
-                || zone == "packages/viewport-gpu/tests/source"
-                || zone == "packages/subpatch-preview/tests/source")) continue;
         foreach (de; dirEntries(buildPath(repoRoot, zone), "*.d", SpanMode.depth)) {
             const rel  = de.name[repoRoot.length + 1 .. $];
             const code = blankNonCode(readText(de.name));

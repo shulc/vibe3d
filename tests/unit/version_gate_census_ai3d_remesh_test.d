@@ -292,7 +292,7 @@ if [ "$config" = web ]; then
     echo "FATAL: --config=web described no -version=web; the gates would be inert" >&2; exit 2 ;;
   esac
 fi
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/common/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/common/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source -name '*.d' -print)
 SH";
     enum graphConfigurations = ["web", "modeling"];
     const graphPaths = [webDepsPath, nativeDepsPath];
@@ -561,9 +561,6 @@ trap 'rm -rf "$out"' EXIT
 for package in common mesh-ops interchange interaction-query pipe-evaluation \
                tool-state transform-ops creation-ops alignment-ops input-events \
                display-policy viewport-gpu subpatch-preview; do
-  case "$package" in subpatch-preview)
-    [ -f "packages/$package/dub.json" ] || continue ;;
-  esac
   dub build --root="packages/$package" --config=web --compiler=dmd
 done
 for data in import-paths versions linker-files libs lflags source-files dflags \

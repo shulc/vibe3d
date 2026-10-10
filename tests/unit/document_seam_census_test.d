@@ -292,10 +292,6 @@ unittest
     foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"])
     {
         const dir = buildPath(repoRoot, root);
-        if (!exists(dir)
-            && (root == "packages/subpatch-preview/source"
-                || root == "packages/subpatch-preview/tests/source")) continue;
-        if (!isDir(dir)) continue;
         foreach (entry; dirEntries(dir, SpanMode.depth))
         {
             if (!entry.isFile || !entry.name.endsWith(".d")) continue;
