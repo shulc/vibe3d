@@ -661,6 +661,12 @@ def validate_actual_compiler(commands, project, owner, description, home, harnes
     return {'compile': compiled, 'link': linked, 'staticOwners': sorted(static)}
 
 
+def fixture_observer_statement(archive, owner):
+    require(archive.is_absolute(), 'PREPARATION-REFUSED: fixture observer archive path')
+    relative, _ = FIXTURES[owner]
+    return ' writeln("PKG-FIXTURE sha256=", sha256Of(read(' + json.dumps(str(archive / relative)) + ')).toHexString.toLower);'
+
+
 def validate_algorithm_cwd(output, archive, owner):
     expected = archive if owner == 'input-events' else archive / 'packages' / owner / 'tests'
     require(re.findall(r'^PKG-CWD path=(.+)$', output, re.M) == [str(expected)],
@@ -691,8 +697,7 @@ def execute(project, owner, compiler, env, evidence):
     harness = root / 'tests/boundary_roster.d'
     receipt_source = 'module boundary_roster;\nimport std.stdio : writeln;\nimport std.file : getcwd, read;\nimport std.digest.sha : sha256Of;\nimport std.digest : toHexString;\nimport std.string : toLower;\nshared static this() { writeln("PKG-CWD path=", getcwd()); foreach (info; ModuleInfo) if (info !is null) writeln("PKG-MODULE name=", info.name, " unittest=", info.unitTest !is null ? 1 : 0);'
     if owner in FIXTURES:
-        relative, _ = FIXTURES[owner]
-        receipt_source += ' writeln("PKG-FIXTURE sha256=", sha256Of(read("' + relative + '")).toHexString.toLower);'
+        receipt_source += fixture_observer_statement(archive, owner)
     harness.write_text(receipt_source + ' }\n')
     raw = json.loads((root / 'tests/dub.json').read_text())
     raw['sourceFiles'].append('boundary_roster.d')
@@ -1013,6 +1018,16 @@ def self_test():
                 lambda: validate_algorithm_cwd('PKG-CWD path=' + str(wrong) + '\n', archive, owner),
                 'support algorithm actual working directory: ' + owner)
             validate_algorithm_cwd(valid, archive, owner)
+        for owner, relative in (('input-events', 'config/shortcuts.yaml'),
+                                ('viewport-gpu', 'assets/icon/png/vibe3d_16.png')):
+            archive = project / (owner + '-observer-archive')
+            statement = fixture_observer_statement(archive, owner)
+            require('read(' + json.dumps(str(archive / relative)) + ')' in statement,
+                    'support exact owned fixture observer path: ' + owner)
+            cells.append(owner + '-fixture-observer-positive')
+            red(owner + '-fixture-observer-relative',
+                lambda: fixture_observer_statement(Path('relative-archive'), owner),
+                'PREPARATION-REFUSED: fixture observer archive path')
         for owner in ('input-events', 'viewport-gpu'):
             relative, sha = FIXTURES[owner]
             original = {'path': relative, 'sha256': sha, 'cwd': str(project)}

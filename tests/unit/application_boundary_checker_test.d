@@ -39,7 +39,7 @@ unittest {
     auto support = execute(["python3", buildPath(repoRoot, "tools",
         "check_package_support_boundary.py"), "--self-test"]);
     assert(support.status == 0, "support package checker controls: " ~ support.output);
-    assert(support.output.lineSplitter.canFind("PKG-SELF-CONTROLS passed=557"),
+    assert(support.output.lineSplitter.canFind("PKG-SELF-CONTROLS passed=561"),
         "support package checker missing control population");
     assert(support.output.canFind("PKG-BOUNDARY-VERDICT=GREEN"),
         "support package checker missing terminal verdict");
