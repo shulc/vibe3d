@@ -7956,7 +7956,7 @@ struct Mesh {
                                     doneV[vid] = true;
                                     // Materialize exactly the snapshot's three floats: a direct
                                     // by-value AA argument can overread Vec3's 12-byte value
-                                    // (task 20262210; guard-page evidence in the task receipt).
+                                    // (task 20262210; core boundary evidence in the task receipt).
                                     auto snapshot = &origPos[vid];
                                     Vec3 p;
                                     p.x = snapshot.x;
