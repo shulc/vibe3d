@@ -281,6 +281,10 @@ live_registration_roles
 log
 macro_recorder
 math
+math_geometry
+math_matrix
+math_quaternion
+math_vector
 mesh
 mesh_analysis
 mesh_bbox
@@ -289,6 +293,7 @@ mesh_corner_maps
 mesh_dirty
 mesh_edge_slice
 mesh_edit_delta
+mesh_edit_replay
 mesh_gpu
 mesh_morph
 mesh_ops.bevel_curves
@@ -303,15 +308,20 @@ mesh_ops.cut
 mesh_ops.decimate
 mesh_ops.edge_bevel
 mesh_ops.extrude
+mesh_ops.face_alignment
+mesh_ops.face_merge
 mesh_ops.loop_slice
 mesh_ops.poly_bevel
 mesh_ops.revolve
 mesh_ops.select_loop
 mesh_ops.thicken
+mesh_plane_types
 mesh_planes
+mesh_scope
 mesh_selsets
 mesh_stats
 mesh_topo
+mesh_types
 mesh_visibility
 model_preview
 morph_target
@@ -399,6 +409,7 @@ snap
 snap_election
 snap_render
 snapshot
+spatial
 step_trace
 subpatch_factories
 subpatch_osd

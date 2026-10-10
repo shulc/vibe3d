@@ -258,11 +258,11 @@ unittest {
     // Task 9449: the shared tools.edit.haul_axis_latch adds one module.
     // Task 20260660: Tool reaches the detached model_preview view (+1 each).
     // Wave6A: the existing kernel reaches its extracted cluster_values leaf (+1 each).
-    pinClosure("transform_tool_registration", transform, 263);
-    pinClosure("registration", positive, 534);
-    assert(transform.queue.length == 263 && positive.queue.length == 534,
-        format("6506 import closure census changed: transform=%d/263 "
-            ~ "registration=%d/534", transform.queue.length,
+    pinClosure("transform_tool_registration", transform, 272);
+    pinClosure("registration", positive, 545);
+    assert(transform.queue.length == 272 && positive.queue.length == 545,
+        format("6506 import closure census changed: transform=%d/272 "
+            ~ "registration=%d/545", transform.queue.length,
             positive.queue.length));
 }
 

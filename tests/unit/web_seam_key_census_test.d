@@ -19,7 +19,8 @@
 // cannot pass over an empty scan, then the exclusive count. One target guard is deliberately
 // different: `version (WebAssembly)` immediately followed by a failing `static assert` rejects
 // a wasm build that missed the configured browser key. It grants no capability and is counted
-// exactly, so another capability gate cannot hide beside it.
+// exactly. Wave8 also pins eight JS-only target refinements inside configured `web`
+// arms; these cannot select the browser backend by themselves.
 module tests.unit.web_seam_key_census_test;
 
 import std.algorithm : canFind, filter, map, sum;
@@ -27,7 +28,9 @@ import std.array     : array;
 import std.file      : dirEntries, SpanMode, readText, exists;
 import std.path      : buildPath;
 import std.regex     : matchAll, regex;
-import std.string    : indexOf;
+import std.string    : indexOf, count;
+import std.path      : relativePath;
+import std.string    : replace;
 
 private string repoRoot()
 {
@@ -41,6 +44,68 @@ private string repoRoot()
     assert(false, "6910 web seam key census: no repository root above the test's cwd");
 }
 
+// Wave8: `web` selects the browser backend; WebAssembly refines only the eight
+// accepted JavaScript bridge surfaces. Each exact fragment has one guard;
+// the tree-wide total still rejects any unrostered target capability gate.
+private size_t bridgeTargetSites(string path, string text)
+{
+    string outer, tail;
+    string[] fragments;
+    switch (path) {
+    case "source/app.d":
+        fragments = [
+            "version (web) {\n    import web_gl_loader : loadWebOpenGL;\n    version (WebAssembly)\n        private extern(C) void vibe3d_web_set_dirty(int) nothrow @nogc;",
+            "version (web) if (dirty != webLastDirty) {\n                version (WebAssembly) vibe3d_web_set_dirty(dirty ? 1 : 0);\n                webLastDirty = dirty;",
+        ];
+        break;
+    case "packages/interchange/source/io/assimp_runtime.d":
+        outer = "version (web)\n{";
+        tail = "}\nelse\n{\n\nimport std.file";
+        fragments = [
+            "version (WebAssembly)\n        extern(C) int vibe3d_web_assimp_available() nothrow @nogc;",
+            "bool isAssimpAvailable() nothrow @nogc\n    {\n        version (WebAssembly) { return vibe3d_web_assimp_available() != 0; }\n        else return false;",
+        ];
+        break;
+    case "packages/interchange/source/io/scene_export.d":
+        outer = "version (web)\n{";
+        tail = "}\nelse\n{\n\nimport std.string";
+        fragments = [
+            "version (WebAssembly)\n    extern(C) int vibe3d_web_assimp_export(const(ubyte)* data, uint length,\n                                           const(char)* formatId, const(char)* path);",
+            "bool exportDocumentViaAssimp(ref const Document document, string path,\n                                 string formatId)\n    {\n        version (WebAssembly) {\n        auto wire = encodeAssimpWire(document);",
+        ];
+        assert(text.count("        } else return false;\n    }\n}\nelse") == 1,
+            "6910 bridge native export must keep its unavailable fallback");
+        break;
+    case "packages/interchange/source/io/scene_import.d":
+        outer = "version (web)\n{";
+        tail = "}\nelse\n{\n\nimport std.string";
+        fragments = [
+            "version (WebAssembly) {\n    extern(C) int vibe3d_web_assimp_import(const(char)* path, void** data, uint* length);\n    extern(C) void vibe3d_web_assimp_free(void* data);\n    }",
+            "bool importViaAssimp(string path, ref ImportedScene scene)\n    {\n        version (WebAssembly) {\n        void* data;",
+        ];
+        assert(text.count("        } else return false;\n    }\n}\nelse") == 1,
+            "6910 bridge native import must keep its unavailable fallback");
+        break;
+    default:
+        return 0;
+    }
+    if (outer.length) {
+        assert(text.count(outer) == 1 && text.count(tail) == 1,
+            "6910 bridge browser configuration envelope changed: " ~ path);
+        assert(text.indexOf(outer) < text.indexOf(tail),
+            "6910 bridge browser envelope must precede the native arm: " ~ path);
+    }
+    foreach (fragment; fragments) {
+        assert(text.count(fragment) == 1,
+            "6910 bridge target fragment must occur exactly once: " ~ path ~ " " ~ fragment);
+        if (outer.length)
+            assert(text.indexOf(fragment) > text.indexOf(outer)
+                && text.indexOf(fragment) < text.indexOf(tail),
+                "6910 bridge target refinement escaped its browser envelope: " ~ path);
+    }
+    return fragments.length;
+}
+
 unittest // the browser seam key is exactly one identifier, and the alternative is absent
 {
     const root = repoRoot();
@@ -49,7 +114,7 @@ unittest // the browser seam key is exactly one identifier, and the alternative 
     auto wasmGuardRe = regex(
         `version\s*\(\s*WebAssembly\s*\)\s*static\s+assert\s*\(`);
 
-    size_t files, webSites, wasmSites, wasmGuardSites;
+    size_t files, webSites, wasmSites, wasmGuardSites, bridgeSites;
     string[] offenders;
     foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source")])
 
@@ -63,7 +128,9 @@ unittest // the browser seam key is exactly one identifier, and the alternative 
         webSites += w;
         wasmSites += a;
         wasmGuardSites += g;
-        if (a != g) offenders ~= entry.name;
+        const b = bridgeTargetSites(relativePath(entry.name, root).replace("\\", "/"), text);
+        bridgeSites += b;
+        if (a != g + b) offenders ~= entry.name;
     }
 
     // FLOOR FIRST. Without it "no WebAssembly sites" is also true of a scan that read nothing,
@@ -76,13 +143,15 @@ unittest // the browser seam key is exactly one identifier, and the alternative 
       ~ "the seams were removed or this scan is looking in the wrong place");
 
     // THE PROPERTY. `WebAssembly` may reject a target that missed `web`, but may not grant a
-    // capability. Pin both halves so a vanished guard and a second capability key are red.
+    // standalone capability. The eight exact JS refinements above require `web`.
+    // Pin both halves so a vanished guard and a second capability key are red.
     assert(wasmGuardSites == 1,
         "6910 web seam key census: expected exactly one `version (WebAssembly)` target guard "
       ~ "immediately followed by `static assert`, found " ~ wasmGuardSites.to!string);
-    assert(wasmSites == wasmGuardSites,
+    assert(bridgeSites == 8, "6910 bridge target roster must contain all eight accepted surfaces");
+    assert(wasmSites == wasmGuardSites + bridgeSites,
         "6910 web seam key census: source/ carries `version (WebAssembly)` as a capability "
-      ~ "gate instead of the one failing target guard. The compiler predefines it on any wasm "
+      ~ "gate outside the rejecting guard and the eight nested JavaScript refinements. The compiler predefines it on any wasm "
       ~ "triple while `web` comes only from a build configuration, so mixing the capability "
       ~ "keys makes a build without that configuration HALF-gated. Offenders: "
       ~ offenders.idup.to!string);

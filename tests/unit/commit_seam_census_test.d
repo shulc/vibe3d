@@ -4163,9 +4163,9 @@ unittest // task 2310 — packages/mesh/source/mesh.d, the zone the write census
     // so a new write cannot hide inside a number that merely did not change.
     string firstHit;
     immutable size_t raw = countRawPositionWrites(src, firstHit);
-    assert(raw == 32,
+    assert(raw == 39,
         format("packages/mesh/source/mesh.d holds %d raw position write(s) under §5.7's "
-             ~ "predicate, expected 32. First hit: `%s`.\n"
+             ~ "predicate, expected 39. First hit: `%s`.\n"
              ~ "  THIS IS A `kAllow` TOTAL, NOT A CLEAN ZERO, and the file is "
              ~ "the one place where that is right: the 46 are the position "
              ~ "DOORS themselves (`setVertexPositions` ×2, `addVertex`), the "
@@ -4193,6 +4193,12 @@ unittest // task 2310 — packages/mesh/source/mesh.d, the zone the write census
              ~ "the pre-sized output mesh and never touches the live subject.\n"
              ~ "  Task 20261720 moves subdivideCube and its one constructed-result "
              ~ "write to subpatch_factories.d; that write stays pinned below.\n"
+             ~ "  Wave8 moves seven replay restoration writes here without "
+             ~ "recording: restoreAppendVertices, restorePositions, "
+             ~ "restoreVertexReindexForward/Reverse, restoreRemoveVertices, "
+             ~ "and restoreInsertVertices (gap and append). The original "
+             ~ "replay guards and payload laws remain; no live kernel gained "
+             ~ "a bypass. See doc/application_layers_wave8_final_census_fix_2026-10-10.md.\n"
              ~ "  A NEW raw write here must be classified in the SAME commit: if "
              ~ "it is on a mesh the caller has just constructed, say so and move "
              ~ "this number; if it is on the live subject, it belongs behind "

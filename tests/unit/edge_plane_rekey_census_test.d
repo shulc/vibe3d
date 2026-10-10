@@ -422,13 +422,13 @@ private static immutable LedgerRow[] kSites = [
     LedgerRow("applyForward|" ~ kRekey, 1,
         "REPLAY twin. Settles through `finalize()`'s tail, not through "
       ~ "`clearEdgeSelectionResize` — see this file's (C)"),
-    LedgerRow("applyReindexForward|" ~ kRekey, 1,
+    LedgerRow("Mesh.restoreVertexReindexForward|" ~ kRekey, 1,
         "REPLAY twin of `compactUnreferenced`'s permutation. Same tail"),
-    LedgerRow("applyReindexReverse|" ~ kRekey, 1,
+    LedgerRow("Mesh.restoreVertexReindexReverse|" ~ kRekey, 1,
         "REPLAY twin, restoring the pre-compaction index space. Same tail"),
-    LedgerRow("removeVertsForward|" ~ kRekey, 1,
+    LedgerRow("Mesh.restoreRemoveVertices|" ~ kRekey, 1,
         "REPLAY twin of the vertex drop. Same tail"),
-    LedgerRow("removeVertsReverse|" ~ kRekey, 1,
+    LedgerRow("Mesh.restoreInsertVertices|" ~ kRekey, 1,
         "REPLAY twin re-inserting dropped vertices. Same tail"),
 ];
 

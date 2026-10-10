@@ -273,9 +273,9 @@ unittest {
                 ~ ": " ~ reachChain("create_tool_registration", forbidden, create));
     // Task 20261660: Tool reaches the detached model_preview view (+1 each).
     // Wave6A: the existing kernel reaches its extracted cluster_values leaf (+1 each).
-    pinClosure("create_tool_registration", create, 266);
-    pinClosure("registration", positive, 534);
-    assert(create.queue.length == 266 && positive.queue.length == 534,
+    pinClosure("create_tool_registration", create, 275);
+    pinClosure("registration", positive, 545);
+    assert(create.queue.length == 275 && positive.queue.length == 545,
         "6507 reviewed narrow and broad closure populations");
 }
 

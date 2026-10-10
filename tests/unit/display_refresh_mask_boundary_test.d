@@ -43,7 +43,9 @@ private struct RoleRow {
 private enum RoleRow[] kExpectedRoles = [
     RoleRow("packages/mesh-change/source/mesh_dirty.d",
             importsPolicy | usesPolicy | definesAlias | usesAlias),
-    RoleRow("packages/mesh-edit-log/source/mesh_edit_delta.d", definesPolicy | usesPolicy),
+    RoleRow("packages/mesh-contracts/source/mesh_scope.d", definesPolicy),
+    RoleRow("packages/mesh-edit-log/source/mesh_edit_delta.d", importsPolicy),
+    RoleRow("packages/mesh-edit-replay/source/mesh_edit_replay.d", usesPolicy),
     RoleRow("source/render/render_mvp.d", importsAlias | usesAlias),
 ];
 

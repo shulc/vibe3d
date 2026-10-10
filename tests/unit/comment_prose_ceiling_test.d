@@ -281,7 +281,7 @@ FIXTURE";
            "a path to a card under the tasks tree is the policy's pointer form");
     assert(censusOf("// tasks 0011 and 0012\n").citationLines == 1,
            "the plural spelling is a citation");
-    assert(toLedgerPath(`packages\common\source\mesh.d`) == "packages/mesh/source/mesh.d",
+    assert(toLedgerPath(`packages\common\source\mesh.d`) == "packages/common/source/mesh.d",
            "ledger paths must be normalised to `/`");
 }
 

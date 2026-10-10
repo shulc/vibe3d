@@ -90,6 +90,8 @@ private immutable string[] kDeclaredHomes = [
 /// Gate 1's subject: the family that held the nine copies.
 private enum string kZeroDir = "source/commands/select/";
 
+/// Wave8: three replay carry reads moved into the already-declared Mesh home.
+/// The core exclusion still applies; they retain their original non-ranking bodies.
 /// Gate 2. One row per owning symbol that legitimately indexes a plane for
 /// its VALUE, with the count and the reason.
 private immutable LedgerRow[] kRoster = [
@@ -104,13 +106,6 @@ private immutable LedgerRow[] kRoster = [
     LedgerRow("meshPlanesJson", 1,
         "the wire serialiser: reports the stamp of one edge, defensively "
       ~ "bounds-checked. A report, not a decision."),
-    LedgerRow("applyReindexForward", 1,
-        "vertex-plane carry across a forward reindex"),
-    LedgerRow("applyReindexReverse", 1,
-        "vertex-plane carry across a reverse reindex"),
-    LedgerRow("applyFaceReindexReverse", 1,
-        "plane CARRIES across a vertex compaction / face reindex — the value "
-      ~ "moves index-to-index and is never compared to another element's."),
     LedgerRow("edgeChainWalk", 1,
         "a RANK read, and legal for the same reason as the row below: the "
       ~ "loop `continue`s on `!isEdgeSelected` one line above the read, so "
@@ -163,7 +158,9 @@ private enum size_t kMinFilesScanned = 300;
 /// plane somewhere new — the hole the header names. It is a FLOOR plus a
 /// recorded value, not a rule, so it is asserted with the floor and not with
 /// the gates.
-private enum int kBareMentionsRecorded = 125;
+// Wave8 moves all 22 old replay mentions into the excluded core home.
+// Preserve the old complement floor by subtraction: 125 - 22 = 103.
+private enum int kBareMentionsRecorded = 103;
 
 // ---------------------------------------------------------------------------
 // The scanner
@@ -329,8 +326,8 @@ unittest {
     // `static foreach`, which put that read out of a text scanner's reach —
     // see the "ALSO NOT ROSTERED" note above for why the row went away rather
     // than becoming a zero. 9 again since task 7132's `edgeChainWalk` row.
-    assert(hits.length == 11,
-        format("selection-order value-read population changed: expected 11, found %d",
+    assert(hits.length == 8,
+        format("selection-order value-read population changed: expected 8, found %d",
                hits.length));
 }
 

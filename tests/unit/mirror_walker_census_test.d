@@ -101,9 +101,8 @@ unittest { // (c1) ONE mirror walker
 unittest { // (c2) ONE side test
     size_t scanned;
     const users = filesWith("symmetrySide(", scanned);
-    assert(users == ["packages/spatial/source/symmetry_plane.d",
-                     "packages/interaction-query/source/symmetry.d", "packages/mesh-ops/source/mesh_ops/extrude.d",
-                     "packages/pipe-evaluation/source/toolpipe/stages/symmetry.d", "source/tools/edit/edge_extend.d"],
+    assert(users == ["packages/interaction-query/source/symmetry.d", "packages/mesh-ops/source/mesh_ops/extrude.d",
+                     "packages/pipe-evaluation/source/toolpipe/stages/symmetry.d", "packages/spatial/source/symmetry_plane.d", "source/tools/edit/edge_extend.d"],
            "(c2) symmetrySide( users: " ~ users.to!string);
     const lower = codeOf("packages/spatial/source/symmetry_plane.d");
     const desktop = codeOf("packages/interaction-query/source/symmetry.d");
