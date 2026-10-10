@@ -338,6 +338,17 @@ def external_closure(names, web=False):
     return result
 
 
+def native_revision(path):
+    # Committed archives have no upstream Git history. The export writes this
+    # provenance only after checking the original HEAD and copied source hashes.
+    provenance = path / '.boundary-revision'
+    if provenance.is_file():
+        return provenance.read_text().strip()
+    result = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=path, text=True, capture_output=True)
+    require(result.returncode == 0, 'PREPARATION-REFUSED: native repository revision unavailable: ' + str(path))
+    return result.stdout.strip()
+
+
 def native_grants(names, roots, web=False):
     libs, lflags = set(), set()
     if 'd-stb-image' in names:
@@ -410,7 +421,8 @@ def validate_description(description, project, owner, config, tests=False, harne
                 require(not package.get(field), 'support resolved owner link grant: ' + name + ':' + field)
             require(package.get('dflags', []) == (['-i'] if settings else []), 'support resolved owner dflags: ' + name)
         else:
-            require(package['targetType'] == 'staticLibrary', 'support resolved native static target: ' + name)
+            expected_native_type = 'library' if name == 'dyaml' else 'staticLibrary'
+            require(package['targetType'] == expected_native_type, 'support resolved native archive target: ' + name)
             expected_hooks = []
             if name == 'd-stb-image':
                 expected_hooks = ['cmake -B $PACKAGE_DIR/build -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $PACKAGE_DIR',
@@ -426,7 +438,7 @@ def validate_description(description, project, owner, config, tests=False, harne
                     'support resolved native importPaths: ' + name)
             require(not package.get('stringImportPaths'), 'support resolved native stringImportPaths: ' + name)
             if name in REVISIONS:
-                require(package['version'].removeprefix('~') == REVISIONS[name][0], 'support resolved repository revision: ' + name)
+                require(native_revision(path) == REVISIONS[name][0], 'support resolved repository revision: ' + name)
             else:
                 prefix = {'bindbc-sdl': '1.5.', 'bindbc-opengl': '1.1.', 'bindbc-common': '1.', 'bindbc-loader': '1.'}[name]
                 require(package['version'].startswith(prefix), 'support resolved binding version: ' + name)
@@ -465,7 +477,7 @@ def validate_description(description, project, owner, config, tests=False, harne
                 {str(Path(p).resolve()) for p in settings.get('sourceFiles', [])} == expected_sources,
                 'support target compiler source identity: ' + name)
         archives = {str(roots[n] / (ARCHIVES[n] if n in ARCHIVES else 'lib' + n + '.a'))
-                    for n in seen - {name} if active[n]['targetType'] == 'staticLibrary'}
+                    for n in seen - {name} if active[n]['targetType'] in ('staticLibrary', 'library')}
         require(set(settings.get('linkerFiles', [])) == archives and len(settings.get('linkerFiles', [])) == len(archives),
                 'support target D archive inputs: ' + name)
         libs, lflags = native_grants(seen, roots, config == 'web')
@@ -556,6 +568,10 @@ def stage_dependencies(active, archive, evidence, env):
         require(files and 'dub.json' in files, 'PREPARATION-REFUSED: dependency source missing: ' + name)
         for relative, sha in files.items():
             require(digest(original / relative) == sha, 'PREPARATION-REFUSED: dependency staging changed: ' + name)
+        if name in REVISIONS:
+            revision = native_revision(original)
+            require(revision == REVISIONS[name][0], 'PREPARATION-REFUSED: native source revision: ' + name)
+            (staged / '.boundary-revision').write_text(revision + '\n')
         run(['git', 'init', '-q', str(staged)], archive, env, evidence, 'initialize-' + name)
         run(['dub', 'add-local', str(staged), package['version']], archive, env, evidence, 'register-' + name)
         receipts[name] = {'original': str(original), 'staged': str(staged), 'version': package['version'], 'files': files}
@@ -642,7 +658,7 @@ def description_control(project, owner, tests=False, config='modeling-noai'):
             deps.remove('bindbc-loader')
         version = REVISIONS[name][0] if name in REVISIONS else {'bindbc-sdl': '1.5.2', 'bindbc-opengl': '1.1.1', 'bindbc-common': '1.0.5', 'bindbc-loader': '1.1.5'}[name]
         packages.append({'name': name, 'path': str(project / 'dependencies' / name), 'active': True, 'version': version,
-                         'targetType': 'staticLibrary', 'dependencies': deps, 'importPaths': ['source'], 'files': []})
+                         'targetType': 'library' if name == 'dyaml' else 'staticLibrary', 'dependencies': deps, 'importPaths': ['source'], 'files': []})
 
     for package in packages:
         name = package['name']
@@ -650,6 +666,10 @@ def description_control(project, owner, tests=False, config='modeling-noai'):
             package['preBuildCommands'] = ['cmake -B $PACKAGE_DIR/build -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $PACKAGE_DIR', 'cmake --build $PACKAGE_DIR/build --config Release']
         elif name == 'd-opensubdiv':
             package['preBuildCommands'] = ['cd "$PACKAGE_DIR" && git submodule update --init --recursive --quiet', 'cmake -S "$PACKAGE_DIR" -B "$PACKAGE_DIR/build" -DCMAKE_BUILD_TYPE=Release', 'cmake --build "$PACKAGE_DIR/build" -j --target osdc']
+    for name in external & REVISIONS.keys():
+        path = project / 'dependencies' / name
+        path.mkdir(parents=True, exist_ok=True)
+        (path / '.boundary-revision').write_text(REVISIONS[name][0] + '\n')
     active = {p['name']: p for p in packages}
     targets = []
     for name, package in active.items():
@@ -667,7 +687,7 @@ def description_control(project, owner, tests=False, config='modeling-noai'):
         strings = sorted({str((Path(active[n]['path']) / p).resolve()) for n in seen for p in active[n].get('stringImportPaths', [])})
         source_owners = {name} | {n for n in seen if active[n]['targetType'] == 'sourceLibrary'}
         sources = sorted({str((Path(active[n]['path']) / f['path']).resolve()) for n in source_owners for f in active[n]['files'] if f['role'] == 'source'})
-        archives = sorted(str(Path(active[n]['path']) / (ARCHIVES[n] if n in ARCHIVES else 'lib' + n + '.a')) for n in seen - {name} if active[n]['targetType'] == 'staticLibrary')
+        archives = sorted(str(Path(active[n]['path']) / (ARCHIVES[n] if n in ARCHIVES else 'lib' + n + '.a')) for n in seen - {name} if active[n]['targetType'] in ('staticLibrary', 'library'))
         libs, lflags = native_grants(seen, {n: Path(p['path']) for n, p in active.items()}, config == 'web')
         targets.append({'rootPackage': name, 'buildSettings': {'sourceFiles': sources, 'importPaths': imports, 'stringImportPaths': strings, 'linkerFiles': archives, 'libs': sorted(libs), 'lflags': sorted(lflags)}})
     return {'rootPackage': root_name, 'packages': packages, 'targets': targets}
@@ -744,7 +764,7 @@ def self_test():
                     red(owner + '-target-' + field, lambda: validate_description(broken, project, owner, config, tests), 'support target')
                 broken = copy.deepcopy(valid)
                 next(p for p in broken['packages'] if p['name'] == 'd-stb-image')['targetType'] = 'sourceLibrary'
-                red(owner + '-external-static', lambda: validate_description(broken, project, owner, config, tests), 'native static target')
+                red(owner + '-external-static', lambda: validate_description(broken, project, owner, config, tests), 'native archive target')
                 broken = copy.deepcopy(valid); broken['packages'].append(copy.deepcopy(broken['packages'][0]))
                 red(owner + '-active-duplicate', lambda: validate_description(broken, project, owner, config, tests), 'active package population')
                 if tests and owner == 'subpatch-preview':
