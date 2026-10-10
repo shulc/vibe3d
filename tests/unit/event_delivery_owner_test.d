@@ -43,7 +43,7 @@ private ptrdiff_t requiredAt(string text, string marker)
 unittest // ownership and both explicit producer handoffs
 {
     const eventlog = blankNonCode(readText(
-        buildPath(repoRoot, "source", "eventlog.d")));
+        buildPath(repoRoot, "packages/input-events/source", "eventlog.d")));
     const http = blankNonCode(readText(
         buildPath(repoRoot, "source", "http_server.d")));
     const playback = blankNonCode(readText(

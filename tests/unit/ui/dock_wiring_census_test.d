@@ -38,8 +38,7 @@ unittest { // F4e: the removed node-level undock guard cannot creep back
     string[] localFlagHits;
     foreach (scanSourceRoot; [sourceRoot, buildPath(gateRepoRoot, "packages/common/source"), buildPath(gateRepoRoot, "packages/mesh-ops/source"), buildPath(gateRepoRoot, "packages/interchange/source"), buildPath(gateRepoRoot, "packages/interaction-query/source"), buildPath(gateRepoRoot, "packages/pipe-evaluation/source"), buildPath(gateRepoRoot, "packages/tool-state/source"), buildPath(gateRepoRoot, "packages/transform-ops/source"), buildPath(gateRepoRoot, "packages/creation-ops/source"), buildPath(gateRepoRoot, "packages/alignment-ops/source"), buildPath(gateRepoRoot, "packages/input-events/source"), buildPath(gateRepoRoot, "packages/display-policy/source"), buildPath(gateRepoRoot, "packages/viewport-gpu/source"), buildPath(gateRepoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(gateRepoRoot, "packages/input-events/source")
-            && scanSourceRoot != buildPath(gateRepoRoot, "packages/display-policy/source")
+        || (scanSourceRoot != buildPath(gateRepoRoot, "packages/display-policy/source")
             && scanSourceRoot != buildPath(gateRepoRoot, "packages/viewport-gpu/source")
             && scanSourceRoot != buildPath(gateRepoRoot, "packages/subpatch-preview/source")))
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {

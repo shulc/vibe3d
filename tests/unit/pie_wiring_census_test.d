@@ -83,7 +83,7 @@ unittest { // U5c: opening and post-close ownership stay timestamped/latched
 unittest { // U5d: live, record and replay share the queued-loss focus rule
     auto app = blankNonCode(readText("source/app.d"));
     auto input = blankNonCode(readText("source/input_router.d"));
-    auto eventlog = blankNonCode(readText("source/eventlog.d"));
+    auto eventlog = blankNonCode(readText("packages/input-events/source/eventlog.d"));
     auto focusRule = bodyAt(app, "private bool liveKeyEventWindowFocused(");
     assert(focusRule.canFind("SDL_GetKeyboardFocus() != window")
            && focusRule.count("SDL_PeepEvents(") == 2

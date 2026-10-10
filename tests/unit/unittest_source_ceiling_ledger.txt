@@ -43,6 +43,8 @@ block packages/common/source/screen_buckets.d 1
 block packages/common/source/toolpipe/pipeline.d 6
 block packages/common/source/trackball.d 4
 block packages/common/source/view.d 26
+block packages/input-events/source/eventlog.d 13
+block packages/input-events/source/tool_input.d 6
 block packages/interaction-query/source/snap.d 8
 block packages/interaction-query/source/symmetry.d 1
 block packages/interchange/source/io/lwo_import.d 5
@@ -78,7 +80,6 @@ block source/commands/workplane.d 3
 block source/drag.d 13
 block source/drag_identity.d 1
 block source/edit_session.d 1
-block source/eventlog.d 13
 block source/forms.d 29
 block source/frame_stall.d 3
 block source/gl_thread_guard.d 1
@@ -140,7 +141,6 @@ block source/selection_product.d 4
 block source/snap_render.d 6
 block source/tool.d 9
 block source/tool_disarm.d 4
-block source/tool_input.d 6
 block source/tool_presets.d 1
 block source/tools/alignment/mirror.d 1
 block source/tools/common/command_wrapper.d 3

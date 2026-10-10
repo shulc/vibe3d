@@ -12,7 +12,7 @@ unittest {
     string[] expected;
     foreach (line; readText(buildPath(root, "tests/unit/root_test_package_module_roster.txt")).splitLines)
         if (line.strip.length && line.strip[0] != '#') expected ~= line.strip;
-    assert(expected.length == 134, "root package ModuleInfo frozen population 134");
+    assert(expected.length == 140, "root package ModuleInfo frozen population 140");
     auto ordered = expected.dup;
     ordered.sort();
     assert(ordered == expected, "root package ModuleInfo manifest sorted");
@@ -21,7 +21,10 @@ unittest {
         if (info is null || info.name is null) continue;
         if (expected.canFind(info.name)) ++occurrences[info.name];
     }
-    assert(occurrences.length == 134, "root package ModuleInfo selected population 134");
+    foreach (name; ["eventlog", "held_gesture_buttons", "tool_input", "input_zones", "input_context", "shortcuts"])
+        assert(occurrences.get(name, 0) == 1,
+               "ROOT-PACKAGE-MODULE-input-events must occur exactly once: " ~ name);
+    assert(occurrences.length == 140, "root package ModuleInfo selected population 140");
     foreach (name; expected)
         assert(occurrences.get(name, 0) == 1,
                "root package ModuleInfo must occur exactly once: " ~ name);

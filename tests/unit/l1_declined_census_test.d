@@ -169,8 +169,7 @@ unittest // GATE S1 — no recorder call in sets.d
     size_t filesRead;
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/input-events/source")
-            && scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
+        || (scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
             && scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
             && scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
@@ -204,8 +203,7 @@ unittest // GATE S2 — the dense captures the declarations promise are still th
     size_t anchorCount;
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/input-events/source")
-            && scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
+        || (scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
             && scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
             && scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {

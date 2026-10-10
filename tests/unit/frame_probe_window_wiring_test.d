@@ -90,8 +90,7 @@ unittest { // 6511: FrameProbe service is the second pre-probe owner boundary
     size_t serverHits;
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/input-events/source")
-            && scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
+        || (scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
             && scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
             && scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
     foreach (entry; dirEntries(scanSourceRoot, "*.d",
@@ -146,8 +145,7 @@ unittest { // 6357: frame-count service is the unique pre-probe owner boundary
     size_t serverHits;
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/input-events/source")
-            && scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
+        || (scanSourceRoot != buildPath(repoRoot, "packages/display-policy/source")
             && scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
             && scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
     foreach (entry; dirEntries(scanSourceRoot, "*.d",

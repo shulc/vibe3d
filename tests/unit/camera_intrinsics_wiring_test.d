@@ -9,7 +9,7 @@ unittest {
     auto app=blankNonCode(readText(buildPath(root,"source/app.d")));
     auto input=blankNonCode(readText(buildPath(root,"source/input_router.d")));
     auto providers=blankNonCode(readText(buildPath(root,"source/http_providers.d")));
-    auto event=blankNonCode(readText(buildPath(root,"source/eventlog.d")));
+    auto event=blankNonCode(readText(buildPath(root,"packages/input-events/source/eventlog.d")));
     assert(app.indexOf("auto vpm = new ViewportManager")<app.indexOf("evLog.writeViewportMeta"),"LENS_METADATA_START_AFTER_CAMERA");
     foreach(consumer;["evPlay.tick();","httpServer.tickEventPlayer();"]) {
         assert(app.canFind("setReplayCurrentLens(recordingLens());\n                    "~consumer),"LENS_REFRESH_BEFORE_PLAYER: "~consumer);

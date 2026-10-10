@@ -118,7 +118,7 @@ unittest { // u3: the router's order and its gates, read from production text
 unittest { // u4: the automation reset clears the SAME set, wired in production
     auto adapter = blankNonCode(readText("source/http_command_adapter.d"));
     auto app = blankNonCode(readText("source/app.d"));
-    auto mod = blankNonCode(readText("source/held_gesture_buttons.d"));
+    auto mod = blankNonCode(readText("packages/input-events/source/held_gesture_buttons.d"));
     assert(bodyAt(adapter, "void resetAutomationAfter(")
                .canFind("automation_.clearHeldGestureButtons();"),
            "M1a u4: resetAutomationAfter stopped clearing the held gesture buttons");

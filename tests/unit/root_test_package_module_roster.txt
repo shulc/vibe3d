@@ -27,11 +27,15 @@ document
 document_selection
 edit_target_contract
 editmode
+eventlog
 falloff
+held_gesture_buttons
 history_lifecycle_contract
 hover_state
 http_json
 image_data
+input_context
+input_zones
 io.assimp_runtime
 io.assimp_wire
 io.file_model
@@ -90,6 +94,7 @@ record_observer_hub
 screen_buckets
 seltype
 session_owner
+shortcuts
 snap
 snap_election
 snapshot
@@ -98,6 +103,7 @@ surface_pick
 symmetry
 symmetry_plane
 tool_activation_ownership
+tool_input
 tool_policy_values
 toolpipe
 toolpipe.attr_cache

@@ -358,8 +358,8 @@ def native_grants(names, roots, web=False):
         libs.update(('osdc', 'osdCPU', 'osdGPU', 'GL', 'stdc++', 'm'))
         lflags.update(('-L' + str(roots['d-opensubdiv'] / 'build'),
                        '-L' + str(roots['d-opensubdiv'] / 'build/extern/OpenSubdiv/opensubdiv')))
-    if web and 'bindbc-sdl' in names:
-        libs.add('SDL2')
+    if 'bindbc-loader' in names:
+        libs.add('dl')
     return libs, lflags
 
 

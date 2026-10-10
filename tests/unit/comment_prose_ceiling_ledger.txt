@@ -73,6 +73,10 @@ allow packages/common/source/toolpipe/subject.d 3
 allow packages/common/source/tsan_annotate.d 1
 allow packages/common/source/view.d 11
 allow packages/creation-ops/source/tools/create/pen_geometry.d 1
+allow packages/input-events/source/eventlog.d 1
+allow packages/input-events/source/input_context.d 3
+allow packages/input-events/source/input_zones.d 1
+allow packages/input-events/source/shortcuts.d 3
 allow packages/interaction-query/source/constraint.d 9
 allow packages/interaction-query/source/hover_state.d 5
 allow packages/interaction-query/source/snap.d 68
@@ -294,7 +298,6 @@ allow source/drag_identity.d 1
 allow source/edit_session.d 13
 allow source/edit_tool_registration.d 12
 allow source/editor_app.d 32
-allow source/eventlog.d 1
 allow source/falloff_handles.d 3
 allow source/falloff_render.d 3
 allow source/file_io_registration.d 1
@@ -322,10 +325,8 @@ allow source/image_cache.d 3
 allow source/image_plane.d 3
 allow source/imgui_event_gate.d 3
 allow source/imgui_flag_boundary.d 1
-allow source/input_context.d 3
 allow source/input_frame_state.d 36
 allow source/input_router.d 65
-allow source/input_zones.d 1
 allow source/io/browser_pick_resume.d 2
 allow source/io/doc_state.d 1
 allow source/io/file_dialog.d 4
@@ -369,7 +370,6 @@ allow source/selection_product.d 3
 allow source/selection_projection.d 5
 allow source/selftest_fault.d 3
 allow source/shader.d 14
-allow source/shortcuts.d 3
 allow source/snap_render.d 3
 allow source/step_trace.d 1
 allow source/subpatch_osd.d 40

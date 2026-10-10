@@ -55,8 +55,7 @@ private string[] filesWith(string needle, out size_t scanned) {
     string[] hits;
     foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(kRepoRoot, "packages/input-events/source")
-            && scanSourceRoot != buildPath(kRepoRoot, "packages/display-policy/source")
+        || (scanSourceRoot != buildPath(kRepoRoot, "packages/display-policy/source")
             && scanSourceRoot != buildPath(kRepoRoot, "packages/viewport-gpu/source")
             && scanSourceRoot != buildPath(kRepoRoot, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {

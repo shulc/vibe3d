@@ -35,16 +35,16 @@ CONTRACT_CELLS = 21
 # ownership moves, the independent 2026-10-09 inventory is 492/75/17/8. The Wave5 prerequisite adds workplane_basis,
 # independently inventoried as common76 (task 20262020, same date).
 # Final Wave5 tracked membership: desktop472/common76/mesh17/interchange8/query10/evaluation12.
-# Wave6 construction, 2026-10-10: desktop461 plus nine libraries134 =595.
+# Wave6 construction, 2026-10-10: desktop455 plus ten libraries140 =595.
 PRODUCTION_ROOTS = ("source", "packages/common/source", "packages/mesh-ops/source",
                     "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source")
 PRODUCTION_OWNER_FLOORS = {
-    "source": 461,
+    "source": 455,
     "packages/common/source": 76,
     "packages/mesh-ops/source": 17,
     "packages/interchange/source": 8,
     "packages/interaction-query/source": 10,
-    "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1
+    "packages/pipe-evaluation/source": 12, "packages/tool-state/source": 2, "packages/transform-ops/source": 7, "packages/creation-ops/source": 1, "packages/alignment-ops/source": 1, "packages/input-events/source": 6
 }
 
 

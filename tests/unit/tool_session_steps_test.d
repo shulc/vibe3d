@@ -515,8 +515,7 @@ unittest { // every consumer site of the array kinds has a PodArray arm (opponen
     string[] missing;
     foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != "packages/input-events/source"
-            && scanSourceRoot != "packages/display-policy/source"
+        || (scanSourceRoot != "packages/display-policy/source"
             && scanSourceRoot != "packages/viewport-gpu/source"
             && scanSourceRoot != "packages/subpatch-preview/source"))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {

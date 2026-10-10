@@ -84,7 +84,7 @@ unittest // source ownership: floor -> identifier needle -> structure -> pin
     const serverRaw = readText(buildPath(repoRoot, "source", "http_server.d"));
     const ownerRaw = readText(
         buildPath(repoRoot, "source", "playback_controller.d"));
-    const eventlogRaw = readText(buildPath(repoRoot, "source", "eventlog.d"));
+    const eventlogRaw = readText(buildPath(repoRoot, "packages/input-events/source", "eventlog.d"));
     const server = blankUnittestBodies(blankNonCode(serverRaw));
     const owner = blankUnittestBodies(blankNonCode(ownerRaw));
     const eventlog = blankUnittestBodies(blankNonCode(eventlogRaw));
