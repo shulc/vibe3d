@@ -1,0 +1,44 @@
+{
+  "name": "vibe3d-common-tests",
+  "description": "Independent public common model and value tests",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": [],
+  "importPaths": [
+    "source"
+  ],
+  "sourceFiles": [
+    "source/tests/unit/math_test.d",
+    "source/tests/unit/params_test.d",
+    "source/tests/unit/document_test.d",
+    "source/tests/unit/mesh_edit_delta_test.d",
+    "source/tests/unit/mesh_key_test.d",
+    "source/tests/unit/mesh_map_kind_test.d",
+    "source/tests/unit/mesh_selsets_test.d",
+    "source/tests/unit/seltype_test.d",
+    "source/tests/unit/snapshot_test.d",
+    "source/tests/unit/mesh_wire_snapshot_test.d",
+    "source/tests/unit/io/native_test.d",
+    "source/tests/common_execution_roster_test.d"
+  ],
+  "dflags": [
+    "-i"
+  ],
+  "dependencies": {
+    "vibe3d-common": {
+      "path": ".."
+    }
+  },
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "configurations": [
+    {
+      "name": "algorithm"
+    }
+  ],
+  "subConfigurations": {
+    "vibe3d-common": "modeling-noai"
+  }
+}
