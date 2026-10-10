@@ -601,7 +601,11 @@ def execute(project, owner, compiler, env, evidence):
     # A receipt-only static constructor observes real ModuleInfo without
     # replacing druntime's tester or importing any judged carrier.
     harness = root / 'tests/boundary_roster.d'
-    harness.write_text('module boundary_roster;\nimport std.stdio : writeln;\nshared static this() { foreach (info; ModuleInfo) if (info !is null) writeln("PKG-MODULE name=", info.name, " unittest=", info.unitTest !is null ? 1 : 0); }\n')
+    receipt_source = 'module boundary_roster;\nimport std.stdio : writeln;\nimport std.file : getcwd, read;\nimport std.digest.sha : sha256Of;\nimport std.digest : toHexString;\nimport std.string : toLower;\nshared static this() { writeln("PKG-CWD path=", getcwd()); foreach (info; ModuleInfo) if (info !is null) writeln("PKG-MODULE name=", info.name, " unittest=", info.unitTest !is null ? 1 : 0);'
+    if owner in FIXTURES:
+        relative, _ = FIXTURES[owner]
+        receipt_source += ' writeln("PKG-FIXTURE sha256=", sha256Of(read("' + relative + '")).toHexString.toLower);'
+    harness.write_text(receipt_source + ' }\n')
     raw = json.loads((root / 'tests/dub.json').read_text())
     raw['sourceFiles'].append('boundary_roster.d')
     recipe = root / 'tests/dub.boundary.json'
@@ -609,7 +613,13 @@ def execute(project, owner, compiler, env, evidence):
     describe(archive, owner, 'algorithm', compiler, env, evidence, True, recipe, harness)
     tested = run(['dub', 'test', '--root=' + str(root / 'tests'), '--recipe=' + str(recipe), '--config=algorithm',
                   '--compiler=' + compiler, '--force', '--verbose'], archive, env, evidence, 'algorithm-run')
-    runtime = validate_runtime(tested.stdout + tested.stderr, owner)
+    runtime_output = tested.stdout + tested.stderr
+    require(re.findall(r'^PKG-CWD path=(.+)$', runtime_output, re.M) == [str(archive)],
+            'support algorithm actual working directory: ' + owner)
+    if owner in FIXTURES:
+        require(re.findall(r'^PKG-FIXTURE sha256=(.+)$', runtime_output, re.M) == [FIXTURES[owner][1]],
+                'support algorithm actual fixture hash: ' + owner)
+    runtime = validate_runtime(runtime_output, owner)
     compiler_lines = [x for x in (built.stdout + built.stderr + tested.stdout + tested.stderr).splitlines()
                       if re.search(r'(?:^|\s)(?:\S*/)?(?:dmd|ldc2)\s', x)]
     require(compiler_lines, 'NO-VERDICT: support fresh compiler argv missing')
