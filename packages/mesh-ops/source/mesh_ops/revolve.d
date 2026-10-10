@@ -121,7 +121,7 @@ import mesh_ops.bridge : bridgeLoopsPaired;
 // `math` imports `std.math.sqrt` selectively and PRIVATELY, so the two
 // `extrudeAlongPath` calls bound through `source/mesh.d`'s
 // `import std.math : sqrt, isIdentical;` and not through this file's.
-import mesh_edit_delta : MeshEditScope;
+import mesh_scope : MeshEditScope;
 import mesh_planes : rewriteFaces, FaceSource;
 import std.math : sqrt;
 

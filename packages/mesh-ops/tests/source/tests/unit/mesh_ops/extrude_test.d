@@ -4,6 +4,7 @@
 module tests.unit.mesh_ops.extrude_test;
 
 import mesh;
+import mesh_edit_replay : revert;
 import math;
 import std.math : sqrt;
 import std.algorithm : sort;

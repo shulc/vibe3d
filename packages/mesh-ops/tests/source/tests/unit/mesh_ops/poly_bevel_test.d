@@ -18,6 +18,7 @@ module tests.unit.mesh_ops.poly_bevel_test;
 import std.format : format;
 import std.conv   : to;
 import mesh;
+import mesh_edit_replay : revert;
 import math;
 import mesh_ops.poly_bevel;
 import mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;

@@ -23,6 +23,7 @@
 module tests.unit.mesh_edge_slice_test;
 
 import mesh;
+import mesh_edge_slice;
 import math : Vec3;
 import tests.unit.mesh_by_value_gate;
 

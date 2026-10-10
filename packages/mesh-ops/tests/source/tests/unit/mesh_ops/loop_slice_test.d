@@ -4,12 +4,13 @@
 module tests.unit.mesh_ops.loop_slice_test;
 
 import mesh;
+import mesh_edit_replay : revert;
 import mesh_ops.poly_bevel;
 import mesh_ops.extrude;
 import mesh_ops.edge_bevel;
 import math;
 import mesh_ops.loop_slice;
-import tests.unit.fixtures : findEdge;
+import tests.unit.mesh_ops.edge_fixture : findEdge;
 
 // Task 1903 Stage F2: the three polygon-bevel entries (`insetFacesByMask`,
 // `bevelFacesByMask`, `spikeFacesByMask`) are free functions over

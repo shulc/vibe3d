@@ -4,7 +4,7 @@ module mesh_ops.loop_slice;
 import mesh;
 import math;
 import std.math : sqrt;
-import mesh_edit_delta : MeshEditScope;
+import mesh_scope : MeshEditScope;
 import mesh_planes : rewriteFaces, FaceSource, kNoSource;
 
 /// Kernel cap on a loop slice's cut count: the captured maximum (K-A3).

@@ -5,7 +5,7 @@ module mesh_ops.bevel_fin;
 import mesh;
 import math;
 import std.array : uninitializedArray;
-import mesh_edit_delta : MeshEditScope;
+import mesh_scope : MeshEditScope;
 
 // ---------------------------------------------------------------------------
 // The two NON-MANIFOLD fin-bundle spine kernels

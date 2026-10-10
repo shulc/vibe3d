@@ -4,6 +4,7 @@
 module tests.unit.mesh_ops.cleanup_test;
 
 import mesh;
+import mesh_edit_replay : revert;
 import math;
 import std.conv : to;
 import mesh_edit_delta : MeshEditScope, MeshEditDelta, MeshOpEntry;

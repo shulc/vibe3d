@@ -4,6 +4,7 @@
 module tests.unit.mesh_ops.cut_test;
 
 import mesh;
+import mesh_edit_replay : revert;
 import math;
 import std.math : abs;
 import mesh_ops.cut;

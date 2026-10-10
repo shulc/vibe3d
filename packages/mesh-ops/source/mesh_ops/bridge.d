@@ -11,7 +11,7 @@ import math;
 import mesh_ops.bridge_patch;
 import std.algorithm : reverse;
 import std.array : uninitializedArray;
-import mesh_edit_delta : MeshEditScope;
+import mesh_scope : MeshEditScope;
 
 /// The change classes one bridge actually commits, for the batch its callers
 /// open. It lives HERE, beside the kernels, and not spelled out at each of the

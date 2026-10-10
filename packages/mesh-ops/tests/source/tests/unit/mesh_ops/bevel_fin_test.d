@@ -36,6 +36,7 @@ module tests.unit.mesh_ops.bevel_fin_test;
 import std.format : format;
 import std.math   : cos, sin, PI;
 import mesh;
+import mesh_edit_replay : revert;
 import mesh_ops.edge_bevel;
 import math;
 import mesh_edit_delta;

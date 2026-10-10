@@ -5,16 +5,37 @@
   "targetType": "executable",
   "sourcePaths": [],
   "importPaths": [
-    "source"
+    "../source",
+    "source",
+    "../../.."
   ],
   "sourceFiles": [
+    "../source/mesh_edge_slice.d",
+    "../source/mesh_ops/bevel_curves.d",
+    "../source/mesh_ops/bevel_fin.d",
+    "../source/mesh_ops/bevel_vertex.d",
+    "../source/mesh_ops/box_geom.d",
+    "../source/mesh_ops/bridge.d",
+    "../source/mesh_ops/bridge_patch.d",
+    "../source/mesh_ops/cleanup.d",
+    "../source/mesh_ops/connected_mask.d",
+    "../source/mesh_ops/cut.d",
+    "../source/mesh_ops/decimate.d",
+    "../source/mesh_ops/edge_bevel.d",
+    "../source/mesh_ops/extrude.d",
+    "../source/mesh_ops/face_alignment.d",
+    "../source/mesh_ops/face_merge.d",
+    "../source/mesh_ops/loop_slice.d",
+    "../source/mesh_ops/poly_bevel.d",
+    "../source/mesh_ops/revolve.d",
+    "../source/mesh_ops/select_loop.d",
+    "../source/mesh_ops/thicken.d",
     "source/tests/unit/mesh_ops/bevel_fin_test.d",
     "source/tests/unit/mesh_ops/bevel_vertex_test.d",
     "source/tests/unit/mesh_ops/box_geom_corner_provenance_test.d",
     "source/tests/unit/mesh_ops/bridge_test.d",
     "source/tests/unit/mesh_ops/cleanup_test.d",
     "source/tests/unit/mesh_ops/connected_mask_test.d",
-    "source/tests/unit/mesh_ops/cut_test.d",
     "source/tests/unit/mesh_ops/extrude_test.d",
     "source/tests/unit/mesh_ops/loop_slice_test.d",
     "source/tests/unit/mesh_ops/poly_bevel_test.d",
@@ -23,17 +44,35 @@
     "source/tests/unit/mesh_ops/select_loop_test.d",
     "source/tests/unit/mesh_ops/vertex_pos_grid_test.d",
     "source/tests/unit/mesh_ops/seam_differential.d",
-    "../../../tests/unit/fixtures.d"
+    "source/tests/unit/mesh_ops/edge_fixture.d",
+    "source/tests/unit/mesh_edge_slice_test.d",
+    "source/tests/unit/mesh_edge_slice_gate_test.d",
+    "source/tests/unit/mesh_ops/face_alignment_test.d",
+    "source/tests/unit/mesh_ops/face_merge_test.d",
+    "../../../tests/unit/mesh_by_value_gate.d"
   ],
-  "dflags": [
-    "-i"
-  ],
+  "dflags": [],
   "dependencies": {
-    "vibe3d-mesh-ops": {
-      "path": ".."
+    "vibe3d-mesh": {
+      "path": "../../mesh"
     },
-    "vibe3d-common": {
-      "path": "../../common"
+    "vibe3d-math": {
+      "path": "../../../util/math"
+    },
+    "vibe3d-spatial": {
+      "path": "../../spatial"
+    },
+    "vibe3d-mesh-contracts": {
+      "path": "../../mesh-contracts"
+    },
+    "vibe3d-mesh-topology": {
+      "path": "../../mesh-topology"
+    },
+    "vibe3d-log": {
+      "path": "../../../util/log"
+    },
+    "vibe3d-mesh-edit-replay": {
+      "path": "../../mesh-edit-replay"
     }
   },
   "toolchainRequirements": {
@@ -42,11 +81,148 @@
   },
   "configurations": [
     {
-      "name": "algorithm"
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-spatial": "isolated-tests",
+        "vibe3d-mesh-contracts": "isolated-tests",
+        "vibe3d-mesh-topology": "isolated-tests",
+        "vibe3d-log": "isolated-tests",
+        "vibe3d-mesh-edit-replay": "isolated-tests"
+      }
     }
   ],
-  "subConfigurations": {
-    "vibe3d-mesh-ops": "modeling-noai",
-    "vibe3d-common": "modeling-noai"
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
   }
 }

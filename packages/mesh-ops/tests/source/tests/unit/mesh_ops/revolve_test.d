@@ -4,6 +4,7 @@
 module tests.unit.mesh_ops.revolve_test;
 
 import mesh;
+import mesh_edit_replay : revert;
 import math;
 import mesh_ops.revolve;
 import mesh_edit_delta : MeshEditScope, MeshEditDelta, MeshOpEntry;

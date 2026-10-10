@@ -2,9 +2,10 @@ module mesh_ops.cut;
 // mesh-ops-import: explicit
 
 import mesh;
+import mesh_edge_slice : insertEdgePoint, rebuildFacesWithChordSplits, edgeIndexOfVerts;
 import mesh_ops.loop_slice : capShellCycles;
 import math;
-import mesh_edit_delta : MeshEditScope;
+import mesh_scope : MeshEditScope;
 
 // ---------------------------------------------------------------------------
 // The plane-cut kernel family: `cutByPlane` / `cutByPlaneRestricted` /

@@ -1,6 +1,7 @@
 module tests.unit.mesh_ops.bevel_vertex_test;
 
 import mesh;
+import mesh_edit_replay : revert;
 import math;
 import mesh_ops.bevel_vertex;
 

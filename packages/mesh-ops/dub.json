@@ -142,16 +142,29 @@
         "debugMode",
         "debugInfo"
       ],
-      "dflags": [
-        "-i"
-      ]
+      "dflags": []
     }
   },
   "name": "vibe3d-mesh-ops",
   "description": "Mesh operation kernels",
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../common"
+    "vibe3d-mesh": {
+      "path": "../mesh"
+    },
+    "vibe3d-math": {
+      "path": "../../util/math"
+    },
+    "vibe3d-spatial": {
+      "path": "../spatial"
+    },
+    "vibe3d-mesh-contracts": {
+      "path": "../mesh-contracts"
+    },
+    "vibe3d-mesh-topology": {
+      "path": "../mesh-topology"
+    },
+    "vibe3d-log": {
+      "path": "../../util/log"
     }
   },
   "configurations": [
@@ -159,21 +172,36 @@
       "name": "modeling",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-common": "modeling"
+        "vibe3d-mesh": "modeling",
+        "vibe3d-math": "modeling",
+        "vibe3d-spatial": "modeling",
+        "vibe3d-mesh-contracts": "modeling",
+        "vibe3d-mesh-topology": "modeling",
+        "vibe3d-log": "modeling"
       }
     },
     {
       "name": "modeling-noai",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-common": "modeling-noai"
+        "vibe3d-mesh": "modeling-noai",
+        "vibe3d-math": "modeling-noai",
+        "vibe3d-spatial": "modeling-noai",
+        "vibe3d-mesh-contracts": "modeling-noai",
+        "vibe3d-mesh-topology": "modeling-noai",
+        "vibe3d-log": "modeling-noai"
       }
     },
     {
       "name": "with-render",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-common": "with-render"
+        "vibe3d-mesh": "with-render",
+        "vibe3d-math": "with-render",
+        "vibe3d-spatial": "with-render",
+        "vibe3d-mesh-contracts": "with-render",
+        "vibe3d-mesh-topology": "with-render",
+        "vibe3d-log": "with-render"
       }
     },
     {
@@ -182,16 +210,39 @@
         "web"
       ],
       "subConfigurations": {
-        "vibe3d-common": "web"
+        "vibe3d-mesh": "web",
+        "vibe3d-math": "web",
+        "vibe3d-spatial": "web",
+        "vibe3d-mesh-contracts": "web",
+        "vibe3d-mesh-topology": "web",
+        "vibe3d-log": "web"
       }
     },
     {
       "name": "root-tests",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-common": "root-tests"
+        "vibe3d-mesh": "root-tests",
+        "vibe3d-math": "root-tests",
+        "vibe3d-spatial": "root-tests",
+        "vibe3d-mesh-contracts": "root-tests",
+        "vibe3d-mesh-topology": "root-tests",
+        "vibe3d-log": "root-tests"
       },
       "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "targetType": "sourceLibrary",
+      "subConfigurations": {
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-spatial": "isolated-tests",
+        "vibe3d-mesh-contracts": "isolated-tests",
+        "vibe3d-mesh-topology": "isolated-tests",
+        "vibe3d-log": "isolated-tests"
+      }
     }
   ]
 }

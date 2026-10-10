@@ -54,7 +54,7 @@ import mesh          : Mesh, FaceIdx;
 import mesh_topo     : edgeKey;
 import mesh_planes   : rewriteFaces, FaceSource;
 import mesh_corner_maps : CornerDrop, PolyVertexBlend;
-import mesh_edit_delta  : MeshEditScope;
+import mesh_scope  : MeshEditScope;
 import math          : Vec3;
 
 // -----------------------------------------------------------------------
