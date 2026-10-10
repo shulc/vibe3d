@@ -941,8 +941,7 @@ unittest { // (4c)
     bool sessionScanned;
     foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != "packages/viewport-gpu/source"
-            && scanSourceRoot != "packages/subpatch-preview/source"))
+        || (scanSourceRoot != "packages/subpatch-preview/source"))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const name = e.name;
@@ -1078,8 +1077,7 @@ unittest { // (4c)
     string[] mps;
     foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != "packages/viewport-gpu/source"
-            && scanSourceRoot != "packages/subpatch-preview/source"))
+        || (scanSourceRoot != "packages/subpatch-preview/source"))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         auto code = blankUnittestBodies(blankNonCode(readText(e.name)));
         foreach (site; identSites(code, "scriptedWriteEndsOperation", false))
@@ -1246,8 +1244,7 @@ unittest { // (4e)
     string[] model;
     foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != "packages/viewport-gpu/source"
-            && scanSourceRoot != "packages/subpatch-preview/source"))
+        || (scanSourceRoot != "packages/subpatch-preview/source"))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         if (blankNonCode(readText(e.name)).canFind("mixin TopologyStepClientBody!"))
             model ~= e.name;
@@ -1731,8 +1728,7 @@ unittest { // (4k)
     size_t scanned;
     foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != "packages/viewport-gpu/source"
-            && scanSourceRoot != "packages/subpatch-preview/source"))
+        || (scanSourceRoot != "packages/subpatch-preview/source"))
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
@@ -2613,8 +2609,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         size_t files;
         foreach (scanSourceRoot; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source"])
         if (exists(scanSourceRoot)
-            || (scanSourceRoot != "packages/viewport-gpu/source"
-                && scanSourceRoot != "packages/subpatch-preview/source"))
+            || (scanSourceRoot != "packages/subpatch-preview/source"))
         foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++files;
             foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),

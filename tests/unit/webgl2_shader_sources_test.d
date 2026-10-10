@@ -203,7 +203,7 @@ JS" ~ "</script>";
     assert(app.count(`ImGui_ImplOpenGL3_Init("#version 300 es")`) == 1
         && app.count(`ImGui_ImplOpenGL3_Init("#version 330 core")`) == 1,
         "W16-B ImGui version seam must contain one web and one desktop arm");
-    const shaderCode = readText(buildPath(repoRoot, "source", "shader.d"));
+    const shaderCode = readText(buildPath(repoRoot, "packages/viewport-gpu/source", "shader.d"));
     assert(!shaderCode.canFind("createProgramWithGeom")
         && !shaderCode.canFind("GL_GEOMETRY_SHADER"),
         "W16-B12 geometry-shader residue returned");

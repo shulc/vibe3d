@@ -1491,7 +1491,7 @@ string buildProjectLib(string scratch) {
     bool[string] seen;
     // Task 20262150: moved conditional helpers need the same unittest source
     // grant as desktop/common; keep production package archives unchanged.
-    foreach (root; ["", " --root=packages/common", " --root=packages/tool-state", " --root=packages/transform-ops", " --root=packages/input-events", " --root=packages/display-policy"]) {
+    foreach (root; ["", " --root=packages/common", " --root=packages/tool-state", " --root=packages/transform-ops", " --root=packages/input-events", " --root=packages/display-policy", " --root=packages/viewport-gpu"]) {
         auto rr = executeShell("dub describe" ~ root
             ~ " --config=modeling --data=source-files --data-list 2>/dev/null");
         if (rr.status != 0) return "";

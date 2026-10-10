@@ -653,7 +653,7 @@ unittest { // SP3 census: each upload-path timer opens right after its path's g_
     import tests.unit.census_symbols : blankNonCode, isIdentChar;
 
     enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    immutable code = blankNonCode(readText(buildPath(repoRoot, "source", "mesh_gpu.d")));
+    immutable code = blankNonCode(readText(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d")));
     static immutable string[2][4] rows = [
         ["uploadFull", "upload"], ["uploadPositions", "refreshPositions"],
         ["uploadSelectedVerts", "uploadSelectedVertices"],

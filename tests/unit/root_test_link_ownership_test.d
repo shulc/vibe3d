@@ -6,12 +6,12 @@ unittest {
     import std.file : readText;
     import std.json : JSONValue, parseJSON;
     import std.path : buildPath, dirName;
-    import std.algorithm : sort;
+    import std.algorithm : sort, canFind;
 
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     enum owners = ["common", "mesh-ops", "interchange", "interaction-query",
                    "pipe-evaluation", "tool-state", "transform-ops",
-                   "creation-ops", "alignment-ops", "input-events", "display-policy"];
+                   "creation-ops", "alignment-ops", "input-events", "display-policy", "viewport-gpu"];
     JSONValue config(JSONValue raw, string name) {
         foreach (candidate; raw["configurations"].array)
             if (candidate["name"].str == name) return candidate;
@@ -29,8 +29,11 @@ unittest {
         if (name.length >= 7 && name[0 .. 7] == "vibe3d-") selected ~= name;
     foreach (owner; owners) expected ~= "vibe3d-" ~ owner;
     selected.sort(); expected.sort();
-    assert(selected.length == 11 && selected == expected,
-           "root test ownership frozen eleven selectors");
+    foreach (owner; owners)
+        assert(selected.canFind("vibe3d-" ~ owner),
+               "root test ownership named selector " ~ owner);
+    assert(selected.length == 12 && selected == expected,
+           "root test ownership frozen twelve selectors");
     foreach (owner; owners) {
         const packageName = "vibe3d-" ~ owner;
         const packagePath = "packages/" ~ owner;

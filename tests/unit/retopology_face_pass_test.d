@@ -92,7 +92,7 @@ unittest // faceNormalFirst3 is the upload's normal, bit for bit
 
 unittest // the face VBO has ONE normal home: no inline copy survives in mesh_gpu.d
 {
-    const src = readText(buildPath(repoRoot, "source", "mesh_gpu.d"));
+    const src = readText(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d"));
     immutable calls = src.count("faceNormalFirst3(");
     // None since the incremental refresh (task 9070): the flat stream reads
     // `vertex_normals.faceUnitNormal`, the one face-normal home, whose
@@ -237,7 +237,7 @@ unittest // the face pass restores every GL state it sets (source census)
     // this pins all four restores at their one site.
     import std.algorithm : canFind;
     import std.string : indexOf;
-    const src = readText(buildPath(repoRoot, "source", "mesh_gpu.d"));
+    const src = readText(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d"));
     immutable at = src.indexOf("private void endFacePass(");
     assert(at >= 0, "mesh_gpu.d: endFacePass not found");
     string bodyOf(string head) {

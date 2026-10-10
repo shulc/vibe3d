@@ -401,7 +401,7 @@ unittest // Legacy destroy releases names but retains its header policy.
 
 unittest // The module contains one typed low-level GPU-name delete sequence.
 {
-    const source = readText(buildPath(repoRoot, "source", "mesh_gpu.d"));
+    const source = readText(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d"));
     const vaoDeletes = source.count("glDeleteVertexArrays(");
     const vboDeletes = source.count("glDeleteBuffers(");
     assert(vaoDeletes == 3, format(

@@ -59,6 +59,8 @@ block packages/pipe-evaluation/source/toolpipe/stages/constrain.d 1
 block packages/pipe-evaluation/source/toolpipe/stages/falloff.d 4
 block packages/pipe-evaluation/source/toolpipe/stages/snap.d 1
 block packages/tool-state/source/tools/common/session_mesh_key.d 1
+block packages/viewport-gpu/source/gl_thread_guard.d 1
+block packages/viewport-gpu/source/mesh_gpu.d 4
 block source/ai/exploration.d 6
 block source/ai3d/event_queue.d 4
 block source/ai3d/worker_manager.d 9
@@ -82,7 +84,6 @@ block source/drag_identity.d 1
 block source/edit_session.d 1
 block source/forms.d 29
 block source/frame_stall.d 3
-block source/gl_thread_guard.d 1
 block source/handles/arbiter.d 3
 block source/handles/gizmo_metrics.d 1
 block source/handles/gl_util.d 2
@@ -92,7 +93,6 @@ block source/http_server.d 3
 block source/image_plane.d 11
 block source/input_frame_state.d 1
 block source/io/file_dialog.d 1
-block source/mesh_gpu.d 4
 block source/overlay_space.d 7
 block source/prefs.d 16
 block source/prepared_bridge_activation.d 1
@@ -168,7 +168,7 @@ block source/ui/viewport_render.d 1
 # only shrink, and each number is EXACT: shed a guard and lower the row.
 allow-version packages/common/source/mesh.d 17
 allow-version packages/common/source/mesh_visibility.d 13
-allow-version source/mesh_gpu.d 44
+allow-version packages/viewport-gpu/source/mesh_gpu.d 44
 allow-version source/prepared_record_context.d 115
 allow-version source/tools/alignment/radial_sweep_tool.d 19
 allow-version source/tools/edit/edge_extend.d 13

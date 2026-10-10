@@ -12,7 +12,7 @@ unittest {
     string[] expected;
     foreach (line; readText(buildPath(root, "tests/unit/root_test_package_module_roster.txt")).splitLines)
         if (line.strip.length && line.strip[0] != '#') expected ~= line.strip;
-    assert(expected.length == 148, "root package ModuleInfo frozen population 148");
+    assert(expected.length == 154, "root package ModuleInfo frozen population 154");
     auto ordered = expected.dup;
     ordered.sort();
     assert(ordered == expected, "root package ModuleInfo manifest sorted");
@@ -27,7 +27,10 @@ unittest {
     foreach (name; ["camera_stamp", "display_state", "viewport_scheme", "viewport_overlay_mode", "viewport_probe_sampling", "weightmap_view", "light_rig", "vertex_normals"])
         assert(occurrences.get(name, 0) == 1,
                "ROOT-PACKAGE-MODULE-display-policy must occur exactly once: " ~ name);
-    assert(occurrences.length == 148, "root package ModuleInfo selected population 148");
+    foreach (name; ["gl_thread_guard", "gpu_pass_timer", "mesh_gpu", "shader", "viewport_env", "gpu_select"])
+        assert(occurrences.get(name, 0) == 1,
+               "ROOT-PACKAGE-MODULE-viewport-gpu must occur exactly once: " ~ name);
+    assert(occurrences.length == 154, "root package ModuleInfo selected population 154");
     foreach (name; expected)
         assert(occurrences.get(name, 0) == 1,
                "root package ModuleInfo must occur exactly once: " ~ name);

@@ -137,7 +137,7 @@ unittest { // the create-tool preview re-seeds the park through the seam's previ
     import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countOccurrences;
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     immutable code = blankUnittestBodies(blankNonCode(
-        readText(buildPath(root, "source", "shader.d"))));
+        readText(buildPath(root, "packages/viewport-gpu/source", "shader.d"))));
     enum head = "void drawLitPreview(";
     assert(countOccurrences(code, head) == 1, "census: expected drawLitPreview defined once in shader.d");
     immutable ptrdiff_t at = code.indexOf(head);
@@ -160,7 +160,7 @@ unittest { // the preview subset parks every plan uniform: applyPreviewPlan's bo
     import tests.unit.census_symbols : balancedSpan, blankNonCode, blankUnittestBodies, countOccurrences;
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     immutable code = blankUnittestBodies(blankNonCode(
-        readText(buildPath(root, "source", "shader.d"))));
+        readText(buildPath(root, "packages/viewport-gpu/source", "shader.d"))));
     enum head = "void applyPreviewPlan(";
     // Floor: the area exists once and its body is found.
     assert(countOccurrences(code, head) == 1, "census: expected applyPreviewPlan defined once in shader.d");
@@ -214,11 +214,10 @@ unittest { // raw-text census of the spellings that bypass private: names, getMe
     string[string] reflect;  // LitShader-mentioning files with a bypass spelling -> counts
     foreach (scanSourceRoot; [src, buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(root, "packages/viewport-gpu/source")
-            && scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
+        || (scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = de.name[src.length + 1 .. $].replace("\\", "/");
-        if (rel == "shader.d") continue;
+        if (rel == "../packages/viewport-gpu/source/shader.d") continue;
         ++scanned;
         immutable raw = readText(de.name);   // RAW: strings and comments included
         if (positions(raw, nameRe).length) named ~= rel;
@@ -311,7 +310,7 @@ unittest {
     import std.string : indexOf;
     import tests.unit.census_symbols : balancedSpan, blankNonCode, blankUnittestBodies;
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    immutable code = blankUnittestBodies(blankNonCode(readText(buildPath(root, "source", "shader.d"))));
+    immutable code = blankUnittestBodies(blankNonCode(readText(buildPath(root, "packages/viewport-gpu/source", "shader.d"))));
     string body_(string head) {
         immutable ptrdiff_t at = code.indexOf(head);
         assert(at >= 0, "census: " ~ head ~ " missing from shader.d");

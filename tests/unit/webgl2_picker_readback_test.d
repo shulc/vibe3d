@@ -19,7 +19,7 @@ private string browserBinary() {
 }
 
 unittest { // real WebGL2 R32UI readback and production wiring
-    const source = readText(buildPath(repoRoot, "source", "gpu_select.d"));
+    const source = readText(buildPath(repoRoot, "packages/viewport-gpu/source", "gpu_select.d"));
     assert(source.count("readIdPixels(") == 4,
         "W16-D production census: expected one helper plus all three picker callers");
     assert(source.count("glReadPixels(") == 1,

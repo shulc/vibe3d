@@ -82,7 +82,7 @@ unittest // task 6520: drag intent is computed once and shared by both policy do
 unittest // the ownership predicate lives at the shared read seam
 {
     const meshGpu = blankNonCode(readText(
-        buildPath(repoRoot, "source", "mesh_gpu.d")));
+        buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d")));
     const displayFold = bodyAt(meshGpu,
         "float[16] displayToolMatrix(const ref float[16] toolMat)");
 
@@ -127,7 +127,7 @@ unittest // publication, dirty key, writers, and reuse close the state census
     // The fan-out's one write site goes through `GpuMesh.noteFaceVboFannedOut`
     // (records the write AND drops the face mirror's smooth cache, S1c).
     const meshGpuSrc = blankNonCode(readText(
-        buildPath(repoRoot, "source", "mesh_gpu.d")));
+        buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d")));
     const note = bodyAt(meshGpuSrc, "void noteFaceVboFannedOut()");
     assert(mainBody.count("noteFaceVboFannedOut()") == 1
         && fanOut.indexOf("gpu.noteFaceVboFannedOut();") >= 0
@@ -161,7 +161,7 @@ unittest // publication, dirty key, writers, and reuse close the state census
 unittest // detached upload state mirrors ownership, while admission stays policy-keyed
 {
     const meshGpu = blankNonCode(readText(
-        buildPath(repoRoot, "source", "mesh_gpu.d")));
+        buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d")));
     const clone = bodyAt(meshGpu, "private GpuMesh cloneUploadState(");
     const take = bodyAt(meshGpu, "private GpuMeshNames takeGpuMeshNames(");
     const empty = bodyAt(meshGpu, "private bool isDefaultEmptyGpuMesh(");
@@ -183,7 +183,7 @@ unittest // detached upload state mirrors ownership, while admission stays polic
 unittest // completed writes are recorded below every entry refusal
 {
     const meshGpu = blankNonCode(readText(
-        buildPath(repoRoot, "source", "mesh_gpu.d")));
+        buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d")));
     const upload = bodyAt(meshGpu, "void upload(ref const Mesh mesh,");
     assert(upload.count("submitUploadGl();") == 1
         && upload.count("publishSuppressedCagePosition(mesh);") == 1
@@ -239,13 +239,7 @@ unittest // deleted ownership channels stay absent from executable code
     size_t files, pyFiles;
     foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "tools", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"]) {
         if (!exists(buildPath(repoRoot, root))
-            && (root == "packages/input-events/source"
-                || root == "packages/display-policy/source"
-                || root == "packages/viewport-gpu/source"
-                || root == "packages/subpatch-preview/source"
-                || root == "packages/input-events/tests/source"
-                || root == "packages/display-policy/tests/source"
-                || root == "packages/viewport-gpu/tests/source"
+            && (root == "packages/subpatch-preview/source"
                 || root == "packages/subpatch-preview/tests/source")) continue;
         foreach (de; dirEntries(buildPath(repoRoot, root), SpanMode.depth)) {
             if (!de.isFile) continue;

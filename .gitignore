@@ -181,3 +181,7 @@ tools/cli/.boundary/
 /packages/display-policy/libvibe3d-display-policy.a
 /packages/display-policy/vibe3d-display-policy.lib
 /packages/display-policy/tests/vibe3d-display-policy-tests-test-*
+
+/packages/viewport-gpu/libvibe3d-viewport-gpu.a
+/packages/viewport-gpu/vibe3d-viewport-gpu.lib
+/packages/viewport-gpu/tests/vibe3d-viewport-gpu-tests-test-*

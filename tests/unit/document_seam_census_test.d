@@ -293,13 +293,7 @@ unittest
     {
         const dir = buildPath(repoRoot, root);
         if (!exists(dir)
-            && (root == "packages/input-events/source"
-                || root == "packages/display-policy/source"
-                || root == "packages/viewport-gpu/source"
-                || root == "packages/subpatch-preview/source"
-                || root == "packages/input-events/tests/source"
-                || root == "packages/display-policy/tests/source"
-                || root == "packages/viewport-gpu/tests/source"
+            && (root == "packages/subpatch-preview/source"
                 || root == "packages/subpatch-preview/tests/source")) continue;
         if (!isDir(dir)) continue;
         foreach (entry; dirEntries(dir, SpanMode.depth))

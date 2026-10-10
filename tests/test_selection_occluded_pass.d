@@ -159,8 +159,8 @@ private string withoutLineComments(string source) {
 // executable as the pixel witness so a narrow run proves both the wiring and
 // its raster result. It does not rebuild an equivalent shader of its own.
 unittest {
-    const meshGpu = readText(buildPath(repoRoot, "source", "mesh_gpu.d"));
-    const shaderCode = readText(buildPath(repoRoot, "source", "shader.d"));
+    const meshGpu = readText(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d"));
+    const shaderCode = readText(buildPath(repoRoot, "packages/viewport-gpu/source", "shader.d"));
     const app = readText(buildPath(repoRoot, "source", "app.d"));
     const viewport = readText(buildPath(repoRoot, "source", "ui",
                                         "viewport_render.d"));

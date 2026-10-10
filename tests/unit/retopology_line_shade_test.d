@@ -340,13 +340,12 @@ unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
     string[] files;
     foreach (scanSourceRoot; [src, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
-            && scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+        || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = relativePath(de.name, src).replace("\\", "/");
         if (rel == "../packages/display-policy/source/light_rig.d") continue;
         immutable raw = readText(de.name);
-        if (rel == "shader.d" || rel == "tools/create/pen.d"
+        if (rel == "../packages/viewport-gpu/source/shader.d" || rel == "tools/create/pen.d"
             || countOccurrences(raw, "LitShader") > 0)
             files ~= rel;
     }
@@ -364,12 +363,12 @@ unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
         immutable code = blankImports(blankUnittestBodies(blankNonCode(
             readText(buildPath(src, rel)))));
         size_t lo = size_t.max, hi = size_t.max;
-        if (rel == "shader.d") {
+        if (rel == "../packages/viewport-gpu/source/shader.d") {
             immutable sp = useProgramSpan(code);
             lo = sp[0]; hi = sp[1];
             foreach (m; matchAll(code[lo .. hi], identRe)) insideReads[m.hit] += 1;
         }
-        bad ~= offenders(rel, code, lo, hi, rel == "shader.d" ? shaderAllowed : otherAllowed);
+        bad ~= offenders(rel, code, lo, hi, rel == "../packages/viewport-gpu/source/shader.d" ? shaderAllowed : otherAllowed);
     }
     // Complement floor: outside useProgram, shader.d spells each location only
     // in its declaration and its glGetUniformLocation assignment — measured
@@ -424,11 +423,10 @@ unittest { // 5a. the fence: rig locations are private, and nobody spells around
     string[] named;
     foreach (scanSourceRoot; [src, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(repoRoot, "packages/viewport-gpu/source")
-            && scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
+        || (scanSourceRoot != buildPath(repoRoot, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = relativePath(de.name, src).replace("\\", "/");
-        if (rel == "shader.d") continue;
+        if (rel == "../packages/viewport-gpu/source/shader.d") continue;
         ++scanned;
         immutable raw = readText(de.name);   // RAW: strings and comments too
         if (!matchAll(raw, rigNameRe).empty) named ~= rel;

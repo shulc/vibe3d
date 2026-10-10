@@ -26,8 +26,7 @@ private string[string] sourceCode() {
     string[string] out_;
     foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(root, "packages/viewport-gpu/source")
-            && scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
+        || (scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         out_[relativePath(e.name, buildPath(root, "source"))] = codeText(readText(e.name));
     return out_;
@@ -127,22 +126,22 @@ unittest { // (c) ONE policy builder, referenced only by the three producers' ho
         immutable n = identCount(c, "buildSmoothPolicy");
         if (n) refs[f] = n;
     }
-    foreach (f; ["../packages/display-policy/source/vertex_normals.d", "mesh_gpu.d", "subpatch_osd.d"])
+    foreach (f; ["../packages/display-policy/source/vertex_normals.d", "../packages/viewport-gpu/source/mesh_gpu.d", "subpatch_osd.d"])
         assert(f in refs, "census floor: " ~ f ~ " no longer references buildSmoothPolicy");
     string[] outside;
     foreach (f, n; refs)
-        if (!["../packages/display-policy/source/vertex_normals.d", "mesh_gpu.d", "subpatch_osd.d"].canFind(f)) outside ~= f;
+        if (!["../packages/display-policy/source/vertex_normals.d", "../packages/viewport-gpu/source/mesh_gpu.d", "subpatch_osd.d"].canFind(f)) outside ~= f;
     assert(outside.length == 0,
         format("buildSmoothPolicy is referenced in %s — a producer that derives the policy itself", outside));
     // Inside the two producer modules the reference sits in the named function
     // (the one other reference is the module's import).
-    immutable gpu = code["mesh_gpu.d"], osd = code["subpatch_osd.d"];
+    immutable gpu = code["../packages/viewport-gpu/source/mesh_gpu.d"], osd = code["subpatch_osd.d"];
     immutable gIn = identCount(bodyAt(gpu, "private void rebuildFaceAdjacency("), "buildSmoothPolicy");
     immutable oIn = identCount(bodyAt(osd, "void installGl("), "buildSmoothPolicy");
     // The fan-out's second home: its material half, re-run on a Material commit
     // over an unchanged topology (`OsdAccel.refreshSmoothPolicy`).
     immutable oRe = identCount(bodyAt(osd, "bool refreshSmoothPolicy("), "buildSmoothPolicy");
-    assert(gIn >= 1 && refs["mesh_gpu.d"] == gIn + 1,
+    assert(gIn >= 1 && refs["../packages/viewport-gpu/source/mesh_gpu.d"] == gIn + 1,
         "census: mesh_gpu.d builds the policy outside rebuildFaceAdjacency");
     assert(oIn >= 1 && oRe >= 1 && refs["subpatch_osd.d"] == oIn + oRe + 1,
         "census: subpatch_osd.d builds the policy outside installGl / refreshSmoothPolicy");

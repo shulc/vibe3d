@@ -131,6 +131,12 @@ allow packages/transform-ops/source/tools/transform/morph_route.d 1
 allow packages/transform-ops/source/tools/transform/relocate_plane.d 2
 allow packages/transform-ops/source/tools/transform/scale_input.d 1
 allow packages/transform-ops/source/tools/transform/xform_kernels.d 12
+allow packages/viewport-gpu/source/gl_thread_guard.d 5
+allow packages/viewport-gpu/source/gpu_pass_timer.d 2
+allow packages/viewport-gpu/source/gpu_select.d 4
+allow packages/viewport-gpu/source/mesh_gpu.d 39
+allow packages/viewport-gpu/source/shader.d 14
+allow packages/viewport-gpu/source/viewport_env.d 1
 allow source/ai/analysis.d 2
 allow source/ai/copilot_gate.d 5
 allow source/ai/exploration.d 1
@@ -312,9 +318,6 @@ allow source/frame_runner.d 2
 allow source/frame_stall.d 3
 allow source/geometry_clipboard.d 4
 allow source/gizmo.d 3
-allow source/gl_thread_guard.d 5
-allow source/gpu_pass_timer.d 2
-allow source/gpu_select.d 4
 allow source/guarded_action_controller.d 2
 allow source/handler.d 1
 allow source/handles/arbiter.d 9
@@ -342,7 +345,6 @@ allow source/layout_reset_action.d 1
 allow source/live_registration_roles.d 1
 allow source/mesh_analysis.d 4
 allow source/mesh_command_registration.d 3
-allow source/mesh_gpu.d 39
 allow source/mesh_stats.d 5
 allow source/overlay_space.d 5
 allow source/pie_geometry.d 1
@@ -373,7 +375,6 @@ allow source/selection_command_registration.d 1
 allow source/selection_product.d 3
 allow source/selection_projection.d 5
 allow source/selftest_fault.d 3
-allow source/shader.d 14
 allow source/snap_render.d 3
 allow source/step_trace.d 1
 allow source/subpatch_osd.d 40
@@ -473,7 +474,6 @@ allow source/view_settings_registration.d 2
 allow source/viewport.d 41
 allow source/viewport_command_registration.d 1
 allow source/viewport_composite.d 1
-allow source/viewport_env.d 1
 
 # Exact per-file counts of comment runs >= 40 lines, sorted by path.
 allow-runs packages/alignment-ops/source/tools/alignment/align_kernels.d 1
@@ -535,6 +535,10 @@ allow-runs packages/pipe-evaluation/source/toolpipe/stages/falloff.d 1
 allow-runs packages/tool-state/source/tools/common/session_mesh_key.d 1
 allow-runs packages/tool-state/source/tools/edit/preview_rebuild.d 1
 allow-runs packages/transform-ops/source/tools/transform/xform_kernels.d 1
+allow-runs packages/viewport-gpu/source/gl_thread_guard.d 1
+allow-runs packages/viewport-gpu/source/gpu_select.d 1
+allow-runs packages/viewport-gpu/source/mesh_gpu.d 2
+allow-runs packages/viewport-gpu/source/shader.d 1
 allow-runs source/ai/support_loop_candidates.d 1
 allow-runs source/app.d 7
 allow-runs source/commands/image/commands.d 1
@@ -574,21 +578,17 @@ allow-runs source/commands/select/sets.d 2
 allow-runs source/drag.d 3
 allow-runs source/forms.d 1
 allow-runs source/forms_render.d 1
-allow-runs source/gl_thread_guard.d 1
-allow-runs source/gpu_select.d 1
 allow-runs source/http_server.d 3
 allow-runs source/image_cache.d 1
 allow-runs source/image_plane.d 1
 allow-runs source/input_frame_state.d 3
 allow-runs source/input_router.d 2
-allow-runs source/mesh_gpu.d 2
 allow-runs source/mesh_stats.d 1
 allow-runs source/overlay_space.d 1
 allow-runs source/remesh/region_stitch.d 1
 allow-runs source/render/render_mvp.d 1
 allow-runs source/selection_product.d 1
 allow-runs source/selftest_fault.d 1
-allow-runs source/shader.d 1
 allow-runs source/subpatch_osd.d 3
 allow-runs source/subpatch_preview.d 2
 allow-runs source/tool_disarm.d 1

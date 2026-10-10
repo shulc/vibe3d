@@ -31,6 +31,9 @@ edit_target_contract
 editmode
 eventlog
 falloff
+gl_thread_guard
+gpu_pass_timer
+gpu_select
 held_gesture_buttons
 history_lifecycle_contract
 hover_state
@@ -63,6 +66,7 @@ mesh_corner_maps
 mesh_dirty
 mesh_edge_slice
 mesh_edit_delta
+mesh_gpu
 mesh_morph
 mesh_ops.bevel_curves
 mesh_ops.bevel_fin
@@ -97,6 +101,7 @@ record_observer_hub
 screen_buckets
 seltype
 session_owner
+shader
 shortcuts
 snap
 snap_election
@@ -141,6 +146,7 @@ tsan_annotate
 vertex_normals
 view
 viewgrid
+viewport_env
 viewport_overlay_mode
 viewport_probe_sampling
 viewport_scheme

@@ -61,8 +61,7 @@ private string[] sourceFiles() {
     string[] o;
     foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(root, "packages/viewport-gpu/source")
-            && scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
+        || (scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         o ~= relativePath(e.name, buildPath(root, "source")).replace("\\", "/");
     o.sort();
@@ -73,7 +72,7 @@ unittest { // (a) the cull POLICY reaches only the display: a picker reading it 
     // Polarity [E14]: stationary — TRUE before a mutation that makes a picker
     // (select_visibility, gpu_select, bvh_pick) read the display cull; the
     // offender list then names that file.
-    immutable string[] allowed = ["../packages/display-policy/source/display_state.d", "http_providers.d", "shader.d", "ui/viewport_render.d"];
+    immutable string[] allowed = ["../packages/display-policy/source/display_state.d", "http_providers.d", "../packages/viewport-gpu/source/shader.d", "ui/viewport_render.d"];
     auto files = sourceFiles();
     assert(files.length > 300, format("census floor: %d source files", files.length));
     string[] holders;
@@ -90,7 +89,7 @@ unittest { // (a) the cull POLICY reaches only the display: a picker reading it 
                ~ "changes picking, which S1d pins unchanged", offenders));
     // The picking modules name none of the sidedness vocabulary.
     size_t pickers;
-    foreach (f; ["gpu_select.d", "select_visibility.d", "bvh_pick.d"]) {
+    foreach (f; ["../packages/viewport-gpu/source/gpu_select.d", "select_visibility.d", "bvh_pick.d"]) {
         immutable code = blankNonCode(readText(buildPath(root, "source", f)));
         ++pickers;
         foreach (tok; ["cullBySurface", "bySurface", "twoSided", "anyTwoSided", "FaceSide", "faceSidesFor"])
@@ -107,10 +106,10 @@ unittest { // (b) `locBackSide`: declared and located in shader.d, written only 
         immutable raw = readText(buildPath(root, "source", f));
         immutable n = tokens(raw, "locBackSide");
         total += n;
-        if (f == "shader.d")
+        if (f == "../packages/viewport-gpu/source/shader.d")
             assert(n == 2, format("shader.d names locBackSide %d time(s): the declaration and its "
                                   ~ "glGetUniformLocation are 2", n));
-        else if (f == "mesh_gpu.d") {
+        else if (f == "../packages/viewport-gpu/source/mesh_gpu.d") {
             immutable begin = tokens(fnBody(raw, "private void beginFaceSide("), "locBackSide");
             immutable end   = tokens(fnBody(raw, "private void endFaceSide("), "locBackSide");
             assert(begin == 1 && end == 1 && n == 2,
@@ -123,7 +122,7 @@ unittest { // (b) `locBackSide`: declared and located in shader.d, written only 
 }
 
 unittest { // (c) the double-sided bit is read by the vertex stage only
-    immutable raw = readText(buildPath(root, "source", "shader.d"));
+    immutable raw = readText(buildPath(root, "packages/viewport-gpu/source", "shader.d"));
     immutable block = glslRegion(raw, "private enum string materialsBlockGlsl");
     immutable vert  = glslRegion(raw, "private immutable string litVertSrc");
     immutable frag  = glslRegion(raw, "private immutable string litFragSrc");
@@ -147,7 +146,7 @@ unittest { // (c) the double-sided bit is read by the vertex stage only
 }
 
 unittest { // (d) GL cull state in mesh_gpu.d is the side bracket's
-    immutable code = blankNonCode(readText(buildPath(root, "source", "mesh_gpu.d")));
+    immutable code = blankNonCode(readText(buildPath(root, "packages/viewport-gpu/source", "mesh_gpu.d")));
     immutable begin = fnBody(code, "private void beginFaceSide(");
     immutable end   = fnBody(code, "private void endFaceSide(");
     foreach (call; ["glCullFace(", "glEnable(GL_CULL_FACE)", "glDisable(GL_CULL_FACE)"]) {
@@ -170,7 +169,7 @@ private bool pickerDisablesCullFirst(string body) {
 }
 
 unittest { // (e) the picker keeps its own cull-off before its first draw
-    immutable code = blankNonCode(readText(buildPath(root, "source", "gpu_select.d")));
+    immutable code = blankNonCode(readText(buildPath(root, "packages/viewport-gpu/source", "gpu_select.d")));
     immutable at = code.indexOf("void renderMode(");
     assert(at >= 0, "gpu_select.d: renderMode not found");
     immutable body = code[at .. $];
@@ -183,7 +182,7 @@ unittest { // (e) the picker keeps its own cull-off before its first draw
 }
 
 unittest { // (f) both create-tool previews choose their pass through previewFacePass
-    immutable shaderCode = blankNonCode(readText(buildPath(root, "source", "shader.d")));
+    immutable shaderCode = blankNonCode(readText(buildPath(root, "packages/viewport-gpu/source", "shader.d")));
     immutable penCode    = blankNonCode(readText(buildPath(root, "source", "tools", "create", "pen.d")));
     immutable lp = fnBody(shaderCode, "void drawLitPreview(");
     size_t n;

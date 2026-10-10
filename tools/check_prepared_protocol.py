@@ -1133,7 +1133,7 @@ for label, mutated_mesh, mutated_document in mesh_mutations:
 
 # P1.0b.4a dormant GL-resource owner. Raw GLuint sets stay owner-private;
 # production doors may carry only scalar identity/generation tokens.
-gpu_source = (ROOT / "source/mesh_gpu.d").read_text()
+gpu_source = (ROOT / "packages/viewport-gpu/source/mesh_gpu.d").read_text()
 for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d")):
     if path.name != "mesh_gpu.d" and ".beginPreparedDestroy(" in path.read_text():
         fail("P1.0b.4a prepared GPU owner gained a pre-cutover caller")
@@ -2166,7 +2166,7 @@ with tempfile.TemporaryDirectory(prefix="vibe3d-prepared-carrier-mut-") as td:
 # P1.0b.4b dormant full-upload owner. Keep production at zero callers until
 # P1.0c, and freeze the closed prepare/validate/nothrow-consume boundary plus
 # the original-state identity guards that make refusal zero-live.
-mesh_gpu = (ROOT / "source/mesh_gpu.d").read_text()
+mesh_gpu = (ROOT / "packages/viewport-gpu/source/mesh_gpu.d").read_text()
 upload_contracts = (
     "bool beginPreparedUpload(ref const Mesh mesh,",
     "bool validatePreparedUpload(ref PreparedGpuUploadToken token,",
@@ -2184,7 +2184,7 @@ for contract in upload_contracts:
     if mesh_gpu.count(contract) != 1:
         fail(f"P1.0b.4b upload-owner contract drift: {contract}")
 for path in (path for sub in ("source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source") for path in (ROOT / sub).rglob("*.d")):
-    if path.name == "mesh_gpu.d" and path.parent == ROOT / "source":
+    if path.name == "mesh_gpu.d" and path.parent == ROOT / "packages/viewport-gpu/source":
         continue
     if re.search(r"\.beginPreparedUpload\s*\(", path.read_text()):
         fail(f"P1.0b.4b early prepared-upload caller: {path.relative_to(ROOT)}")
@@ -2436,7 +2436,7 @@ for name, old, new, label in (
 # validated, and reset as one closed value. No production tool calls either
 # context enlistment seam in this infrastructure-only phase.
 b5c_sources = {
-    "gpu": (ROOT / "source/mesh_gpu.d").read_text(),
+    "gpu": (ROOT / "packages/viewport-gpu/source/mesh_gpu.d").read_text(),
     "snap": (ROOT / "source/snap_render.d").read_text(),
     "context": record_context,
 }

@@ -515,8 +515,7 @@ unittest {
 
     foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/common/source"), buildPath(censusRepoRoot, "packages/mesh-ops/source"), buildPath(censusRepoRoot, "packages/interchange/source"), buildPath(censusRepoRoot, "packages/interaction-query/source"), buildPath(censusRepoRoot, "packages/pipe-evaluation/source"), buildPath(censusRepoRoot, "packages/tool-state/source"), buildPath(censusRepoRoot, "packages/transform-ops/source"), buildPath(censusRepoRoot, "packages/creation-ops/source"), buildPath(censusRepoRoot, "packages/alignment-ops/source"), buildPath(censusRepoRoot, "packages/input-events/source"), buildPath(censusRepoRoot, "packages/display-policy/source"), buildPath(censusRepoRoot, "packages/viewport-gpu/source"), buildPath(censusRepoRoot, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(censusRepoRoot, "packages/viewport-gpu/source")
-            && scanSourceRoot != buildPath(censusRepoRoot, "packages/subpatch-preview/source")))
+        || (scanSourceRoot != buildPath(censusRepoRoot, "packages/subpatch-preview/source")))
 
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile || entry.name.length < 2

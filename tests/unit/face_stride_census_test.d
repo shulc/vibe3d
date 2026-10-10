@@ -127,8 +127,7 @@ unittest { // the layout census: four files, one stride constant, no other spell
     string[] files;
     foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source")])
     if (exists(scanSourceRoot)
-        || (scanSourceRoot != buildPath(root, "packages/viewport-gpu/source")
-            && scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
+        || (scanSourceRoot != buildPath(root, "packages/subpatch-preview/source")))
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = relativePath(de.name, buildPath(root, "source")).replace("\\", "/");
         if (bindsFaceVbo(blankUnittestBodies(blankNonCode(readText(de.name))))) files ~= rel;
@@ -151,7 +150,7 @@ unittest { // the layout census: four files, one stride constant, no other spell
 }
 
 unittest { // ONE fan writer behind ONE CPU refresh, called by exactly the three face-VBO writers [E3, E14]
-    immutable code = codeOf("mesh_gpu.d");
+    immutable code = codeOf("../packages/viewport-gpu/source/mesh_gpu.d");
     assert(hits(code, ctRegex!(`\bsize_t\s+writeFaceCorners\s*\(`)) == 1,
         "census: writeFaceCorners must be defined exactly once in mesh_gpu.d");
     // The fan writer has one caller: the incremental CPU refresh.
@@ -183,7 +182,7 @@ unittest { // ONE fan writer behind ONE CPU refresh, called by exactly the three
 }
 
 unittest { // the prepared-upload helpers carry the smooth stream's inputs
-    immutable code = codeOf("mesh_gpu.d");
+    immutable code = codeOf("../packages/viewport-gpu/source/mesh_gpu.d");
     immutable clone   = squash(bodyAt(code, "private GpuMesh cloneUploadState("));
     immutable install = squash(bodyAt(code, "private void installUploadState("));
     immutable empty   = squash(bodyAt(code, "private bool isDefaultEmptyGpuMesh("));
@@ -213,7 +212,7 @@ unittest { // the prepared-upload helpers carry the smooth stream's inputs
 unittest { // the smoothing policy (S1e) travels, moves, empties and resets with the adjacency
     // No pixel can see a policy that failed to move or reset (the self-heal
     // rebuild repaints it); this census IS the witness. One assert per helper.
-    immutable code = codeOf("mesh_gpu.d");
+    immutable code = codeOf("../packages/viewport-gpu/source/mesh_gpu.d");
     immutable string[4] heads = ["private GpuMesh cloneUploadState(",
         "private void installUploadState(", "private bool isDefaultEmptyGpuMesh(",
         "private GpuMeshNames takeGpuMeshNames("];
@@ -242,7 +241,7 @@ unittest { // the selected-vertex path reads the DRAWN positions only (task 1069
     // Positive control [E5]: the needle finds the pre-S1a edge walk.
     assert(hits("Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];", baseVertRe) == 2,
         "control: the `mesh.vertices[` needle misses the old edge walk");
-    immutable body_ = bodyAt(codeOf("mesh_gpu.d"), "void uploadSelectedVertices(");
+    immutable body_ = bodyAt(codeOf("../packages/viewport-gpu/source/mesh_gpu.d"), "void uploadSelectedVertices(");
     assert(body_.length > 500, "census: uploadSelectedVertices' body vanished");
     // Polarity: FALSE before S1a (the face fan and the edge walk read the
     // base), TRUE after. A hit here is a VBO walk that went back to base

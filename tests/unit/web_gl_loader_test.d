@@ -321,7 +321,7 @@ unittest
         "W16-L web must leave pre-main-loop SDL timing to Emscripten while "
         ~ "preserving the single native swap-interval call");
 
-    const meshGpuRaw = readText(buildPath(repoRoot, "source", "mesh_gpu.d"));
+    const meshGpuRaw = readText(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d"));
     enum pointResetSeam = q"D
         version (web) {
         } else glPointSize(1.0f);

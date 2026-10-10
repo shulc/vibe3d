@@ -561,7 +561,7 @@ trap 'rm -rf "$out"' EXIT
 for package in common mesh-ops interchange interaction-query pipe-evaluation \
                tool-state transform-ops creation-ops alignment-ops input-events \
                display-policy viewport-gpu subpatch-preview; do
-  case "$package" in viewport-gpu|subpatch-preview)
+  case "$package" in subpatch-preview)
     [ -f "packages/$package/dub.json" ] || continue ;;
   esac
   dub build --root="packages/$package" --config=web --compiler=dmd
