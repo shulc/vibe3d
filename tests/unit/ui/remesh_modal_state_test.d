@@ -1,5 +1,7 @@
 module tests.unit.ui.remesh_modal_state_test;
 
+import std.file : exists;
+
 import core.time : MonoTime, msecs, seconds;
 import d_imgui.imgui_h : ImVec2;
 import editor_app : MeshDg;
