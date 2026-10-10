@@ -185,3 +185,7 @@ tools/cli/.boundary/
 /packages/viewport-gpu/libvibe3d-viewport-gpu.a
 /packages/viewport-gpu/vibe3d-viewport-gpu.lib
 /packages/viewport-gpu/tests/vibe3d-viewport-gpu-tests-test-*
+
+# Wave7E preview production and isolated algorithm outputs.
+/packages/subpatch-preview/libvibe3d-subpatch-preview.a
+/packages/subpatch-preview/tests/vibe3d-subpatch-preview-tests-test-*
