@@ -210,8 +210,8 @@
       "name": "isolated-tests",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-common": "modeling-noai",
-        "vibe3d-display-policy": "modeling-noai"
+        "vibe3d-common": "isolated-tests",
+        "vibe3d-display-policy": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

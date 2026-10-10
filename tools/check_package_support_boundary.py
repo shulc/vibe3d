@@ -182,7 +182,7 @@ COMMON_SOURCES = ('active_mesh_resolver.d',
  'tsan_annotate.d',
  'view.d',
  'workplane_basis.d')
-COMMON_DESCRIPTOR = 'cce6d2f13d8ba5e30fdb881f394de0b6f4842dead4d9b10376061d0b1ae26e64'
+COMMON_DESCRIPTOR = 'ec9c1fd1034b8eef88456b6e15ec13d66e2c73d1f99890e518a1030cace480c5'
 
 
 def digest(path):
@@ -206,8 +206,9 @@ def test_files(project, owner):
     paths = production_files(project, owner)
     paths += [(project / 'packages' / owner / 'tests/source/tests/unit' / (x + '.d')).resolve()
               for x in carrier_names(owner)]
-    if owner == 'subpatch-preview':
-        paths += production_files(project, 'viewport-gpu')
+    if owner in ('viewport-gpu', 'subpatch-preview'):
+        for lower in SPECS[owner]['lower']:
+            paths += production_files(project, lower)
     return sorted(paths)
 
 
@@ -239,17 +240,18 @@ def expected_descriptor(owner, tests=False):
                    subConfigurations={'vibe3d-' + x: 'modeling-noai' for x in spec['lower']})
         if owner == 'input-events':
             raw['workingDirectory'] = '../../../'
-        if owner == 'subpatch-preview':
-            raw['subConfigurations']['vibe3d-viewport-gpu'] = 'isolated-tests'
-            raw['sourceFiles'] += ['../../viewport-gpu/source/' + x + '.d'
-                                  for x in SPECS['viewport-gpu']['sources']]
+        if owner in ('viewport-gpu', 'subpatch-preview'):
+            raw['subConfigurations'] = {'vibe3d-' + x: 'isolated-tests' for x in spec['lower']}
+            for lower in spec['lower']:
+                names = COMMON_SOURCES if lower == 'common' else tuple(x + '.d' for x in SPECS[lower]['sources'])
+                raw['sourceFiles'] += ['../../' + lower + '/source/' + x for x in names]
     else:
         raw['configurations'] = []
-        for config in CONFIGS + (('isolated-tests',) if owner == 'viewport-gpu' else ()):
+        for config in CONFIGS + (('isolated-tests',) if owner in ('display-policy', 'viewport-gpu') else ()):
             versions = {'modeling': ['WithAI'], 'modeling-noai': [], 'with-render': ['WithRender', 'WithAI'],
                         'web': ['web'], 'root-tests': ['WithAI'], 'isolated-tests': []}[config]
             cell = {'name': config, 'versions': versions,
-                    'subConfigurations': {'vibe3d-' + x: 'modeling-noai' if config == 'isolated-tests' else config
+                    'subConfigurations': {'vibe3d-' + x: config
                                           for x in spec['lower']}}
             if config == 'web' and owner == 'input-events':
                 cell['subConfigurations']['bindbc-sdl'] = 'static'
@@ -392,11 +394,12 @@ def validate_description(description, project, owner, config, tests=False, harne
             else:
                 deps = ['vibe3d-' + x for x in SPECS[selected]['lower']] + list(SPECS[selected]['external'])
             require(sorted(package.get('dependencies', [])) == sorted(deps), 'support resolved dependency DAG: ' + name)
+            source_lower = tests and owner in ('viewport-gpu', 'subpatch-preview') and selected in spec['lower']
             target = ('executable' if name.endswith('-tests') else 'sourceLibrary'
-                      if config == 'root-tests' or tests and owner == 'subpatch-preview' and selected == 'viewport-gpu'
+                      if config == 'root-tests' or source_lower
                       else 'staticLibrary')
             expected_config = ('algorithm' if name.endswith('-tests') else 'isolated-tests'
-                               if tests and owner == 'subpatch-preview' and selected == 'viewport-gpu'
+                               if source_lower
                                else 'modeling-noai' if tests else config)
             require(package['configuration'] == expected_config, 'support resolved configuration: ' + name)
             require(package['targetType'] == target, 'support resolved compiler owner: ' + name)
@@ -483,12 +486,23 @@ def validate_description(description, project, owner, config, tests=False, harne
                 'support target D archive inputs: ' + name)
         libs, lflags = native_grants(seen, roots, config == 'web')
         for field, expected_values in (('libs', libs), ('lflags', lflags)):
-            require(set(settings.get(field, [])) == expected_values and len(settings.get(field, [])) == len(expected_values),
+            require(set(settings.get(field, [])) == expected_values and
+                    (field == 'lflags' or len(settings.get(field, [])) == len(expected_values)),
                     'support target native link inputs: ' + name + ':' + field)
         for field in HOOKS + ('injectSourceFiles', 'copyFiles', 'extraDependencyFiles', 'cImportPaths'):
             require(not settings.get(field), 'support target extra grant: ' + name + ':' + field)
 
     return active
+
+
+# Amendment 20262230: frozen from the pre-compile root roster / COMMON_SOURCES
+# intersection, independently of the candidate's measured enabled modules.
+COMMON_UNITTESTS = ('argstring', 'command', 'command_history', 'command_registry',
+                    'commands.mesh.session_edit', 'commands.select.element',
+                    'io.image_decode', 'io.native', 'json_num', 'log', 'math', 'mesh',
+                    'mesh_corner_maps', 'mesh_dirty', 'mesh_edit_delta', 'mesh_planes',
+                    'mesh_topo', 'plane_bytes', 'record_observer_hub', 'screen_buckets',
+                    'toolpipe.pipeline', 'trackball', 'view')
 
 
 def validate_runtime(output, owner):
@@ -501,6 +515,16 @@ def validate_runtime(output, owner):
     expected = ['tests.unit.' + x for x in carrier_names(owner)] + list(SPECS[owner]['private'])
     for module in expected:
         require(roster.count((module, '1')) == 1, 'support runtime unittest owner exactly once: ' + module)
+    if owner in ('viewport-gpu', 'subpatch-preview'):
+        for lower in SPECS[owner]['lower']:
+            modules = (tuple(x.removesuffix('.d').replace('/', '.') for x in COMMON_SOURCES)
+                       if lower == 'common' else SPECS[lower]['sources'])
+            for module in modules:
+                require(sum(name == module for name, _ in roster) == 1,
+                        'support runtime lower production owner exactly once: ' + module)
+            enabled = sorted(name for name, flag in roster if name in modules and flag == '1')
+            expected_lower = COMMON_UNITTESTS if lower == 'common' else SPECS[lower]['private']
+            require(enabled == sorted(expected_lower), 'support runtime lower enabled identity: ' + lower)
     require(sum(flag == '1' for _, flag in roster) == int(totals[0]), 'support runtime executed roster total')
     return {'modules': int(totals[0]), 'roster': roster}
 
@@ -673,6 +697,13 @@ def validate_algorithm_cwd(output, archive, owner):
             'support algorithm actual working directory: ' + owner)
 
 
+def native_archive_input(search_paths, library):
+    inputs = sorted({(directory / ('lib' + library + '.a')).resolve()
+                     for directory in search_paths if (directory / ('lib' + library + '.a')).is_file()})
+    require(len(inputs) == 1, 'support actual native archive input: ' + library)
+    return inputs[0]
+
+
 def execute(project, owner, compiler, env, evidence):
     check_raw_tree(project, owner)
     description = describe(project, owner, 'modeling-noai', compiler, env, evidence)
@@ -735,10 +766,8 @@ def execute(project, owner, compiler, env, evidence):
     for library in ('stb_image_c', 'osdc', 'osdCPU', 'osdGPU'):
         if '-L-l' + library not in link['argv']:
             continue
-        inputs = [directory / ('lib' + library + '.a') for directory in search_paths
-                  if (directory / ('lib' + library + '.a')).is_file()]
-        require(len(inputs) == 1, 'support actual native archive input: ' + library)
-        input_hashes[str(inputs[0])] = digest(inputs[0])
+        native_input = native_archive_input(search_paths, library)
+        input_hashes[str(native_input)] = digest(native_input)
     native = {str(p): digest(p) for owned in (archive, Path(env['DUB_HOME']))
               for p in owned.rglob('*.a')}
     (evidence / 'actual-input-hashes.json').write_text(json.dumps(input_hashes, indent=2))
@@ -775,7 +804,9 @@ def description_control(project, owner, tests=False, config='modeling-noai'):
         if name == 'viewport-gpu':
             strings = ['../assets/shading', '../../../assets/icon'] if is_test else ['assets/shading']
         files = test_files(project, owner) if is_test else production_files(project, name)
-        actual_config = 'algorithm' if is_test else 'isolated-tests' if tests and owner == 'subpatch-preview' and name == 'viewport-gpu' else 'modeling-noai' if tests else config
+        actual_config = ('algorithm' if is_test else 'isolated-tests'
+                         if tests and owner in ('viewport-gpu', 'subpatch-preview') and name in spec['lower']
+                         else 'modeling-noai' if tests else config)
         packages.append({'name': 'vibe3d-' + name + ('-tests' if is_test else ''), 'active': True, 'path': str(path),
                          'configuration': actual_config, 'targetType': 'executable' if is_test else 'sourceLibrary' if actual_config in ('root-tests', 'isolated-tests') else 'staticLibrary',
                          'dependencies': deps, 'versions': versions, 'importPaths': ['source', '../source'] if is_test else ['source'],
@@ -855,10 +886,26 @@ def self_test():
             validate_raw(valid, owner, tests)
         expected = ['tests.unit.' + x for x in carrier_names(owner)] + list(SPECS[owner]['private'])
         other = set(SPECS[owner]['sources']) - set(SPECS[owner]['private'])
+        lower_roster = ''
+        if owner in ('viewport-gpu', 'subpatch-preview'):
+            for lower in SPECS[owner]['lower']:
+                modules = (tuple(x.removesuffix('.d').replace('/', '.') for x in COMMON_SOURCES)
+                           if lower == 'common' else SPECS[lower]['sources'])
+                enabled = COMMON_UNITTESTS if lower == 'common' else SPECS[lower]['private']
+                lower_roster += ''.join('PKG-MODULE name=' + x + ' unittest=' + str(int(x in enabled)) + '\n' for x in modules)
         output = (''.join('PKG-MODULE name=' + x + ' unittest=1\n' for x in expected) +
                   ''.join('PKG-MODULE name=' + x + ' unittest=0\n' for x in sorted(other)) +
-                  str(len(expected)) + ' modules passed unittests\n')
+                  lower_roster + str(len(expected) + lower_roster.count('unittest=1')) + ' modules passed unittests\n')
         validate_runtime(output, owner)
+        if owner in ('viewport-gpu', 'subpatch-preview'):
+            for module in COMMON_UNITTESTS:
+                broken = output.replace('PKG-MODULE name=' + module + ' unittest=1\n',
+                                        'PKG-MODULE name=' + module + ' unittest=0\n')
+                red(owner + '-lower-enabled-' + module, lambda: validate_runtime(broken, owner), 'lower enabled identity: common')
+            for lower in SPECS[owner]['lower']:
+                module = COMMON_SOURCES[0].removesuffix('.d') if lower == 'common' else SPECS[lower]['sources'][0]
+                broken = re.sub(r'^PKG-MODULE name=' + re.escape(module) + r' unittest=[01]\n', '', output, flags=re.M)
+                red(owner + '-lower-source-' + lower, lambda: validate_runtime(broken, owner), 'lower production owner exactly once')
         for module in SPECS[owner]['sources']:
             broken = re.sub(r'^PKG-MODULE name=' + re.escape(module) + r' unittest=[01]\n', '', output, flags=re.M)
             red(owner + '-runtime-source-' + module, lambda: validate_runtime(broken, owner), 'production owner exactly once')
@@ -875,6 +922,15 @@ def self_test():
         for owner in SPECS:
             for tests, config in ((False, 'modeling-noai'), (True, 'algorithm')):
                 valid = description_control(project, owner, tests, config)
+                validate_description(valid, project, owner, config, tests)
+                target = next(t for t in valid['targets'] if t['rootPackage'] == valid['rootPackage'])
+                broken = copy.deepcopy(valid)
+                repeated = next(t for t in broken['targets'] if t['rootPackage'] == broken['rootPackage'])
+                repeated['buildSettings']['lflags'] += target['buildSettings']['lflags']
+                validate_description(broken, project, owner, config, tests)
+                cells.append(owner + '-' + config + '-native-known-directory-duplicate-positive')
+                repeated['buildSettings']['lflags'].append('-L' + str(project / 'foreign'))
+                red(owner + '-' + config + '-native-foreign-directory', lambda: validate_description(broken, project, owner, config, tests), 'native link inputs')
                 validate_description(valid, project, owner, config, tests)
                 for label, field, value in [('deps', 'dependencies', ['editor']), ('versions', 'versions', ['foreign']),
                                            ('hook', 'preBuildCommands', ['foreign']), ('config', 'configuration', 'foreign'),
@@ -902,11 +958,12 @@ def self_test():
                     marker.write_text(REVISIONS[native][0] + '\n')
                 broken = copy.deepcopy(valid); broken['packages'].append(copy.deepcopy(broken['packages'][0]))
                 red(owner + '-active-duplicate', lambda: validate_description(broken, project, owner, config, tests), 'active package population')
-                if tests and owner == 'subpatch-preview':
-                    broken = copy.deepcopy(valid)
-                    judged = next(p for p in broken['packages'] if p['name'] == 'vibe3d-viewport-gpu')
-                    judged['targetType'] = 'staticLibrary'
-                    red('isolated-lower-static', lambda: validate_description(broken, project, owner, config, tests), 'compiler owner')
+                if tests and owner in ('viewport-gpu', 'subpatch-preview'):
+                    for lower in SPECS[owner]['lower']:
+                        broken = copy.deepcopy(valid)
+                        judged = next(p for p in broken['packages'] if p['name'] == 'vibe3d-' + lower)
+                        judged['targetType'] = 'staticLibrary'
+                        red(owner + '-isolated-' + lower + '-static', lambda: validate_description(broken, project, owner, config, tests), 'compiler owner: vibe3d-' + lower)
                 validate_description(valid, project, owner, config, tests)
 
             # The same finite four-owner contract exercises actual compile/link
@@ -963,13 +1020,24 @@ def self_test():
                 broken = copy.deepcopy(actual); broken[1]['archiveInputs'].append(extra)
                 red(owner + '-actual-extra-archive', lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
                     'support actual compiler D archive inputs: ' + owner)
-            if owner == 'subpatch-preview':
-                broken = copy.deepcopy(actual)
-                broken[1]['archiveInputs'].append(str(home / 'cache/vibe3d-viewport-gpu/control/libvibe3d-viewport-gpu.a'))
-                red(owner + '-actual-lower-gpu-archive', lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
-                    'support actual compiler D archive inputs: ' + owner)
+            if owner in ('viewport-gpu', 'subpatch-preview'):
+                for lower in SPECS[owner]['lower']:
+                    broken = copy.deepcopy(actual)
+                    broken[1]['archiveInputs'].append(str(home / 'cache' / ('vibe3d-' + lower) / 'control' / ('libvibe3d-' + lower + '.a')))
+                    red(owner + '-actual-lower-' + lower + '-archive', lambda: validate_actual_compiler(broken, project, owner, valid, home, harness),
+                        'support actual compiler D archive inputs: ' + owner)
             validate_actual_compiler(actual, project, owner, valid, home, harness)
 
+        native = project / 'native'
+        native.mkdir()
+        (native / 'libstb_image_c.a').write_bytes(b'owned control')
+        require(native_archive_input([native, native / '.'], 'stb_image_c') == (native / 'libstb_image_c.a').resolve(),
+                'native repeated resolved candidate positive')
+        cells.append('native-repeated-resolved-candidate-positive')
+        foreign = project / 'foreign-native'; foreign.mkdir()
+        (foreign / 'libstb_image_c.a').write_bytes(b'distinct control')
+        red('native-distinct-candidates', lambda: native_archive_input([native, foreign], 'stb_image_c'), 'support actual native archive input: stb_image_c')
+        native_archive_input([native, native], 'stb_image_c')
         for owner in SPECS:
             red(owner + '-missing', lambda: check_raw_tree(project, owner), 'selected descriptor missing')
             root = project / 'packages' / owner

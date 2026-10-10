@@ -175,6 +175,11 @@
         "WithAI"
       ],
       "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "targetType": "sourceLibrary"
     }
   ]
 }

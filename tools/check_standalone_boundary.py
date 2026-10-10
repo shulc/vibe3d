@@ -26,7 +26,7 @@ CORE_CELLS = ('document-primary', 'invocation-order', 'invocation-outcomes', 'in
 STB_REVISION = 'a66f6917718ea128076a2c5660e37f362a785144'
 # Canonical JSON pins include configuration/build-type grants and platform keys.
 DESCRIPTORS = {
-    'packages/common': 'cce6d2f13d8ba5e30fdb881f394de0b6f4842dead4d9b10376061d0b1ae26e64',
+    'packages/common': 'ec9c1fd1034b8eef88456b6e15ec13d66e2c73d1f99890e518a1030cace480c5',
     'tests/core': 'a8d2d7591ab2b00f361bafbf387b4b4f444150dffa43e9412482f781de9d07ba',
     'tools/cli': 'b72bee94493992f892354a6d6d0b01c2162b1875cb515231f4aaed51c6ef296f',
 }

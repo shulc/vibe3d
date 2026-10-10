@@ -190,6 +190,14 @@
         "vibe3d-common": "root-tests"
       },
       "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d-common": "isolated-tests"
+      },
+      "targetType": "sourceLibrary"
     }
   ]
 }
