@@ -133,7 +133,7 @@ for owner, population in owners.items():
             raise SystemExit(f"prepared-protocol synthetic owner baseline {owner}: {got!r}")
         (partial / owner / inputs[0].relative_to(root / owner)).unlink()
         got = census_contracts.production_lexer_census(partial)
-        want = f"dspans lexer census owner {owner} read {floor - 1} files; floor {floor} (measured 2026-10-09)"
+        want = f"dspans lexer census owner {owner} read {floor - 1} files; floor {floor} (materialized 2026-10-10)"
         if got != [want]:
             raise SystemExit(f"prepared-protocol omission guard {owner}: got {got!r}, want {[want]!r}")
 PY";

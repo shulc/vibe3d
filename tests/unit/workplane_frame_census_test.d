@@ -66,12 +66,12 @@ private string roster(const Src[] srcs, string ident) {
 unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
 {
     const all = sources(false), prod = sources(true);
-    // FLOOR: the scan sees the tree (measured 2026-10-05: 587 + 1 in-source test
-    // module, so all = prod + 1).
-    assert(prod.length > 550, format("only %s production files scanned "
-        ~ "(measured 587)", prod.length));
-    assert(all.length == prod.length + 1, format("%s source files, %s production; "
-        ~ "measured exactly one in-source *_test.d module", all.length, prod.length));
+    // Historical 2026-10-05: 587 production plus one source test. Wave6 moves
+    // that six-block carrier to transform tests; independent tracked union =595.
+    assert(prod.length == 595, format("%s production files scanned "
+        ~ "(materialized Wave6 population 595)", prod.length));
+    assert(all.length == prod.length, format("%s source files, %s production; "
+        ~ "Wave6 source test carrier belongs to transform tests", all.length, prod.length));
 
     // Positive control of the counter and of the switch needle.
     assert(countIdent("a.viewVectorQuantum(x); auto d = &viewVectorQuantum;",

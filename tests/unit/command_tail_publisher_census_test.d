@@ -180,7 +180,11 @@ private struct TreeScan {
 private TreeScan scanRoot(string relRoot) {
     TreeScan r;
     foreach (scanSourceRoot; relRoot == "source/commands"
-            ? [relRoot, "packages/common/source/commands"] : [relRoot])
+            ? [relRoot, "packages/common/source/commands"]
+            : relRoot == "source/tools"
+            ? [relRoot, "packages/tool-state/source/tools", "packages/transform-ops/source/tools",
+               "packages/creation-ops/source/tools", "packages/alignment-ops/source/tools"]
+            : [relRoot])
     foreach (de; dirEntries(buildPath(repoRoot, scanSourceRoot), "*.d", SpanMode.depth)) {
         ++r.filesScanned;
         const string label = de.name[repoRoot.length + 1 .. $];

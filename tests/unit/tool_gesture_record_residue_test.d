@@ -81,7 +81,11 @@ private alias stripCommentsAndStrings = blankNonCode;
 // ---------------------------------------------------------------------------
 private string[] population() {
     string[] r;
-    immutable root = buildPath(repoRoot, "source", "tools");
+    foreach (root; [buildPath(repoRoot, "source/tools"),
+                   buildPath(repoRoot, "packages/tool-state/source/tools"),
+                   buildPath(repoRoot, "packages/transform-ops/source/tools"),
+                   buildPath(repoRoot, "packages/creation-ops/source/tools"),
+                   buildPath(repoRoot, "packages/alignment-ops/source/tools")])
     if (exists(root))
         foreach (e; dirEntries(root, "*.d", SpanMode.depth))
             r ~= relativePath(e.name, repoRoot);
