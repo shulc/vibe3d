@@ -105,6 +105,35 @@ class BoundaryControls(unittest.TestCase):
         finally:
             path.unlink()
 
+    def test_ldc_mesh_ops_archive_flag_scope(self):
+        compiler = str(Path.home() / '.local/dlang/ldc2-1.42.0-linux-x86_64/bin/ldc2')
+        actual = Path(__file__).resolve().parents[1]
+        for relative, config in (('packages/common', 'modeling-noai'), ('tests/core', 'core')):
+            result = subprocess.run(['dub', 'describe', '--root=' + str(actual / relative),
+                '--config=' + config, '--compiler=' + compiler, '--quiet'],
+                text=True, capture_output=True, check=True)
+            description = json.loads(result.stdout.replace(str(actual), str(self.project)))
+            root = self.project / relative
+            boundary.validate_package_settings(description, root, compiler)
+            if relative == 'packages/common':
+                target = next(t for t in description['targets'] if t['rootPackage'] == 'vibe3d-mesh-ops')
+                self.assertEqual(target['buildSettings']['dflags'], ['--singleobj'])
+                target['buildSettings']['dflags'] = []
+                with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: vibe3d-mesh-ops:dflags'):
+                    boundary.validate_package_settings(description, root, compiler)
+                target['buildSettings']['dflags'] = ['--singleobj']
+                package = next(p for p in description['packages'] if p['name'] == 'vibe3d-mesh-ops')
+                package['configuration'] = 'isolated-tests'
+                with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: vibe3d-mesh-ops:dflags'):
+                    boundary.validate_package_settings(description, root, compiler)
+                package['configuration'] = config
+                target = next(t for t in description['targets'] if t['rootPackage'] == 'vibe3d-common')
+            else:
+                target = next(t for t in description['targets'] if t['rootPackage'] == 'vibe3d-core-tests')
+            target['buildSettings']['dflags'] = ['--singleobj']
+            with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: ' + target['rootPackage'] + ':dflags'):
+                boundary.validate_package_settings(description, root, compiler)
+
     def test_actual_ldc_alias_argv_and_unknown_leaf(self):
         # DUB's actual unprefixed alias shape uses the invocation cwd; keep
         # printed argv rather than rewriting it to the symlink destination.
