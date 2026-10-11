@@ -394,9 +394,10 @@ template countMemberOverloads(T) {
     }();
 }
 
-// Task 20262340: compiler-measured 389/320; 6 operation members removed,
-// 28 restoration/private helper members added; live fields remain 55/34.
-static assert(__traits(allMembers, Mesh).length == 389,
+// Task 20262400: Wave9 maps 389 names minus five constants, three helpers
+// and triangulateFacesByMask to 380; 320 overloads minus four to 316.
+// TriangulateMode and live fields remain; exact custody is in the Wave9 owner map.
+static assert(__traits(allMembers, Mesh).length == 380,
     "`struct Mesh` gained (or lost) a member NAME — a function, a nested type, "
   ~ "an `enum`, an `alias` or a field. This is the step-4 RATCHET of "
   ~ "`doc/tasks/work/2910-mesh-struct-seams.md`: the struct was 13 308 lines on "
@@ -417,7 +418,7 @@ static assert(__traits(allMembers, Mesh).length == 389,
   ~ "below to learn whether a FUNCTION landed or a TYPE. THIS TREE HAS "
   ~ ctfeDec(__traits(allMembers, Mesh).length) ~ " member names.");
 
-static assert(countMemberOverloads!Mesh == 320,
+static assert(countMemberOverloads!Mesh == 316,
     "`struct Mesh` gained (or lost) a member-function OVERLOAD. Read it with "
   ~ "the name count above: if BOTH moved, a whole new function name landed. If "
   ~ "ONLY the name count moved, what landed is a nested type, an `enum` or an "
