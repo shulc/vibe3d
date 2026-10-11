@@ -166,7 +166,7 @@ public:
         // directly — no local->world remap (and its extra rounding) needed.
         result.point = org + dir * hit.t;
         if (productPoint) {
-            import morph_target : displayPosition;
+            import morph_preview : displayPosition;
             const corners = _surfTriVertices[hit.tri];
             result.preciseT = triangleRayParameter(orgLocal, dirLocal,
                 displayPosition(&sourceMesh, corners[0]), displayPosition(&sourceMesh, corners[1]),
@@ -198,7 +198,7 @@ public:
         if (result.face >= 0 && result.face < cast(int)sourceMesh.faces.length) {
             auto face = sourceMesh.faces[result.face];
             if (face.length >= 3) {
-                import morph_target : displayPosition;
+                import morph_preview : displayPosition;
                 Vec3 a = displayPosition(&sourceMesh, face[0]);
                 Vec3 b = displayPosition(&sourceMesh, face[1]);
                 Vec3 c = displayPosition(&sourceMesh, face[2]);
@@ -258,7 +258,7 @@ private:
         // byte-identical geometry.
         const(Vec3)[] bvhSrc;
         {
-            import morph_target : displayVertices;
+            import morph_preview : displayVertices;
             auto dv = displayVertices(&sourceMesh);
             bvhSrc = (dv.length == sourceMesh.vertices.length)
                    ? dv : sourceMesh.vertices;

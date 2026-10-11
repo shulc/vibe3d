@@ -51,7 +51,7 @@ import std.math   : abs;
 import math         : Vec3;
 import mesh;
 import mesh_morph   : morphApply;
-import morph_target : displayPosition, setMorphTarget, clearMorphTarget;
+import morph_preview : displayPosition, setMorphTarget, clearMorphTarget;
 
 private enum string kFixture = "tests/fixtures/morph_routing_laws.json";
 private JSONValue fx() { return parseJSON(readText(kFixture)); }

@@ -842,7 +842,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         // least agree with EACH OTHER. If snap is ever measured and answers
         // differently, THIS is the assumption to revisit.
         Vec3 vAt(size_t vi) {
-            import morph_target : displayPosition;
+            import morph_preview : displayPosition;
             return toWorld(displayPosition(&m, vi));
         }
 
