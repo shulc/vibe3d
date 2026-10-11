@@ -189,3 +189,12 @@ tools/cli/.boundary/
 # Wave7E preview production and isolated algorithm outputs.
 /packages/subpatch-preview/libvibe3d-subpatch-preview.a
 /packages/subpatch-preview/tests/vibe3d-subpatch-preview-tests-test-*
+
+# Wave9 ordinary package build outputs.
+/util/json-number/libvibe3d-json-number.a
+/packages/pipe-contracts/libvibe3d-pipe-contracts.a
+/packages/mesh-preview/libvibe3d-mesh-preview.a
+/packages/edit-contracts/libvibe3d-edit-contracts.a
+/packages/mesh-change/libvibe3d-mesh-change.a
+/packages/mesh-contracts/libvibe3d-mesh-contracts.a
+/packages/mesh-topology/libvibe3d-mesh-topology.a

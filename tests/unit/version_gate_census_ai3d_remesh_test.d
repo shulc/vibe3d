@@ -552,7 +552,8 @@ out=$(mktemp -d "/var/tmp/w16-a-web-probe.XXXXXX")
 trap 'rm -rf "$out"' EXIT
 # Describe lists ordinary STATIC archives but does not build them. Prepare
 # their declared web configurations before linking this host transport probe.
-for package in packages/common packages/mesh-ops packages/interchange \
+for package in util/json-number packages/pipe-contracts packages/mesh-preview \
+               packages/common packages/mesh-ops packages/interchange \
                packages/interaction-query packages/pipe-evaluation \
                packages/tool-state packages/transform-ops packages/creation-ops \
                packages/alignment-ops packages/input-events \
