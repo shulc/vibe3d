@@ -103,6 +103,10 @@
     },
     "vibe3d-mesh-ops": {
       "path": "../../mesh-ops"
+    },
+    "d-stb-image": {
+      "version": "a66f6917718ea128076a2c5660e37f362a785144",
+      "repository": "git+https://github.com/shulc/D-StbImage.git"
     }
   },
   "toolchainRequirements": {

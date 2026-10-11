@@ -98,8 +98,10 @@ def validate_package_settings(description, root, compiler="dmd"):
         require(set(actual_imports)==imports and len(actual_imports)==len(imports),'resolved importPaths changed: '+name)
         archives={str(Path(active[n]['path'])/('lib'+n+'.a')) for n in seen-{name} if active[n]['targetType'] in ('staticLibrary','library')}
         require(set(settings.get('linkerFiles',[]))==archives and len(settings.get('linkerFiles',[]))==len(archives),'resolved setting changed: '+name+':linkerFiles')
-        expected_flags = ['--singleobj'] if (name == 'vibe3d-mesh-ops' and
+        expected_flags = ['--singleobj'] if (
             active[name]['configuration'] in ('modeling', 'modeling-noai', 'with-render', 'web') and
+            'vibe3d-mesh-ops' in seen and
+            active['vibe3d-mesh-ops']['configuration'] in ('modeling', 'modeling-noai', 'with-render', 'web') and
             Path(compiler).name in ('ldc', 'ldc2')) else []
         for field,value in {'dflags':expected_flags, 'libs':['stb_image_c','m'] if 'd-stb-image' in seen else [],'lflags':['-L'+str(image/'build')] if 'd-stb-image' in seen else []}.items():
             require(settings.get(field,[])==value,'resolved setting changed: '+name+':'+field)

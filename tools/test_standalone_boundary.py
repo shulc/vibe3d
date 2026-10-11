@@ -116,18 +116,24 @@ class BoundaryControls(unittest.TestCase):
             root = self.project / relative
             boundary.validate_package_settings(description, root, compiler)
             if relative == 'packages/common':
-                target = next(t for t in description['targets'] if t['rootPackage'] == 'vibe3d-mesh-ops')
-                self.assertEqual(target['buildSettings']['dflags'], ['--singleobj'])
-                target['buildSettings']['dflags'] = []
-                with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: vibe3d-mesh-ops:dflags'):
-                    boundary.validate_package_settings(description, root, compiler)
-                target['buildSettings']['dflags'] = ['--singleobj']
-                package = next(p for p in description['packages'] if p['name'] == 'vibe3d-mesh-ops')
-                package['configuration'] = 'isolated-tests'
-                with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: vibe3d-mesh-ops:dflags'):
-                    boundary.validate_package_settings(description, root, compiler)
-                package['configuration'] = config
-                target = next(t for t in description['targets'] if t['rootPackage'] == 'vibe3d-common')
+                for name in ('vibe3d-common', 'vibe3d-mesh-ops'):
+                    changed = copy.deepcopy(description)
+                    target = next(t for t in changed['targets'] if t['rootPackage'] == name)
+                    self.assertEqual(target['buildSettings']['dflags'], ['--singleobj'])
+                    target['buildSettings']['dflags'] = []
+                    with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: ' + name + ':dflags'):
+                        boundary.validate_package_settings(changed, root, compiler)
+                    target['buildSettings']['dflags'] = ['--singleobj', '--singleobj']
+                    with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: ' + name + ':dflags'):
+                        boundary.validate_package_settings(changed, root, compiler)
+                with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: vibe3d-common:dflags'):
+                    boundary.validate_package_settings(description, root, 'dmd')
+                for name in ('vibe3d-common', 'vibe3d-mesh-ops'):
+                    changed = copy.deepcopy(description)
+                    next(p for p in changed['packages'] if p['name'] == name)['configuration'] = 'isolated-tests'
+                    with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: vibe3d-common:dflags'):
+                        boundary.validate_package_settings(changed, root, compiler)
+                target = next(t for t in description['targets'] if t['rootPackage'] == 'vibe3d-math')
             else:
                 target = next(t for t in description['targets'] if t['rootPackage'] == 'vibe3d-core-tests')
             target['buildSettings']['dflags'] = ['--singleobj']
