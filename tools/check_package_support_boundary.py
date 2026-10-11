@@ -1491,7 +1491,8 @@ def execute(project,owner,compiler,env,evidence):
     archive=evidence/'archive';require(not archive.exists(),'PREPARATION-REFUSED: archive exists');archive.mkdir()
     members=[SPECS[n]['root'] for n in closure(owner)|closure(owner,True)|{owner}]
     # Exact read-only support carrier accepted in C; no desktop production root.
-    if owner=='mesh-ops':members += ['tests/unit/mesh_by_value_gate.d', 'tests/unit/fixtures.d']
+    if 'mesh-ops' in closure(owner)|closure(owner,True)|{owner}:
+        members += ['tests/unit/mesh_by_value_gate.d', 'tests/unit/fixtures.d']
     if owner in FIXTURES:members.append(FIXTURES[owner][0])
     import tarfile
     tar=evidence/'committed.tar'
