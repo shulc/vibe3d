@@ -49,7 +49,10 @@
     "source/tests/unit/mesh_edge_slice_gate_test.d",
     "source/tests/unit/mesh_ops/face_alignment_test.d",
     "source/tests/unit/mesh_ops/face_merge_test.d",
-    "../../../tests/unit/mesh_by_value_gate.d"
+    "../../../tests/unit/mesh_by_value_gate.d",
+    "../source/mesh_ops/triangulate.d",
+    "source/tests/unit/mesh_ops/triangulate_test.d",
+    "../../../tests/unit/fixtures.d"
   ],
   "dflags": [],
   "dependencies": {
@@ -73,6 +76,9 @@
     },
     "vibe3d-mesh-edit-replay": {
       "path": "../../mesh-edit-replay"
+    },
+    "vibe3d-mesh-snapshot": {
+      "path": "../../mesh-snapshot"
     }
   },
   "toolchainRequirements": {
@@ -89,7 +95,8 @@
         "vibe3d-mesh-contracts": "isolated-tests",
         "vibe3d-mesh-topology": "isolated-tests",
         "vibe3d-log": "isolated-tests",
-        "vibe3d-mesh-edit-replay": "isolated-tests"
+        "vibe3d-mesh-edit-replay": "isolated-tests",
+        "vibe3d-mesh-snapshot": "isolated-tests"
       }
     }
   ],

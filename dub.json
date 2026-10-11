@@ -155,6 +155,15 @@
 		},
 		"vibe3d-screen-buckets": {
 			"path": "util/screen-buckets"
+		},
+		"vibe3d-json-number": {
+			"path": "util/json-number"
+		},
+		"vibe3d-pipe-contracts": {
+			"path": "packages/pipe-contracts"
+		},
+		"vibe3d-mesh-preview": {
+			"path": "packages/mesh-preview"
 		}
 	},
 	"_comment-onnx-per-config": "d-onnxruntime (AI candidate ranker backend) is NOT a base dependency \u2014 it is added per-configuration alongside the `WithAI` version so the `modeling-noai` build can omit it entirely. onnxruntime.dll statically imports api-ms-win-core-path (Windows 8+), so dropping it is what makes a Windows 7-capable build possible. Only source/ai/onnx_backend.d touches the binding; all of it is gated by version(WithAI).",
@@ -348,7 +357,10 @@
 				"vibe3d-mesh-contracts": "modeling",
 				"vibe3d-parallel": "modeling",
 				"vibe3d-plane-bytes": "modeling",
-				"vibe3d-screen-buckets": "modeling"
+				"vibe3d-screen-buckets": "modeling",
+				"vibe3d-json-number": "modeling",
+				"vibe3d-pipe-contracts": "modeling",
+				"vibe3d-mesh-preview": "modeling"
 			}
 		},
 		{
@@ -387,7 +399,10 @@
 				"vibe3d-mesh-contracts": "modeling-noai",
 				"vibe3d-parallel": "modeling-noai",
 				"vibe3d-plane-bytes": "modeling-noai",
-				"vibe3d-screen-buckets": "modeling-noai"
+				"vibe3d-screen-buckets": "modeling-noai",
+				"vibe3d-json-number": "modeling-noai",
+				"vibe3d-pipe-contracts": "modeling-noai",
+				"vibe3d-mesh-preview": "modeling-noai"
 			}
 		},
 		{
@@ -442,7 +457,10 @@
 				"vibe3d-mesh-contracts": "with-render",
 				"vibe3d-parallel": "with-render",
 				"vibe3d-plane-bytes": "with-render",
-				"vibe3d-screen-buckets": "with-render"
+				"vibe3d-screen-buckets": "with-render",
+				"vibe3d-json-number": "with-render",
+				"vibe3d-pipe-contracts": "with-render",
+				"vibe3d-mesh-preview": "with-render"
 			}
 		},
 		{
@@ -511,7 +529,13 @@
 				"util/math/tests/source",
 				"util/parallel/source",
 				"util/plane-bytes/source",
-				"util/screen-buckets/source"
+				"util/screen-buckets/source",
+				"util/json-number/source",
+				"util/json-number/tests/source",
+				"packages/pipe-contracts/source",
+				"packages/pipe-contracts/tests/source",
+				"packages/mesh-preview/source",
+				"packages/mesh-preview/tests/source"
 			],
 			"sourceFiles": [
 				"tools/harness/hostspace.d",
@@ -574,7 +598,13 @@
 				"util/math/tests/source",
 				"util/parallel/source",
 				"util/plane-bytes/source",
-				"util/screen-buckets/source"
+				"util/screen-buckets/source",
+				"util/json-number/source",
+				"util/json-number/tests/source",
+				"packages/pipe-contracts/source",
+				"packages/pipe-contracts/tests/source",
+				"packages/mesh-preview/source",
+				"packages/mesh-preview/tests/source"
 			],
 			"_comment-perf-portpolicy": "Task 9220. tools/perf/lib/portpolicy.d decides which port the perf harness may clear and launch on (refuses a run_test.d worker window, derived from tools/harness/runslots.d, which rdmd reaches through the tracked symlink tools/perf/tools/harness/runslots.d). lib/lifecycle.d is compiled here only so tests/unit/perf_port_policy_test.d can pin, by type, that its kill and launch seams take an admitted PerfPort. Test-only, like the other tools/perf entries.",
 			"_comment-hostspace": "Task 5630. tools/harness/hostspace.d is the one owner of scratch-root and available-space policy for the standalone test runner and sanitizer lane. Both scripts import module tools.harness.hostspace; rdmd gives lane.d only tools/sanitizer as its import root, so the tracked file symlink under that root preserves absolute-script invocation from a foreign cwd. The real file is listed explicitly in sourceFiles, which keeps it test-only: modeling and with-render do not compile harness policy. importPaths still repeats source because declaring this array replaces dub's derived default.",
@@ -612,7 +642,10 @@
 				"vibe3d-math": "root-tests",
 				"vibe3d-parallel": "root-tests",
 				"vibe3d-plane-bytes": "root-tests",
-				"vibe3d-screen-buckets": "root-tests"
+				"vibe3d-screen-buckets": "root-tests",
+				"vibe3d-json-number": "root-tests",
+				"vibe3d-pipe-contracts": "root-tests",
+				"vibe3d-mesh-preview": "root-tests"
 			}
 		},
 		{
@@ -649,7 +682,10 @@
 				"vibe3d-mesh-contracts": "web",
 				"vibe3d-parallel": "web",
 				"vibe3d-plane-bytes": "web",
-				"vibe3d-screen-buckets": "web"
+				"vibe3d-screen-buckets": "web",
+				"vibe3d-json-number": "web",
+				"vibe3d-pipe-contracts": "web",
+				"vibe3d-mesh-preview": "web"
 			},
 			"libs-wasm": [
 				"dbvh_c",

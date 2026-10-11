@@ -26,8 +26,8 @@ CORE_CELLS = ('document-primary', 'invocation-order', 'invocation-outcomes', 'in
 STB_REVISION = 'a66f6917718ea128076a2c5660e37f362a785144'
 # Canonical JSON pins include configuration/build-type grants and platform keys.
 DESCRIPTORS = {
-    'packages/common': '3ec4c7d2f353489fd26bd52bfc6503310bb7cd3aa905d2a5f6bffc364b9ee81c',
-    'tests/core': 'bd2333a904baa23b5a9d6a020583dfe1a7bb597c597980cb8676a9ef84a6b7aa',
+    'packages/common': '03ea38a2d7c2d0565371dc6825a06d046adf13454c15116bfc790aa403e5a47a',
+    'tests/core': 'f9037475073418ca62a2bb4ae17bddce4db6f2efb335e1f3b74d97c87a570361',
     'tools/cli': '8192e13efb4d5ad56de2c33c79db52d602c02b20172edeeb8eed55f8dd194276',
 }
 HOOKS = ('preGenerateCommands', 'postGenerateCommands', 'preBuildCommands',
@@ -45,7 +45,7 @@ def require(condition, message):
         raise BoundaryError(message)
 
 
-def validate_package_settings(description, root):
+def validate_package_settings(description, root, compiler="dmd"):
     import check_package_support_boundary as support
     project=root.parents[1]
     manifest=json.loads((root/'dub.json').read_text()); owner=manifest['name']
@@ -98,7 +98,10 @@ def validate_package_settings(description, root):
         require(set(actual_imports)==imports and len(actual_imports)==len(imports),'resolved importPaths changed: '+name)
         archives={str(Path(active[n]['path'])/('lib'+n+'.a')) for n in seen-{name} if active[n]['targetType'] in ('staticLibrary','library')}
         require(set(settings.get('linkerFiles',[]))==archives and len(settings.get('linkerFiles',[]))==len(archives),'resolved setting changed: '+name+':linkerFiles')
-        for field,value in {'dflags':[], 'libs':['stb_image_c','m'] if 'd-stb-image' in seen else [],'lflags':['-L'+str(image/'build')] if 'd-stb-image' in seen else []}.items():
+        expected_flags = ['--singleobj'] if (name == 'vibe3d-mesh-ops' and
+            active[name]['configuration'] in ('modeling', 'modeling-noai', 'with-render', 'web') and
+            Path(compiler).name in ('ldc', 'ldc2')) else []
+        for field,value in {'dflags':expected_flags, 'libs':['stb_image_c','m'] if 'd-stb-image' in seen else [],'lflags':['-L'+str(image/'build')] if 'd-stb-image' in seen else []}.items():
             require(settings.get(field,[])==value,'resolved setting changed: '+name+':'+field)
         for field in HOOKS+('injectSourceFiles','frameworks','extraDependencyFiles','copyFiles','stringImportPaths','cImportPaths'):
             expected=IMAGE_BUILD if name=='d-stb-image' and field=='preBuildCommands' else []
@@ -148,7 +151,7 @@ def main(argv=None):
     require(described.returncode == 0, 'DUB describe failed (see describe.stderr.log)')
     description = json.loads(described.stdout)
     (evidence / 'describe.json').write_text(json.dumps(description, indent=2) + '\n')
-    roots = validate_package_settings(description, root)
+    roots = validate_package_settings(description, root, compiler)
     # CORE's five unittest roots have no production main. Production acceptance
     # compiles all common sources through their actual static-library target.
     build_root = root.parents[1] / 'packages/common' if owner == 'vibe3d-core-tests' and not args.unittest else root

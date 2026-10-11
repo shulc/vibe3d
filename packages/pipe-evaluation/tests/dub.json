@@ -59,6 +59,9 @@
     },
     "vibe3d-spatial": {
       "path": "../../spatial"
+    },
+    "vibe3d-pipe-contracts": {
+      "path": "../../pipe-contracts"
     }
   },
   "toolchainRequirements": {
@@ -209,7 +212,8 @@
         "vibe3d-mesh-change": "isolated-tests",
         "vibe3d-mesh-edit-log": "isolated-tests",
         "vibe3d-profiling": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests"
+        "vibe3d-spatial": "isolated-tests",
+        "vibe3d-pipe-contracts": "isolated-tests"
       }
     }
   ],

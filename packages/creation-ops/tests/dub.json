@@ -30,6 +30,9 @@
     },
     "vibe3d-spatial": {
       "path": "../../spatial"
+    },
+    "vibe3d-pipe-contracts": {
+      "path": "../../pipe-contracts"
     }
   },
   "dflags": [],
@@ -178,7 +181,8 @@
         "vibe3d-edit-contracts": "isolated-tests",
         "vibe3d-math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests"
+        "vibe3d-spatial": "isolated-tests",
+        "vibe3d-pipe-contracts": "isolated-tests"
       }
     }
   ]

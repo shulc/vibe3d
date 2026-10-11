@@ -306,6 +306,7 @@ mesh_ops.poly_bevel
 mesh_ops.revolve
 mesh_ops.select_loop
 mesh_ops.thicken
+mesh_ops.triangulate
 mesh_plane_types
 mesh_planes
 mesh_scope
@@ -315,6 +316,7 @@ mesh_topo
 mesh_types
 mesh_visibility
 model_preview
+morph_preview
 morph_target
 operator
 overlay_space

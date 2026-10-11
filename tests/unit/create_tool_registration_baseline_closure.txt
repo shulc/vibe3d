@@ -101,6 +101,7 @@ mesh_topo
 mesh_types
 mesh_visibility
 model_preview
+morph_preview
 morph_target
 operator
 overlay_space

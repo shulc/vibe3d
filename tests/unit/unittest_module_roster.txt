@@ -49,7 +49,6 @@ io.lwo_import
 io.native
 io.scene_import
 io.scene_ir
-json_num
 log
 math_geometry
 math_quaternion
@@ -64,6 +63,7 @@ mesh_gpu
 mesh_ops.extrude
 mesh_ops.loop_slice
 mesh_ops.poly_bevel
+mesh_ops.triangulate
 mesh_planes
 mesh_stats_test
 mesh_topo
@@ -328,6 +328,7 @@ tests.unit.io.v3d_wire_order_test
 tests.unit.io.v3d_wire_roundtrip_test
 tests.unit.island_walk_alloc_test
 tests.unit.json_emitter_scan_test
+tests.unit.json_num_test
 tests.unit.kernel_solve_law_test
 tests.unit.l0_declined_census_test
 tests.unit.l10_command_undo_census_test
@@ -399,6 +400,7 @@ tests.unit.mesh_ops.revolve_seam_test
 tests.unit.mesh_ops.revolve_test
 tests.unit.mesh_ops.seam_differential
 tests.unit.mesh_ops.select_loop_test
+tests.unit.mesh_ops.triangulate_test
 tests.unit.mesh_ops.vertex_pos_grid_test
 tests.unit.mesh_plane_types_test
 tests.unit.mesh_planes_census_test

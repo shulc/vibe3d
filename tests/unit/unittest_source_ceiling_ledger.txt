@@ -13,8 +13,8 @@
 # Counts are compiler-aware: comments and string/character literals are
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
-source-files 606
-unittest-blocks 592
+source-files 608
+unittest-blocks 588
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -28,7 +28,6 @@ block packages/common/source/commands/mesh/session_edit.d 1
 block packages/common/source/commands/select/element.d 1
 block packages/common/source/io/image_decode.d 5
 block packages/common/source/io/native.d 13
-block packages/common/source/json_num.d 3
 block packages/common/source/record_observer_hub.d 1
 block packages/common/source/toolpipe/pipeline.d 6
 block packages/common/source/view.d 26
@@ -46,8 +45,9 @@ block packages/mesh-edit-replay/source/mesh_edit_replay.d 8
 block packages/mesh-ops/source/mesh_ops/extrude.d 18
 block packages/mesh-ops/source/mesh_ops/loop_slice.d 1
 block packages/mesh-ops/source/mesh_ops/poly_bevel.d 6
+block packages/mesh-ops/source/mesh_ops/triangulate.d 1
 block packages/mesh-topology/source/mesh_topo.d 2
-block packages/mesh/source/mesh.d 20
+block packages/mesh/source/mesh.d 18
 block packages/mesh/source/mesh_planes.d 1
 block packages/pipe-evaluation/source/toolpipe/stages/actcenter.d 5
 block packages/pipe-evaluation/source/toolpipe/stages/axis.d 2
