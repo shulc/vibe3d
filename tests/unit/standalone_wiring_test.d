@@ -42,11 +42,11 @@ unittest {
         "standalone-wiring: suite unittest source grant viewport-gpu");
     assert(library.count("\" --root=packages/subpatch-preview\"") == 1,
         "standalone-wiring: suite unittest source grant subpatch-preview");
-    assert(library.count("foreach (root; [\"\", \" --root=packages/common\", \" --root=packages/tool-state\", \" --root=packages/transform-ops\", \" --root=packages/input-events\", \" --root=packages/display-policy\", \" --root=packages/viewport-gpu\", \" --root=packages/subpatch-preview\"])") == 1
+    assert(library.count("foreach (root; [\"\", \" --root=packages/common\", \" --root=util/json-number\", \" --root=packages/pipe-contracts\", \" --root=packages/mesh-preview\", \" --root=packages/mesh-ops\", \" --root=packages/tool-state\", \" --root=packages/transform-ops\", \" --root=packages/input-events\", \" --root=packages/display-policy\", \" --root=packages/viewport-gpu\", \" --root=packages/subpatch-preview\"])") == 1
         && library.count(" --config=modeling --data=source-files --data-list 2>/dev/null") == 1
         && library.count("dmd -lib -unittest%s %s -of=%s 2>&1") == 1
         && library.count("sourceCompileFlags(), srcs.join(\" \"), lib") == 1,
-        "standalone-wiring: suite compiles exactly eight source inventories under unittest flags");
+        "standalone-wiring: suite compiles exactly twelve source inventories under unittest flags");
 }
 
 unittest {
