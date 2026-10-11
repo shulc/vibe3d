@@ -1,4 +1,5 @@
 module tests.unit.mesh_command_registration_test;
+import mesh_ops.triangulate : triangulateFacesByMask;
 
 import command : Command;
 import commands.mesh.remesh : Remesh;
@@ -213,7 +214,7 @@ unittest {
         if (id == "mesh.quadruple" || id == "mesh.detriangulate"
                 || id == "mesh.mergeFaces") {
             auto mask = m.visibleFaceMask();
-            assert(m.triangulateFacesByMask(mask) > 0,
+            assert(triangulateFacesByMask(m, mask) > 0,
                 "6509 rebuild-drop fixture: cube did not triangulate for " ~ id);
         }
         if (id == "mesh.mergeFaces") {

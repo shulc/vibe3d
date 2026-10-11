@@ -55,6 +55,7 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — run the cells in
 // isolation when scoring a mutation.
 module tests.unit.undo_parity_l10_test;
+import mesh_ops.triangulate : triangulateFacesByMask;
 
 import std.format : format;
 import std.json   : JSONValue, parseJSON;
@@ -371,7 +372,7 @@ private void arrTriangulated(Mesh* m)
     {
         auto ed = MeshEditBatch.unrecorded(*m,
                       MeshEditScope.Geometry | MeshEditScope.Marks);
-        ed.triangulateFacesByMask(m.visibleFaceMask(), &origin);
+        triangulateFacesByMask(ed.mesh, m.visibleFaceMask(), &origin);
         ed.close();
     }
     assert(m.faces.length > preF,

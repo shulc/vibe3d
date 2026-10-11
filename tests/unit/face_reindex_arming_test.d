@@ -37,6 +37,7 @@
 // clean — including the two the stage refuses to arm.
 // ===========================================================================
 module tests.unit.face_reindex_arming_test;
+import mesh_ops.triangulate : triangulateFacesByMask;
 import mesh_edit_replay : apply, revert;
 import mesh_edge_slice : splitFaceByVertices;
 
@@ -600,7 +601,7 @@ unittest // armed: Mesh.triangulateFacesByMask
     MeshEditDelta d;
     {
         auto ed = MeshEditBatch(m, MeshEditScope.Geometry | MeshEditScope.Marks);
-        n = ed.triangulateFacesByMask(faceMaskOf(ed.mesh, 0u, 4u));
+        n = triangulateFacesByMask(ed.mesh, faceMaskOf(ed.mesh, 0u, 4u));
         d = ed.close();
     }
     assert(n == 2 && m.faces.length == 11,

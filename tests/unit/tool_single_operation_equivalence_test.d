@@ -6,6 +6,7 @@
 // reaches it, not only their equality; then the modes are compared bit for bit.
 // The text half (one kernel site per tool) is tool_single_operation_census_test.
 module tests.unit.tool_single_operation_equivalence_test;
+import mesh_ops.triangulate : triangulateFacesByMask;
 
 import std.format : format;
 import std.math : abs;
@@ -46,7 +47,7 @@ private void pickTwoVertices(ref Mesh m) {
     m.syncSelection(); m.selectVertex(0); m.selectVertex(1);
 }
 private void triangulateAll(ref Mesh m) {
-    auto mask = m.operandFaceMask(); m.triangulateFacesByMask(mask);
+    auto mask = m.operandFaceMask(); triangulateFacesByMask(m, mask);
 }
 private void triangulatedGrid(ref Mesh m) { m = makeGridPlane(2); triangulateAll(m); }
 

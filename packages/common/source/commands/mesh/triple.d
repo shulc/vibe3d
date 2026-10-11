@@ -1,4 +1,5 @@
 module commands.mesh.triple;
+import mesh_ops.triangulate : triangulateFacesByMask;
 import mesh_edit_replay : apply, revert;
 
 import command;
@@ -132,7 +133,7 @@ class MeshTriple : Command, Operator {
                                     bool hasSelection, bool[] prevSelectedFaces)
     {
         uint[] faceOrigin;
-        immutable size_t changed = ed.triangulateFacesByMask(mask, &faceOrigin);
+        immutable size_t changed = triangulateFacesByMask(ed.mesh, mask, &faceOrigin);
 
         // Re-select children of originally-selected parents.
         if (hasSelection) {

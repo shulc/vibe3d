@@ -1,4 +1,5 @@
 module unit.prepared_param_update_test;
+import mesh_ops.triangulate : triangulateFacesByMask;
 
 // Tasks 9426/9427: ONE `PreparedParamUpdateOwner` and ONE record-context slot
 // serve sixteen tools' parameter writes at arm time. Each row is a tool as DATA
@@ -47,7 +48,7 @@ private void pickTwoVertices(ref Mesh m) {
     m.syncSelection(); m.selectVertex(0); m.selectVertex(1);
 }
 private void triangulateAll(ref Mesh m) {
-    auto mask = m.operandFaceMask(); m.triangulateFacesByMask(mask);
+    auto mask = m.operandFaceMask(); triangulateFacesByMask(m, mask);
 }
 private void noOperand(ref Mesh) {}
 private Vec3 firstVertex(ref Mesh m) { return m.vertices[0]; }

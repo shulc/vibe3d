@@ -2,6 +2,7 @@
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.mesh_ops.decimate_test;
+import mesh_ops.triangulate : triangulateFacesByMask;
 import mesh_edit_replay : apply, revert;
 
 import subpatch_factories : subdivideCube;
@@ -28,7 +29,7 @@ unittest { // reduceToTarget no-op: target >= current face count
     Mesh m = makeCube();
     m.buildLoops();
     auto triMask = new bool[](m.faces.length); triMask[] = true;
-    m.triangulateFacesByMask(triMask); // 12 tris
+    triangulateFacesByMask(m, triMask); // 12 tris
     assert(m.faces.length == 12);
     size_t n = reduceOnce(m, 12, true);
     assert(n == 0, "target==current must return 0, got " ~ n.to!string);
@@ -40,7 +41,7 @@ unittest { // reduceToTarget: tri cube → ~50% faces, manifold, no degenerate
     Mesh m = makeCube();
     m.buildLoops();
     auto triMask = new bool[](m.faces.length); triMask[] = true;
-    m.triangulateFacesByMask(triMask);
+    triangulateFacesByMask(m, triMask);
     assert(m.faces.length == 12);
 
     size_t f0 = 12;
@@ -103,7 +104,7 @@ unittest { // reduceToTarget preserveBoundary=true: boundary positions kept, int
     }
     {
         auto triMask = new bool[](m.faces.length); triMask[] = true;
-        m.triangulateFacesByMask(triMask);   // 48 tris
+        triangulateFacesByMask(m, triMask);   // 48 tris
     }
     // Remove the last triangle to open the mesh.
     {
@@ -190,7 +191,7 @@ unittest // a recording reduce declares kReduceEditScope and records the SetPos
     Mesh m = subdivideCube(2);
     {
         auto k = new bool[](m.faces.length); k[] = true;
-        m.triangulateFacesByMask(k);
+        triangulateFacesByMask(m, k);
     }
     immutable size_t preV = m.vertices.length;
     immutable size_t preF = m.faces.length;
@@ -330,7 +331,7 @@ unittest { // THE WITNESS: reduceToTarget's collapse heap must not allocate
 
     Mesh m = makeGridPlane(60); // 61x61 = 3721 verts, 3600 quads
     auto triMask = new bool[](m.faces.length); triMask[] = true;
-    m.triangulateFacesByMask(triMask);
+    triangulateFacesByMask(m, triMask);
     immutable size_t f0 = m.faces.length; // 7200 triangles
     immutable size_t target = f0 / 4;     // force ~thousands of collapses
 

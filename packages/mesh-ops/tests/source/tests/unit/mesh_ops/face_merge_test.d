@@ -1,4 +1,5 @@
 module tests.unit.mesh_ops.face_merge_test;
+import mesh_ops.triangulate : triangulateFacesByMask;
 import mesh;
 import math;
 import mesh_scope : MeshEditScope;
@@ -20,7 +21,7 @@ unittest { // quadrupleFacesByMask: triple → quadruple round-trips a cube
     m.buildLoops();
     auto allF = new bool[](m.faces.length);
     allF[] = true;
-    m.triangulateFacesByMask(allF);
+    triangulateFacesByMask(m, allF);
     assert(m.faces.length == 12);
     auto allF2 = new bool[](m.faces.length);
     allF2[] = true;
@@ -43,7 +44,7 @@ unittest { // quadrupleFacesByMask: planarity — every result quad is flat
     m.buildLoops();
     auto allF = new bool[](m.faces.length);
     allF[] = true;
-    m.triangulateFacesByMask(allF);
+    triangulateFacesByMask(m, allF);
     auto allF2 = new bool[](m.faces.length);
     allF2[] = true;
     faceOpOnce!quadrupleFacesByMask(m, allF2);
@@ -70,7 +71,7 @@ unittest { // detriangulateFacesByMask: triple → detriangulate round-trips a c
     m.buildLoops();
     auto allF = new bool[](m.faces.length);
     allF[] = true;
-    m.triangulateFacesByMask(allF);
+    triangulateFacesByMask(m, allF);
     assert(m.faces.length == 12);
     auto allF2 = new bool[](m.faces.length);
     allF2[] = true;
@@ -93,7 +94,7 @@ unittest { // detriangulateFacesByMask: partial mask — only masked faces merge
     auto allF = new bool[](m.faces.length);
     allF[] = true;
     uint[] faceOrigin;
-    m.triangulateFacesByMask(allF, &faceOrigin);  // 12 tris
+    triangulateFacesByMask(m, allF, &faceOrigin);  // 12 tris
     // Find the 2 children of original face 0.
     bool[] partMask = new bool[](m.faces.length);
     foreach (fi; 0 .. faceOrigin.length)
