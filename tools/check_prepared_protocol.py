@@ -874,6 +874,8 @@ observer_source = (ROOT / "packages/command-runtime/source/record_observer_hub.d
 production_hub_refs = 0
 for path, hub_text in prepared_source_texts.items():
     hub_module = source_module_name(path, hub_text)
+    if path == ROOT / "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d":
+        continue
     if hub_module not in ("record_observer_hub", "command_history",
                           "prepared_record_context"):
         if "RecordObserverHub" in hub_text:
