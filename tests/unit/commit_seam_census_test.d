@@ -61,7 +61,7 @@ private string readCode(string path)
 unittest
 {
     const meshPath = buildPath(repoRoot, "packages", "mesh", "source", "mesh.d");
-    const commandPath = buildPath(repoRoot, "packages", "common", "source", "command.d");
+    const commandPath = buildPath(repoRoot, "packages", "command-runtime", "source", "command.d");
     const meshCode = readCode(meshPath);
     const commandCode = readCode(commandPath);
     assert(meshCode.canFind("struct Mesh {")
@@ -69,7 +69,7 @@ unittest
         "readCode memo returned empty or foreign code for packages/mesh/source/mesh.d");
     assert(commandCode.canFind("class Command {")
         && !commandCode.canFind("struct Mesh {"),
-        "readCode memo returned empty or foreign code for packages/common/source/command.d");
+        "readCode memo returned empty or foreign code for packages/command-runtime/source/command.d");
 }
 
 // ---------------------------------------------------------------------------
@@ -427,7 +427,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
     enum kGuard = "scope(failure) mesh.abortEditBatch();";
 
     string[] callers;
-    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
+    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
 
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (e.name == meshPath) continue;
@@ -459,6 +459,11 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
         if (sourceCarrierPath == meshPath) continue;
@@ -1881,7 +1886,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
         immutable srcRoot2 = buildPath(repoRoot, "source");
         string[] qualified;
         size_t scanned2 = 0;
-        foreach (scanSourceRoot; [srcRoot2, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
+        foreach (scanSourceRoot; [srcRoot2, buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
 
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned2;
@@ -1893,6 +1898,11 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
 
@@ -2234,7 +2244,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
         immutable srcRootF2 = buildPath(repoRoot, "source");
         string[] qualifiedF2;
         size_t scannedF2 = 0;
-        foreach (scanSourceRoot; [srcRootF2, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
+        foreach (scanSourceRoot; [srcRootF2, buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
 
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scannedF2;
@@ -2246,6 +2256,11 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
 
@@ -2666,7 +2681,7 @@ unittest // Stage G — the manifold edge bevel family
         import std.file : dirEntries, SpanMode;
         size_t scanned = 0;
         string[] offenders;
-        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
 
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned;
@@ -2678,6 +2693,11 @@ unittest // Stage G — the manifold edge bevel family
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
 
@@ -2939,7 +2959,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
         import std.file : dirEntries, SpanMode;
         size_t scanned = 0;
         string[][string] offenders;
-        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
 
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++scanned;
@@ -2952,6 +2972,11 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
 
@@ -3335,7 +3360,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         import std.path : relativePath;
         import std.string : replace;
 
-        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
+        foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
 
 
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
@@ -3353,6 +3378,11 @@ unittest // every §2.6 widening this stage made still has the caller it names
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
             immutable rel = relativePath(sourceCarrierPath, repoRoot).replace("\\", "/");
@@ -3484,7 +3514,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         import std.string : replace;
 
         immutable srcRoot = buildPath(repoRoot, "source");
-        foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
+        foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
 
         foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
@@ -3504,6 +3534,11 @@ unittest // every §2.6 widening this stage made still has the caller it names
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
             immutable rel = relativePath(sourceCarrierPath, repoRoot).replace("\\", "/");
@@ -3764,7 +3799,7 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
     size_t zoneTotal = 0;
     size_t rosterTotal = 0;
     string[] offenders;
-    foreach (scanSourceRoot; [zone, buildPath(repoRoot, "packages/common/source", "commands", "mesh")])
+    foreach (scanSourceRoot; [zone, buildPath(repoRoot, "packages/command-runtime/source", "commands", "mesh")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.shallow)) {
         ++scanned;
         immutable src = readCode(e.name);
@@ -3774,6 +3809,17 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
         if (kL0dPositionCommands[].canFind(baseName(e.name))
          || kL0bSymmetryCommands[].canFind(baseName(e.name))) rosterTotal += n;
         else if (n > 0) offenders ~= format("%s:%d", baseName(e.name), n);
+    }
+    foreach (relative; [
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+    ]) {
+        immutable src = readCode(buildPath(repoRoot, relative));
+        string hit;
+        immutable size_t n = countRawPositionWrites(src, hit);
+        zoneTotal += n;
+        if (kL0dPositionCommands[].canFind(baseName(relative))
+         || kL0bSymmetryCommands[].canFind(baseName(relative))) rosterTotal += n;
+        else if (n > 0) offenders ~= format("%s:%d", baseName(relative), n);
     }
     // A mis-rooted walk reports 0 files, 0 writes, and passes.
     assert(scanned >= 50,
@@ -4107,7 +4153,7 @@ unittest // L0-b — the recorder pins, one per command
     ];
     LedgerHit[] hits;
     size_t filesRead;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
 
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = e.name[repoRoot.length + 1 .. $];
@@ -4128,6 +4174,11 @@ unittest // L0-b — the recorder pins, one per command
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
         const rel = sourceCarrierPath[repoRoot.length + 1 .. $];
@@ -4169,7 +4220,7 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
     immutable srcRoot = buildPath(repoRoot, "source");
     size_t scanned = 0;
     string[] sites;
-    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
+    foreach (scanSourceRoot; [srcRoot, buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
 
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
@@ -4182,6 +4233,11 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
         const sourceRelative = sourceCarrier ==
@@ -4189,7 +4245,12 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
                 ? "view.d"
                 : sourceCarrier ==
                     "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d"
-                        ? "io/image_decode.d" : "io/native.d";
+                        ? "io/image_decode.d"
+                        : sourceCarrier == "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d" ? "command_history.d"
+                        : sourceCarrier == "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d" ? "command.d"
+                        : sourceCarrier == "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d" ? "commands/mesh/session_edit.d"
+                        : sourceCarrier == "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d" ? "commands/select/element.d"
+                        : sourceCarrier == "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d" ? "record_observer_hub.d" : "io/native.d";
 
         immutable src = readCode(sourceCarrierPath);
         immutable size_t n = countOccurrences(src, "recordPositionDiff(");
@@ -4562,7 +4623,7 @@ unittest // Stage M - the closing MeshSnapshot declaration census
 {
     LedgerHit[] hits;
     size_t filesRead;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source", "commands"), buildPath(repoRoot, "packages/common/source", "commands")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source", "commands"), buildPath(repoRoot, "packages/command-runtime/source", "commands")])
     foreach (e; dirEntries(scanSourceRoot, "*.d",
                            SpanMode.depth)) {
         ++filesRead;
@@ -4576,6 +4637,21 @@ unittest // Stage M - the closing MeshSnapshot declaration census
                     file, li + 1, line.strip));
             if (declaresVarOfType(line, "MeshSnapshot"))
                 hits ~= LedgerHit(symbolAt(symbols, li), file, li + 1, line.strip);
+        }
+    }
+    foreach (relative; [
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+    ]) {
+        const code = readCode(buildPath(repoRoot, relative));
+        const symbols = enclosingSymbols(code);
+        foreach (li, line; code.splitLines) {
+            if (hasUnknownDeclPrefix(line, "MeshSnapshot"))
+                assert(false, format(
+                    "%s:%d has an unrecognised MeshSnapshot declaration prefix: %s",
+                    relative, li + 1, line.strip));
+            if (declaresVarOfType(line, "MeshSnapshot"))
+                hits ~= LedgerHit(symbolAt(symbols, li), relative, li + 1, line.strip);
         }
     }
     const problems = reconcile(kSnapHolders, hits);

@@ -13,7 +13,7 @@
 //     header for why the fix was a second gate rather than a looser first one,
 //     and for the number the roster moved from and to.
 //
-// WHAT THIS GATE IS FOR. `packages/common/source/command.d`'s doc comment used to claim the
+// WHAT THIS GATE IS FOR. `packages/command-runtime/source/command.d`'s doc comment used to claim the
 // two undo paths ("`/api/undo` / `navHistory` call `history.undo()` raw" vs.
 // "the registered `history.undo` command wraps it") differ in delivery
 // granularity. Task 1932 re-measured that claim by grep and found it FALSE:
@@ -60,7 +60,7 @@
 // correct one would, because either way the (file, function) pair the
 // scanner reports will not be in the recorded table.
 //
-// Before task 3694, three sites shared `packages/common/source/command_history.d :: undo`:
+// Before task 3694, three sites shared `packages/command-runtime/source/command_history.d :: undo`:
 // ToolLifecycle, Case A and Case B. Strict lifecycle LIFO removed all three
 // branches and added one common-tail call in the same function. The table
 // below records that seven-site result and the gate still aggregates by
@@ -321,7 +321,7 @@ private struct ScanResult { RevertSite[] sites; size_t filesScanned; }
 private ScanResult scanTree() {
     auto sites = appender!(RevertSite[]);
     size_t n = 0;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++n;
@@ -331,6 +331,11 @@ private ScanResult scanTree() {
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
 
@@ -977,8 +982,8 @@ unittest
 // revert inside it".
 // ---------------------------------------------------------------------------
 unittest {
-    const string historySrc = readText(buildPath(repoRoot, "packages/common/source/command_history.d"));
-    const string commandSrc = readText(buildPath(repoRoot, "packages/common/source/command.d"));
+    const string historySrc = readText(buildPath(repoRoot, "packages/command-runtime/source/command_history.d"));
+    const string commandSrc = readText(buildPath(repoRoot, "packages/command-runtime/source/command.d"));
 
     const size_t nHistory = codeLevelCallCount(historySrc, "beginDeliveryBatchGlobal(");
     const size_t nCommand = codeLevelCallCount(commandSrc, "beginDeliveryBatchGlobal(");

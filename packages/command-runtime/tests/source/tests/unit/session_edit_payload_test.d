@@ -39,7 +39,7 @@ import commands.mesh.session_edit : MeshSessionEdit, kNoSessionReason;
 import std.algorithm : canFind;
 import std.conv      : to;
 
-// The packet a `Command.apply()` would have built (packages/common/source/command.d) — this
+// The packet a `Command.apply()` would have built (packages/command-runtime/source/command.d) — this
 // file drives `evaluate()` directly, so it builds the same one by hand.
 private void withSubject(ref Mesh m, ref VectorStack vts, ref SubjectPacket subj) {
     subj.mesh     = &m;

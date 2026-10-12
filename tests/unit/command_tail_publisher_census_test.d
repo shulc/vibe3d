@@ -180,7 +180,7 @@ private struct TreeScan {
 private TreeScan scanRoot(string relRoot) {
     TreeScan r;
     foreach (scanSourceRoot; relRoot == "source/commands"
-            ? [relRoot, "packages/common/source/commands"]
+            ? [relRoot, "packages/command-runtime/source/commands"]
             : relRoot == "source/tools"
             ? [relRoot, "packages/tool-state/source/tools", "packages/transform-ops/source/tools",
                "packages/creation-ops/source/tools", "packages/alignment-ops/source/tools"]
@@ -192,6 +192,15 @@ private TreeScan scanRoot(string relRoot) {
         r.sites.put_(scanFunnels(label, code));
         r.publisherHits ~= symbolTokenHits(code, label, "publishChange(");
     }
+    if (relRoot == "source/commands")
+        foreach (relative; [
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        ]) {
+            const string code = codeView(readText(buildPath(repoRoot, relative)));
+            r.sites.put_(scanFunnels(relative, code));
+            r.publisherHits ~= symbolTokenHits(code, relative, "publishChange(");
+        }
     return r;
 }
 

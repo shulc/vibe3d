@@ -52,7 +52,7 @@
 //
 // `with (subj) { mesh = ...; }` LEFT THAT LIST at task 2007. The sweep
 // proved the hole live — `with (subj) { mesh = hideBatchMesh; }` planted
-// straight after `SubjectPacket subj;` in `packages/common/source/command.d`, census green
+// straight after `SubjectPacket subj;` in `packages/command-runtime/source/command.d`, census green
 // at the same module count — and `withSubjectOf` + `scanFieldAssignments`'
 // `withStack` now cover both the braced and the braceless single-statement
 // form. A bare field name is counted ONLY inside a `with` bound to a name
@@ -221,7 +221,7 @@ private bool[string] declaredSubjectPacketVars(string stripped) {
 /// `subj.` prefix at all. This file's own header used to list the shape under
 /// "WHAT IT DOES NOT SEE"; the sweep then PROVED it live, planting
 /// `with (subj) { mesh = hideBatchMesh; }` straight after `SubjectPacket subj;`
-/// in `packages/common/source/command.d` and watching the census stay green at the same module
+/// in `packages/command-runtime/source/command.d` and watching the census stay green at the same module
 /// count. A hole a file names in its own header is still a hole.
 ///
 /// Returns the SubjectPacket variable a `with (…)` head binds, or `null` if
@@ -390,7 +390,7 @@ unittest {
 
     // TASK 2007 — the `with (subj)` arm. The field write carries no `subj.`
     // prefix; before this arm the scan read ZERO on every shape below, which
-    // the sweep proved live in `packages/common/source/command.d` with the census green.
+    // the sweep proved live in `packages/command-runtime/source/command.d` with the census green.
     static FieldAssignment[] scanBoth(string src) {
         const st = stripCommentsAndStrings(src);
         return scanFieldAssignments(st, declaredSubjectPacketVars(st));
@@ -513,7 +513,7 @@ unittest {
     LedgerHit[] evalHits;            // assertion (b)
     LedgerHit[] workplaneHits;       // assertion (c)
 
-    foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/common/source"), buildPath(censusRepoRoot, "packages/camera-model/source"), buildPath(censusRepoRoot, "packages/document-channels/source"), buildPath(censusRepoRoot, "packages/image-codec/source"), buildPath(censusRepoRoot, "packages/document-io/source"), buildPath(censusRepoRoot, "packages/document-model/source"), buildPath(censusRepoRoot, "packages/param-schema/source"), buildPath(censusRepoRoot, "packages/pipe-runtime/source"), buildPath(censusRepoRoot, "packages/mesh-ops/source"), buildPath(censusRepoRoot, "packages/interchange/source"), buildPath(censusRepoRoot, "packages/interaction-query/source"), buildPath(censusRepoRoot, "packages/pipe-evaluation/source"), buildPath(censusRepoRoot, "packages/tool-state/source"), buildPath(censusRepoRoot, "packages/transform-ops/source"), buildPath(censusRepoRoot, "packages/creation-ops/source"), buildPath(censusRepoRoot, "packages/alignment-ops/source"), buildPath(censusRepoRoot, "packages/input-events/source"), buildPath(censusRepoRoot, "packages/display-policy/source"), buildPath(censusRepoRoot, "packages/viewport-gpu/source"), buildPath(censusRepoRoot, "packages/subpatch-preview/source"), buildPath(censusRepoRoot, "packages/edit-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-change/source"), buildPath(censusRepoRoot, "packages/mesh-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-edit-log/source"), buildPath(censusRepoRoot, "packages/mesh-edit-replay/source"), buildPath(censusRepoRoot, "packages/mesh-snapshot/source"), buildPath(censusRepoRoot, "packages/mesh-topology/source"), buildPath(censusRepoRoot, "packages/mesh/source"), buildPath(censusRepoRoot, "packages/profiling/source"), buildPath(censusRepoRoot, "packages/spatial/source"), buildPath(censusRepoRoot, "util/log/source"), buildPath(censusRepoRoot, "util/math/source"), buildPath(censusRepoRoot, "util/parallel/source"), buildPath(censusRepoRoot, "util/plane-bytes/source"), buildPath(censusRepoRoot, "util/screen-buckets/source"), buildPath(censusRepoRoot, "packages/pipe-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-preview/source"), buildPath(censusRepoRoot, "util/json-number/source")])
+    foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/command-runtime/source"), buildPath(censusRepoRoot, "packages/application-core/source"), buildPath(censusRepoRoot, "packages/camera-model/source"), buildPath(censusRepoRoot, "packages/document-channels/source"), buildPath(censusRepoRoot, "packages/image-codec/source"), buildPath(censusRepoRoot, "packages/document-io/source"), buildPath(censusRepoRoot, "packages/document-model/source"), buildPath(censusRepoRoot, "packages/param-schema/source"), buildPath(censusRepoRoot, "packages/pipe-runtime/source"), buildPath(censusRepoRoot, "packages/mesh-ops/source"), buildPath(censusRepoRoot, "packages/interchange/source"), buildPath(censusRepoRoot, "packages/interaction-query/source"), buildPath(censusRepoRoot, "packages/pipe-evaluation/source"), buildPath(censusRepoRoot, "packages/tool-state/source"), buildPath(censusRepoRoot, "packages/transform-ops/source"), buildPath(censusRepoRoot, "packages/creation-ops/source"), buildPath(censusRepoRoot, "packages/alignment-ops/source"), buildPath(censusRepoRoot, "packages/input-events/source"), buildPath(censusRepoRoot, "packages/display-policy/source"), buildPath(censusRepoRoot, "packages/viewport-gpu/source"), buildPath(censusRepoRoot, "packages/subpatch-preview/source"), buildPath(censusRepoRoot, "packages/edit-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-change/source"), buildPath(censusRepoRoot, "packages/mesh-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-edit-log/source"), buildPath(censusRepoRoot, "packages/mesh-edit-replay/source"), buildPath(censusRepoRoot, "packages/mesh-snapshot/source"), buildPath(censusRepoRoot, "packages/mesh-topology/source"), buildPath(censusRepoRoot, "packages/mesh/source"), buildPath(censusRepoRoot, "packages/profiling/source"), buildPath(censusRepoRoot, "packages/spatial/source"), buildPath(censusRepoRoot, "util/log/source"), buildPath(censusRepoRoot, "util/math/source"), buildPath(censusRepoRoot, "util/parallel/source"), buildPath(censusRepoRoot, "util/plane-bytes/source"), buildPath(censusRepoRoot, "util/screen-buckets/source"), buildPath(censusRepoRoot, "packages/pipe-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-preview/source"), buildPath(censusRepoRoot, "util/json-number/source")])
 
 
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
@@ -551,6 +551,11 @@ unittest {
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(censusRepoRoot, sourceCarrier);
 

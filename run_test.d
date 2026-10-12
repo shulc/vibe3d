@@ -1355,7 +1355,7 @@ string sourceDigest() {
     // of a test run does not (task 0685 T7).
     try {
         foreach (pattern; ["*.d", "*.c"])
-            foreach (scanSourceRoot; ["packages/camera-model/source", "packages/camera-model/tests/source", "packages/document-channels/source", "packages/document-channels/tests/source", "packages/image-codec/source", "packages/image-codec/tests/source", "packages/document-io/source", "packages/document-io/tests/source", "source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
+            foreach (scanSourceRoot; ["packages/camera-model/source", "packages/camera-model/tests/source", "packages/document-channels/source", "packages/document-channels/tests/source", "packages/image-codec/source", "packages/image-codec/tests/source", "packages/document-io/source", "packages/document-io/tests/source", "source", "packages/command-runtime/source", "packages/application-core/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
             foreach (e; dirEntries(scanSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
     } catch (Exception e) {
@@ -1363,6 +1363,13 @@ string sourceDigest() {
                             ~ ") — treating the build as stale"));
         return "";
     }
+    files ~= [
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+    ];
     sort(files);
     foreach (f; files) {
         hash.put(cast(const(ubyte)[]) f);
@@ -1491,7 +1498,7 @@ string buildProjectLib(string scratch) {
     bool[string] seen;
     // Task 20262150: moved conditional helpers need the same unittest source
     // grant as desktop/common; keep production package archives unchanged.
-    foreach (root; ["", " --root=packages/camera-model", " --root=packages/document-channels", " --root=packages/image-codec", " --root=packages/document-io", " --root=packages/common", " --root=packages/document-model", " --root=packages/param-schema", " --root=packages/pipe-runtime", " --root=util/json-number", " --root=packages/pipe-contracts", " --root=packages/mesh-preview", " --root=packages/mesh-ops", " --root=packages/tool-state", " --root=packages/transform-ops", " --root=packages/input-events", " --root=packages/display-policy", " --root=packages/viewport-gpu", " --root=packages/subpatch-preview"]) {
+    foreach (root; ["", " --root=packages/camera-model", " --root=packages/document-channels", " --root=packages/image-codec", " --root=packages/document-io", " --root=packages/command-runtime", " --root=packages/application-core", " --root=packages/document-model", " --root=packages/param-schema", " --root=packages/pipe-runtime", " --root=util/json-number", " --root=packages/pipe-contracts", " --root=packages/mesh-preview", " --root=packages/mesh-ops", " --root=packages/tool-state", " --root=packages/transform-ops", " --root=packages/input-events", " --root=packages/display-policy", " --root=packages/viewport-gpu", " --root=packages/subpatch-preview"]) {
         auto rr = executeShell("dub describe" ~ root
             ~ " --config=modeling --data=source-files --data-list 2>/dev/null");
         if (rr.status != 0) return "";

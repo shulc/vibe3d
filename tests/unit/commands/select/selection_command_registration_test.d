@@ -444,7 +444,7 @@ unittest { // S9: production call, ordering and old-path census
             sel.count("doors.switchItem_")));
 
     string[] regFiles;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/application-core/source")])
     foreach (de; dirEntries(scanSourceRoot,
                             "*_registration.d", SpanMode.shallow))
         regFiles ~= de.name;

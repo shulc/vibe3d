@@ -297,7 +297,7 @@ private JSONValue coerceToSlot(JSONValue v, ref Param p) {
     }
 }
 
-// The unit tests for this law live in `tests/unit/command_bindargs_test.d`
+// The unit tests for this law live in `packages/command-runtime/tests/source/tests/unit/command_bindargs_test.d`
 // (module unittests under source/ are a ratchet the census gate holds down,
 // task 4057), and the funnel-level parity test beside them drives the same
 // lines through BOTH entry shapes against a written-down expectation rather

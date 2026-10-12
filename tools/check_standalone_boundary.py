@@ -2,7 +2,7 @@
 """Exact standalone DUB descriptors and ordinary fresh package execution.
 
 Task 20261840, application_layers_wave2_plan_2026-10-09.md, Slice 2B.
-Desktop sources are unavailable to common and its independent consumers.
+Desktop sources are unavailable to the headless owners and their independent consumers.
 The package compiler owns import resolution; this witness pins the grants.
 """
 import argparse
@@ -26,9 +26,10 @@ CORE_CELLS = ('document-primary', 'invocation-order', 'invocation-outcomes', 'in
 STB_REVISION = 'a66f6917718ea128076a2c5660e37f362a785144'
 # Canonical JSON pins include configuration/build-type grants and platform keys.
 DESCRIPTORS = {
-    'packages/common': '6847a7e4ec6008c66403a3d8be9f48602effcae1950fdb9dd773a725b9a72296',
-    'tests/core': '094335fa23dbe7ba69d410de28c74844352d79b47ab026f865a9567e682bcdf1',
-    'tools/cli': '6b0b74a84b4b6de870f3c346aa884f9a7c4cd134861ccd82da78cb92709275f2',
+    'packages/command-runtime': 'a1264dd8918e95d395cc8c99e77eb0bafa8bac420bf77a6ada76b17f545771eb',
+    'packages/application-core': '281175aed0c0ea8861171c7be11ae1e06b074ae39859854bd1ff26bbdbe04cac',
+    'tests/core': '6b5c47b116117bfffbab856ba4739fff1f2cd21f522e390809d01c194909ba2d',
+    'tools/cli': '2b13fbc0b4d8b2d3e463947d86bb667377564319ff67d606b1459abd6ef59545',
 }
 HOOKS = ('preGenerateCommands', 'postGenerateCommands', 'preBuildCommands',
          'postBuildCommands', 'preRunCommands', 'postRunCommands')
@@ -49,8 +50,8 @@ def validate_package_settings(description, root, compiler="dmd"):
     import check_package_support_boundary as support
     project=root.parents[1]
     manifest=json.loads((root/'dub.json').read_text()); owner=manifest['name']
-    require(owner in ('vibe3d-common','vibe3d-core-tests','vibe3d-cli'), 'unexpected root package')
-    for path in {project/'packages/common',root}:
+    require(owner in ('vibe3d-command-runtime','vibe3d-application-core','vibe3d-core-tests','vibe3d-cli'), 'unexpected root package')
+    for path in {project/'packages/command-runtime',project/'packages/application-core',root}:
         raw=json.loads((path/'dub.json').read_text())
         grants={k:v for k,v in raw.items() if k not in ('description','license','toolchainRequirements')}
         digest=hashlib.sha256(json.dumps(grants,sort_keys=True,separators=(',',':')).encode()).hexdigest()
@@ -58,14 +59,19 @@ def validate_package_settings(description, root, compiler="dmd"):
         require(digest==DESCRIPTORS[relative], 'raw descriptor changed: '+relative)
     require(description['rootPackage']==owner, 'unexpected root package')
     active_list=[p for p in description['packages'] if p.get('active')];active={p['name']:p for p in active_list}
-    expected={'vibe3d-'+x for x in support.closure('common')}|{owner}
-    if owner=='vibe3d-cli':
-        expected|={'vibe3d-'+x for x in support.closure('document-io')}|{'d-stb-image'}
+    expected={owner}
+    for dependency in manifest.get('dependencies', {}):
+        expected|={'vibe3d-'+x for x in support.closure(dependency.removeprefix('vibe3d-'))}
+    if owner in ('vibe3d-command-runtime','vibe3d-application-core'):
+        expected|={'vibe3d-'+x for x in support.closure(owner.removeprefix('vibe3d-'))}
+    if 'vibe3d-document-io' in expected: expected.add('d-stb-image')
     require(len(active_list)==len(expected) and set(active)==expected,'resolved package population changed')
     image=Path(active['d-stb-image']['path']).resolve() if 'd-stb-image' in active else None
     if image is not None:
         require(image.parts[-2:]==(STB_REVISION,'d-stb-image'),'resolved image revision changed')
-    roots=([root/'source/main.d'] if owner=='vibe3d-cli' else [(project/'tests/unit'/name).resolve() for name in CORE_ROOTS] if owner=='vibe3d-core-tests' else sorted((project/'packages/common/source').rglob('*.d')))
+    roots=([root/'source/main.d'] if owner=='vibe3d-cli' else [(root/name).resolve() for name in manifest['sourceFiles']] if owner=='vibe3d-core-tests' else sorted((root/'source').rglob('*.d')))
+    if owner=='vibe3d-core-tests':
+        require(tuple(path.name for path in roots)==CORE_ROOTS, 'CORE mapped five root identities changed')
     targets={t['rootPackage']:t for t in description['targets']}
     expected_targets={n for n,p in active.items() if p['targetType']!='sourceLibrary'}
     require(len(description['targets'])==len(expected_targets) and set(targets)==expected_targets,'resolved target population changed')
@@ -73,7 +79,7 @@ def validate_package_settings(description, root, compiler="dmd"):
         if name=='d-stb-image':path=image;deps=[]
         else:
             selected=name.removeprefix('vibe3d-')
-            path=root if name==owner and owner!='vibe3d-common' else project/support.SPECS[selected]['root']
+            path=root if name==owner else project/support.SPECS[selected]['root']
             raw=json.loads((path/'dub.json').read_text());deps=list(raw.get('dependencies',{}))
         require(Path(package['path']).resolve()==path.resolve(),'resolved package path changed: '+name)
         require(sorted(package.get('dependencies',[]))==sorted(deps),'resolved dependencies changed: '+name)
@@ -91,8 +97,7 @@ def validate_package_settings(description, root, compiler="dmd"):
         expected_sources=[]
         for n in internal:
             if n=='d-stb-image':expected_sources.append(image/'source/stb_image/c.d')
-            elif n==owner and owner!='vibe3d-common':expected_sources+=roots
-            elif n=='vibe3d-common':expected_sources+=sorted((project/'packages/common/source').rglob('*.d'))
+            elif n==owner:expected_sources+=roots
             else:expected_sources+=support.production_files(project,n.removeprefix('vibe3d-'))
         actual=[Path(p).resolve() for p in settings.get('sourceFiles',[])]
         require(sorted(actual)==sorted(Path(p).resolve() for p in expected_sources) and len(actual)==len(set(actual)),'resolved sourceFiles changed: '+name)
@@ -142,7 +147,9 @@ def main(argv=None):
     root = Path(args.root).resolve()
     owner = json.loads((root / 'dub.json').read_text())['name']
     require(not args.unittest or owner == 'vibe3d-core-tests', 'only CORE has independent unittest acceptance')
-    config = args.config or ('modeling-noai' if owner == 'vibe3d-common' else 'core' if owner == 'vibe3d-core-tests' else 'application')
+    require(owner != 'vibe3d-core-tests' or args.unittest,
+            'CORE executable construction requires --unittest; ordinary library evidence uses explicit support-owner recipes')
+    config = args.config or ('core' if owner == 'vibe3d-core-tests' else 'application' if owner == 'vibe3d-cli' else 'modeling-noai')
     mode = 'unittest' if args.unittest else 'production'
     evidence = Path(args.evidence_dir).resolve() if args.evidence_dir else root / '.boundary' / mode
     evidence.mkdir(parents=True, exist_ok=True)
@@ -157,10 +164,10 @@ def main(argv=None):
     description = json.loads(described.stdout)
     (evidence / 'describe.json').write_text(json.dumps(description, indent=2) + '\n')
     roots = validate_package_settings(description, root, compiler)
-    # CORE's five unittest roots have no production main. Production acceptance
-    # compiles all common sources through their actual static-library target.
-    build_root = root.parents[1] / 'packages/common' if owner == 'vibe3d-core-tests' and not args.unittest else root
-    build_config = 'modeling-noai' if build_root != root else config
+    # CORE constructs its mapped five roots directly. Library evidence belongs
+    # to the explicit support-owner recipes, without an ordinary redirect.
+    build_root = root
+    build_config = config
     command = ['dub', 'test' if args.unittest else 'build', '--root=' + str(build_root),
                '--config=' + build_config, '--compiler=' + compiler, '--force', '--verbose']
     result = run(command, root, env, evidence, 'build-run')
@@ -191,7 +198,7 @@ def main(argv=None):
     (evidence/'actual-input-hashes.json').write_text(json.dumps(actual_inputs,indent=2)+'\n')
 
     binary = build_root / ('vibe3d-core-tests-test-' + config if args.unittest else
-                           'libvibe3d-common.a' if build_root.name == 'common' else owner)
+                           'lib'+owner+'.a' if owner in ('vibe3d-command-runtime','vibe3d-application-core') else owner)
     require(binary.is_file(), 'fresh DUB output missing: ' + str(binary))
     revision = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=root, text=True, capture_output=True)
     sha = revision.stdout.strip() if revision.returncode == 0 else 'uncommitted-copy'

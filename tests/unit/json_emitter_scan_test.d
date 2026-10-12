@@ -366,7 +366,7 @@ private enum gateRepoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 /// hole in this gate's scope — see the module header.
 private immutable string[] kScanned = [
     "util/json-number/source/json_num.d",
-    "packages/common/source/http_json.d",
+    "packages/application-core/source/http_json.d",
     "source/http_providers.d",
     "source/http_server.d",
     "source/http_transport.d",
@@ -378,7 +378,7 @@ private immutable string[] kScanned = [
     // marker stays under the gate: it is exempt because it spells a value into
     // an ARGSTRING, and an argstring is not a JSON body — but "not a JSON
     // body" is a claim that has to keep being checked at its new address.
-    "packages/common/source/command_args.d",
+    "packages/command-runtime/source/command_args.d",
 ];
 
 private static immutable LedgerRow[] kExemptionLedger = [
@@ -432,13 +432,13 @@ unittest {
     // contract is that these exact seven source paths were read (task 6740).
     immutable expectedFiles = [
         "util/json-number/source/json_num.d",
-        "packages/common/source/http_json.d",
+        "packages/application-core/source/http_json.d",
         "source/http_providers.d",
         "source/http_server.d",
         "source/http_transport.d",
         "packages/camera-model/source/view.d",
     "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
-        "packages/common/source/command_args.d",
+        "packages/command-runtime/source/command_args.d",
     ];
     assert(filesRead == expectedFiles,
         format("the JSON emitter gate must read exactly %s, it read %s",

@@ -10,7 +10,7 @@
 // transitively over direct or address-taken member edges. Named residual: a
 // member calling another member injected into the same class by a mixin
 // template is not followed through the real mixin graph. This is safe today:
-// packages/common/source/command_history.d has no live mixin, and the gate's actor is an
+// packages/command-runtime/source/command_history.d has no live mixin, and the gate's actor is an
 // external caller, which cannot inject a member into the class. A future mixin
 // in that file is the trigger to extend and mutation-test this arm.
 // `blankNonCode` removes comments AND literals before brace matching. The
@@ -476,7 +476,7 @@ private LedgerHit[] deriveHistoryReceiverHits(string code) {
     auto owners = parseHistoryOwnerScans(code);
     LedgerHit[] ownerHits;
     foreach (ref owner; owners)
-        ownerHits ~= LedgerHit(owner.name, "packages/common/source/command_history.d",
+        ownerHits ~= LedgerHit(owner.name, "packages/command-runtime/source/command_history.d",
             owner.line, owner.name);
     auto ownerProblems = reconcile(kHistoryOwners, ownerHits);
     assert(ownerProblems.length == 0,
@@ -537,7 +537,7 @@ private LedgerHit[] deriveHistoryReceiverHits(string code) {
             if (!m.hidden && ((m.name in reaches)
                     || auditedHistoryProtocolPeer(owner.name, m.name)))
                 proposals ~= LedgerHit(owner.name ~ "." ~ m.name,
-                    "packages/common/source/command_history.d", m.line, m.name);
+                    "packages/command-runtime/source/command_history.d", m.line, m.name);
     }
     proposals.sort!((a, b) => a.key < b.key);
     return proposals;
@@ -599,7 +599,7 @@ package:
             && mentionsHistoryStackField("{ undoStack.remove(0); }"),
         "history receiver scanner: an indirect/ref/UFCS mitigation arm is dead");
 
-    immutable historyPath = buildPath(repoRoot, "packages", "common", "source", "command_history.d");
+    immutable historyPath = buildPath(repoRoot, "packages", "command-runtime", "source", "command_history.d");
     assert(exists(historyPath),
         "command-record class census: command_history.d is missing");
     auto receiverProposals = deriveHistoryReceiverHits(
@@ -613,7 +613,7 @@ package:
     immutable sourceRoot = buildPath(repoRoot, "source");
     assert(exists(sourceRoot),
         "command-record class census: source population root is missing");
-    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
+    foreach (scanSourceRoot; [sourceRoot, buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
 
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         population ~= relativePath(e.name, repoRoot);
@@ -621,6 +621,11 @@ package:
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ])
         population ~= relativePath(buildPath(repoRoot, sourceCarrier), repoRoot);
     population.sort();

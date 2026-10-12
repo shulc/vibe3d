@@ -558,7 +558,7 @@ unittest { // production census: one owner, live provider, no pointer-era path
     const flatPanel = collapseWhitespace(panel);
 
     size_t registrarBytes, registrarFiles;
-    foreach (scanSourceRoot; [root.buildPath("source"), root.buildPath("packages/common/source")])
+    foreach (scanSourceRoot; [root.buildPath("source"), root.buildPath("packages/application-core/source")])
     foreach (entry; dirEntries(scanSourceRoot,
             "*_registration.d", SpanMode.shallow)) {
         ++registrarFiles;
@@ -576,7 +576,7 @@ unittest { // production census: one owner, live provider, no pointer-era path
 
     size_t sourceFiles;
     string allSource;
-    foreach (scanSourceRoot; [root.buildPath("source"), root.buildPath("packages/common/source"), root.buildPath("packages/camera-model/source"), root.buildPath("packages/document-channels/source"), root.buildPath("packages/image-codec/source"), root.buildPath("packages/document-io/source"), root.buildPath("packages/document-model/source"), root.buildPath("packages/param-schema/source"), root.buildPath("packages/pipe-runtime/source"), root.buildPath("packages/mesh-ops/source"), root.buildPath("packages/interchange/source"), root.buildPath("packages/interaction-query/source"), root.buildPath("packages/pipe-evaluation/source"), root.buildPath("packages/tool-state/source"), root.buildPath("packages/transform-ops/source"), root.buildPath("packages/creation-ops/source"), root.buildPath("packages/alignment-ops/source"), root.buildPath("packages/input-events/source"), root.buildPath("packages/display-policy/source"), root.buildPath("packages/viewport-gpu/source"), root.buildPath("packages/subpatch-preview/source"), root.buildPath("packages/edit-contracts/source"), root.buildPath("packages/mesh-change/source"), root.buildPath("packages/mesh-contracts/source"), root.buildPath("packages/mesh-edit-log/source"), root.buildPath("packages/mesh-edit-replay/source"), root.buildPath("packages/mesh-snapshot/source"), root.buildPath("packages/mesh-topology/source"), root.buildPath("packages/mesh/source"), root.buildPath("packages/profiling/source"), root.buildPath("packages/spatial/source"), root.buildPath("util/log/source"), root.buildPath("util/math/source"), root.buildPath("util/parallel/source"), root.buildPath("util/plane-bytes/source"), root.buildPath("util/screen-buckets/source")])
+    foreach (scanSourceRoot; [root.buildPath("source"), root.buildPath("packages/command-runtime/source"), root.buildPath("packages/application-core/source"), root.buildPath("packages/camera-model/source"), root.buildPath("packages/document-channels/source"), root.buildPath("packages/image-codec/source"), root.buildPath("packages/document-io/source"), root.buildPath("packages/document-model/source"), root.buildPath("packages/param-schema/source"), root.buildPath("packages/pipe-runtime/source"), root.buildPath("packages/mesh-ops/source"), root.buildPath("packages/interchange/source"), root.buildPath("packages/interaction-query/source"), root.buildPath("packages/pipe-evaluation/source"), root.buildPath("packages/tool-state/source"), root.buildPath("packages/transform-ops/source"), root.buildPath("packages/creation-ops/source"), root.buildPath("packages/alignment-ops/source"), root.buildPath("packages/input-events/source"), root.buildPath("packages/display-policy/source"), root.buildPath("packages/viewport-gpu/source"), root.buildPath("packages/subpatch-preview/source"), root.buildPath("packages/edit-contracts/source"), root.buildPath("packages/mesh-change/source"), root.buildPath("packages/mesh-contracts/source"), root.buildPath("packages/mesh-edit-log/source"), root.buildPath("packages/mesh-edit-replay/source"), root.buildPath("packages/mesh-snapshot/source"), root.buildPath("packages/mesh-topology/source"), root.buildPath("packages/mesh/source"), root.buildPath("packages/profiling/source"), root.buildPath("packages/spatial/source"), root.buildPath("util/log/source"), root.buildPath("util/math/source"), root.buildPath("util/parallel/source"), root.buildPath("util/plane-bytes/source"), root.buildPath("util/screen-buckets/source")])
 
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
@@ -586,6 +586,11 @@ unittest { // production census: one owner, live provider, no pointer-era path
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = root.buildPath(sourceCarrier);
 

@@ -10,31 +10,32 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 608
-task-citation-lines 5171
+task-citation-lines 5169
 citing-files 469
 long-comment-runs 258
 files-with-long-runs 142
 
 # Exact per-file task-citation allowances, sorted by path.
 allow packages/alignment-ops/source/tools/alignment/align_kernels.d 6
+allow packages/application-core/source/app_version.d 1
+allow packages/application-core/source/http_json.d 8
+allow packages/application-core/source/live_registration_roles.d 1
+allow packages/application-core/source/session_owner.d 2
 allow packages/camera-model/source/view.d 10
-allow packages/common/source/app_version.d 1
-allow packages/common/source/command.d 27
-allow packages/common/source/command_args.d 3
-allow packages/common/source/command_executor.d 7
-allow packages/common/source/command_history.d 27
-allow packages/common/source/command_invocation.d 1
-allow packages/common/source/commands/mesh/gesture_payload.d 1
-allow packages/common/source/commands/mesh/select.d 3
-allow packages/common/source/commands/mesh/selection_undo.d 3
-allow packages/common/source/commands/mesh/session_edit.d 10
-allow packages/common/source/commands/mesh/triple.d 5
-allow packages/common/source/commands/mesh/vertex_edit.d 5
-allow packages/common/source/commands/select/invert.d 2
-allow packages/common/source/http_json.d 8
-allow packages/common/source/record_observer_hub.d 1
-allow packages/common/source/session_owner.d 2
-allow packages/common/source/tool_activation_ownership.d 6
+allow packages/command-runtime/source/command.d 26
+allow packages/command-runtime/source/command_args.d 3
+allow packages/command-runtime/source/command_executor.d 7
+allow packages/command-runtime/source/command_history.d 27
+allow packages/command-runtime/source/command_invocation.d 1
+allow packages/command-runtime/source/commands/mesh/gesture_payload.d 1
+allow packages/command-runtime/source/commands/mesh/select.d 3
+allow packages/command-runtime/source/commands/mesh/selection_undo.d 3
+allow packages/command-runtime/source/commands/mesh/session_edit.d 9
+allow packages/command-runtime/source/commands/mesh/triple.d 5
+allow packages/command-runtime/source/commands/mesh/vertex_edit.d 5
+allow packages/command-runtime/source/commands/select/invert.d 2
+allow packages/command-runtime/source/record_observer_hub.d 1
+allow packages/command-runtime/source/tool_activation_ownership.d 6
 allow packages/creation-ops/source/tools/create/pen_geometry.d 1
 allow packages/display-policy/source/camera_stamp.d 3
 allow packages/display-policy/source/display_state.d 14
@@ -349,7 +350,6 @@ allow source/io/file_dialog_browser.d 2
 allow source/item_command_registration.d 2
 allow source/item_pick.d 3
 allow source/layout_reset_action.d 1
-allow source/live_registration_roles.d 1
 allow source/mesh_analysis.d 4
 allow source/mesh_command_registration.d 3
 allow source/mesh_stats.d 5
@@ -488,14 +488,14 @@ allow util/screen-buckets/source/screen_buckets.d 1
 
 # Exact per-file counts of comment runs >= 40 lines, sorted by path.
 allow-runs packages/alignment-ops/source/tools/alignment/align_kernels.d 1
-allow-runs packages/common/source/command.d 2
-allow-runs packages/common/source/command_args.d 1
-allow-runs packages/common/source/command_executor.d 1
-allow-runs packages/common/source/command_history.d 1
-allow-runs packages/common/source/commands/mesh/gesture_payload.d 1
-allow-runs packages/common/source/commands/mesh/selection_undo.d 1
-allow-runs packages/common/source/commands/mesh/session_edit.d 1
-allow-runs packages/common/source/http_json.d 1
+allow-runs packages/application-core/source/http_json.d 1
+allow-runs packages/command-runtime/source/command.d 2
+allow-runs packages/command-runtime/source/command_args.d 1
+allow-runs packages/command-runtime/source/command_executor.d 1
+allow-runs packages/command-runtime/source/command_history.d 1
+allow-runs packages/command-runtime/source/commands/mesh/gesture_payload.d 1
+allow-runs packages/command-runtime/source/commands/mesh/selection_undo.d 1
+allow-runs packages/command-runtime/source/commands/mesh/session_edit.d 1
 allow-runs packages/display-policy/source/camera_stamp.d 1
 allow-runs packages/display-policy/source/display_state.d 1
 allow-runs packages/display-policy/source/weightmap_view.d 1

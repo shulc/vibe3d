@@ -209,7 +209,8 @@ shared static this() {
 
 unittest {
     auto hits = scanTree("source");
-    hits ~= scanTree("packages/common/source");
+    hits ~= scanTree("packages/command-runtime/source");
+    hits ~= scanTree("packages/application-core/source");
     hits ~= scanTree("packages/mesh-ops/source");
     hits ~= scanTree("packages/interchange/source");
     hits ~= scanTree("packages/interaction-query/source");
@@ -237,6 +238,14 @@ unittest {
     hits ~= scanTree("util/parallel/source");
     hits ~= scanTree("util/plane-bytes/source");
     hits ~= scanTree("util/screen-buckets/source");
+
+    foreach (sourceCarrier; [
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+    ]) hits ~= scanFile(sourceCarrier);
 
     size_t[string] byFile;
     foreach (h; hits) byFile[h.file] = byFile.get(h.file, 0) + 1;

@@ -7,16 +7,13 @@
   "sourceFiles": [
     "../unit/application_core_command_test.d",
     "../unit/application_core_mesh_test.d",
-    "../unit/command_invocation_test.d",
-    "../unit/command_registry_test.d",
-    "../unit/standalone_application_test.d"
+    "../../packages/application-core/tests/source/tests/unit/command_invocation_test.d",
+    "../../packages/command-runtime/tests/source/tests/unit/command_registry_test.d",
+    "../../packages/application-core/tests/source/tests/unit/standalone_application_test.d"
   ],
   "importPaths": [],
   "dflags": [],
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../../packages/common"
-    },
     "vibe3d-mesh": {
       "path": "../../packages/mesh"
     },
@@ -58,6 +55,12 @@
     },
     "vibe3d-param-schema": {
       "path": "../../packages/param-schema"
+    },
+    "vibe3d-command-runtime": {
+      "path": "../../packages/command-runtime"
+    },
+    "vibe3d-application-core": {
+      "path": "../../packages/application-core"
     }
   },
   "toolchainRequirements": {
@@ -76,7 +79,6 @@
     }
   ],
   "subConfigurations": {
-    "vibe3d-common": "isolated-tests",
     "vibe3d-mesh": "isolated-tests",
     "vibe3d-mesh-change": "isolated-tests",
     "vibe3d-mesh-edit-log": "isolated-tests",
@@ -87,6 +89,8 @@
     "vibe3d-math": "isolated-tests",
     "vibe3d-spatial": "isolated-tests",
     "vibe3d-pipe-contracts": "isolated-tests",
-    "vibe3d-mesh-preview": "isolated-tests"
+    "vibe3d-mesh-preview": "isolated-tests",
+    "vibe3d-command-runtime": "isolated-tests",
+    "vibe3d-application-core": "isolated-tests"
   }
 }

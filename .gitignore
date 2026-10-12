@@ -153,10 +153,6 @@ scratch/*.lock
 tools/cli/vibe3d-cli
 tools/cli/.boundary/
 
-# Common package library artifacts.
-/packages/common/libvibe3d-common.a
-/packages/common/vibe3d-common.lib
-
 # Standalone application-layer package library artifacts.
 /packages/mesh-ops/libvibe3d-mesh-ops.a
 /packages/mesh-ops/vibe3d-mesh-ops.lib
@@ -218,3 +214,13 @@ tools/cli/.boundary/
 /packages/image-codec/vibe3d-image-codec.lib
 /packages/document-io/libvibe3d-document-io.a
 /packages/document-io/vibe3d-document-io.lib
+/packages/camera-model/tests/vibe3d-camera-model-tests-test-*
+/packages/document-channels/tests/vibe3d-document-channels-tests-test-*
+/packages/image-codec/tests/vibe3d-image-codec-tests-test-*
+/packages/document-io/tests/vibe3d-document-io-tests-test-*
+/packages/command-runtime/libvibe3d-command-runtime.a
+/packages/command-runtime/vibe3d-command-runtime.lib
+/packages/command-runtime/tests/vibe3d-command-runtime-tests-test-*
+/packages/application-core/libvibe3d-application-core.a
+/packages/application-core/vibe3d-application-core.lib
+/packages/application-core/tests/vibe3d-application-core-tests-test-*

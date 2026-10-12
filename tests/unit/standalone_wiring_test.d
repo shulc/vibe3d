@@ -26,9 +26,17 @@ private string rawBody(string source, string declaration) {
 unittest {
     const runner = file("run_test.d");
     const digest = rawBody(runner, "string sourceDigest()");
-    assert(digest.count("foreach (scanSourceRoot; [\"packages/camera-model/source\", \"packages/camera-model/tests/source\", \"packages/document-channels/source\", \"packages/document-channels/tests/source\", \"packages/image-codec/source\", \"packages/image-codec/tests/source\", \"packages/document-io/source\", \"packages/document-io/tests/source\", \"source\", \"packages/common/source\", \"packages/document-model/source\", \"packages/param-schema/source\", \"packages/pipe-runtime/source\", \"packages/mesh-ops/source\", \"packages/interchange/source\", \"packages/interaction-query/source\", \"packages/pipe-evaluation/source\", \"packages/tool-state/source\", \"packages/transform-ops/source\", \"packages/creation-ops/source\", \"packages/alignment-ops/source\", \"packages/input-events/source\", \"packages/display-policy/source\", \"packages/viewport-gpu/source\", \"packages/subpatch-preview/source\", \"packages/edit-contracts/source\", \"packages/mesh-change/source\", \"packages/mesh-contracts/source\", \"packages/mesh-edit-log/source\", \"packages/mesh-edit-replay/source\", \"packages/mesh-snapshot/source\", \"packages/mesh-topology/source\", \"packages/mesh/source\", \"packages/profiling/source\", \"packages/spatial/source\", \"util/log/source\", \"util/math/source\", \"util/parallel/source\", \"util/plane-bytes/source\", \"util/screen-buckets/source\", \"packages/pipe-contracts/source\", \"packages/mesh-preview/source\", \"util/json-number/source\"])") == 1
+    assert(digest.count("foreach (scanSourceRoot; [\"packages/camera-model/source\", \"packages/camera-model/tests/source\", \"packages/document-channels/source\", \"packages/document-channels/tests/source\", \"packages/image-codec/source\", \"packages/image-codec/tests/source\", \"packages/document-io/source\", \"packages/document-io/tests/source\", \"source\", \"packages/command-runtime/source\", \"packages/application-core/source\", \"packages/document-model/source\", \"packages/param-schema/source\", \"packages/pipe-runtime/source\", \"packages/mesh-ops/source\", \"packages/interchange/source\", \"packages/interaction-query/source\", \"packages/pipe-evaluation/source\", \"packages/tool-state/source\", \"packages/transform-ops/source\", \"packages/creation-ops/source\", \"packages/alignment-ops/source\", \"packages/input-events/source\", \"packages/display-policy/source\", \"packages/viewport-gpu/source\", \"packages/subpatch-preview/source\", \"packages/edit-contracts/source\", \"packages/mesh-change/source\", \"packages/mesh-contracts/source\", \"packages/mesh-edit-log/source\", \"packages/mesh-edit-replay/source\", \"packages/mesh-snapshot/source\", \"packages/mesh-topology/source\", \"packages/mesh/source\", \"packages/profiling/source\", \"packages/spatial/source\", \"util/log/source\", \"util/math/source\", \"util/parallel/source\", \"util/plane-bytes/source\", \"util/screen-buckets/source\", \"packages/pipe-contracts/source\", \"packages/mesh-preview/source\", \"util/json-number/source\"])") == 1
         && digest.count("dirEntries(scanSourceRoot, pattern, SpanMode.depth)") == 1,
-        "standalone-wiring: freshness scans all thirty-nine production ownership roots plus four explicit test roots");
+        "standalone-wiring: freshness scans all forty production ownership roots plus four explicit test roots");
+    foreach (carrier; [
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+    ])
+        assert(digest.count(carrier) == 1, "standalone-wiring: exact extracted source freshness input " ~ carrier);
     const library = rawBody(runner, "string buildProjectLib(string scratch)");
     assert(library.count("\" --root=packages/tool-state\"") == 1,
         "standalone-wiring: suite unittest source grant tool-state");
@@ -42,15 +50,15 @@ unittest {
         "standalone-wiring: suite unittest source grant viewport-gpu");
     assert(library.count("\" --root=packages/subpatch-preview\"") == 1,
         "standalone-wiring: suite unittest source grant subpatch-preview");
-    assert(library.count("foreach (root; [\"\", \" --root=packages/camera-model\", \" --root=packages/document-channels\", \" --root=packages/image-codec\", \" --root=packages/document-io\", \" --root=packages/common\", \" --root=packages/document-model\", \" --root=packages/param-schema\", \" --root=packages/pipe-runtime\", \" --root=util/json-number\", \" --root=packages/pipe-contracts\", \" --root=packages/mesh-preview\", \" --root=packages/mesh-ops\", \" --root=packages/tool-state\", \" --root=packages/transform-ops\", \" --root=packages/input-events\", \" --root=packages/display-policy\", \" --root=packages/viewport-gpu\", \" --root=packages/subpatch-preview\"])") == 1
+    assert(library.count("foreach (root; [\"\", \" --root=packages/camera-model\", \" --root=packages/document-channels\", \" --root=packages/image-codec\", \" --root=packages/document-io\", \" --root=packages/command-runtime\", \" --root=packages/application-core\", \" --root=packages/document-model\", \" --root=packages/param-schema\", \" --root=packages/pipe-runtime\", \" --root=util/json-number\", \" --root=packages/pipe-contracts\", \" --root=packages/mesh-preview\", \" --root=packages/mesh-ops\", \" --root=packages/tool-state\", \" --root=packages/transform-ops\", \" --root=packages/input-events\", \" --root=packages/display-policy\", \" --root=packages/viewport-gpu\", \" --root=packages/subpatch-preview\"])") == 1
         && library.count(" --config=modeling --data=source-files --data-list 2>/dev/null") == 1
         && library.count("dmd -lib -unittest%s %s -of=%s 2>&1") == 1
         && library.count("sourceCompileFlags(), srcs.join(\" \"), lib") == 1,
-        "standalone-wiring: suite compiles exactly nineteen source inventories under unittest flags");
+        "standalone-wiring: suite compiles exactly twenty source inventories under unittest flags");
 }
 
 unittest {
-    auto owner = blankNonCode(file("packages/common/source/standalone_application.d"));
+    auto owner = blankNonCode(file("packages/application-core/source/standalone_application.d"));
     auto ctor = body(owner, "this(Document loadedDocument)");
     assert(ctor.count("session_ = Session.create(loadedDocument);") == 1
         && ctor.count("registry_.bindSelTypeAuthority(() => session_.selTypeOrder.current());") == 1

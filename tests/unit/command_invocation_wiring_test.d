@@ -12,10 +12,10 @@ unittest { // Production seams, with scanner-blanked comments and literals.
     import tests.unit.census_symbols : blankNonCode;
     auto binding = blankNonCode(repoFile("source/application_command_binding.d"));
     auto owner = blankNonCode(repoFile("source/registry.d"));
-    auto invocation = blankNonCode(repoFile("packages/common/source/command_invocation.d"));
+    auto invocation = blankNonCode(repoFile("packages/command-runtime/source/command_invocation.d"));
     auto meshFamily = blankNonCode(repoFile("source/mesh_command_registration.d"));
     auto historyFamily = blankNonCode(repoFile("source/history_macro_registration.d"));
-    auto pilot = blankNonCode(repoFile("packages/common/source/pilot_command_registration.d"));
+    auto pilot = blankNonCode(repoFile("packages/application-core/source/pilot_command_registration.d"));
     assert(occurrences(binding, "registry.createCommandInvocationService(executor, history,") == 1
         && occurrences(binding, "new CommandInvocationService(") == 0
         && occurrences(owner, "new CommandInvocationService(commandRegistry_, executor, history,") == 1

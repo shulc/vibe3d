@@ -13,7 +13,7 @@ import snapshot : MeshSnapshot;
 // instead". That was false and it actively discouraged the next reader from
 // covering them: neither touches GL — `MeshSnapshot.restore` is pure data
 // plus `buildLoops`/`resizeAllMeshMaps`/`commitChange`. They are covered
-// CPU-only in `tests/unit/session_edit_payload_test.d` (task 1552).
+// CPU-only in `packages/command-runtime/tests/source/tests/unit/session_edit_payload_test.d` (task 1552).
 // ---------------------------------------------------------------------------
 
 

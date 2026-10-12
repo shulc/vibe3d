@@ -9,9 +9,6 @@
   "importPaths": [],
   "dflags": [],
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../../packages/common"
-    },
     "vibe3d-log": {
       "path": "../../util/log"
     },
@@ -20,15 +17,22 @@
     },
     "vibe3d-document-io": {
       "path": "../../packages/document-io"
+    },
+    "vibe3d-command-runtime": {
+      "path": "../../packages/command-runtime"
+    },
+    "vibe3d-application-core": {
+      "path": "../../packages/application-core"
     }
   },
   "toolchainRequirements": {
     "dmd": ">=2.111.0"
   },
   "subConfigurations": {
-    "vibe3d-common": "modeling-noai",
     "vibe3d-log": "modeling-noai",
     "vibe3d-document-model": "modeling-noai",
-    "vibe3d-document-io": "modeling-noai"
+    "vibe3d-document-io": "modeling-noai",
+    "vibe3d-command-runtime": "modeling-noai",
+    "vibe3d-application-core": "modeling-noai"
   }
 }

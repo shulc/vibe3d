@@ -60,7 +60,7 @@ private static immutable string[] kTokens = [
 /// The roots the census walks. Enumerated per-root rather than swept from the
 /// repo top, so a root that stops existing is a red rather than a silently
 /// smaller scan.
-private static immutable string[] kDirRoots = ["source", "packages/common/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"];
+private static immutable string[] kDirRoots = ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"];
 private static immutable string[] kFileRoots = [
     "run_all.d",
     "run_test.d",
@@ -72,6 +72,18 @@ private static immutable string[] kFileRoots = [
     "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
     "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
     "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/base_revert_flag_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_apply_anchor_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_bindargs_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_registry_test.d",
+        "packages/command-runtime/tests/source/tests/unit/session_edit_payload_test.d",
+        "packages/application-core/tests/source/tests/unit/command_invocation_test.d",
+        "packages/application-core/tests/source/tests/unit/standalone_application_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
 ];
 
 private size_t countIn(string hay, string needle) {
@@ -119,6 +131,8 @@ private Scan scanRoots() {
         "packages/document-channels/source",
         "packages/image-codec/source",
         "packages/document-io/source",
+        "packages/command-runtime/source",
+        "packages/application-core/source",
     ]) {
         size_t occurrences;
         foreach (candidate; kDirRoots) if (candidate == relative) ++occurrences;
@@ -133,11 +147,24 @@ private Scan scanRoots() {
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/base_revert_flag_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_apply_anchor_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_bindargs_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_registry_test.d",
+        "packages/command-runtime/tests/source/tests/unit/session_edit_payload_test.d",
+        "packages/application-core/tests/source/tests/unit/command_invocation_test.d",
+        "packages/application-core/tests/source/tests/unit/standalone_application_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         size_t occurrences;
         foreach (candidate; kFileRoots) if (candidate == relative) ++occurrences;
         assert(occurrences == 1, "census exact source and public carrier membership: " ~ relative);
     }
+    string[] inputPaths;
     foreach (root; kDirRoots) {
         immutable dir = buildPath(repoRoot, root);
         if (!dir.exists
@@ -149,14 +176,62 @@ private Scan scanRoots() {
         assert(dir.exists, "census root " ~ root ~ " does not exist — the scan "
                          ~ "would be silently smaller, not red");
         foreach (de; dirEntries(dir, "*.d", SpanMode.depth))
-            one(de.name[repoRoot.length + 1 .. $], readText(de.name));
+            inputPaths ~= de.name[repoRoot.length + 1 .. $];
     }
     foreach (f; kFileRoots) {
         immutable path = buildPath(repoRoot, f);
         assert(path.exists && path.isFile,
                "census root " ~ f ~ " does not exist");
-        one(f, readText(path));
+        inputPaths ~= f;
     }
+    foreach (relative; [
+        "packages/application-core/source/app_version.d",
+        "packages/command-runtime/source/command.d",
+        "packages/command-runtime/source/command_args.d",
+        "packages/command-runtime/source/command_executor.d",
+        "packages/command-runtime/source/command_history.d",
+        "packages/command-runtime/source/command_invocation.d",
+        "packages/command-runtime/source/command_registry.d",
+        "packages/command-runtime/source/command_tool_policy.d",
+        "packages/command-runtime/source/commands/history/redo.d",
+        "packages/command-runtime/source/commands/history/undo.d",
+        "packages/command-runtime/source/commands/mesh/gesture_payload.d",
+        "packages/command-runtime/source/commands/mesh/mesh_edit_payload.d",
+        "packages/command-runtime/source/commands/mesh/select.d",
+        "packages/command-runtime/source/commands/mesh/selection_undo.d",
+        "packages/command-runtime/source/commands/mesh/session_edit.d",
+        "packages/command-runtime/source/commands/mesh/triple.d",
+        "packages/command-runtime/source/commands/mesh/vertex_edit.d",
+        "packages/command-runtime/source/commands/select/drop.d",
+        "packages/command-runtime/source/commands/select/element.d",
+        "packages/command-runtime/source/commands/select/invert.d",
+        "packages/command-runtime/source/history_lifecycle_contract.d",
+        "packages/application-core/source/http_json.d",
+        "packages/application-core/source/morph_target.d",
+        "packages/application-core/source/pilot_command_registration.d",
+        "packages/command-runtime/source/record_observer_hub.d",
+        "packages/application-core/source/session_owner.d",
+        "packages/application-core/source/standalone_application.d",
+        "packages/command-runtime/source/tool_activation_ownership.d",
+        "packages/application-core/source/live_registration_roles.d",
+        "packages/command-runtime/tests/source/tests/unit/base_revert_flag_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_apply_anchor_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_bindargs_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_registry_test.d",
+        "packages/command-runtime/tests/source/tests/unit/session_edit_payload_test.d",
+        "packages/application-core/tests/source/tests/unit/command_invocation_test.d",
+        "packages/application-core/tests/source/tests/unit/standalone_application_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+    ]) {
+        size_t occurrences;
+        foreach (candidate; inputPaths) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "census historical input membership: " ~ relative);
+    }
+    foreach (relative; inputPaths) one(relative, readText(buildPath(repoRoot, relative)));
     return r;
 }
 

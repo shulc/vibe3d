@@ -233,9 +233,13 @@ bool instantiates(string code, string name) {
 private ClassScan scanCommandsTree(string root) {
     ClassScan all;
     string[] files;
-    foreach (scanSourceRoot; [buildPath(root, "source", "commands"), buildPath(root, "packages/common/source", "commands")])
+    foreach (scanSourceRoot; [buildPath(root, "source", "commands"), buildPath(root, "packages/command-runtime/source", "commands")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         files ~= de.name;
+    foreach (relative; [
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+    ]) files ~= buildPath(root, relative);
     sort(files);
     foreach (f; files) {
         const one = scanClasses(readText(f), f[root.length + 1 .. $]);
@@ -338,10 +342,18 @@ unittest { // the tree walk aggregates decls, unread and sites per file (task 81
     const root = buildPath(tempDir, format("crc8130-%d", thisProcessID));
     scope (exit) if (exists(root)) rmdirRecurse(root);
     mkdirRecurse(buildPath(root, "source", "commands", "b"));
-    mkdirRecurse(buildPath(root, "packages/common/source/commands"));
+    mkdirRecurse(buildPath(root, "packages/command-runtime/source/commands"));
     write(buildPath(root, "source", "commands", "a.d"),
           "class U(T) if (is(T == int)) : Command {}\nclass V : Command {}\n");
     write(buildPath(root, "source", "commands", "b", "c.d"), "\nclass W : .Command {}\n");
+    foreach (relative; [
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+    ]) {
+        const path = buildPath(root, relative);
+        mkdirRecurse(dirName(path));
+        write(path, "module synthetic_empty_carrier;\n");
+    }
     const r = scanCommandsTree(root);
     assert(r.keywordSites == 3, format("expected 3 keyword sites; got %d", r.keywordSites));
     assert(r.decls.length == 1 && r.decls[0].name == "V",
@@ -479,7 +491,7 @@ unittest {
     foreach (ref row; kBuiltElsewhere)
         builderRegexes ~= instantiationRegex(row.name);
     LedgerHit[] builderHits;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const code = blankUnittestBodies(blankNonCode(readText(de.name)));
@@ -495,6 +507,11 @@ unittest {
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
         const code = blankUnittestBodies(blankNonCode(readText(sourceCarrierPath)));
@@ -543,11 +560,11 @@ unittest {
     // this test exists for under a "the scanner is broken" message that was
     // not true.
     {
-        const sampleFile = buildPath(repoRoot, "packages", "common", "source", "commands", "history", "redo.d");
+        const sampleFile = buildPath(repoRoot, "packages", "command-runtime", "source", "commands", "history", "redo.d");
         const sampleText = readText(sampleFile);
         size_t unregisteredIn(string text) {
             size_t n;
-            foreach (ref d; commandDerived(scanClassDecls(text, "packages/common/source/commands/history/redo.d")))
+            foreach (ref d; commandDerived(scanClassDecls(text, "packages/command-runtime/source/commands/history/redo.d")))
                 if (!d.isAbstract && !instantiates(regCode, d.name)) n++;
             return n;
         }
@@ -568,7 +585,7 @@ unittest {
                  ~ "unregistered count from %d to %d; the scanner saw %d",
                    base, base + 1, withSplit));
         size_t unreadIn(string text) {
-            return scanClasses(text, "packages/common/source/commands/history/redo.d").unread.length;
+            return scanClasses(text, "packages/command-runtime/source/commands/history/redo.d").unread.length;
         }
         const unreadBase = unreadIn(sampleText);
         const withUnread = unreadIn(sampleText

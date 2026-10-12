@@ -318,7 +318,7 @@ unittest {
     size_t registryTuple;
     size_t mixes;
     size_t privateNames;
-    const string[] censusRoots = ["source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source"];
+    const string[] censusRoots = ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source"];
     const string[] historicalCarriers = [
         "packages/camera-model/tests/source/tests/unit/view_test.d",
         "packages/document-channels/tests/source/tests/unit/layer_params_test.d",
@@ -328,6 +328,18 @@ unittest {
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/command-runtime/tests/source/tests/unit/base_revert_flag_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_apply_anchor_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_bindargs_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_registry_test.d",
+        "packages/command-runtime/tests/source/tests/unit/session_edit_payload_test.d",
+        "packages/application-core/tests/source/tests/unit/command_invocation_test.d",
+        "packages/application-core/tests/source/tests/unit/standalone_application_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ];
     string[] inputPaths;
     foreach (root; censusRoots) {
@@ -343,6 +355,8 @@ unittest {
         "packages/document-channels/source",
         "packages/image-codec/source",
         "packages/document-io/source",
+        "packages/command-runtime/source",
+        "packages/application-core/source",
     ]) {
         size_t occurrences;
         foreach (candidate; censusRoots) if (candidate == relative) ++occurrences;
@@ -363,6 +377,47 @@ unittest {
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+        "packages/application-core/source/app_version.d",
+        "packages/command-runtime/source/command.d",
+        "packages/command-runtime/source/command_args.d",
+        "packages/command-runtime/source/command_executor.d",
+        "packages/command-runtime/source/command_history.d",
+        "packages/command-runtime/source/command_invocation.d",
+        "packages/command-runtime/source/command_registry.d",
+        "packages/command-runtime/source/command_tool_policy.d",
+        "packages/command-runtime/source/commands/history/redo.d",
+        "packages/command-runtime/source/commands/history/undo.d",
+        "packages/command-runtime/source/commands/mesh/gesture_payload.d",
+        "packages/command-runtime/source/commands/mesh/mesh_edit_payload.d",
+        "packages/command-runtime/source/commands/mesh/select.d",
+        "packages/command-runtime/source/commands/mesh/selection_undo.d",
+        "packages/command-runtime/source/commands/mesh/session_edit.d",
+        "packages/command-runtime/source/commands/mesh/triple.d",
+        "packages/command-runtime/source/commands/mesh/vertex_edit.d",
+        "packages/command-runtime/source/commands/select/drop.d",
+        "packages/command-runtime/source/commands/select/element.d",
+        "packages/command-runtime/source/commands/select/invert.d",
+        "packages/command-runtime/source/history_lifecycle_contract.d",
+        "packages/application-core/source/http_json.d",
+        "packages/application-core/source/morph_target.d",
+        "packages/application-core/source/pilot_command_registration.d",
+        "packages/command-runtime/source/record_observer_hub.d",
+        "packages/application-core/source/session_owner.d",
+        "packages/application-core/source/standalone_application.d",
+        "packages/command-runtime/source/tool_activation_ownership.d",
+        "packages/application-core/source/live_registration_roles.d",
+        "packages/command-runtime/tests/source/tests/unit/base_revert_flag_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_apply_anchor_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_bindargs_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_registry_test.d",
+        "packages/command-runtime/tests/source/tests/unit/session_edit_payload_test.d",
+        "packages/application-core/tests/source/tests/unit/command_invocation_test.d",
+        "packages/application-core/tests/source/tests/unit/standalone_application_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) {
         size_t occurrences;
         foreach (candidate; inputPaths)
@@ -376,7 +431,7 @@ unittest {
             codeBytes += code.length;
             registryTuple += code.count("Registry.tupleof");
             if (relative != "source/registry.d"
-                    && relative != "packages/common/source/command_registry.d"
+                    && relative != "packages/command-runtime/source/command_registry.d"
                     && relative != "tests/unit/registry_construction_authority_test.d")
                 if (hasIdentifier(code, "commandFactories_")
                         || hasIdentifier(code, "toolFactories_")) ++privateNames;
@@ -448,7 +503,7 @@ unittest {
 // half using a real family and binding.
 unittest {
     string[] registrarNames;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/application-core/source")])
     foreach (de; dirEntries(scanSourceRoot,
                             "*_registration.d", SpanMode.shallow))
         registrarNames ~= baseName(de.name);
@@ -467,7 +522,7 @@ unittest {
 
 // The lower behavior probe is complemented by actual desktop attachment wiring.
 version (AccessRuntimeOnly) {} else unittest {
-    const lower = blankNonCode(readText(buildPath(repoRoot, "packages", "common", "source", "command_registry.d")));
+    const lower = blankNonCode(readText(buildPath(repoRoot, "packages", "command-runtime", "source", "command_registry.d")));
     const desktop = blankNonCode(readText(buildPath(repoRoot, "source", "registry.d")));
     const factory = symbolTokenHits(desktop, "source/registry.d",
         "new CommandInvocationService(commandRegistry_, executor, history,");
@@ -475,7 +530,7 @@ version (AccessRuntimeOnly) {} else unittest {
         "1D owner factory must borrow the embedded lower owner");
     assert(desktop.count("ref CommandRegistry") == 0 && desktop.count("CommandRegistry*") == 0,
         "1D owner must not export a named ref or pointer");
-    const attached = symbolTokenHits(lower, "packages/common/source/command_registry.d",
+    const attached = symbolTokenHits(lower, "packages/command-runtime/source/command_registry.d",
         "command.setSelTypeProvider(selTypeAuthority_)");
     assert(attached.length == 1 && attached[0].key == "CommandRegistry.makeCommand",
         "1C lower makeCommand must attach the live selection provider");

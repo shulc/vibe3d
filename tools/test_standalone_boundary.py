@@ -23,7 +23,7 @@ class BoundaryControls(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(actual / relative / 'dub.json', target)
             result = subprocess.run(['dub', 'describe', '--root=' + str(actual / relative),
-                '--config=' + ('modeling-noai' if relative == 'packages/common' else 'core'
+                '--config=' + ('modeling-noai' if relative in ('packages/command-runtime', 'packages/application-core') else 'core'
                                if relative == 'tests/core' else 'application'),
                 '--compiler=dmd', '--quiet'], text=True, capture_output=True, check=True)
             cls.descriptions[relative] = json.loads(result.stdout.replace(str(actual), str(cls.project)))
@@ -31,7 +31,10 @@ class BoundaryControls(unittest.TestCase):
             target=cls.project/spec['root']/'dub.json'
             target.parent.mkdir(parents=True,exist_ok=True)
             shutil.copyfile(actual/spec['root']/'dub.json',target)
-        for path in (p for spec in support.SPECS.values() for p in (actual/spec['root']/'source').rglob('*.d')):
+        core = json.loads((actual/'tests/core/dub.json').read_text())
+        source_paths = [p for spec in support.SPECS.values() for p in (actual/spec['root']/'source').rglob('*.d')]
+        source_paths += [(actual/'tests/core'/p).resolve() for p in core['sourceFiles']]
+        for path in source_paths:
             target = cls.project / path.relative_to(actual)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
@@ -92,32 +95,35 @@ class BoundaryControls(unittest.TestCase):
                 for field in boundary.HOOKS:
                     reject(lambda d: d['packages'][index].setdefault(field, []).append('echo changed'), 'package hook')
 
-    def test_common_source_inventory_is_live(self):
-        root = self.project / 'packages/common'
-        path = root / 'source/additional_model.d'
-        original = self.descriptions['packages/common']
-        path.write_text('module additional_model;')
-        try:
-            with self.assertRaisesRegex(boundary.BoundaryError, 'resolved sourceFiles'):
-                boundary.validate_package_settings(original, root)
-            changed = copy.deepcopy(original)
-            next(t for t in changed['targets'] if t['rootPackage']=='vibe3d-common')['buildSettings']['sourceFiles'].append(str(path))
-            boundary.validate_package_settings(changed, root)
-        finally:
-            path.unlink()
+    def test_owner_source_inventory_is_live(self):
+        for relative in ('packages/command-runtime', 'packages/application-core'):
+            root = self.project / relative
+            path = root / 'source/additional_model.d'
+            original = self.descriptions[relative]
+            owner = json.loads((root / 'dub.json').read_text())['name']
+            path.write_text('module additional_model;')
+            try:
+                with self.assertRaisesRegex(boundary.BoundaryError, 'resolved sourceFiles'):
+                    boundary.validate_package_settings(original, root)
+                changed = copy.deepcopy(original)
+                next(t for t in changed['targets'] if t['rootPackage']==owner)['buildSettings']['sourceFiles'].append(str(path))
+                boundary.validate_package_settings(changed, root)
+            finally:
+                path.unlink()
 
     def test_ldc_mesh_ops_archive_flag_scope(self):
         compiler = str(Path.home() / '.local/dlang/ldc2-1.42.0-linux-x86_64/bin/ldc2')
         actual = Path(__file__).resolve().parents[1]
-        for relative, config in (('packages/common', 'modeling-noai'), ('tests/core', 'core')):
+        for relative, config in (('packages/command-runtime', 'modeling-noai'), ('packages/application-core', 'modeling-noai'), ('tests/core', 'core')):
             result = subprocess.run(['dub', 'describe', '--root=' + str(actual / relative),
                 '--config=' + config, '--compiler=' + compiler, '--quiet'],
                 text=True, capture_output=True, check=True)
             description = json.loads(result.stdout.replace(str(actual), str(self.project)))
             root = self.project / relative
             boundary.validate_package_settings(description, root, compiler)
-            if relative == 'packages/common':
-                for name in ('vibe3d-common', 'vibe3d-mesh-ops'):
+            if relative != 'tests/core':
+                owner = json.loads((root / 'dub.json').read_text())['name']
+                for name in (owner, 'vibe3d-mesh-ops'):
                     changed = copy.deepcopy(description)
                     target = next(t for t in changed['targets'] if t['rootPackage'] == name)
                     self.assertEqual(target['buildSettings']['dflags'], ['--singleobj'])
@@ -127,12 +133,12 @@ class BoundaryControls(unittest.TestCase):
                     target['buildSettings']['dflags'] = ['--singleobj', '--singleobj']
                     with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: ' + name + ':dflags'):
                         boundary.validate_package_settings(changed, root, compiler)
-                with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: vibe3d-common:dflags'):
+                with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: ' + owner + ':dflags'):
                     boundary.validate_package_settings(description, root, 'dmd')
-                for name in ('vibe3d-common', 'vibe3d-mesh-ops'):
+                for name in (owner, 'vibe3d-mesh-ops'):
                     changed = copy.deepcopy(description)
                     next(p for p in changed['packages'] if p['name'] == name)['configuration'] = 'isolated-tests'
-                    with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: vibe3d-common:dflags'):
+                    with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: ' + owner + ':dflags'):
                         boundary.validate_package_settings(changed, root, compiler)
                 target = next(t for t in description['targets'] if t['rootPackage'] == 'vibe3d-math')
             else:

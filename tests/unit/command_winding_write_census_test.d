@@ -130,8 +130,12 @@ unittest // no command writes a face winding by hand
       ~ "zero for the one reason that is not a finding");
 
     string[] paths;
-    foreach (scanSourceRoot; [zone, buildPath(repoRoot(), "packages/common/source", "commands")])
+    foreach (scanSourceRoot; [zone, buildPath(repoRoot(), "packages/command-runtime/source", "commands")])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) paths ~= e.name;
+    foreach (relative; [
+        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
+    ]) paths ~= buildPath(repoRoot(), relative);
     paths.sort();
 
     // THE ANTI-DUPLICATION TERM, and it is not decoration: a repeated path

@@ -23,7 +23,7 @@
 		"dmd": ">=2.111.0",
 		"ldc": ">=1.41.0"
 	},
-	"_comment-version": "MIRROR, not the source of truth. The version the BINARY reports is `appVersion` in source/app_version.d \u2014 a plain D literal, so a clean clone with no git and no network still produces a binary that can name itself. This field exists because it is what `dub describe` and any package consumer read; tests/test_app_version.d fails when the two disagree, and CI's tag check keys off the D literal.",
+	"_comment-version": "MIRROR, not the source of truth. The version the BINARY reports is `appVersion` in packages/application-core/source/app_version.d \u2014 a plain D literal, so a clean clone with no git and no network still produces a binary that can name itself. This field exists because it is what `dub describe` and any package consumer read; tests/test_app_version.d fails when the two disagree, and CI's tag check keys off the D literal.",
 	"version": "0.0.2",
 	"sourcePaths": [
 		"source"
@@ -72,8 +72,11 @@
 			"version": "e74bb683d869d31ddcb279b2f05bfaebd53065ee",
 			"repository": "git+https://github.com/shulc/D-OpenSubdiv.git"
 		},
-		"vibe3d-common": {
-			"path": "packages/common"
+		"vibe3d-command-runtime": {
+			"path": "packages/command-runtime"
+		},
+		"vibe3d-application-core": {
+			"path": "packages/application-core"
 		},
 		"vibe3d-mesh-ops": {
 			"path": "packages/mesh-ops"
@@ -351,7 +354,8 @@
 			},
 			"_comment": "Default. Modeling-only build \u2014 no IPR, no Cycles/RPR runtime, no D-Cycles/D-RadeonProRender dependencies. Fast compile, no extra system libs needed. All code under source/render/* and source/material/* is excluded from the build (gated by `version (WithRender)`). Includes the AI candidate ranker (version WithAI + d-onnxruntime).",
 			"subConfigurations": {
-				"vibe3d-common": "modeling",
+				"vibe3d-command-runtime": "modeling",
+				"vibe3d-application-core": "modeling",
 				"vibe3d-mesh-ops": "modeling",
 				"vibe3d-interchange": "modeling",
 				"vibe3d-interaction-query": "modeling",
@@ -400,7 +404,8 @@
 			},
 			"_comment": "AI-less modeling build (Windows 7 target). Same as `modeling` but WithAI is undefined and d-onnxruntime is NOT pulled in, so source/ai/onnx_backend.d compiles to an empty module and the statusline AI button renders as a disabled placeholder. The pure-D AI heuristics still compile but are unreachable (master switch stays off). Rationale: onnxruntime.dll statically imports api-ms-win-core-path-l1-1-0.dll (Windows 8+) \u2014 omitting it is the prerequisite for a binary that can load on Windows 7. CI's Win7 zip pairs this config with app-local UCRT + VC++ runtime DLLs.",
 			"subConfigurations": {
-				"vibe3d-common": "modeling-noai",
+				"vibe3d-command-runtime": "modeling-noai",
+				"vibe3d-application-core": "modeling-noai",
 				"vibe3d-mesh-ops": "modeling-noai",
 				"vibe3d-interchange": "modeling-noai",
 				"vibe3d-interaction-query": "modeling-noai",
@@ -465,7 +470,8 @@
 			},
 			"_comment": "Opt-in build with two render backends (Cycles via D-Cycles, RPR via D-RadeonProRender) plus the AI ranker. The default `modeling` config never references the render repos so `dub build` works on machines that have neither. Git dependencies are pinned to commit SHAs so CI can reuse the persistent dub cache instead of re-cloning heavyweight repositories. For active backend development, register a local override once: `dub add-local ~/Code/D-RadeonProRender && dub add-local ~/Code/D-Cycles`. D-Cycles builds its C shim via CMake (Blender LFS submodule + optional CUDA/OptiX); D-RadeonProRender is dynamic-loaded bindbc. See doc/shader_framework_plan.md.",
 			"subConfigurations": {
-				"vibe3d-common": "with-render",
+				"vibe3d-command-runtime": "with-render",
+				"vibe3d-application-core": "with-render",
 				"vibe3d-mesh-ops": "with-render",
 				"vibe3d-interchange": "with-render",
 				"vibe3d-interaction-query": "with-render",
@@ -522,7 +528,8 @@
 			},
 			"sourcePaths": [
 				"source",
-				"packages/common/source",
+				"packages/command-runtime/source",
+				"packages/application-core/source",
 				"packages/mesh-ops/source",
 				"packages/interchange/source",
 				"tests/unit",
@@ -532,7 +539,8 @@
 				"packages/pipe-evaluation/source",
 				"packages/interaction-query/tests/source",
 				"packages/pipe-evaluation/tests/source",
-				"packages/common/tests/source",
+				"packages/command-runtime/tests/source",
+				"packages/application-core/tests/source",
 				"packages/tool-state/source",
 				"packages/tool-state/tests/source",
 				"packages/transform-ops/source",
@@ -606,7 +614,8 @@
 			"importPaths": [
 				"source",
 				"tools/perf",
-				"packages/common/source",
+				"packages/command-runtime/source",
+				"packages/application-core/source",
 				"packages/mesh-ops/source",
 				"packages/interchange/source",
 				"packages/mesh-ops/tests/source",
@@ -615,7 +624,8 @@
 				"packages/pipe-evaluation/source",
 				"packages/interaction-query/tests/source",
 				"packages/pipe-evaluation/tests/source",
-				"packages/common/tests/source",
+				"packages/command-runtime/tests/source",
+				"packages/application-core/tests/source",
 				"packages/tool-state/source",
 				"packages/tool-state/tests/source",
 				"packages/transform-ops/source",
@@ -685,7 +695,8 @@
 			"_comment-sourcepaths": "All fourteen production owners compile directly under root unittest flags in one compiler target, preserving private blocks. Desktop and all thirteen package public test roots register through the generated test main. Test-only sourceLibrary selections prevent package D archive links; native and external archives remain declared.",
 			"_comment-duplication": "`WithAI` + d-onnxruntime are copied from `modeling` rather than hoisted to the root ON PURPOSE: `modeling-noai` deliberately omits both (Windows 7 target -- onnxruntime.dll needs Win8+ APIs), so hoisting them would silently un-do that build. Keep this block in sync with `modeling` by hand; there are only two lines of it.",
 			"subConfigurations": {
-				"vibe3d-common": "root-tests",
+				"vibe3d-command-runtime": "root-tests",
+				"vibe3d-application-core": "root-tests",
 				"vibe3d-mesh-ops": "root-tests",
 				"vibe3d-interchange": "root-tests",
 				"vibe3d-interaction-query": "root-tests",
@@ -732,7 +743,8 @@
 			],
 			"subConfigurations": {
 				"bindbc-sdl": "static",
-				"vibe3d-common": "web",
+				"vibe3d-command-runtime": "web",
+				"vibe3d-application-core": "web",
 				"vibe3d-mesh-ops": "web",
 				"vibe3d-interchange": "web",
 				"vibe3d-interaction-query": "web",
