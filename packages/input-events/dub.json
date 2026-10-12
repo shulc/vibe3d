@@ -141,9 +141,6 @@
     }
   },
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../common"
-    },
     "bindbc-sdl": "~>1.5.2",
     "dyaml": {
       "version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
@@ -163,7 +160,6 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "modeling",
         "vibe3d-log": "modeling"
       }
     },
@@ -171,7 +167,6 @@
       "name": "modeling-noai",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-common": "modeling-noai",
         "vibe3d-log": "modeling-noai"
       }
     },
@@ -182,7 +177,6 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "with-render",
         "vibe3d-log": "with-render"
       }
     },
@@ -192,7 +186,6 @@
         "web"
       ],
       "subConfigurations": {
-        "vibe3d-common": "web",
         "bindbc-sdl": "static",
         "vibe3d-log": "web"
       }
@@ -203,7 +196,6 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "root-tests",
         "vibe3d-log": "root-tests"
       },
       "targetType": "sourceLibrary"
@@ -212,7 +204,6 @@
       "name": "isolated-tests",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-common": "isolated-tests",
         "vibe3d-log": "isolated-tests"
       },
       "targetType": "sourceLibrary"

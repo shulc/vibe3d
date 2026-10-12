@@ -13,9 +13,6 @@
     "source/tests/unit/tools/create/pen_geometry_test.d"
   ],
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../../common"
-    },
     "vibe3d-interaction-query": {
       "path": "../../interaction-query"
     },
@@ -176,7 +173,6 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-common": "isolated-tests",
         "vibe3d-interaction-query": "isolated-tests",
         "vibe3d-edit-contracts": "isolated-tests",
         "vibe3d-math": "isolated-tests",

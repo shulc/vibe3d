@@ -139,9 +139,6 @@
     }
   },
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../../common"
-    },
     "vibe3d-math": {
       "path": "../../../util/math"
     },
@@ -157,7 +154,6 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-common": "isolated-tests",
         "vibe3d-math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests"
       }

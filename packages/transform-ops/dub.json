@@ -7,9 +7,6 @@
     "source"
   ],
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../common"
-    },
     "vibe3d-interaction-query": {
       "path": "../interaction-query"
     },
@@ -181,7 +178,6 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "modeling",
         "vibe3d-interaction-query": "modeling",
         "vibe3d-mesh-edit-log": "modeling",
         "vibe3d-spatial": "modeling",
@@ -197,7 +193,6 @@
       "name": "modeling-noai",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-common": "modeling-noai",
         "vibe3d-interaction-query": "modeling-noai",
         "vibe3d-mesh-edit-log": "modeling-noai",
         "vibe3d-spatial": "modeling-noai",
@@ -216,7 +211,6 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "with-render",
         "vibe3d-interaction-query": "with-render",
         "vibe3d-mesh-edit-log": "with-render",
         "vibe3d-spatial": "with-render",
@@ -234,7 +228,6 @@
         "web"
       ],
       "subConfigurations": {
-        "vibe3d-common": "web",
         "vibe3d-interaction-query": "web",
         "vibe3d-mesh-edit-log": "web",
         "vibe3d-spatial": "web",
@@ -252,7 +245,6 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-common": "root-tests",
         "vibe3d-interaction-query": "root-tests",
         "vibe3d-mesh-edit-log": "root-tests",
         "vibe3d-spatial": "root-tests",
@@ -269,7 +261,6 @@
       "name": "isolated-tests",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-common": "isolated-tests",
         "vibe3d-interaction-query": "isolated-tests",
         "vibe3d-mesh-edit-log": "isolated-tests",
         "vibe3d-spatial": "isolated-tests",

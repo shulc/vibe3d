@@ -27,9 +27,6 @@
     "source/tools/transform/relocate_plane_test.d"
   ],
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../../common"
-    },
     "vibe3d-interaction-query": {
       "path": "../../interaction-query"
     },
@@ -198,7 +195,6 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-common": "isolated-tests",
         "vibe3d-interaction-query": "isolated-tests",
         "vibe3d-math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",

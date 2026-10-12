@@ -139,9 +139,6 @@
     }
   },
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../../common"
-    },
     "bindbc-sdl": "~>1.5.2",
     "dyaml": {
       "version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
@@ -162,7 +159,6 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-common": "isolated-tests",
         "vibe3d-log": "isolated-tests"
       }
     }
