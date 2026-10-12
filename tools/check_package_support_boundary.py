@@ -2493,6 +2493,7 @@ CONFIGS = ('modeling', 'modeling-noai', 'with-render', 'web', 'root-tests')
 HOOKS = ('preGenerateCommands', 'postGenerateCommands', 'preBuildCommands',
          'postBuildCommands', 'preRunCommands', 'postRunCommands')
 FIXTURES = {'input-events': ('config/shortcuts.yaml', '99c14eaa556d365f42ead60e30db9aa926723b0ee0a9b1ae4f823542a10fbff8'),
+            'display-policy': ('tests/fixtures/retopology_display.json', '7d5d2aba420e1e6927ebd72b9a29bd47503e6958c5413e54de2f6aeb0c78f808'),
             'viewport-gpu': ('assets/icon/png/vibe3d_16.png', '2efe412bb268afa882bbde043473c4e3990302ef76899938914b3e525ce7817e'),
             'mesh-preview': ('tests/fixtures/morph_routing_laws.json', '9067efdbbeac2c37f72f365648e49ecf9fea1ded0d0dcf3bb4c65ecdcd06356c'),
             'pipe-runtime': ('tests/fixtures/falloff_selection_bake.json', '336f6524a11ecd585a525522467c3db1d2dca251da69ffb73cbeaad592d63404')}
