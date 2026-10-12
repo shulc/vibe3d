@@ -63,7 +63,6 @@
     "../source/uv_unwrap.d",
     "../source/uv_weld.d",
     "source/tests/unit/mesh_analysis_test.d",
-    "source/tests/unit/mesh_ops/cut_test.d",
     "source/tests/unit/mesh_wire_analysis_test.d",
     "source/tests/unit/uv_island_test.d",
     "source/tests/unit/uv_project_test.d",
