@@ -1338,6 +1338,13 @@ def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=
                      mutant_root / "source/commands/tool/set.d")
         (mutant_root / "config").mkdir()
         shutil.copy2(ROOT / "config/tool_presets.yaml", mutant_root / "config/tool_presets.yaml")
+        for relative in (
+                "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+                "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+                "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d"):
+            destination = mutant_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / relative, destination)
         edit(mutant_root)
         try:
             actual = scan_writer_graph(mutant_root)
