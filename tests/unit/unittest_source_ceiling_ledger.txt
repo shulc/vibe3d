@@ -3,7 +3,8 @@
 # Refresh:
 #     rdmd -version=CeilingLedgerTool -I. \
 #         tests/unit/unittest_source_ceiling_test.d > \
-#         tests/unit/unittest_source_ceiling_ledger.txt
+#         tests/unit/unittest_source_ceiling_ledger.txt.new && \
+#         mv tests/unit/unittest_source_ceiling_ledger.txt.new tests/unit/unittest_source_ceiling_ledger.txt
 #
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for; an in-module unittest under source/ is

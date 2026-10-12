@@ -377,7 +377,8 @@ void main(string[] args)
     writeln("# Refresh:");
     writeln("#     rdmd -version=CeilingLedgerTool -I. \\");
     writeln("#         tests/unit/unittest_source_ceiling_test.d > \\");
-    writeln("#         " ~ ledgerPath);
+    writeln("#         " ~ ledgerPath ~ ".new && \\");
+    writeln("#         mv " ~ ledgerPath ~ ".new " ~ ledgerPath);
     writeln("#");
     writeln("# Then READ THE DIFF. Regeneration is mechanical and will absorb an");
     writeln("# addition nobody argued for; an in-module unittest under source/ is");

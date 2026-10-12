@@ -3,19 +3,21 @@
 # Refresh:
 #     rdmd -version=CitationLedgerTool -I. \
 #         tests/unit/comment_prose_ceiling_test.d > \
-#         tests/unit/comment_prose_ceiling_ledger.txt
+#         tests/unit/comment_prose_ceiling_ledger.txt.new && \
+#         mv tests/unit/comment_prose_ceiling_ledger.txt.new tests/unit/comment_prose_ceiling_ledger.txt
 #
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 608
-task-citation-lines 5176
+task-citation-lines 5171
 citing-files 469
 long-comment-runs 258
 files-with-long-runs 142
 
 # Exact per-file task-citation allowances, sorted by path.
 allow packages/alignment-ops/source/tools/alignment/align_kernels.d 6
+allow packages/camera-model/source/view.d 10
 allow packages/common/source/app_version.d 1
 allow packages/common/source/command.d 27
 allow packages/common/source/command_args.d 3
@@ -30,15 +32,9 @@ allow packages/common/source/commands/mesh/triple.d 5
 allow packages/common/source/commands/mesh/vertex_edit.d 5
 allow packages/common/source/commands/select/invert.d 2
 allow packages/common/source/http_json.d 8
-allow packages/common/source/io/file_model.d 1
-allow packages/common/source/io/image_decode.d 3
-allow packages/common/source/io/image_path.d 5
-allow packages/common/source/io/native.d 56
-allow packages/common/source/layer_params.d 19
 allow packages/common/source/record_observer_hub.d 1
 allow packages/common/source/session_owner.d 2
 allow packages/common/source/tool_activation_ownership.d 6
-allow packages/common/source/view.d 11
 allow packages/creation-ops/source/tools/create/pen_geometry.d 1
 allow packages/display-policy/source/camera_stamp.d 3
 allow packages/display-policy/source/display_state.d 14
@@ -47,11 +43,16 @@ allow packages/display-policy/source/vertex_normals.d 1
 allow packages/display-policy/source/viewport_overlay_mode.d 6
 allow packages/display-policy/source/viewport_scheme.d 8
 allow packages/display-policy/source/weightmap_view.d 1
+allow packages/document-channels/source/layer_params.d 19
+allow packages/document-io/source/io/file_model.d 1
+allow packages/document-io/source/io/image_path.d 5
+allow packages/document-io/source/io/native.d 52
 allow packages/document-model/source/document.d 37
 allow packages/document-model/source/document_selection.d 63
 allow packages/document-model/source/image_data.d 7
 allow packages/document-model/source/item_kinds.d 12
 allow packages/edit-contracts/source/seltype.d 3
+allow packages/image-codec/source/io/image_decode.d 3
 allow packages/input-events/source/eventlog.d 1
 allow packages/input-events/source/input_context.d 3
 allow packages/input-events/source/input_zones.d 1
@@ -495,12 +496,12 @@ allow-runs packages/common/source/commands/mesh/gesture_payload.d 1
 allow-runs packages/common/source/commands/mesh/selection_undo.d 1
 allow-runs packages/common/source/commands/mesh/session_edit.d 1
 allow-runs packages/common/source/http_json.d 1
-allow-runs packages/common/source/io/image_path.d 1
-allow-runs packages/common/source/io/native.d 1
-allow-runs packages/common/source/layer_params.d 2
 allow-runs packages/display-policy/source/camera_stamp.d 1
 allow-runs packages/display-policy/source/display_state.d 1
 allow-runs packages/display-policy/source/weightmap_view.d 1
+allow-runs packages/document-channels/source/layer_params.d 2
+allow-runs packages/document-io/source/io/image_path.d 1
+allow-runs packages/document-io/source/io/native.d 1
 allow-runs packages/document-model/source/document.d 2
 allow-runs packages/document-model/source/document_selection.d 4
 allow-runs packages/document-model/source/image_data.d 1

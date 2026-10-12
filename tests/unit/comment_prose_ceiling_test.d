@@ -446,7 +446,8 @@ void main(string[] args)
     writeln("# Refresh:");
     writeln("#     rdmd -version=CitationLedgerTool -I. \\");
     writeln("#         tests/unit/comment_prose_ceiling_test.d > \\");
-    writeln("#         " ~ ledgerPath);
+    writeln("#         " ~ ledgerPath ~ ".new && \\");
+    writeln("#         mv " ~ ledgerPath ~ ".new " ~ ledgerPath);
     writeln("#");
     writeln("# Then READ THE DIFF. Regeneration is mechanical and will absorb an");
     writeln("# addition nobody argued for. Every row is exact and may only fall.");
