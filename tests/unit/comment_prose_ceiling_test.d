@@ -26,7 +26,8 @@
 //
 //     rdmd -version=CitationLedgerTool -I. \
 //         tests/unit/comment_prose_ceiling_test.d > \
-//         tests/unit/comment_prose_ceiling_ledger.txt
+//         tests/unit/comment_prose_ceiling_ledger.txt.new && \
+//         mv tests/unit/comment_prose_ceiling_ledger.txt.new tests/unit/comment_prose_ceiling_ledger.txt
 module tests.unit.comment_prose_ceiling_test;
 
 import std.algorithm : sort;
@@ -58,7 +59,8 @@ private enum citationRe = ctRegex!(
     `|(^|[^A-Za-z0-9_])tasks/[A-Za-z]+/[0-9]{4}([^0-9]|$)`, "i");
 private enum refreshCommand =
     "rdmd -version=CitationLedgerTool -I. " ~
-    "tests/unit/comment_prose_ceiling_test.d > " ~ ledgerPath;
+    "tests/unit/comment_prose_ceiling_test.d > " ~ ledgerPath ~ ".new && mv " ~
+    ledgerPath ~ ".new " ~ ledgerPath;
 
 private struct Ledger
 {
@@ -232,7 +234,7 @@ private FileCount[] scanSourceTree(string root)
     if (!isDir(sourceDir)) return [];
 
     auto found = appender!(FileCount[]);
-    foreach (scanSourceRoot; [sourceDir, buildPath(root, "packages/common/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source"), buildPath(root, "packages/pipe-contracts/source"), buildPath(root, "packages/mesh-preview/source"), buildPath(root, "util/json-number/source")])
+    foreach (scanSourceRoot; [sourceDir, buildPath(root, "packages/common/source"), buildPath(root, "packages/camera-model/source"), buildPath(root, "packages/document-channels/source"), buildPath(root, "packages/image-codec/source"), buildPath(root, "packages/document-io/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source"), buildPath(root, "packages/pipe-contracts/source"), buildPath(root, "packages/mesh-preview/source"), buildPath(root, "util/json-number/source")])
 
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth))
     {

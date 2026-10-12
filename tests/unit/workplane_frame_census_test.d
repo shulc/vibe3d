@@ -44,7 +44,7 @@ private struct Src { string rel, raw, code; }
 /// Every `source/**/*.d`; `production` drops the in-source `*_test.d` modules.
 private Src[] sources(bool production) {
     Src[] r;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")])
 
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (production && e.name.endsWith("_test.d")) continue;
@@ -76,6 +76,39 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     assert(all.length == prod.length, format("%s source files, %s production; "
         ~ "Wave6 source test carrier belongs to transform tests", all.length, prod.length));
 
+    const string[] sourceCarriers = [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ];
+    Src[] logicalRaw = all.dup, logicalCode = prod.dup;
+    foreach (relative; sourceCarriers) {
+        const raw = readText(buildPath(repoRoot, relative));
+        const s = Src(relative, raw, blankUnittestBodies(blankNonCode(raw)));
+        logicalRaw ~= s;
+        logicalCode ~= s;
+    }
+    foreach (relative; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        size_t rawOccurrences, codeOccurrences;
+        foreach (s; logicalRaw) if (s.rel == relative) ++rawOccurrences;
+        foreach (s; logicalCode) if (s.rel == relative) ++codeOccurrences;
+        assert(rawOccurrences == 1 && codeOccurrences == 1,
+               "workplane logical source carrier membership: " ~ relative);
+    }
+    assert(logicalRaw.length == 611 && logicalCode.length == 611,
+           "workplane logical production and source carrier population 611");
+    foreach (physical; prod) {
+        size_t rawOccurrences, codeOccurrences;
+        foreach (s; logicalRaw) if (s.rel == physical.rel) ++rawOccurrences;
+        foreach (s; logicalCode) if (s.rel == physical.rel) ++codeOccurrences;
+        assert(rawOccurrences == 1 && codeOccurrences == 1,
+               "workplane logical physical source membership: " ~ physical.rel);
+    }
+
     // Positive control of the counter and of the switch needle.
     assert(countIdent("a.viewVectorQuantum(x); auto d = &viewVectorQuantum;",
                       "viewVectorQuantum") == 2, "identifier counter is blind");
@@ -96,7 +129,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     foreach (dead; ["currentWorkplaneFrame", "primitiveParameterFrame", "localCursorPlane"]) {
         size_t n;
         string[] where;
-        foreach (s; all) if (auto k = countIdent(s.raw, dead)) { n += k; where ~= s.rel; }
+        foreach (s; logicalRaw) if (auto k = countIdent(s.raw, dead)) { n += k; where ~= s.rel; }
         assert(n == 0, format("%s still named %s times in %s", dead, n, where));
     }
 
@@ -107,7 +140,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     // is GREEN before (create_common.d's sat in `screenToPlacementLocal`) and
     // guards growth only.
     string[] switchFiles, ternFiles;
-    foreach (s; prod) {
+    foreach (s; logicalCode) {
         if (!matchAll(s.code, sw).empty) switchFiles ~= baseName(s.rel);
         foreach (m; matchAll(s.code, tern)) ternFiles ~= baseName(s.rel);
     }
@@ -121,7 +154,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     assert(!matchAll("mostFacingAxis(camBack, Vec3(1, 0, 0),", principalCopy).empty,
            "principal-axis copy needle is blind");
     string[] principalCopies;
-    foreach (src; prod)
+    foreach (src; logicalCode)
         foreach (_; matchAll(src.code, principalCopy)) principalCopies ~= src.rel;
     assert(principalCopies == ["packages/spatial/source/workplane_basis.d"],
            format("inline principal-axis copies in %s (only the distinct auto-view build plane is retained)", principalCopies));
@@ -155,7 +188,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     assert(want.length == 6, "roster table lost a row");
     string bad;
     foreach (name, rows; want) {
-        const got = roster(prod, name);
+        const got = roster(logicalCode, name);
         if (got != rows) bad ~= format("\n%s roster:\n  got  %s\n  want %s", name, got, rows);
     }
     assert(bad.length == 0, bad);

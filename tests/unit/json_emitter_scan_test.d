@@ -370,7 +370,8 @@ private immutable string[] kScanned = [
     "source/http_providers.d",
     "source/http_server.d",
     "source/http_transport.d",
-    "packages/common/source/view.d",
+    "packages/camera-model/source/view.d",
+    "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
     // TASK 4062 — `scalarArgToString` moved from http_providers.d to
     // command_args.d with the argument-binding law, and its
     // `json-num-exempt:` marker went with it. The file is scanned so the
@@ -435,7 +436,8 @@ unittest {
         "source/http_providers.d",
         "source/http_server.d",
         "source/http_transport.d",
-        "packages/common/source/view.d",
+        "packages/camera-model/source/view.d",
+    "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/common/source/command_args.d",
     ];
     assert(filesRead == expectedFiles,

@@ -26,9 +26,9 @@ CORE_CELLS = ('document-primary', 'invocation-order', 'invocation-outcomes', 'in
 STB_REVISION = 'a66f6917718ea128076a2c5660e37f362a785144'
 # Canonical JSON pins include configuration/build-type grants and platform keys.
 DESCRIPTORS = {
-    'packages/common': '010625a2381ba35a89dd9375c42618eec8777f363bb270bcc1d4ce75e64be830',
+    'packages/common': '6847a7e4ec6008c66403a3d8be9f48602effcae1950fdb9dd773a725b9a72296',
     'tests/core': '094335fa23dbe7ba69d410de28c74844352d79b47ab026f865a9567e682bcdf1',
-    'tools/cli': 'e37475529479ed1730893614ecf404af68e0b19f3923972774c178908807fae1',
+    'tools/cli': '6b0b74a84b4b6de870f3c346aa884f9a7c4cd134861ccd82da78cb92709275f2',
 }
 HOOKS = ('preGenerateCommands', 'postGenerateCommands', 'preBuildCommands',
          'postBuildCommands', 'preRunCommands', 'postRunCommands')
@@ -58,10 +58,13 @@ def validate_package_settings(description, root, compiler="dmd"):
         require(digest==DESCRIPTORS[relative], 'raw descriptor changed: '+relative)
     require(description['rootPackage']==owner, 'unexpected root package')
     active_list=[p for p in description['packages'] if p.get('active')];active={p['name']:p for p in active_list}
-    expected={'vibe3d-'+x for x in support.closure('common')}|{'d-stb-image',owner}
+    expected={'vibe3d-'+x for x in support.closure('common')}|{owner}
+    if owner=='vibe3d-cli':
+        expected|={'vibe3d-'+x for x in support.closure('document-io')}|{'d-stb-image'}
     require(len(active_list)==len(expected) and set(active)==expected,'resolved package population changed')
-    image=Path(active['d-stb-image']['path']).resolve()
-    require(image.parts[-2:]==(STB_REVISION,'d-stb-image'),'resolved image revision changed')
+    image=Path(active['d-stb-image']['path']).resolve() if 'd-stb-image' in active else None
+    if image is not None:
+        require(image.parts[-2:]==(STB_REVISION,'d-stb-image'),'resolved image revision changed')
     roots=([root/'source/main.d'] if owner=='vibe3d-cli' else [(project/'tests/unit'/name).resolve() for name in CORE_ROOTS] if owner=='vibe3d-core-tests' else sorted((project/'packages/common/source').rglob('*.d')))
     targets={t['rootPackage']:t for t in description['targets']}
     expected_targets={n for n,p in active.items() if p['targetType']!='sourceLibrary'}

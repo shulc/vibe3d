@@ -14,7 +14,7 @@
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
 source-files 608
-unittest-blocks 545
+unittest-blocks 505
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -25,10 +25,8 @@ block packages/common/source/command_history.d 14
 block packages/common/source/command_registry.d 1
 block packages/common/source/commands/mesh/session_edit.d 1
 block packages/common/source/commands/select/element.d 1
-block packages/common/source/io/image_decode.d 5
-block packages/common/source/io/native.d 13
 block packages/common/source/record_observer_hub.d 1
-block packages/common/source/view.d 26
+block packages/document-io/source/io/native.d 4
 block packages/input-events/source/eventlog.d 13
 block packages/input-events/source/tool_input.d 6
 block packages/interaction-query/source/snap.d 8

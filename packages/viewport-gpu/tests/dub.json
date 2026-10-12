@@ -139,9 +139,6 @@
     }
   },
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../../common"
-    },
     "vibe3d-display-policy": {
       "path": "../../display-policy"
     },
@@ -175,6 +172,15 @@
     },
     "vibe3d-spatial": {
       "path": "../../spatial"
+    },
+    "vibe3d-camera-model": {
+      "path": "../../camera-model"
+    },
+    "vibe3d-image-codec": {
+      "path": "../../image-codec"
+    },
+    "vibe3d-mesh-preview": {
+      "path": "../../mesh-preview"
     }
   },
   "versions": [
@@ -192,7 +198,6 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-common": "isolated-tests",
         "vibe3d-display-policy": "isolated-tests",
         "vibe3d-edit-contracts": "isolated-tests",
         "vibe3d-log": "isolated-tests",
@@ -203,7 +208,10 @@
         "vibe3d-mesh-edit-replay": "isolated-tests",
         "vibe3d-mesh-snapshot": "isolated-tests",
         "vibe3d-profiling": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests"
+        "vibe3d-spatial": "isolated-tests",
+        "vibe3d-camera-model": "isolated-tests",
+        "vibe3d-image-codec": "isolated-tests",
+        "vibe3d-mesh-preview": "isolated-tests"
       }
     }
   ],

@@ -60,8 +60,19 @@ private static immutable string[] kTokens = [
 /// The roots the census walks. Enumerated per-root rather than swept from the
 /// repo top, so a root that stops existing is a red rather than a silently
 /// smaller scan.
-private static immutable string[] kDirRoots = ["source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"];
-private static immutable string[] kFileRoots = ["run_all.d", "run_test.d"];
+private static immutable string[] kDirRoots = ["source", "packages/common/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"];
+private static immutable string[] kFileRoots = [
+    "run_all.d",
+    "run_test.d",
+    "packages/camera-model/tests/source/tests/unit/view_test.d",
+    "packages/document-channels/tests/source/tests/unit/layer_params_test.d",
+    "packages/image-codec/tests/source/tests/unit/io/image_decode_test.d",
+    "packages/document-io/tests/source/tests/unit/io/native_test.d",
+    "packages/document-io/tests/source/tests/unit/io/image_path_test.d",
+    "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+    "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+    "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+];
 
 private size_t countIn(string hay, string needle) {
     size_t n = 0, i = 0;
@@ -102,6 +113,30 @@ private Scan scanRoots() {
                 r.offenders ~= format("%s — the wire id %s is still issued; no "
                                     ~ "factory serves it since task 1903 stage N",
                                       rel, t);
+    }
+    foreach (relative; [
+        "packages/camera-model/source",
+        "packages/document-channels/source",
+        "packages/image-codec/source",
+        "packages/document-io/source",
+    ]) {
+        size_t occurrences;
+        foreach (candidate; kDirRoots) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "census production root membership: " ~ relative);
+    }
+    foreach (relative; [
+        "packages/camera-model/tests/source/tests/unit/view_test.d",
+        "packages/document-channels/tests/source/tests/unit/layer_params_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_test.d",
+        "packages/document-io/tests/source/tests/unit/io/image_path_test.d",
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        size_t occurrences;
+        foreach (candidate; kFileRoots) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "census exact source and public carrier membership: " ~ relative);
     }
     foreach (root; kDirRoots) {
         immutable dir = buildPath(repoRoot, root);

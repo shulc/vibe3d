@@ -72,14 +72,14 @@ unittest {
 }
 
 unittest {
-    const lower = compactCode("packages/common/source/io/file_model.d");
+    const lower = compactCode("packages/document-io/source/io/file_model.d");
     assert(lower.canFind("version(unittest){privateboolg_browserBackendForTest;"
         ~ "voidselectBrowserBackendForTest(boolenabled){g_browserBackendForTest=enabled;}"),
         "file model sole lower unittest storage and setter");
-    assert(countIdent(blankNonCode(readText(buildPath(root, "packages/common/source/io/file_model.d"))),
+    assert(countIdent(blankNonCode(readText(buildPath(root, "packages/document-io/source/io/file_model.d"))),
                      "g_browserBackendForTest") == 3,
         "file model exactly one switch definition/write/read");
-    assert(sourceBody(blankNonCode(readText(buildPath(root, "packages/common/source/io/file_model.d"))),
+    assert(sourceBody(blankNonCode(readText(buildPath(root, "packages/document-io/source/io/file_model.d"))),
         "bool", "browserFileModel", "") ==
         "{version(web){returntrue;}else{version(unittest){returng_browserBackendForTest;}else{returnfalse;}}}",
         "file model lower getter branch order and storage");
@@ -89,20 +89,41 @@ unittest {
         "file model chooser public compatibility aliases");
     foreach (call; ["Open", "Save"])
         requireChooser(blankNonCode(readText(buildPath(root, "source/io/file_dialog.d"))), call);
-    assert(compactCode("packages/common/source/io/image_path.d").canFind("importio.file_model:browserFileModel;") &&
-           !compactCode("packages/common/source/io/image_path.d").canFind("io.file_dialog"),
+    assert(compactCode("packages/document-io/source/io/image_path.d").canFind("importio.file_model:browserFileModel;") &&
+           !compactCode("packages/document-io/source/io/image_path.d").canFind("io.file_dialog"),
         "file model image paths import lower owner directly");
     size_t sourceFiles;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source"), buildPath(root, "packages/pipe-contracts/source"), buildPath(root, "packages/mesh-preview/source"), buildPath(root, "util/json-number/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/camera-model/source"), buildPath(root, "packages/document-channels/source"), buildPath(root, "packages/image-codec/source"), buildPath(root, "packages/document-io/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source"), buildPath(root, "packages/pipe-contracts/source"), buildPath(root, "packages/mesh-preview/source"), buildPath(root, "util/json-number/source")])
 
     foreach (file; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
-        if (file.name == buildPath(root, "packages/common/source/io/file_model.d")) continue;
+        if (file.name == buildPath(root, "packages/document-io/source/io/file_model.d")) continue;
         const code = blankNonCode(readText(file.name));
         assert(countIdent(code, "g_browserBackendForTest") == 0,
             "file model switch has only its lower production owner: " ~ file.name);
         assert(!code.split.join("").canFind("voidselectBrowserBackendForTest("),
             "file model setter has only its lower production owner: " ~ file.name);
+    }
+    const string[] sourceCarriers = [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ];
+    foreach (relative; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        size_t occurrences;
+        foreach (candidate; sourceCarriers) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "file model logical source carrier membership: " ~ relative);
+    }
+    foreach (relative; sourceCarriers) {
+        const code = blankNonCode(readText(buildPath(root, relative)));
+        assert(countIdent(code, "g_browserBackendForTest") == 0,
+            "file model switch has only its lower production owner: " ~ relative);
+        assert(!code.split.join("").canFind("voidselectBrowserBackendForTest("),
+            "file model setter has only its lower production owner: " ~ relative);
     }
     // Wave9 fixed owner map: desktop436 + thirty-one libraries172 =608.
     assert(sourceFiles == 608, "file model production source population");

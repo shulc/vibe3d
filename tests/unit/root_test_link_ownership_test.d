@@ -9,7 +9,7 @@ unittest {
     import std.algorithm : sort, canFind;
 
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    enum owners = ["document-model", "param-schema", "pipe-runtime", "alignment-ops", "common", "creation-ops", "display-policy", "edit-contracts", "input-events", "interaction-query", "interchange", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-ops", "mesh-snapshot", "mesh-topology", "mesh", "pipe-evaluation", "profiling", "spatial", "subpatch-preview", "tool-state", "transform-ops", "viewport-gpu", "log", "math", "parallel", "plane-bytes", "screen-buckets", "json-number", "pipe-contracts", "mesh-preview"];
+    enum owners = ["camera-model", "document-channels", "image-codec", "document-io", "document-model", "param-schema", "pipe-runtime", "alignment-ops", "common", "creation-ops", "display-policy", "edit-contracts", "input-events", "interaction-query", "interchange", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-ops", "mesh-snapshot", "mesh-topology", "mesh", "pipe-evaluation", "profiling", "spatial", "subpatch-preview", "tool-state", "transform-ops", "viewport-gpu", "log", "math", "parallel", "plane-bytes", "screen-buckets", "json-number", "pipe-contracts", "mesh-preview"];
     enum utilOwners = ["json-number", "log", "math", "parallel", "plane-bytes", "screen-buckets"];
     enum noCarriers = ["log", "parallel", "plane-bytes", "profiling", "screen-buckets", "mesh-change", "mesh-topology"];
     enum fixtureOnlyVersions = ["edit-contracts", "mesh", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-snapshot", "mesh-topology"];
@@ -33,8 +33,8 @@ unittest {
     foreach (owner; owners)
         assert(selected.canFind("vibe3d-" ~ owner),
                "root test ownership named selector " ~ owner);
-    assert(selected.length == 34 && selected == expected,
-           "root test ownership frozen thirty-four selectors");
+    assert(selected.length == 38 && selected == expected,
+           "root test ownership frozen thirty-eight selectors");
     foreach (owner; owners) {
         const packageName = "vibe3d-" ~ owner;
         const packagePath = (utilOwners.canFind(owner) ? "util/" : "packages/") ~ owner;

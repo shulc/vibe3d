@@ -508,7 +508,7 @@ private size_t skipDelimited(const(char)[] s, size_t i) @safe pure nothrow @nogc
 /// are inside `source/` and therefore counted, even though the `tests`
 /// configuration does not compile them: the point is that a block cannot vanish
 /// unnoticed, and a block nobody compiles is the easiest kind to lose.
-immutable string[] censusRoots = ["packages/alignment-ops/source", "packages/alignment-ops/tests/source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/common/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/creation-ops/source", "packages/creation-ops/tests/source", "packages/display-policy/source", "packages/display-policy/tests/source", "packages/edit-contracts/source", "packages/edit-contracts/tests/source", "packages/input-events/source", "packages/input-events/tests/source", "packages/interaction-query/source", "packages/interaction-query/tests/source", "packages/interchange/source", "packages/interchange/tests/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-contracts/tests/source", "packages/mesh-edit-log/source", "packages/mesh-edit-log/tests/source", "packages/mesh-edit-replay/source", "packages/mesh-edit-replay/tests/source", "packages/mesh-ops/source", "packages/mesh-ops/tests/source", "packages/mesh-snapshot/source", "packages/mesh-snapshot/tests/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/mesh/tests/source", "packages/pipe-evaluation/source", "packages/pipe-evaluation/tests/source", "packages/profiling/source", "packages/spatial/source", "packages/spatial/tests/source", "packages/subpatch-preview/source", "packages/subpatch-preview/tests/source", "packages/tool-state/source", "packages/tool-state/tests/source", "packages/transform-ops/source", "packages/transform-ops/tests/source", "packages/viewport-gpu/source", "packages/viewport-gpu/tests/source", "source", "tests/unit", "util/log/source", "util/math/source", "util/math/tests/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "packages/pipe-contracts/tests/source", "packages/mesh-preview/tests/source", "util/json-number/tests/source"];
+immutable string["packages/camera-model/source", "packages/camera-model/tests/source", "packages/document-channels/source", "packages/document-channels/tests/source", "packages/image-codec/source", "packages/image-codec/tests/source", "packages/document-io/source", "packages/document-io/tests/source", ] censusRoots = ["packages/alignment-ops/source", "packages/alignment-ops/tests/source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/common/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/creation-ops/source", "packages/creation-ops/tests/source", "packages/display-policy/source", "packages/display-policy/tests/source", "packages/edit-contracts/source", "packages/edit-contracts/tests/source", "packages/input-events/source", "packages/input-events/tests/source", "packages/interaction-query/source", "packages/interaction-query/tests/source", "packages/interchange/source", "packages/interchange/tests/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-contracts/tests/source", "packages/mesh-edit-log/source", "packages/mesh-edit-log/tests/source", "packages/mesh-edit-replay/source", "packages/mesh-edit-replay/tests/source", "packages/mesh-ops/source", "packages/mesh-ops/tests/source", "packages/mesh-snapshot/source", "packages/mesh-snapshot/tests/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/mesh/tests/source", "packages/pipe-evaluation/source", "packages/pipe-evaluation/tests/source", "packages/profiling/source", "packages/spatial/source", "packages/spatial/tests/source", "packages/subpatch-preview/source", "packages/subpatch-preview/tests/source", "packages/tool-state/source", "packages/tool-state/tests/source", "packages/transform-ops/source", "packages/transform-ops/tests/source", "packages/viewport-gpu/source", "packages/viewport-gpu/tests/source", "source", "tests/unit", "util/log/source", "util/math/source", "util/math/tests/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "packages/pipe-contracts/tests/source", "packages/mesh-preview/tests/source", "util/json-number/tests/source"];
 
 /// One file's contribution, keyed by its repo-relative path with `/` separators.
 struct FileCensus
@@ -1592,7 +1592,7 @@ unittest
     const sandbox = buildPath(tempDir(), format("vibe3d-census-wave4-%d", thisProcessID));
     collectException(rmdirRecurse(sandbox));
     scope(exit) collectException(rmdirRecurse(sandbox));
-    foreach (owner; ["packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source",
+    foreach (owner; ["packages/camera-model/source", "packages/camera-model/tests/source", "packages/document-channels/source", "packages/document-channels/tests/source", "packages/image-codec/source", "packages/image-codec/tests/source", "packages/document-io/source", "packages/document-io/tests/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source",
                     "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source",
                     "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source", "packages/pipe-contracts/source", "packages/pipe-contracts/tests/source", "packages/mesh-preview/source", "packages/mesh-preview/tests/source", "util/json-number/source", "util/json-number/tests/source"])
     {
@@ -1604,22 +1604,31 @@ unittest
     assert(owners.length >= 17, "census materialized owner complement floor seventeen");
     string[] ownerPaths;
     foreach (file; owners) ownerPaths ~= file.path;
-    foreach (owner; ["packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/input-events/source", "packages/display-policy/source",
+    foreach (owner; ["packages/camera-model/source", "packages/camera-model/tests/source", "packages/document-channels/source", "packages/document-channels/tests/source", "packages/image-codec/source", "packages/image-codec/tests/source", "packages/document-io/source", "packages/document-io/tests/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/input-events/source", "packages/display-policy/source",
                     "packages/viewport-gpu/source", "packages/subpatch-preview/source",
                     "packages/input-events/tests/source", "packages/display-policy/tests/source",
                     "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source", "packages/pipe-contracts/source", "packages/pipe-contracts/tests/source", "packages/mesh-preview/source", "packages/mesh-preview/tests/source", "util/json-number/source", "util/json-number/tests/source"])
         assert(ownerPaths.count(buildPath(owner, "probe.d")) == 1,
             "SCAN-OWNER-" ~ owner ~ ": synthetic owner must be observed exactly once");
-    assert(owners.length == 37, "Wave10 census observes all thirty-seven materialized package production/test roots");
-    assert(ownerPaths == ["packages/alignment-ops/source/probe.d",
+    assert(owners.length == 45, "Wave12 census observes all forty-five materialized package production/test roots");
+    assert(ownerPaths == [
+                          "packages/alignment-ops/source/probe.d",
                           "packages/alignment-ops/tests/source/probe.d",
+                          "packages/camera-model/source/probe.d",
+                          "packages/camera-model/tests/source/probe.d",
                           "packages/common/tests/source/probe.d",
                           "packages/creation-ops/source/probe.d",
                           "packages/creation-ops/tests/source/probe.d",
                           "packages/display-policy/source/probe.d",
                           "packages/display-policy/tests/source/probe.d",
+                          "packages/document-channels/source/probe.d",
+                          "packages/document-channels/tests/source/probe.d",
+                          "packages/document-io/source/probe.d",
+                          "packages/document-io/tests/source/probe.d",
                           "packages/document-model/source/probe.d",
                           "packages/document-model/tests/source/probe.d",
+                          "packages/image-codec/source/probe.d",
+                          "packages/image-codec/tests/source/probe.d",
                           "packages/input-events/source/probe.d",
                           "packages/input-events/tests/source/probe.d",
                           "packages/interaction-query/source/probe.d",
@@ -1648,9 +1657,9 @@ unittest
                           "packages/viewport-gpu/tests/source/probe.d",
                           "util/json-number/source/probe.d",
                           "util/json-number/tests/source/probe.d"],
-        "Wave10 census exact independent ownership membership");
+        "Wave12 census exact independent ownership membership");
     const ownershipTotal = total(owners);
-    assert(ownershipTotal.blocks == 37 && ownershipTotal.asserts == 74,
+    assert(ownershipTotal.blocks == 45 && ownershipTotal.asserts == 90,
         "Wave9 census preserves each owner's nonzero block/assert contribution");
 }
 

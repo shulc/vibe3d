@@ -76,11 +76,12 @@ class BoundaryControls(unittest.TestCase):
                 (lambda d: d['packages'].append(copy.deepcopy(d['packages'][0])), 'package population'),
                 (lambda d: d['packages'][0]['dependencies'].append('vibe3d'), 'dependencies'),
                 (lambda d: d['packages'][0].update(path='/outside'), 'package path'),
-                (lambda d: next(p for p in d['packages'] if p['name']=='d-stb-image').update(path='/outside/image'), 'image revision'),
                 (lambda d: d['targets'].pop(), 'target population'),
                 (lambda d: d['targets'].append(copy.deepcopy(d['targets'][0])), 'target population'),
             ]:
                 reject(change, message)
+            if any(p['name']=='d-stb-image' for p in original['packages']):
+                reject(lambda d: next(p for p in d['packages'] if p['name']=='d-stb-image').update(path='/outside/image'), 'image revision')
             for index in range(len(original['targets'])):
                 for field in ('sourceFiles', 'importPaths', 'dflags', 'libs', 'lflags', 'linkerFiles',
                               'injectSourceFiles', 'frameworks', 'extraDependencyFiles', 'copyFiles',

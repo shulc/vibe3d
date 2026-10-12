@@ -44,7 +44,6 @@ http_server
 image_plane
 input_frame_state
 io.file_dialog
-io.image_decode
 io.lwo_import
 io.native
 io.scene_import
@@ -169,6 +168,7 @@ tests.unit.bvh_pick_test
 tests.unit.byte_size_test
 tests.unit.camera_intrinsics_test
 tests.unit.camera_intrinsics_wiring_test
+tests.unit.camera_model_population_test
 tests.unit.camera_stamp_test
 tests.unit.census_symbols
 tests.unit.change_bus_test
@@ -241,6 +241,8 @@ tests.unit.display_policy_population_test
 tests.unit.display_refresh_mask_boundary_test
 tests.unit.display_refresh_mask_semantics_test
 tests.unit.display_state_test
+tests.unit.document_channels_population_test
+tests.unit.document_io_population_test
 tests.unit.document_replace_disarm_census_test
 tests.unit.document_seam_census_test
 tests.unit.document_test
@@ -312,17 +314,20 @@ tests.unit.http_server_test
 tests.unit.http_test_client
 tests.unit.idle_handle_pose_census_test
 tests.unit.image_cache_test
+tests.unit.image_codec_population_test
 tests.unit.image_plane_test
 tests.unit.imgui_event_gate_test
 tests.unit.imgui_flag_boundary_census_test
 tests.unit.input_events_population_test
 tests.unit.io.file_model_test
+tests.unit.io.image_decode_source_cells_test
 tests.unit.io.image_decode_test
 tests.unit.io.image_path_test
 tests.unit.io.lwo_export_ptag_census_test
 tests.unit.io.lwo_export_test
 tests.unit.io.lwo_import_test
 tests.unit.io.native_refusal_chain_test
+tests.unit.io.native_source_cells_test
 tests.unit.io.native_test
 tests.unit.io.v3d_wire_order_test
 tests.unit.io.v3d_wire_roundtrip_test
@@ -699,6 +704,7 @@ tests.unit.version_poll_census_test
 tests.unit.vertex_dot_arm_census_test
 tests.unit.vertex_extrude_apex_law_test
 tests.unit.vertex_normals_test
+tests.unit.view_source_cells_test
 tests.unit.view_test
 tests.unit.view_work_plane_anchor_census_test
 tests.unit.viewgrid_regression_test
@@ -777,4 +783,3 @@ ui.viewport_render_plan_test
 unit.bevel_cold_arm_param_image_test
 unit.prepared_param_update_test
 unit.prepared_tool_transition_test
-view

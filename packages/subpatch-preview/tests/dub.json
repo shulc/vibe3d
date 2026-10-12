@@ -139,9 +139,6 @@
     }
   },
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../../common"
-    },
     "vibe3d-display-policy": {
       "path": "../../display-policy"
     },
@@ -198,7 +195,6 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-common": "isolated-tests",
         "vibe3d-display-policy": "isolated-tests",
         "vibe3d-viewport-gpu": "isolated-tests",
         "vibe3d-edit-contracts": "isolated-tests",

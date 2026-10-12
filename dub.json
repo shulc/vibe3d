@@ -173,6 +173,18 @@
 		},
 		"vibe3d-pipe-runtime": {
 			"path": "packages/pipe-runtime"
+		},
+		"vibe3d-camera-model": {
+			"path": "packages/camera-model"
+		},
+		"vibe3d-document-channels": {
+			"path": "packages/document-channels"
+		},
+		"vibe3d-image-codec": {
+			"path": "packages/image-codec"
+		},
+		"vibe3d-document-io": {
+			"path": "packages/document-io"
 		}
 	},
 	"_comment-onnx-per-config": "d-onnxruntime (AI candidate ranker backend) is NOT a base dependency \u2014 it is added per-configuration alongside the `WithAI` version so the `modeling-noai` build can omit it entirely. onnxruntime.dll statically imports api-ms-win-core-path (Windows 8+), so dropping it is what makes a Windows 7-capable build possible. Only source/ai/onnx_backend.d touches the binding; all of it is gated by version(WithAI).",
@@ -372,7 +384,11 @@
 				"vibe3d-mesh-preview": "modeling",
 				"vibe3d-document-model": "modeling",
 				"vibe3d-param-schema": "modeling",
-				"vibe3d-pipe-runtime": "modeling"
+				"vibe3d-pipe-runtime": "modeling",
+				"vibe3d-camera-model": "modeling",
+				"vibe3d-document-channels": "modeling",
+				"vibe3d-image-codec": "modeling",
+				"vibe3d-document-io": "modeling"
 			}
 		},
 		{
@@ -417,7 +433,11 @@
 				"vibe3d-mesh-preview": "modeling-noai",
 				"vibe3d-document-model": "modeling-noai",
 				"vibe3d-param-schema": "modeling-noai",
-				"vibe3d-pipe-runtime": "modeling-noai"
+				"vibe3d-pipe-runtime": "modeling-noai",
+				"vibe3d-camera-model": "modeling-noai",
+				"vibe3d-document-channels": "modeling-noai",
+				"vibe3d-image-codec": "modeling-noai",
+				"vibe3d-document-io": "modeling-noai"
 			}
 		},
 		{
@@ -478,7 +498,11 @@
 				"vibe3d-mesh-preview": "with-render",
 				"vibe3d-document-model": "with-render",
 				"vibe3d-param-schema": "with-render",
-				"vibe3d-pipe-runtime": "with-render"
+				"vibe3d-pipe-runtime": "with-render",
+				"vibe3d-camera-model": "with-render",
+				"vibe3d-document-channels": "with-render",
+				"vibe3d-image-codec": "with-render",
+				"vibe3d-document-io": "with-render"
 			}
 		},
 		{
@@ -559,7 +583,15 @@
 				"packages/param-schema/source",
 				"packages/param-schema/tests/source",
 				"packages/pipe-runtime/source",
-				"packages/pipe-runtime/tests/source"
+				"packages/pipe-runtime/tests/source",
+				"packages/camera-model/source",
+				"packages/camera-model/tests/source",
+				"packages/document-channels/source",
+				"packages/document-channels/tests/source",
+				"packages/image-codec/source",
+				"packages/image-codec/tests/source",
+				"packages/document-io/source",
+				"packages/document-io/tests/source"
 			],
 			"sourceFiles": [
 				"tools/harness/hostspace.d",
@@ -634,7 +666,15 @@
 				"packages/param-schema/source",
 				"packages/param-schema/tests/source",
 				"packages/pipe-runtime/source",
-				"packages/pipe-runtime/tests/source"
+				"packages/pipe-runtime/tests/source",
+				"packages/camera-model/source",
+				"packages/camera-model/tests/source",
+				"packages/document-channels/source",
+				"packages/document-channels/tests/source",
+				"packages/image-codec/source",
+				"packages/image-codec/tests/source",
+				"packages/document-io/source",
+				"packages/document-io/tests/source"
 			],
 			"_comment-perf-portpolicy": "Task 9220. tools/perf/lib/portpolicy.d decides which port the perf harness may clear and launch on (refuses a run_test.d worker window, derived from tools/harness/runslots.d, which rdmd reaches through the tracked symlink tools/perf/tools/harness/runslots.d). lib/lifecycle.d is compiled here only so tests/unit/perf_port_policy_test.d can pin, by type, that its kill and launch seams take an admitted PerfPort. Test-only, like the other tools/perf entries.",
 			"_comment-hostspace": "Task 5630. tools/harness/hostspace.d is the one owner of scratch-root and available-space policy for the standalone test runner and sanitizer lane. Both scripts import module tools.harness.hostspace; rdmd gives lane.d only tools/sanitizer as its import root, so the tracked file symlink under that root preserves absolute-script invocation from a foreign cwd. The real file is listed explicitly in sourceFiles, which keeps it test-only: modeling and with-render do not compile harness policy. importPaths still repeats source because declaring this array replaces dub's derived default.",
@@ -678,7 +718,11 @@
 				"vibe3d-mesh-preview": "root-tests",
 				"vibe3d-document-model": "root-tests",
 				"vibe3d-param-schema": "root-tests",
-				"vibe3d-pipe-runtime": "root-tests"
+				"vibe3d-pipe-runtime": "root-tests",
+				"vibe3d-camera-model": "root-tests",
+				"vibe3d-document-channels": "root-tests",
+				"vibe3d-image-codec": "root-tests",
+				"vibe3d-document-io": "root-tests"
 			}
 		},
 		{
@@ -721,7 +765,11 @@
 				"vibe3d-mesh-preview": "web",
 				"vibe3d-document-model": "web",
 				"vibe3d-param-schema": "web",
-				"vibe3d-pipe-runtime": "web"
+				"vibe3d-pipe-runtime": "web",
+				"vibe3d-camera-model": "web",
+				"vibe3d-document-channels": "web",
+				"vibe3d-image-codec": "web",
+				"vibe3d-document-io": "web"
 			},
 			"libs-wasm": [
 				"dbvh_c",

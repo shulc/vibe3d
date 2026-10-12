@@ -7,10 +7,6 @@
     "source"
   ],
   "dependencies": {
-    "d-stb-image": {
-      "version": "a66f6917718ea128076a2c5660e37f362a785144",
-      "repository": "git+https://github.com/shulc/D-StbImage.git"
-    },
     "vibe3d-mesh-edit-log": {
       "path": "../mesh-edit-log"
     },
@@ -61,6 +57,9 @@
     },
     "vibe3d-pipe-runtime": {
       "path": "../pipe-runtime"
+    },
+    "vibe3d-camera-model": {
+      "path": "../camera-model"
     }
   },
   "toolchainRequirements": {
@@ -219,7 +218,8 @@
         "vibe3d-mesh-ops": "modeling",
         "vibe3d-document-model": "modeling",
         "vibe3d-param-schema": "modeling",
-        "vibe3d-pipe-runtime": "modeling"
+        "vibe3d-pipe-runtime": "modeling",
+        "vibe3d-camera-model": "modeling"
       }
     },
     {
@@ -242,7 +242,8 @@
         "vibe3d-mesh-ops": "modeling-noai",
         "vibe3d-document-model": "modeling-noai",
         "vibe3d-param-schema": "modeling-noai",
-        "vibe3d-pipe-runtime": "modeling-noai"
+        "vibe3d-pipe-runtime": "modeling-noai",
+        "vibe3d-camera-model": "modeling-noai"
       }
     },
     {
@@ -268,7 +269,8 @@
         "vibe3d-mesh-ops": "with-render",
         "vibe3d-document-model": "with-render",
         "vibe3d-param-schema": "with-render",
-        "vibe3d-pipe-runtime": "with-render"
+        "vibe3d-pipe-runtime": "with-render",
+        "vibe3d-camera-model": "with-render"
       }
     },
     {
@@ -293,7 +295,8 @@
         "vibe3d-mesh-ops": "web",
         "vibe3d-document-model": "web",
         "vibe3d-param-schema": "web",
-        "vibe3d-pipe-runtime": "web"
+        "vibe3d-pipe-runtime": "web",
+        "vibe3d-camera-model": "web"
       }
     },
     {
@@ -319,7 +322,8 @@
         "vibe3d-mesh-ops": "root-tests",
         "vibe3d-document-model": "root-tests",
         "vibe3d-param-schema": "root-tests",
-        "vibe3d-pipe-runtime": "root-tests"
+        "vibe3d-pipe-runtime": "root-tests",
+        "vibe3d-camera-model": "root-tests"
       }
     },
     {
@@ -343,7 +347,8 @@
         "vibe3d-mesh-ops": "isolated-tests",
         "vibe3d-document-model": "isolated-tests",
         "vibe3d-param-schema": "isolated-tests",
-        "vibe3d-pipe-runtime": "isolated-tests"
+        "vibe3d-pipe-runtime": "isolated-tests",
+        "vibe3d-camera-model": "isolated-tests"
       }
     }
   ]
