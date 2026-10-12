@@ -35,7 +35,7 @@ private string geometryModeToken(EditMode mode) pure nothrow @safe @nogc {
 /// Task 5750: traverse the same authoritative marks-array lengths as the old
 /// materialized selection views, but test each mark through the scalar mesh
 /// predicates so allocation follows selected output only. Allocation and wire
-/// identity evidence lives in tests/unit/selection_projection_test.d.
+/// identity evidence lives in packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d.
 private JSONValue selectedVertexIndices(scope const ref Mesh mesh) {
     JSONValue[] result;
     foreach (i; 0 .. mesh.vertexMarks.length)
