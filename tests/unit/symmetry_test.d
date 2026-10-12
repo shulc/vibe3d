@@ -186,7 +186,7 @@ unittest {
     // (b) no command pairs (Symmetrize builds its own pair table).
     size_t n;
     bool sawElement, sawSelect;
-    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source/commands"), buildPath(kRepoRoot, "packages/command-runtime/source/commands")])
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source/commands"), buildPath(kRepoRoot, "packages/command-runtime/source/commands"), buildPath(kRepoRoot, "packages/editor-commands/source/commands")])
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[kRepoRoot.length + 1 .. $];
         if (rel == "packages/editor-commands/source/commands/mesh/symmetrize.d") continue;
@@ -273,7 +273,7 @@ unittest {
 
     }
     callers.sort();
-    assert(callers == ["source/input_router.d", "packages/scene-query/source/symmetry_pick.d",
+    assert(callers == ["packages/scene-query/source/symmetry_pick.d", "source/input_router.d",
                        "source/tools/transform/xfrm_transform.d"],
            "(u4)(c) mirrorElement( callers: " ~ callers.to!string);
     // ...and each helper that holds such a call is itself CALLED at its

@@ -1669,7 +1669,7 @@ unittest
 ],
         "Wave12 census exact independent ownership membership");
     const ownershipTotal = total(owners);
-    assert(ownershipTotal.blocks == 48 && ownershipTotal.asserts == 96,
+    assert(ownershipTotal.blocks == 54 && ownershipTotal.asserts == 108,
         "Wave9 census preserves each owner's nonzero block/assert contribution");
 }
 
