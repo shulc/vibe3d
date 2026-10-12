@@ -209,3 +209,12 @@ tools/cli/.boundary/
 /packages/pipe-runtime/libvibe3d-pipe-runtime.a
 /packages/pipe-runtime/vibe3d-pipe-runtime.lib
 /packages/pipe-runtime/tests/vibe3d-pipe-runtime-tests-test-*
+
+/packages/camera-model/libvibe3d-camera-model.a
+/packages/camera-model/vibe3d-camera-model.lib
+/packages/document-channels/libvibe3d-document-channels.a
+/packages/document-channels/vibe3d-document-channels.lib
+/packages/image-codec/libvibe3d-image-codec.a
+/packages/image-codec/vibe3d-image-codec.lib
+/packages/document-io/libvibe3d-document-io.a
+/packages/document-io/vibe3d-document-io.lib
