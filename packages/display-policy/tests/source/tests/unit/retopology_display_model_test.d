@@ -41,7 +41,7 @@ import viewport_scheme : SchemeColor, schemeColor, kBasePointSize,
                          kRetopologyPresetPointSize;
 
 private enum string kFixturePath =
-    buildPath(dirName(dirName(__FILE_FULL_PATH__)), "fixtures",
+    buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))), "tests", "fixtures",
               "retopology_display.json");
 
 private JSONValue fixture()
@@ -185,7 +185,7 @@ unittest {
         import std.algorithm.iteration : filter;
         import std.conv : text;
         immutable src = readText(buildPath(
-            dirName(dirName(dirName(__FILE_FULL_PATH__))), "packages/display-policy/source",
+            dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))), "packages/display-policy/source",
             "display_state.d")).filter!(ch => !isWhite(ch)).text;
         assert(src.count("p.faceAlpha=") == 1
             && src.count("p.faceAlpha=retopologyFaceAlpha(kRetopologyFillTransparency);") == 1,
