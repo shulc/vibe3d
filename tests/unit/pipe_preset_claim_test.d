@@ -115,12 +115,18 @@ private string writerLedger(string pattern) {
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
+        const sourceRelative = sourceCarrier ==
+            "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d"
+                ? "view.d"
+                : sourceCarrier ==
+                    "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d"
+                        ? "io/image_decode.d" : "io/native.d";
 
         const source = commentsBlanked(readText(sourceCarrierPath));
         size_t count;
         foreach (_; source.matchAll(compiled)) ++count;
         if (count)
-            hits[sourceCarrierPath[scanSourceRoot.length + 1 .. $]] = count;
+            hits[sourceRelative] = count;
 
     }
 

@@ -4184,11 +4184,17 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
+        const sourceRelative = sourceCarrier ==
+            "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d"
+                ? "view.d"
+                : sourceCarrier ==
+                    "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d"
+                        ? "io/image_decode.d" : "io/native.d";
 
         immutable src = readCode(sourceCarrierPath);
         immutable size_t n = countOccurrences(src, "recordPositionDiff(");
         if (n > 0)
-            sites ~= format("%s:%d", relativePath(sourceCarrierPath, scanSourceRoot), n);
+            sites ~= format("%s:%d", sourceRelative, n);
 
     }
     // A mis-rooted walk reports 0 files, 0 sites, and passes.

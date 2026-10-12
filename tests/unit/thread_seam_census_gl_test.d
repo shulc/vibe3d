@@ -163,6 +163,12 @@ SH";
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
     ]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
+        const sourceRelative = sourceCarrier ==
+            "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d"
+                ? "view.d"
+                : sourceCarrier ==
+                    "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d"
+                        ? "io/image_decode.d" : "io/native.d";
 
         if (baseName(sourceCarrierPath) == "gl_thread_guard.d") continue;
         const code = blankUnittestBodies(blankNonCode(readText(sourceCarrierPath)));
@@ -171,7 +177,7 @@ SH";
         const markUsesHere = identifierCount(code, "markMainThread");
         if (importsHere || glUsesHere || markUsesHere)
         {
-            auto moduleName = relativePath(sourceCarrierPath, scanSourceRoot)[0 .. $ - 2]
+            auto moduleName = sourceRelative[0 .. $ - 2]
                 .replace("/", ".");
             subjects ~= moduleName;
         }
