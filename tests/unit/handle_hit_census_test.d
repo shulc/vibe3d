@@ -57,7 +57,7 @@ unittest {
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
     ])
-        files ~= buildPath(repoRoot, sourceCarrier);
+        files ~= sourceCarrier;
     string[string] code;
     foreach (f; files) code[f] = blankNonCode(readText(f));
     // Population floor: the walk saw the anchor modules at all.
