@@ -86,9 +86,9 @@ private size_t lineOf(string src, size_t off)
     return line;
 }
 
-// Task 20261990: call the production reader, then omit one real input from
-// each floor-sized synthetic owner in temporary trees. Independent floors refuse before a
-// missing owner can silently evade the lexer check; see the task evidence.
+// Tasks 20261990/20262570: call the production reader, then omit enough real
+// inputs from each full synthetic owner to fall below its independent floor.
+// See doc/library_layout_wave12_prerequisite_source_2026-10-12.md for evidence.
 unittest
 {
     import std.stdio : write;
@@ -103,8 +103,8 @@ failures = census_contracts.production_lexer_census(root)
 if failures:
     raise SystemExit("prepared-protocol production lexer census: " + "; ".join(failures))
 owners = {'source': 436, 'packages/alignment-ops/source': 1, 'packages/common/source': 34, 'packages/document-model/source': 5, 'packages/param-schema/source': 2, 'packages/pipe-runtime/source': 4, 'packages/creation-ops/source': 1, 'packages/display-policy/source': 8, 'packages/edit-contracts/source': 4, 'packages/input-events/source': 6, 'packages/interaction-query/source': 12, 'packages/interchange/source': 8, 'packages/mesh-change/source': 2, 'packages/mesh-contracts/source': 4, 'packages/mesh-edit-log/source': 1, 'packages/mesh-edit-replay/source': 1, 'packages/mesh-ops/source': 21, 'packages/mesh-snapshot/source': 1, 'packages/mesh-topology/source': 1, 'packages/mesh/source': 4, 'packages/pipe-evaluation/source': 12, 'packages/profiling/source': 1, 'packages/spatial/source': 5, 'packages/subpatch-preview/source': 5, 'packages/tool-state/source': 2, 'packages/transform-ops/source': 7, 'packages/viewport-gpu/source': 6, 'util/log/source': 1, 'util/math/source': 5, 'util/parallel/source': 1, 'util/plane-bytes/source': 1, 'util/screen-buckets/source': 1, 'packages/pipe-contracts/source': 2, 'packages/mesh-preview/source': 2, 'util/json-number/source': 1}
-# Independently frozen final physical owner populations, not reader discovery.
-floors = {'source': 436, 'packages/alignment-ops/source': 1, 'packages/common/source': 34, 'packages/document-model/source': 5, 'packages/param-schema/source': 2, 'packages/pipe-runtime/source': 4, 'packages/creation-ops/source': 1, 'packages/display-policy/source': 8, 'packages/edit-contracts/source': 4, 'packages/input-events/source': 6, 'packages/interaction-query/source': 12, 'packages/interchange/source': 8, 'packages/mesh-change/source': 2, 'packages/mesh-contracts/source': 4, 'packages/mesh-edit-log/source': 1, 'packages/mesh-edit-replay/source': 1, 'packages/mesh-ops/source': 21, 'packages/mesh-snapshot/source': 1, 'packages/mesh-topology/source': 1, 'packages/mesh/source': 4, 'packages/pipe-evaluation/source': 12, 'packages/profiling/source': 1, 'packages/spatial/source': 5, 'packages/subpatch-preview/source': 5, 'packages/tool-state/source': 2, 'packages/transform-ops/source': 7, 'packages/viewport-gpu/source': 6, 'util/log/source': 1, 'util/math/source': 5, 'util/parallel/source': 1, 'util/plane-bytes/source': 1, 'util/screen-buckets/source': 1, 'packages/pipe-contracts/source': 2, 'packages/mesh-preview/source': 2, 'util/json-number/source': 1}
+# Independently frozen owner floors, separate from the physical populations.
+floors = {'source': 436, 'packages/alignment-ops/source': 1, 'packages/common/source': 28, 'packages/document-model/source': 5, 'packages/param-schema/source': 2, 'packages/pipe-runtime/source': 4, 'packages/creation-ops/source': 1, 'packages/display-policy/source': 8, 'packages/edit-contracts/source': 4, 'packages/input-events/source': 6, 'packages/interaction-query/source': 12, 'packages/interchange/source': 8, 'packages/mesh-change/source': 2, 'packages/mesh-contracts/source': 4, 'packages/mesh-edit-log/source': 1, 'packages/mesh-edit-replay/source': 1, 'packages/mesh-ops/source': 21, 'packages/mesh-snapshot/source': 1, 'packages/mesh-topology/source': 1, 'packages/mesh/source': 4, 'packages/pipe-evaluation/source': 12, 'packages/profiling/source': 1, 'packages/spatial/source': 5, 'packages/subpatch-preview/source': 5, 'packages/tool-state/source': 2, 'packages/transform-ops/source': 7, 'packages/viewport-gpu/source': 6, 'util/log/source': 1, 'util/math/source': 5, 'util/parallel/source': 1, 'util/plane-bytes/source': 1, 'util/screen-buckets/source': 1, 'packages/pipe-contracts/source': 2, 'packages/mesh-preview/source': 2, 'util/json-number/source': 1}
 for owner, population in owners.items():
     floor = floors[owner]
     with tempfile.TemporaryDirectory(prefix="protocol-owner-") as scratch:
@@ -120,16 +120,18 @@ for owner, population in owners.items():
             # from the reader or the fixture it will judge.
             if len(inputs) != population:
                 raise SystemExit(f"prepared-protocol omission input changed: {owner}")
-            for path in inputs[:floor]:
+            for path in inputs:
                 link = target / path.relative_to(root / owner)
                 link.parent.mkdir(parents=True, exist_ok=True)
                 link.symlink_to(path)
         got = census_contracts.production_lexer_census(partial)
         if got:
             raise SystemExit(f"prepared-protocol synthetic owner baseline {owner}: {got!r}")
-        (partial / owner / inputs[0].relative_to(root / owner)).unlink()
+        omitted = population - floor + 1
+        for path in inputs[:omitted]:
+            (partial / owner / path.relative_to(root / owner)).unlink()
         got = census_contracts.production_lexer_census(partial)
-        complement = "dspans production complement read 607 files; floor 608"
+        complement = f"dspans production complement read {608 - omitted} files; floor 608"
         owner_refusal = f"dspans lexer census owner {owner} read {floor - 1} files; floor {floor} (materialized 2026-10-10)"
         if complement not in got:
             raise SystemExit(f"prepared-protocol COMPLEMENT omission guard {owner}: got {got!r}, missing {complement!r}")
