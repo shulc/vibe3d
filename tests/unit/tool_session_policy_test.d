@@ -951,7 +951,7 @@ unittest { // (4c)
         if (c[0] + c[1] + c[2])
             raw ~= format("raw:%s:%s/%s/%s", name, c[0], c[1], c[2]);
     }
-    foreach (sourceCarrier; [
+    const string[] sourceCarriersWave14_1 = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
@@ -960,7 +960,35 @@ unittest { // (4c)
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+];
+    import std.file : exists;
+    import std.path : buildPath;
+    foreach (relative; [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
     ]) {
+        size_t occurrences;
+        foreach (candidate; sourceCarriersWave14_1) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
+        assert(exists(relative), "Wave14 logical source physical input missing: " ~ relative);
+    }
+    foreach (sourceCarrier; sourceCarriersWave14_1) {
         const sourceCarrierPath = sourceCarrier;
 
         const name = sourceCarrierPath;
@@ -1105,7 +1133,7 @@ unittest { // (4c)
         foreach (site; identSites(code, "scriptedWriteEndsOperation", false))
             mps ~= e.name ~ ":" ~ site;
     }
-    foreach (sourceCarrier; [
+    const string[] sourceCarriersWave14_2 = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
@@ -1114,7 +1142,35 @@ unittest { // (4c)
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+];
+    import std.file : exists;
+    import std.path : buildPath;
+    foreach (relative; [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
     ]) {
+        size_t occurrences;
+        foreach (candidate; sourceCarriersWave14_2) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
+        assert(exists(relative), "Wave14 logical source physical input missing: " ~ relative);
+    }
+    foreach (sourceCarrier; sourceCarriersWave14_2) {
         const sourceCarrierPath = sourceCarrier;
         auto code = blankUnittestBodies(blankNonCode(readText(sourceCarrierPath)));
         foreach (site; identSites(code, "scriptedWriteEndsOperation", false))
@@ -1280,11 +1336,11 @@ unittest { // (4e)
     // composing the topology-step client mixin» (task 9429; the pen keeps its own
     // block) — 12, the table's files.
     string[] model;
-    foreach (scanSourceRoot; ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
+    foreach (scanSourceRoot; ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         if (blankNonCode(readText(e.name)).canFind("mixin TopologyStepClientBody!"))
             model ~= e.name;
-    foreach (sourceCarrier; [
+    const string[] sourceCarriersWave14_3 = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
@@ -1293,7 +1349,35 @@ unittest { // (4e)
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+];
+    import std.file : exists;
+    import std.path : buildPath;
+    foreach (relative; [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
     ]) {
+        size_t occurrences;
+        foreach (candidate; sourceCarriersWave14_3) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
+        assert(exists(relative), "Wave14 logical source physical input missing: " ~ relative);
+    }
+    foreach (sourceCarrier; sourceCarriersWave14_3) {
         const sourceCarrierPath = sourceCarrier;if (blankNonCode(readText(sourceCarrierPath)).canFind("mixin TopologyStepClientBody!"))
             model ~= sourceCarrierPath;
     }
@@ -1775,14 +1859,14 @@ unittest { // (4k)
     // the datum, every word occurrence in `source` (form item 12: a rule, not a list)
     string[] datum;
     size_t scanned;
-    foreach (scanSourceRoot; ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
+    foreach (scanSourceRoot; ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"])
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
                                   "redoPinsRefireImage", false))
             datum ~= f.name ~ " " ~ site;
     }
-    foreach (sourceCarrier; [
+    const string[] sourceCarriersWave14_4 = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
@@ -1791,7 +1875,35 @@ unittest { // (4k)
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+];
+    import std.file : exists;
+    import std.path : buildPath;
+    foreach (relative; [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
     ]) {
+        size_t occurrences;
+        foreach (candidate; sourceCarriersWave14_4) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
+        assert(exists(relative), "Wave14 logical source physical input missing: " ~ relative);
+    }
+    foreach (sourceCarrier; sourceCarriersWave14_4) {
         const sourceCarrierPath = sourceCarrier;
 
         foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(sourceCarrierPath))),
@@ -2671,14 +2783,14 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
                       identSites(esU, "invalidateRedo", false)));
         string[] cuts;
         size_t files;
-        foreach (scanSourceRoot; ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
+        foreach (scanSourceRoot; ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"])
         foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++files;
             foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
                                       "truncateRedo", false))
                 cuts ~= f.name ~ " " ~ site;
         }
-    foreach (sourceCarrier; [
+    const string[] sourceCarriersWave14_5 = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
@@ -2687,7 +2799,35 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+];
+    import std.file : exists;
+    import std.path : buildPath;
+    foreach (relative; [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
     ]) {
+        size_t occurrences;
+        foreach (candidate; sourceCarriersWave14_5) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
+        assert(exists(relative), "Wave14 logical source physical input missing: " ~ relative);
+    }
+    foreach (sourceCarrier; sourceCarriersWave14_5) {
         const sourceCarrierPath = sourceCarrier;
 
             foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(sourceCarrierPath))),

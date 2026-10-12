@@ -9,7 +9,7 @@ unittest {
     import std.algorithm : sort, canFind;
 
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    enum owners = ["camera-model", "document-channels", "image-codec", "document-io", "document-model", "param-schema", "pipe-runtime", "alignment-ops", "command-runtime", "application-core", "creation-ops", "display-policy", "edit-contracts", "input-events", "interaction-query", "interchange", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-ops", "mesh-snapshot", "mesh-topology", "mesh", "pipe-evaluation", "profiling", "spatial", "subpatch-preview", "tool-state", "transform-ops", "viewport-gpu", "log", "math", "parallel", "plane-bytes", "screen-buckets", "json-number", "pipe-contracts", "mesh-preview"];
+    enum owners = ["camera-model", "document-channels", "image-codec", "document-io", "document-model", "param-schema", "pipe-runtime", "alignment-ops", "command-runtime", "application-core", "creation-ops", "display-policy", "edit-contracts", "input-events", "interaction-query", "interchange", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-ops", "mesh-snapshot", "mesh-topology", "mesh", "pipe-evaluation", "profiling", "spatial", "subpatch-preview", "tool-state", "transform-ops", "viewport-gpu", "log", "math", "parallel", "plane-bytes", "screen-buckets", "json-number", "pipe-contracts", "mesh-preview", "selection-model", "scene-query", "editor-commands"];
     enum utilOwners = ["json-number", "log", "math", "parallel", "plane-bytes", "screen-buckets"];
     enum noCarriers = ["log", "parallel", "plane-bytes", "profiling", "screen-buckets", "mesh-change", "mesh-topology"];
     enum fixtureOnlyVersions = ["edit-contracts", "mesh", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-snapshot", "mesh-topology"];
@@ -33,8 +33,8 @@ unittest {
     foreach (owner; owners)
         assert(selected.canFind("vibe3d-" ~ owner),
                "root test ownership named selector " ~ owner);
-    assert(selected.length == 39 && selected == expected,
-           "root test ownership frozen thirty-nine selectors");
+    assert(selected.length == 42 && selected == expected,
+           "root test ownership frozen forty-two selectors");
     foreach (owner; owners) {
         const packageName = "vibe3d-" ~ owner;
         const packagePath = (utilOwners.canFind(owner) ? "util/" : "packages/") ~ owner;
@@ -57,6 +57,13 @@ unittest {
         auto source = config(raw, "root-tests");
         assert(source["targetType"].str == "sourceLibrary",
                "root test ownership sourceLibrary " ~ owner);
+        if (["selection-model", "scene-query", "editor-commands"].canFind(owner)) {
+            assert(source["versions"].array.length == 2 &&
+                   source["versions"][0].str == "WithAI" &&
+                   source["versions"][1].str == "MeshSnapshotFixtures",
+                   "root test ownership Wave14 fixture versions " ~ owner);
+            source["versions"] = modeling["versions"];
+        }
         if (fixtureOnlyVersions.canFind(owner)) {
             assert(source["versions"].array.length == 0,
                    "root test ownership lower fixture-only versions " ~ owner);

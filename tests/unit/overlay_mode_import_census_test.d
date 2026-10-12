@@ -197,7 +197,7 @@ unittest // K1-K9: whole-tree census
     size_t sourceFiles, testFiles;
     Scan renderer, editorApp;
     size_t rendererSeen, editorAppSeen;
-    const string[] censusRoots = ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source"];
+    const string[] censusRoots = ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"];
     const string[] historicalCarriers = [
         "packages/camera-model/tests/source/tests/unit/view_test.d",
         "packages/document-channels/tests/source/tests/unit/layer_params_test.d",
@@ -219,7 +219,18 @@ unittest // K1-K9: whole-tree census
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
-    ];
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+        "packages/scene-query/tests/source/tests/unit/bvh_pick_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d",
+];
     string[] inputPaths;
     bool[] inputProduction;
     foreach (root; censusRoots) {
@@ -345,7 +356,18 @@ unittest // K1-K9: whole-tree census
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
-    ]) {
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+        "packages/scene-query/tests/source/tests/unit/bvh_pick_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d",
+]) {
         size_t occurrences, classifiedOccurrences;
         foreach (i, candidate; inputPaths)
             if (candidate == buildPath(repoRoot, relative)) {

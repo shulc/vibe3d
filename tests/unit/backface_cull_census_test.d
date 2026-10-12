@@ -59,11 +59,11 @@ private string glslRegion(string src, string head) {
 
 private string[] sourceFiles() {
     string[] o;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/command-runtime/source"), buildPath(root, "packages/application-core/source"), buildPath(root, "packages/camera-model/source"), buildPath(root, "packages/document-channels/source"), buildPath(root, "packages/image-codec/source"), buildPath(root, "packages/document-io/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/command-runtime/source"), buildPath(root, "packages/application-core/source"), buildPath(root, "packages/camera-model/source"), buildPath(root, "packages/document-channels/source"), buildPath(root, "packages/image-codec/source"), buildPath(root, "packages/document-io/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source"), buildPath(root, "packages/selection-model/source"), buildPath(root, "packages/scene-query/source"), buildPath(root, "packages/editor-commands/source")])
 
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         o ~= relativePath(e.name, buildPath(root, "source")).replace("\\", "/");
-    foreach (sourceCarrier; [
+    const string[] sourceCarriersWave14_1 = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
@@ -72,7 +72,34 @@ private string[] sourceFiles() {
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
-    ])
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+];
+    import std.file : exists;
+    foreach (relative; [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+    ]) {
+        size_t occurrences;
+        foreach (candidate; sourceCarriersWave14_1) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
+        assert(exists(buildPath(root, relative)), "Wave14 logical source physical input missing: " ~ relative);
+    }
+    foreach (sourceCarrier; sourceCarriersWave14_1)
         o ~= relativePath(buildPath(root, sourceCarrier), buildPath(root, "source")).replace("\\", "/");
     o.sort();
     return o;
@@ -99,7 +126,7 @@ unittest { // (a) the cull POLICY reaches only the display: a picker reading it 
                ~ "changes picking, which S1d pins unchanged", offenders));
     // The picking modules name none of the sidedness vocabulary.
     size_t pickers;
-    foreach (f; ["../packages/viewport-gpu/source/gpu_select.d", "select_visibility.d", "bvh_pick.d"]) {
+    foreach (f; ["../packages/viewport-gpu/source/gpu_select.d", "../packages/display-policy/source/select_visibility.d", "../packages/scene-query/source/bvh_pick.d"]) {
         immutable code = blankNonCode(readText(buildPath(root, "source", f)));
         ++pickers;
         foreach (tok; ["cullBySurface", "bySurface", "twoSided", "anyTwoSided", "FaceSide", "faceSidesFor"])

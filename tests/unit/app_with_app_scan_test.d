@@ -275,7 +275,7 @@ unittest {
     size_t filesScanned;
     size_t scopeModulesScanned;
     const sourceDir = buildPath(gateRepoRoot, "source");
-    foreach (scanSourceRoot; [sourceDir, buildPath(gateRepoRoot, "packages/command-runtime/source"), buildPath(gateRepoRoot, "packages/application-core/source"), buildPath(gateRepoRoot, "packages/camera-model/source"), buildPath(gateRepoRoot, "packages/document-channels/source"), buildPath(gateRepoRoot, "packages/image-codec/source"), buildPath(gateRepoRoot, "packages/document-io/source"), buildPath(gateRepoRoot, "packages/document-model/source"), buildPath(gateRepoRoot, "packages/param-schema/source"), buildPath(gateRepoRoot, "packages/pipe-runtime/source"), buildPath(gateRepoRoot, "packages/mesh-ops/source"), buildPath(gateRepoRoot, "packages/interchange/source"), buildPath(gateRepoRoot, "packages/interaction-query/source"), buildPath(gateRepoRoot, "packages/pipe-evaluation/source"), buildPath(gateRepoRoot, "packages/tool-state/source"), buildPath(gateRepoRoot, "packages/transform-ops/source"), buildPath(gateRepoRoot, "packages/creation-ops/source"), buildPath(gateRepoRoot, "packages/alignment-ops/source"), buildPath(gateRepoRoot, "packages/input-events/source"), buildPath(gateRepoRoot, "packages/display-policy/source"), buildPath(gateRepoRoot, "packages/viewport-gpu/source"), buildPath(gateRepoRoot, "packages/subpatch-preview/source"), buildPath(gateRepoRoot, "packages/edit-contracts/source"), buildPath(gateRepoRoot, "packages/mesh-change/source"), buildPath(gateRepoRoot, "packages/mesh-contracts/source"), buildPath(gateRepoRoot, "packages/mesh-edit-log/source"), buildPath(gateRepoRoot, "packages/mesh-edit-replay/source"), buildPath(gateRepoRoot, "packages/mesh-snapshot/source"), buildPath(gateRepoRoot, "packages/mesh-topology/source"), buildPath(gateRepoRoot, "packages/mesh/source"), buildPath(gateRepoRoot, "packages/profiling/source"), buildPath(gateRepoRoot, "packages/spatial/source"), buildPath(gateRepoRoot, "util/log/source"), buildPath(gateRepoRoot, "util/math/source"), buildPath(gateRepoRoot, "util/parallel/source"), buildPath(gateRepoRoot, "util/plane-bytes/source"), buildPath(gateRepoRoot, "util/screen-buckets/source")])
+    foreach (scanSourceRoot; [sourceDir, buildPath(gateRepoRoot, "packages/command-runtime/source"), buildPath(gateRepoRoot, "packages/application-core/source"), buildPath(gateRepoRoot, "packages/camera-model/source"), buildPath(gateRepoRoot, "packages/document-channels/source"), buildPath(gateRepoRoot, "packages/image-codec/source"), buildPath(gateRepoRoot, "packages/document-io/source"), buildPath(gateRepoRoot, "packages/document-model/source"), buildPath(gateRepoRoot, "packages/param-schema/source"), buildPath(gateRepoRoot, "packages/pipe-runtime/source"), buildPath(gateRepoRoot, "packages/mesh-ops/source"), buildPath(gateRepoRoot, "packages/interchange/source"), buildPath(gateRepoRoot, "packages/interaction-query/source"), buildPath(gateRepoRoot, "packages/pipe-evaluation/source"), buildPath(gateRepoRoot, "packages/tool-state/source"), buildPath(gateRepoRoot, "packages/transform-ops/source"), buildPath(gateRepoRoot, "packages/creation-ops/source"), buildPath(gateRepoRoot, "packages/alignment-ops/source"), buildPath(gateRepoRoot, "packages/input-events/source"), buildPath(gateRepoRoot, "packages/display-policy/source"), buildPath(gateRepoRoot, "packages/viewport-gpu/source"), buildPath(gateRepoRoot, "packages/subpatch-preview/source"), buildPath(gateRepoRoot, "packages/edit-contracts/source"), buildPath(gateRepoRoot, "packages/mesh-change/source"), buildPath(gateRepoRoot, "packages/mesh-contracts/source"), buildPath(gateRepoRoot, "packages/mesh-edit-log/source"), buildPath(gateRepoRoot, "packages/mesh-edit-replay/source"), buildPath(gateRepoRoot, "packages/mesh-snapshot/source"), buildPath(gateRepoRoot, "packages/mesh-topology/source"), buildPath(gateRepoRoot, "packages/mesh/source"), buildPath(gateRepoRoot, "packages/profiling/source"), buildPath(gateRepoRoot, "packages/spatial/source"), buildPath(gateRepoRoot, "util/log/source"), buildPath(gateRepoRoot, "util/math/source"), buildPath(gateRepoRoot, "util/parallel/source"), buildPath(gateRepoRoot, "util/plane-bytes/source"), buildPath(gateRepoRoot, "util/screen-buckets/source"), buildPath(gateRepoRoot, "packages/selection-model/source"), buildPath(gateRepoRoot, "packages/scene-query/source"), buildPath(gateRepoRoot, "packages/editor-commands/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         filesScanned++;
@@ -314,7 +314,7 @@ unittest {
                        moduleName, liveApp, liveApp + 1, canaryApp));
         }
     }
-    foreach (sourceCarrier; [
+    const string[] sourceCarriersWave14_1 = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
@@ -323,7 +323,34 @@ unittest {
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+];
+    import std.file : exists;
+    foreach (relative; [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
     ]) {
+        size_t occurrences;
+        foreach (candidate; sourceCarriersWave14_1) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
+        assert(exists(buildPath(gateRepoRoot, relative)), "Wave14 logical source physical input missing: " ~ relative);
+    }
+    foreach (sourceCarrier; sourceCarriersWave14_1) {
         const sourceCarrierPath = buildPath(gateRepoRoot, sourceCarrier);
 
         const rel = relativePath(sourceCarrierPath, gateRepoRoot);

@@ -762,13 +762,13 @@ unittest { // 6040 census: production binder, call sites, retired EditorApp path
         && panels.count("import ui.item_rename") == 0,
         "6040 retired panel path: ui.panels still defines or feeds the Images rename owner");
     size_t sourceFiles, oldSig;
-    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/command-runtime/source"), repoRoot.buildPath("packages/application-core/source"), repoRoot.buildPath("packages/camera-model/source"), repoRoot.buildPath("packages/document-channels/source"), repoRoot.buildPath("packages/image-codec/source"), repoRoot.buildPath("packages/document-io/source"), repoRoot.buildPath("packages/document-model/source"), repoRoot.buildPath("packages/param-schema/source"), repoRoot.buildPath("packages/pipe-runtime/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source"), repoRoot.buildPath("packages/input-events/source"), repoRoot.buildPath("packages/display-policy/source"), repoRoot.buildPath("packages/viewport-gpu/source"), repoRoot.buildPath("packages/subpatch-preview/source"), repoRoot.buildPath("packages/edit-contracts/source"), repoRoot.buildPath("packages/mesh-change/source"), repoRoot.buildPath("packages/mesh-contracts/source"), repoRoot.buildPath("packages/mesh-edit-log/source"), repoRoot.buildPath("packages/mesh-edit-replay/source"), repoRoot.buildPath("packages/mesh-snapshot/source"), repoRoot.buildPath("packages/mesh-topology/source"), repoRoot.buildPath("packages/mesh/source"), repoRoot.buildPath("packages/profiling/source"), repoRoot.buildPath("packages/spatial/source"), repoRoot.buildPath("util/log/source"), repoRoot.buildPath("util/math/source"), repoRoot.buildPath("util/parallel/source"), repoRoot.buildPath("util/plane-bytes/source"), repoRoot.buildPath("util/screen-buckets/source")])
+    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/command-runtime/source"), repoRoot.buildPath("packages/application-core/source"), repoRoot.buildPath("packages/camera-model/source"), repoRoot.buildPath("packages/document-channels/source"), repoRoot.buildPath("packages/image-codec/source"), repoRoot.buildPath("packages/document-io/source"), repoRoot.buildPath("packages/document-model/source"), repoRoot.buildPath("packages/param-schema/source"), repoRoot.buildPath("packages/pipe-runtime/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source"), repoRoot.buildPath("packages/input-events/source"), repoRoot.buildPath("packages/display-policy/source"), repoRoot.buildPath("packages/viewport-gpu/source"), repoRoot.buildPath("packages/subpatch-preview/source"), repoRoot.buildPath("packages/edit-contracts/source"), repoRoot.buildPath("packages/mesh-change/source"), repoRoot.buildPath("packages/mesh-contracts/source"), repoRoot.buildPath("packages/mesh-edit-log/source"), repoRoot.buildPath("packages/mesh-edit-replay/source"), repoRoot.buildPath("packages/mesh-snapshot/source"), repoRoot.buildPath("packages/mesh-topology/source"), repoRoot.buildPath("packages/mesh/source"), repoRoot.buildPath("packages/profiling/source"), repoRoot.buildPath("packages/spatial/source"), repoRoot.buildPath("util/log/source"), repoRoot.buildPath("util/math/source"), repoRoot.buildPath("util/parallel/source"), repoRoot.buildPath("util/plane-bytes/source"), repoRoot.buildPath("util/screen-buckets/source"), "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"])
 
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         oldSig += blankNonCode(readText(entry.name)).count("drawImageListPanel(EditorApp");
     }
-    foreach (sourceCarrier; [
+    const string[] sourceCarriersWave14_1 = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
@@ -777,7 +777,35 @@ unittest { // 6040 census: production binder, call sites, retired EditorApp path
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+];
+    import std.file : exists;
+    import std.path : buildPath;
+    foreach (relative; [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
     ]) {
+        size_t occurrences;
+        foreach (candidate; sourceCarriersWave14_1) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
+        assert(exists(buildPath(repoRoot, relative)), "Wave14 logical source physical input missing: " ~ relative);
+    }
+    foreach (sourceCarrier; sourceCarriersWave14_1) {
         const sourceCarrierPath = repoRoot.buildPath(sourceCarrier);
 
         oldSig += blankNonCode(readText(sourceCarrierPath)).count("drawImageListPanel(EditorApp");

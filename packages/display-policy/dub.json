@@ -146,6 +146,12 @@
     },
     "vibe3d-mesh": {
       "path": "../mesh"
+    },
+    "vibe3d-document-model": {
+      "path": "../document-model"
+    },
+    "vibe3d-mesh-change": {
+      "path": "../mesh-change"
     }
   },
   "configurations": [
@@ -156,7 +162,9 @@
       ],
       "subConfigurations": {
         "vibe3d-math": "modeling",
-        "vibe3d-mesh": "modeling"
+        "vibe3d-mesh": "modeling",
+        "vibe3d-document-model": "modeling",
+        "vibe3d-mesh-change": "modeling"
       }
     },
     {
@@ -164,7 +172,9 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-math": "modeling-noai",
-        "vibe3d-mesh": "modeling-noai"
+        "vibe3d-mesh": "modeling-noai",
+        "vibe3d-document-model": "modeling-noai",
+        "vibe3d-mesh-change": "modeling-noai"
       }
     },
     {
@@ -175,7 +185,9 @@
       ],
       "subConfigurations": {
         "vibe3d-math": "with-render",
-        "vibe3d-mesh": "with-render"
+        "vibe3d-mesh": "with-render",
+        "vibe3d-document-model": "with-render",
+        "vibe3d-mesh-change": "with-render"
       }
     },
     {
@@ -185,7 +197,9 @@
       ],
       "subConfigurations": {
         "vibe3d-math": "web",
-        "vibe3d-mesh": "web"
+        "vibe3d-mesh": "web",
+        "vibe3d-document-model": "web",
+        "vibe3d-mesh-change": "web"
       }
     },
     {
@@ -195,7 +209,9 @@
       ],
       "subConfigurations": {
         "vibe3d-math": "root-tests",
-        "vibe3d-mesh": "root-tests"
+        "vibe3d-mesh": "root-tests",
+        "vibe3d-document-model": "root-tests",
+        "vibe3d-mesh-change": "root-tests"
       },
       "targetType": "sourceLibrary"
     },
@@ -204,7 +220,9 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-math": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests"
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-document-model": "isolated-tests",
+        "vibe3d-mesh-change": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

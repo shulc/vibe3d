@@ -144,6 +144,12 @@
     },
     "vibe3d-mesh": {
       "path": "../../mesh"
+    },
+    "vibe3d-document-model": {
+      "path": "../../document-model"
+    },
+    "vibe3d-mesh-change": {
+      "path": "../../mesh-change"
     }
   },
   "importPaths": [
@@ -155,7 +161,9 @@
       "name": "algorithm",
       "subConfigurations": {
         "vibe3d-math": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests"
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-document-model": "isolated-tests",
+        "vibe3d-mesh-change": "isolated-tests"
       }
     }
   ],
@@ -172,7 +180,16 @@
     "source/tests/unit/display_policy_population_test.d",
     "source/tests/unit/vertex_normals_test.d",
     "source/tests/unit/viewport_scheme_test.d",
-    "source/tests/unit/weightmap_state_test.d"
+    "source/tests/unit/weightmap_state_test.d",
+    "../source/retopology_dot_cull.d",
+    "../source/retopology_line_shade.d",
+    "../source/retopology_order.d",
+    "../source/select_visibility.d",
+    "source/tests/unit/retopology_display_model_test.d",
+    "source/tests/unit/retopology_dot_cull_test.d",
+    "source/tests/unit/retopology_line_shade_algorithm_cells_test.d",
+    "source/tests/unit/retopology_order_algorithm_cells_test.d",
+    "source/tests/unit/select_visibility_test.d"
   ],
   "dflags": []
 }

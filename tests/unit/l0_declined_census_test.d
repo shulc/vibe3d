@@ -199,7 +199,7 @@ private struct Found { string zone; string file; string symbol; string ident; si
 private Found[] scanDormant() {
     auto found = appender!(Found[]);
     string[] inputPaths;
-    foreach (zone; ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"]) {
+    foreach (zone; ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"]) {
         foreach (de; dirEntries(buildPath(repoRoot, zone), "*.d", SpanMode.depth)) {
             const rel  = de.name[repoRoot.length + 1 .. $];
             inputPaths ~= rel;
@@ -228,7 +228,18 @@ private Found[] scanDormant() {
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
-    ]) {
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+        "packages/scene-query/tests/source/tests/unit/bvh_pick_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d",
+]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
         const zone = "packages/common/source";
             const rel  = sourceCarrierPath[repoRoot.length + 1 .. $];
@@ -284,7 +295,135 @@ private Found[] scanDormant() {
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
-    ]) {
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",        "packages/scene-query/source/bvh_pick.d",
+        "packages/editor-commands/source/commands/history/clear.d",
+        "packages/editor-commands/source/commands/history/save_as_script.d",
+        "packages/editor-commands/source/commands/history/show.d",
+        "packages/editor-commands/source/commands/macros/record.d",
+        "packages/editor-commands/source/commands/macros/save_recorded.d",
+        "packages/editor-commands/source/commands/mesh/add_point.d",
+        "packages/editor-commands/source/commands/mesh/array.d",
+        "packages/editor-commands/source/commands/mesh/axis_slice.d",
+        "packages/editor-commands/source/commands/mesh/bevel.d",
+        "packages/editor-commands/source/commands/mesh/bridge.d",
+        "packages/editor-commands/source/commands/mesh/cleanup.d",
+        "packages/editor-commands/source/commands/mesh/clone_.d",
+        "packages/editor-commands/source/commands/mesh/collapse.d",
+        "packages/editor-commands/source/commands/mesh/copy.d",
+        "packages/editor-commands/source/commands/mesh/cut.d",
+        "packages/editor-commands/source/commands/mesh/delete.d",
+        "packages/editor-commands/source/commands/mesh/detriangulate.d",
+        "packages/editor-commands/source/commands/mesh/duplicate.d",
+        "packages/editor-commands/source/commands/mesh/edge_crease.d",
+        "packages/editor-commands/source/commands/mesh/edge_extend.d",
+        "packages/editor-commands/source/commands/mesh/edge_extrude.d",
+        "packages/editor-commands/source/commands/mesh/edge_join.d",
+        "packages/editor-commands/source/commands/mesh/edge_slice.d",
+        "packages/editor-commands/source/commands/mesh/edge_slide.d",
+        "packages/editor-commands/source/commands/mesh/face_extrude.d",
+        "packages/editor-commands/source/commands/mesh/fix_orientation.d",
+        "packages/editor-commands/source/commands/mesh/flip.d",
+        "packages/editor-commands/source/commands/mesh/hide.d",
+        "packages/editor-commands/source/commands/mesh/jitter.d",
+        "packages/editor-commands/source/commands/mesh/linear_align.d",
+        "packages/editor-commands/source/commands/mesh/loop_slice.d",
+        "packages/editor-commands/source/commands/mesh/make_polygon.d",
+        "packages/editor-commands/source/commands/mesh/map_edit_undo.d",
+        "packages/editor-commands/source/commands/mesh/merge.d",
+        "packages/editor-commands/source/commands/mesh/mirror.d",
+        "packages/editor-commands/source/commands/mesh/morph_edit.d",
+        "packages/editor-commands/source/commands/mesh/move_vertex.d",
+        "packages/editor-commands/source/commands/mesh/paste.d",
+        "packages/editor-commands/source/commands/mesh/poly_inset.d",
+        "packages/editor-commands/source/commands/mesh/polygon_align.d",
+        "packages/editor-commands/source/commands/mesh/position_undo.d",
+        "packages/editor-commands/source/commands/mesh/quadruple.d",
+        "packages/editor-commands/source/commands/mesh/quantize.d",
+        "packages/editor-commands/source/commands/mesh/radial_align.d",
+        "packages/editor-commands/source/commands/mesh/radial_array.d",
+        "packages/editor-commands/source/commands/mesh/reduce.d",
+        "packages/editor-commands/source/commands/mesh/remove.d",
+        "packages/editor-commands/source/commands/mesh/screen_slice.d",
+        "packages/editor-commands/source/commands/mesh/selection_edit.d",
+        "packages/editor-commands/source/commands/mesh/set_material.d",
+        "packages/editor-commands/source/commands/mesh/set_part.d",
+        "packages/editor-commands/source/commands/mesh/smooth_shift.d",
+        "packages/editor-commands/source/commands/mesh/spikey.d",
+        "packages/editor-commands/source/commands/mesh/spin_edge.d",
+        "packages/editor-commands/source/commands/mesh/split_edge.d",
+        "packages/editor-commands/source/commands/mesh/split_face.d",
+        "packages/editor-commands/source/commands/mesh/stroke_extrude.d",
+        "packages/editor-commands/source/commands/mesh/subdivide.d",
+        "packages/editor-commands/source/commands/mesh/subdivide_faceted.d",
+        "packages/editor-commands/source/commands/mesh/subpatch_toggle.d",
+        "packages/editor-commands/source/commands/mesh/surface_attr.d",
+        "packages/editor-commands/source/commands/mesh/sweep.d",
+        "packages/editor-commands/source/commands/mesh/symmetrize.d",
+        "packages/editor-commands/source/commands/mesh/thicken.d",
+        "packages/editor-commands/source/commands/mesh/transform.d",
+        "packages/editor-commands/source/commands/mesh/unify.d",
+        "packages/editor-commands/source/commands/mesh/uv_map_util.d",
+        "packages/editor-commands/source/commands/mesh/uv_pack.d",
+        "packages/editor-commands/source/commands/mesh/uv_project.d",
+        "packages/editor-commands/source/commands/mesh/uv_relax.d",
+        "packages/editor-commands/source/commands/mesh/uv_transform.d",
+        "packages/editor-commands/source/commands/mesh/uv_unwrap.d",
+        "packages/editor-commands/source/commands/mesh/vert_join.d",
+        "packages/editor-commands/source/commands/mesh/vert_merge.d",
+        "packages/editor-commands/source/commands/mesh/vertex_bevel.d",
+        "packages/editor-commands/source/commands/mesh/vertex_center.d",
+        "packages/editor-commands/source/commands/mesh/vertex_extrude.d",
+        "packages/editor-commands/source/commands/mesh/vertex_new.d",
+        "packages/editor-commands/source/commands/mesh/vertex_position_result.d",
+        "packages/editor-commands/source/commands/mesh/vertex_set.d",
+        "packages/editor-commands/source/commands/mesh/vertex_split.d",
+        "packages/editor-commands/source/commands/mesh/weightmap.d",
+        "packages/editor-commands/source/commands/mesh/weld_vertex_pair.d",
+        "packages/editor-commands/source/commands/select/between.d",
+        "packages/editor-commands/source/commands/select/boundary.d",
+        "packages/editor-commands/source/commands/select/by_stat.d",
+        "packages/editor-commands/source/commands/select/by_tag.d",
+        "packages/editor-commands/source/commands/select/connect.d",
+        "packages/editor-commands/source/commands/select/contract.d",
+        "packages/editor-commands/source/commands/select/convert.d",
+        "packages/editor-commands/source/commands/select/expand.d",
+        "packages/editor-commands/source/commands/select/fill.d",
+        "packages/editor-commands/source/commands/select/less.d",
+        "packages/editor-commands/source/commands/select/loop.d",
+        "packages/editor-commands/source/commands/select/more.d",
+        "packages/editor-commands/source/commands/select/ring.d",
+        "packages/editor-commands/source/commands/select/sets.d",
+        "packages/editor-commands/source/commands/select/type_from.d",
+        "packages/mesh-ops/source/geometry_clipboard.d",
+        "packages/editor-commands/source/macro_recorder.d",
+        "packages/mesh-ops/source/mesh_analysis.d",
+        "packages/mesh-ops/source/mesh_stats.d",
+        "packages/display-policy/source/retopology_dot_cull.d",
+        "packages/display-policy/source/retopology_line_shade.d",
+        "packages/display-policy/source/retopology_order.d",
+        "packages/display-policy/source/select_visibility.d",
+        "packages/selection-model/source/selection_product.d",
+        "packages/selection-model/source/selection_projection.d",
+        "packages/editor-commands/source/step_trace.d",
+        "packages/scene-query/source/symmetry_pick.d",
+        "packages/mesh-ops/source/uv_island.d",
+        "packages/mesh-ops/source/uv_project.d",
+        "packages/mesh-ops/source/uv_relax.d",
+        "packages/mesh-ops/source/uv_transform.d",
+        "packages/mesh-ops/source/uv_unwrap.d",
+        "packages/mesh-ops/source/uv_weld.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+        "packages/scene-query/tests/source/tests/unit/bvh_pick_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d",
+
+]) {
         size_t occurrences;
         foreach (candidate; inputPaths) if (candidate == relative) ++occurrences;
         assert(occurrences == 1,
@@ -327,7 +466,7 @@ unittest // GATE A anti-vacuity — the tree walk actually read the tree
     // cell fires first, in its own words. The floor is deliberately far below
     // the real counts so it never needs touching as the tree grows.
     size_t nSource = 0, nTests = 0;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/selection-model/source"), buildPath(repoRoot, "packages/scene-query/source"), buildPath(repoRoot, "packages/editor-commands/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         ++nSource;
@@ -380,7 +519,7 @@ unittest // GATE B — dense declarations and the absence of recorder calls
     size_t anchorCount;
     size_t filesRead;
 
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/selection-model/source"), buildPath(repoRoot, "packages/scene-query/source"), buildPath(repoRoot, "packages/editor-commands/source")])
 
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
@@ -416,7 +555,18 @@ unittest // GATE B — dense declarations and the absence of recorder calls
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
-    ]) {
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+        "packages/scene-query/tests/source/tests/unit/bvh_pick_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d",
+]) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
         const rel = sourceCarrierPath[repoRoot.length + 1 .. $];
         const raw = readText(sourceCarrierPath);

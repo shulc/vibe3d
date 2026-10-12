@@ -88,7 +88,16 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
-    ];
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+];
     Src[] logicalRaw = all.dup, logicalCode = prod.dup;
     foreach (relative; sourceCarriers) {
         const raw = readText(buildPath(repoRoot, relative));
@@ -105,15 +114,24 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
-    ]) {
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+]) {
         size_t rawOccurrences, codeOccurrences;
         foreach (s; logicalRaw) if (s.rel == relative) ++rawOccurrences;
         foreach (s; logicalCode) if (s.rel == relative) ++codeOccurrences;
         assert(rawOccurrences == 1 && codeOccurrences == 1,
                "workplane logical source carrier membership: " ~ relative);
     }
-    assert(logicalRaw.length == 616 && logicalCode.length == 616,
-           "workplane logical production and source carrier population 616");
+    assert(logicalRaw.length == 625 && logicalCode.length == 625,
+           "workplane logical production and source carrier population 625");
     foreach (physical; prod) {
         size_t rawOccurrences, codeOccurrences;
         foreach (s; logicalRaw) if (s.rel == physical.rel) ++rawOccurrences;

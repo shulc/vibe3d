@@ -513,7 +513,7 @@ unittest {
     LedgerHit[] evalHits;            // assertion (b)
     LedgerHit[] workplaneHits;       // assertion (c)
 
-    foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/command-runtime/source"), buildPath(censusRepoRoot, "packages/application-core/source"), buildPath(censusRepoRoot, "packages/camera-model/source"), buildPath(censusRepoRoot, "packages/document-channels/source"), buildPath(censusRepoRoot, "packages/image-codec/source"), buildPath(censusRepoRoot, "packages/document-io/source"), buildPath(censusRepoRoot, "packages/document-model/source"), buildPath(censusRepoRoot, "packages/param-schema/source"), buildPath(censusRepoRoot, "packages/pipe-runtime/source"), buildPath(censusRepoRoot, "packages/mesh-ops/source"), buildPath(censusRepoRoot, "packages/interchange/source"), buildPath(censusRepoRoot, "packages/interaction-query/source"), buildPath(censusRepoRoot, "packages/pipe-evaluation/source"), buildPath(censusRepoRoot, "packages/tool-state/source"), buildPath(censusRepoRoot, "packages/transform-ops/source"), buildPath(censusRepoRoot, "packages/creation-ops/source"), buildPath(censusRepoRoot, "packages/alignment-ops/source"), buildPath(censusRepoRoot, "packages/input-events/source"), buildPath(censusRepoRoot, "packages/display-policy/source"), buildPath(censusRepoRoot, "packages/viewport-gpu/source"), buildPath(censusRepoRoot, "packages/subpatch-preview/source"), buildPath(censusRepoRoot, "packages/edit-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-change/source"), buildPath(censusRepoRoot, "packages/mesh-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-edit-log/source"), buildPath(censusRepoRoot, "packages/mesh-edit-replay/source"), buildPath(censusRepoRoot, "packages/mesh-snapshot/source"), buildPath(censusRepoRoot, "packages/mesh-topology/source"), buildPath(censusRepoRoot, "packages/mesh/source"), buildPath(censusRepoRoot, "packages/profiling/source"), buildPath(censusRepoRoot, "packages/spatial/source"), buildPath(censusRepoRoot, "util/log/source"), buildPath(censusRepoRoot, "util/math/source"), buildPath(censusRepoRoot, "util/parallel/source"), buildPath(censusRepoRoot, "util/plane-bytes/source"), buildPath(censusRepoRoot, "util/screen-buckets/source"), buildPath(censusRepoRoot, "packages/pipe-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-preview/source"), buildPath(censusRepoRoot, "util/json-number/source")])
+    foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/command-runtime/source"), buildPath(censusRepoRoot, "packages/application-core/source"), buildPath(censusRepoRoot, "packages/camera-model/source"), buildPath(censusRepoRoot, "packages/document-channels/source"), buildPath(censusRepoRoot, "packages/image-codec/source"), buildPath(censusRepoRoot, "packages/document-io/source"), buildPath(censusRepoRoot, "packages/document-model/source"), buildPath(censusRepoRoot, "packages/param-schema/source"), buildPath(censusRepoRoot, "packages/pipe-runtime/source"), buildPath(censusRepoRoot, "packages/mesh-ops/source"), buildPath(censusRepoRoot, "packages/interchange/source"), buildPath(censusRepoRoot, "packages/interaction-query/source"), buildPath(censusRepoRoot, "packages/pipe-evaluation/source"), buildPath(censusRepoRoot, "packages/tool-state/source"), buildPath(censusRepoRoot, "packages/transform-ops/source"), buildPath(censusRepoRoot, "packages/creation-ops/source"), buildPath(censusRepoRoot, "packages/alignment-ops/source"), buildPath(censusRepoRoot, "packages/input-events/source"), buildPath(censusRepoRoot, "packages/display-policy/source"), buildPath(censusRepoRoot, "packages/viewport-gpu/source"), buildPath(censusRepoRoot, "packages/subpatch-preview/source"), buildPath(censusRepoRoot, "packages/edit-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-change/source"), buildPath(censusRepoRoot, "packages/mesh-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-edit-log/source"), buildPath(censusRepoRoot, "packages/mesh-edit-replay/source"), buildPath(censusRepoRoot, "packages/mesh-snapshot/source"), buildPath(censusRepoRoot, "packages/mesh-topology/source"), buildPath(censusRepoRoot, "packages/mesh/source"), buildPath(censusRepoRoot, "packages/profiling/source"), buildPath(censusRepoRoot, "packages/spatial/source"), buildPath(censusRepoRoot, "util/log/source"), buildPath(censusRepoRoot, "util/math/source"), buildPath(censusRepoRoot, "util/parallel/source"), buildPath(censusRepoRoot, "util/plane-bytes/source"), buildPath(censusRepoRoot, "util/screen-buckets/source"), buildPath(censusRepoRoot, "packages/pipe-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-preview/source"), buildPath(censusRepoRoot, "util/json-number/source"), buildPath(censusRepoRoot, "packages/selection-model/source"), buildPath(censusRepoRoot, "packages/scene-query/source"), buildPath(censusRepoRoot, "packages/editor-commands/source")])
 
 
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
@@ -547,7 +547,7 @@ unittest {
             if (h.key == "pickWorkplaneFrame|SubjectSource")
                 workplaneHits ~= h;
     }
-    foreach (sourceCarrier; [
+    const string[] sourceCarriersWave14_1 = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
@@ -556,7 +556,35 @@ unittest {
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+];
+    import std.file : exists;
+    import std.path : buildPath;
+    foreach (relative; [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
     ]) {
+        size_t occurrences;
+        foreach (candidate; sourceCarriersWave14_1) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
+        assert(exists(buildPath(censusRepoRoot, relative)), "Wave14 logical source physical input missing: " ~ relative);
+    }
+    foreach (sourceCarrier; sourceCarriersWave14_1) {
         const sourceCarrierPath = buildPath(censusRepoRoot, sourceCarrier);
 
 

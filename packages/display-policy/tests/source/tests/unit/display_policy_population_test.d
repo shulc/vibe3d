@@ -9,11 +9,16 @@ unittest {
 
     immutable string[] expected = [
         "tests.unit.camera_stamp_test",
+        "tests.unit.retopology_display_model_test",
+        "tests.unit.retopology_dot_cull_test",
+        "tests.unit.retopology_line_shade_algorithm_cells_test",
+        "tests.unit.retopology_order_algorithm_cells_test",
+        "tests.unit.select_visibility_test",
         "tests.unit.vertex_normals_test",
         "tests.unit.viewport_scheme_test",
         "tests.unit.weightmap_state_test",
     ];
-    assert(expected.length == 4, "display-policy frozen carrier roster floor 4");
+    assert(expected.length == 9, "display-policy frozen carrier roster floor 9");
     string[] actual;
     foreach (info; ModuleInfo)
         if (info !is null && info.unitTest !is null && expected.canFind(info.name))
@@ -25,7 +30,7 @@ unittest {
                "PKG-POP-display-policy must occur exactly once: " ~ name);
     }
     actual.sort;
-    assert(actual.length == 4, "display-policy selected carrier population 4");
+    assert(actual.length == 9, "display-policy selected carrier population 9");
     assert(actual == expected, "display-policy selected carrier sorted identity");
-    writeln("PKG-POPULATION package=display-policy selected=4 exactly-once=4");
+    writeln("PKG-POPULATION package=display-policy selected=9 exactly-once=9");
 }
