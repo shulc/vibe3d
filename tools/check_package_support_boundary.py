@@ -2320,7 +2320,8 @@ def validate_actual_compiler(commands, project, owner, description, home, harnes
 def compiler_module(relative):
     if relative=='../../../tests/unit/mesh_by_value_gate.d':return 'tests.unit.mesh_by_value_gate'
     if relative=='../../../tests/unit/fixtures.d':return 'tests.unit.fixtures'
-    return relative.removeprefix('../source/').removeprefix('source/').removesuffix('.d').replace('/','.')
+    module = relative.removeprefix('../source/').removeprefix('source/').removesuffix('.d').replace('/','.')
+    return module.removesuffix('.package') if relative.endswith('/package.d') else module
 
 # The frozen pre-compile identity is translated from the accepted root cell map.
 # It is independent of the runtime roster observed below.
@@ -2524,7 +2525,35 @@ def stage_dependencies(active, archive, evidence, env):
             revision = legacy_native_revision(original)
             legacy_require(revision == REVISIONS[name][0], 'PREPARATION-REFUSED: native source revision: ' + name)
             (staged / '.boundary-revision').write_text(revision + '\n')
-        legacy_run(['git', 'init', '-q', str(staged)], archive, env, evidence, 'initialize-' + name)
+        if name == 'bindbc-assimp6':
+            # The unchanged native hook names its existing submodule explicitly.
+            # Preserve independent local metadata so it observes the frozen gitlink.
+            metadata = original / '.git'
+            require(metadata.is_dir() and not (metadata / 'objects/info/alternates').exists(),
+                    'PREPARATION-REFUSED: Assimp independent Git metadata')
+            shutil.copytree(metadata, staged / '.git')
+            child = Path('extern/assimp')
+            (staged / child / '.git').write_bytes((original / child / '.git').read_bytes())
+            git_provenance = {}
+            for suffix in (Path('.'), child):
+                def git_value(root, args):
+                    return subprocess.check_output(['git', '-C', str(root / suffix)] + args, text=True).strip()
+                source_head = git_value(original, ['rev-parse', 'HEAD'])
+                source_tree = git_value(original, ['rev-parse', 'HEAD^{tree}'])
+                require(git_value(staged, ['rev-parse', 'HEAD']) == source_head and
+                        git_value(staged, ['rev-parse', 'HEAD^{tree}']) == source_tree,
+                        'PREPARATION-REFUSED: Assimp staged Git identity')
+                gitdir = Path(git_value(staged, ['rev-parse', '--absolute-git-dir'])).resolve()
+                require(gitdir.is_relative_to(staged.resolve()),
+                        'PREPARATION-REFUSED: Assimp foreign Git metadata')
+                git_provenance[str(suffix)] = {'head': source_head, 'tree': source_tree, 'gitdir': str(gitdir)}
+            gitlink = subprocess.check_output(['git', '-C', str(original), 'ls-files', '--stage', str(child)], text=True)
+            require(gitlink == subprocess.check_output(['git', '-C', str(staged), 'ls-files', '--stage', str(child)], text=True),
+                    'PREPARATION-REFUSED: Assimp staged gitlink')
+            git_provenance['gitlink'] = gitlink.strip()
+            (evidence / 'assimp-git-provenance.json').write_text(json.dumps(git_provenance, indent=2))
+        else:
+            legacy_run(['git', 'init', '-q', str(staged)], archive, env, evidence, 'initialize-' + name)
         legacy_run(['dub', 'add-local', str(staged), package['version']], archive, env, evidence, 'register-' + name)
         receipts[name] = {'original': str(original), 'staged': str(staged), 'version': package['version'], 'files': files}
     (evidence / 'dependency-sources.json').write_text(json.dumps(receipts, indent=2))
