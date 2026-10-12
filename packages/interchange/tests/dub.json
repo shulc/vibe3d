@@ -36,6 +36,14 @@
     },
     "vibe3d-document-model": {
       "path": "../../document-model"
+    },
+    "lwo2-writer": {
+      "version": "6d35b70a2a23c16c5b6cc19ea3e2d05a99eb0061",
+      "repository": "git+https://github.com/shulc/D-Lwo2Writer.git"
+    },
+    "bindbc-assimp6": {
+      "version": "3b7c87431b12418a32e70cb065fc63fd6cc98b13",
+      "repository": "git+https://github.com/shulc/bindbc-assimp6.git"
     }
   },
   "toolchainRequirements": {
@@ -49,7 +57,8 @@
         "vibe3d-log": "isolated-tests",
         "vibe3d-math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
-        "vibe3d-document-model": "isolated-tests"
+        "vibe3d-document-model": "isolated-tests",
+        "bindbc-assimp6": "static"
       }
     }
   ]
