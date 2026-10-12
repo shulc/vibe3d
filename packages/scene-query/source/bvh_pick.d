@@ -40,7 +40,7 @@ import surface_pick : SurfacePicker, hideSkipFace;
 ///     feeds it the cage, the subpatch preview mesh, or another layer's cage
 ///     after a primary switch — different objects that can share an
 ///     `uploadVersion`. Pinned by a stale-read block in
-///     tests/unit/bvh_pick_test.d: delete the term and it goes red.
+///     packages/scene-query/tests/source/tests/unit/bvh_pick_test.d: delete the term and it goes red.
 ///   * `_surfKey.addr` (surface pick) is redundant TODAY: its only caller,
 ///     `ConstrainStage`, already keys its `BvhPick[size_t]` map BY mesh
 ///     address (toolpipe/stages/constrain.d), so a given instance never sees
@@ -195,7 +195,7 @@ private:
         // byte-identical geometry.
         const(Vec3)[] bvhSrc;
         {
-            import morph_target : displayVertices;
+            import morph_preview : displayVertices;
             auto dv = displayVertices(&sourceMesh);
             bvhSrc = (dv.length == sourceMesh.vertices.length)
                    ? dv : sourceMesh.vertices;
