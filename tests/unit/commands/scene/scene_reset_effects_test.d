@@ -135,14 +135,20 @@ unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneRe
 
     const root = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..", "..", "..", "..");
     size_t loops, retiredIdent;
-    string[] sites;
+    string[] sites, scanFiles;
     foreach (scanSourceRoot; [buildNormalizedPath(root, "source"), buildNormalizedPath(root, "packages/common/source"), buildNormalizedPath(root, "packages/document-model/source"), buildNormalizedPath(root, "packages/param-schema/source"), buildNormalizedPath(root, "packages/pipe-runtime/source"), buildNormalizedPath(root, "packages/mesh-ops/source"), buildNormalizedPath(root, "packages/interchange/source"), buildNormalizedPath(root, "packages/interaction-query/source"), buildNormalizedPath(root, "packages/pipe-evaluation/source"), buildNormalizedPath(root, "packages/tool-state/source"), buildNormalizedPath(root, "packages/transform-ops/source"), buildNormalizedPath(root, "packages/creation-ops/source"), buildNormalizedPath(root, "packages/alignment-ops/source"), buildNormalizedPath(root, "packages/input-events/source"), buildNormalizedPath(root, "packages/display-policy/source"), buildNormalizedPath(root, "packages/viewport-gpu/source"), buildNormalizedPath(root, "packages/subpatch-preview/source"), buildNormalizedPath(root, "packages/edit-contracts/source"), buildNormalizedPath(root, "packages/mesh-change/source"), buildNormalizedPath(root, "packages/mesh-contracts/source"), buildNormalizedPath(root, "packages/mesh-edit-log/source"), buildNormalizedPath(root, "packages/mesh-edit-replay/source"), buildNormalizedPath(root, "packages/mesh-snapshot/source"), buildNormalizedPath(root, "packages/mesh-topology/source"), buildNormalizedPath(root, "packages/mesh/source"), buildNormalizedPath(root, "packages/profiling/source"), buildNormalizedPath(root, "packages/spatial/source"), buildNormalizedPath(root, "util/log/source"), buildNormalizedPath(root, "util/math/source"), buildNormalizedPath(root, "util/parallel/source"), buildNormalizedPath(root, "util/plane-bytes/source"), buildNormalizedPath(root, "util/screen-buckets/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         if (de.name.endsWith("_test.d")) continue;
-        const code = blankNonCode(readText(de.name));
+        scanFiles ~= de.name;
+    }
+    // The original scanner also read this carrier's in-module public bodies.
+    scanFiles ~= buildNormalizedPath(root,
+        "packages/pipe-runtime/tests/source/tests/unit/toolpipe/pipeline_registration_test.d");
+    foreach (sourceFile; scanFiles) {
+        const code = blankNonCode(readText(sourceFile));
         retiredIdent += countIdent(code, "resetAllPipeStages");
-        sites ~= fullPipeResetSites(code, relativePath(de.name, root), loops);
+        sites ~= fullPipeResetSites(code, relativePath(sourceFile, root), loops);
     }
     // Floor, then the needle, then the pin (measured 2026-10-05: `grep -rnow
     // allMut source --include=*.d | wc -l` = 10: nine uses plus the declaration
