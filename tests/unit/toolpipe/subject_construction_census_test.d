@@ -1,5 +1,5 @@
 // Task 1904 Stage 6 (doc/subject_stage_plan.md §6) — the census: "no site
-// decides what the subject is" outside packages/common/source/toolpipe/subject.d.
+// decides what the subject is" outside packages/pipe-runtime/source/toolpipe/subject.d.
 //
 // WHAT THE CONTRACT IS. Before this task, ~15 call sites in 7 files each
 // hand-decided what "the subject" is (which Mesh*, which editMode, which
@@ -13,7 +13,7 @@
 // site is STORAGE, not a decision — `VectorStack` (packages/common/source/operator.d) holds
 // raw pointers into caller-owned frames, and the pipe is genuinely
 // re-entered while an outer stack is alive (plan §2, hazard R1;
-// `packages/common/source/toolpipe/subject.d`'s header comment). So "no `SubjectPacket(`
+// `packages/pipe-runtime/source/toolpipe/subject.d`'s header comment). So "no `SubjectPacket(`
 // outside subject.d" is unreachable AND wrong: `SubjectPacket subj;`
 // declarations must keep existing at every migrated call site. What must
 // NOT exist outside `subject.d` is an assignment to one of `subj`'s fields
@@ -93,7 +93,7 @@
 // last caller and went, task 9417 — reaches the
 // funnel through `viewOnlySubject(` and contains no four-argument
 // `SubjectSource(` literal. The frozen constant itself is pinned by
-// `tests/unit/toolpipe/view_only_subject_pin_test.d`; this is the call-site
+// `packages/pipe-runtime/tests/source/tests/unit/toolpipe/view_only_subject_pin_test.d`; this is the call-site
 // half — a future edit that inlines `SubjectSource(null, EditMode.Vertices,
 // currentSelType(...), vp)` at either site is named by file and function.
 //
@@ -513,7 +513,7 @@ unittest {
     LedgerHit[] evalHits;            // assertion (b)
     LedgerHit[] workplaneHits;       // assertion (c)
 
-    foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/common/source"), buildPath(censusRepoRoot, "packages/mesh-ops/source"), buildPath(censusRepoRoot, "packages/interchange/source"), buildPath(censusRepoRoot, "packages/interaction-query/source"), buildPath(censusRepoRoot, "packages/pipe-evaluation/source"), buildPath(censusRepoRoot, "packages/tool-state/source"), buildPath(censusRepoRoot, "packages/transform-ops/source"), buildPath(censusRepoRoot, "packages/creation-ops/source"), buildPath(censusRepoRoot, "packages/alignment-ops/source"), buildPath(censusRepoRoot, "packages/input-events/source"), buildPath(censusRepoRoot, "packages/display-policy/source"), buildPath(censusRepoRoot, "packages/viewport-gpu/source"), buildPath(censusRepoRoot, "packages/subpatch-preview/source"), buildPath(censusRepoRoot, "packages/edit-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-change/source"), buildPath(censusRepoRoot, "packages/mesh-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-edit-log/source"), buildPath(censusRepoRoot, "packages/mesh-edit-replay/source"), buildPath(censusRepoRoot, "packages/mesh-snapshot/source"), buildPath(censusRepoRoot, "packages/mesh-topology/source"), buildPath(censusRepoRoot, "packages/mesh/source"), buildPath(censusRepoRoot, "packages/profiling/source"), buildPath(censusRepoRoot, "packages/spatial/source"), buildPath(censusRepoRoot, "util/log/source"), buildPath(censusRepoRoot, "util/math/source"), buildPath(censusRepoRoot, "util/parallel/source"), buildPath(censusRepoRoot, "util/plane-bytes/source"), buildPath(censusRepoRoot, "util/screen-buckets/source"), buildPath(censusRepoRoot, "packages/pipe-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-preview/source"), buildPath(censusRepoRoot, "util/json-number/source")])
+    foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/common/source"), buildPath(censusRepoRoot, "packages/document-model/source"), buildPath(censusRepoRoot, "packages/param-schema/source"), buildPath(censusRepoRoot, "packages/pipe-runtime/source"), buildPath(censusRepoRoot, "packages/mesh-ops/source"), buildPath(censusRepoRoot, "packages/interchange/source"), buildPath(censusRepoRoot, "packages/interaction-query/source"), buildPath(censusRepoRoot, "packages/pipe-evaluation/source"), buildPath(censusRepoRoot, "packages/tool-state/source"), buildPath(censusRepoRoot, "packages/transform-ops/source"), buildPath(censusRepoRoot, "packages/creation-ops/source"), buildPath(censusRepoRoot, "packages/alignment-ops/source"), buildPath(censusRepoRoot, "packages/input-events/source"), buildPath(censusRepoRoot, "packages/display-policy/source"), buildPath(censusRepoRoot, "packages/viewport-gpu/source"), buildPath(censusRepoRoot, "packages/subpatch-preview/source"), buildPath(censusRepoRoot, "packages/edit-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-change/source"), buildPath(censusRepoRoot, "packages/mesh-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-edit-log/source"), buildPath(censusRepoRoot, "packages/mesh-edit-replay/source"), buildPath(censusRepoRoot, "packages/mesh-snapshot/source"), buildPath(censusRepoRoot, "packages/mesh-topology/source"), buildPath(censusRepoRoot, "packages/mesh/source"), buildPath(censusRepoRoot, "packages/profiling/source"), buildPath(censusRepoRoot, "packages/spatial/source"), buildPath(censusRepoRoot, "util/log/source"), buildPath(censusRepoRoot, "util/math/source"), buildPath(censusRepoRoot, "util/parallel/source"), buildPath(censusRepoRoot, "util/plane-bytes/source"), buildPath(censusRepoRoot, "util/screen-buckets/source"), buildPath(censusRepoRoot, "packages/pipe-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-preview/source"), buildPath(censusRepoRoot, "util/json-number/source")])
 
 
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {

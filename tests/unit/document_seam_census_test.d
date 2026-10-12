@@ -1,7 +1,7 @@
 // The document test-access seam has ONE caller file, and this closes it
 // (task 4120).
 //
-// `packages/common/source/document.d` ends in a `version (unittest)` block of six readers that
+// `packages/document-model/source/document.d` ends in a `version (unittest)` block of six readers that
 // reach state which is `private` for a reason. They exist so that the document
 // unit tests can be ordinary top-level `unittest` blocks in an ordinary test
 // module instead of a `mixin template` the production module imports back —
@@ -36,7 +36,7 @@
 // MUTATIONS, each in isolation:
 //   * add a call to any seam reader from a second test module ⇒ the caller-set
 //     assertion reddens, naming that file;
-//   * delete the last call to one reader from `packages/common/tests/source/tests/unit/document_test.d`
+//   * delete the last call to one reader from `packages/document-model/tests/source/tests/unit/document_test.d`
 //     ⇒ the population floor reddens, naming that reader;
 //   * add a seventh reader to the seam ⇒ the declaration-set assertion reddens,
 //     and it reddens whether the reader is spelled at indent 4 or at column 0;
@@ -58,8 +58,8 @@ import tests.unit.census_symbols : blankNonCode;
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 /// The file that DECLARES the seam, and the one file allowed to call it.
-private enum seamDecl = "packages/common/source/document.d";
-private enum seamCaller = "packages/common/tests/source/tests/unit/document_test.d";
+private enum seamDecl = "packages/document-model/source/document.d";
+private enum seamCaller = "packages/document-model/tests/source/tests/unit/document_test.d";
 
 /// The six accessors. Data, deliberately: spelled as string literals so that
 /// this census is not itself a caller of the thing it is counting.
@@ -94,7 +94,7 @@ private size_t count(R)(R range)
 }
 
 /// The accessor names declared by the `version (unittest)` seam at the tail of
-/// `packages/common/source/document.d`, read out of the file rather than trusted from a list.
+/// `packages/document-model/source/document.d`, read out of the file rather than trusted from a list.
 ///
 /// PARSED BY NAME CONVENTION, NOT BY RETURN TYPE, and that is the whole point
 /// of this function's second draft. The first matched `^    Ident\*? +name\(`,
@@ -140,7 +140,7 @@ private size_t count(R)(R range)
 ///     declaration ended up somewhere this parse does not read.
 private string[] declaredSeamReaders(string rawText)
 {
-    // Comments and string literals blanked first: `packages/common/source/document.d` names
+    // Comments and string literals blanked first: `packages/document-model/source/document.d` names
     // this very header inside the prose above the seam, and a parse that read
     // raw text would locate the block in a paragraph about the block.
     const text = blankNonCode(rawText);
@@ -289,7 +289,7 @@ unittest
     // ---- (3) THE LAW. Nothing outside the declaring file and that one caller
     //          may name a seam reader.
     string[] strays;
-    foreach (root; ["source", "packages/common/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"])
+    foreach (root; ["source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"])
     {
         const dir = buildPath(repoRoot, root);
         foreach (entry; dirEntries(dir, SpanMode.depth))

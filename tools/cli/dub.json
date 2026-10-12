@@ -14,6 +14,9 @@
     },
     "vibe3d-log": {
       "path": "../../util/log"
+    },
+    "vibe3d-document-model": {
+      "path": "../../packages/document-model"
     }
   },
   "toolchainRequirements": {
@@ -21,6 +24,7 @@
   },
   "subConfigurations": {
     "vibe3d-common": "modeling-noai",
-    "vibe3d-log": "modeling-noai"
+    "vibe3d-log": "modeling-noai",
+    "vibe3d-document-model": "modeling-noai"
   }
 }

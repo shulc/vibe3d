@@ -10,7 +10,6 @@
   ],
   "sourceFiles": [
     "../source/app_version.d",
-    "../source/argstring.d",
     "../source/command.d",
     "../source/command_args.d",
     "../source/command_executor.d",
@@ -30,35 +29,22 @@
     "../source/commands/select/drop.d",
     "../source/commands/select/element.d",
     "../source/commands/select/invert.d",
-    "../source/document.d",
-    "../source/document_selection.d",
-    "../source/edit_target_contract.d",
-    "../source/falloff.d",
     "../source/history_lifecycle_contract.d",
     "../source/http_json.d",
-    "../source/image_data.d",
     "../source/io/file_model.d",
     "../source/io/image_decode.d",
     "../source/io/image_path.d",
     "../source/io/native.d",
-    "../source/item_kinds.d",
     "../source/layer_params.d",
     "../source/morph_target.d",
-    "../source/params.d",
     "../source/pilot_command_registration.d",
     "../source/record_observer_hub.d",
     "../source/session_owner.d",
     "../source/standalone_application.d",
     "../source/tool_activation_ownership.d",
-    "../source/tool_policy_values.d",
-    "../source/toolpipe/pipeline.d",
-    "../source/toolpipe/stage.d",
-    "../source/toolpipe/subject.d",
     "../source/view.d",
     "source/tests/common_execution_roster_test.d",
-    "source/tests/unit/document_test.d",
-    "source/tests/unit/io/native_test.d",
-    "source/tests/unit/params_test.d"
+    "source/tests/unit/io/native_test.d"
   ],
   "dflags": [],
   "dependencies": {
@@ -107,6 +93,15 @@
     "d-stb-image": {
       "version": "a66f6917718ea128076a2c5660e37f362a785144",
       "repository": "git+https://github.com/shulc/D-StbImage.git"
+    },
+    "vibe3d-document-model": {
+      "path": "../../document-model"
+    },
+    "vibe3d-param-schema": {
+      "path": "../../param-schema"
+    },
+    "vibe3d-pipe-runtime": {
+      "path": "../../pipe-runtime"
     }
   },
   "toolchainRequirements": {
@@ -130,7 +125,10 @@
         "vibe3d-json-number": "isolated-tests",
         "vibe3d-pipe-contracts": "isolated-tests",
         "vibe3d-mesh-preview": "isolated-tests",
-        "vibe3d-mesh-ops": "isolated-tests"
+        "vibe3d-mesh-ops": "isolated-tests",
+        "vibe3d-document-model": "isolated-tests",
+        "vibe3d-param-schema": "isolated-tests",
+        "vibe3d-pipe-runtime": "isolated-tests"
       }
     }
   ]

@@ -52,6 +52,15 @@
     },
     "vibe3d-mesh-ops": {
       "path": "../mesh-ops"
+    },
+    "vibe3d-document-model": {
+      "path": "../document-model"
+    },
+    "vibe3d-param-schema": {
+      "path": "../param-schema"
+    },
+    "vibe3d-pipe-runtime": {
+      "path": "../pipe-runtime"
     }
   },
   "toolchainRequirements": {
@@ -207,7 +216,10 @@
         "vibe3d-json-number": "modeling",
         "vibe3d-pipe-contracts": "modeling",
         "vibe3d-mesh-preview": "modeling",
-        "vibe3d-mesh-ops": "modeling"
+        "vibe3d-mesh-ops": "modeling",
+        "vibe3d-document-model": "modeling",
+        "vibe3d-param-schema": "modeling",
+        "vibe3d-pipe-runtime": "modeling"
       }
     },
     {
@@ -227,7 +239,10 @@
         "vibe3d-json-number": "modeling-noai",
         "vibe3d-pipe-contracts": "modeling-noai",
         "vibe3d-mesh-preview": "modeling-noai",
-        "vibe3d-mesh-ops": "modeling-noai"
+        "vibe3d-mesh-ops": "modeling-noai",
+        "vibe3d-document-model": "modeling-noai",
+        "vibe3d-param-schema": "modeling-noai",
+        "vibe3d-pipe-runtime": "modeling-noai"
       }
     },
     {
@@ -250,7 +265,10 @@
         "vibe3d-json-number": "with-render",
         "vibe3d-pipe-contracts": "with-render",
         "vibe3d-mesh-preview": "with-render",
-        "vibe3d-mesh-ops": "with-render"
+        "vibe3d-mesh-ops": "with-render",
+        "vibe3d-document-model": "with-render",
+        "vibe3d-param-schema": "with-render",
+        "vibe3d-pipe-runtime": "with-render"
       }
     },
     {
@@ -272,7 +290,10 @@
         "vibe3d-json-number": "web",
         "vibe3d-pipe-contracts": "web",
         "vibe3d-mesh-preview": "web",
-        "vibe3d-mesh-ops": "web"
+        "vibe3d-mesh-ops": "web",
+        "vibe3d-document-model": "web",
+        "vibe3d-param-schema": "web",
+        "vibe3d-pipe-runtime": "web"
       }
     },
     {
@@ -295,7 +316,10 @@
         "vibe3d-json-number": "root-tests",
         "vibe3d-pipe-contracts": "root-tests",
         "vibe3d-mesh-preview": "root-tests",
-        "vibe3d-mesh-ops": "root-tests"
+        "vibe3d-mesh-ops": "root-tests",
+        "vibe3d-document-model": "root-tests",
+        "vibe3d-param-schema": "root-tests",
+        "vibe3d-pipe-runtime": "root-tests"
       }
     },
     {
@@ -316,7 +340,10 @@
         "vibe3d-json-number": "isolated-tests",
         "vibe3d-pipe-contracts": "isolated-tests",
         "vibe3d-mesh-preview": "isolated-tests",
-        "vibe3d-mesh-ops": "isolated-tests"
+        "vibe3d-mesh-ops": "isolated-tests",
+        "vibe3d-document-model": "isolated-tests",
+        "vibe3d-param-schema": "isolated-tests",
+        "vibe3d-pipe-runtime": "isolated-tests"
       }
     }
   ]

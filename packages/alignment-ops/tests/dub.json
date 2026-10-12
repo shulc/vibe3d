@@ -27,6 +27,9 @@
     },
     "vibe3d-mesh": {
       "path": "../../mesh"
+    },
+    "vibe3d-pipe-runtime": {
+      "path": "../../pipe-runtime"
     }
   },
   "toolchainRequirements": {
@@ -173,7 +176,8 @@
         "vibe3d-interaction-query": "isolated-tests",
         "vibe3d-edit-contracts": "isolated-tests",
         "vibe3d-math": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests"
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-pipe-runtime": "isolated-tests"
       }
     }
   ],

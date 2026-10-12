@@ -6,7 +6,8 @@
     "../source/editmode.d",
     "../source/prepared_tool_effect.d",
     "../source/seltype.d",
-    "source/tests/unit/seltype_test.d"
+    "source/tests/unit/seltype_test.d",
+    "../source/tool_policy_values.d"
   ],
   "importPaths": [
     "../source",

@@ -583,6 +583,7 @@ tests.unit.toolpipe.obbox_regression_test
 tests.unit.toolpipe.obbox_test
 tests.unit.toolpipe.packets_test
 tests.unit.toolpipe.pipeline_order_test
+tests.unit.toolpipe.pipeline_registration_test
 tests.unit.toolpipe.prepared_stage_regression_test
 tests.unit.toolpipe.required_packets_witness_test
 tests.unit.toolpipe.snap_stage_regression_test
@@ -735,7 +736,6 @@ tool
 tool_disarm
 tool_input
 tool_presets
-toolpipe.pipeline
 toolpipe.stages.actcenter
 toolpipe.stages.axis
 toolpipe.stages.constrain

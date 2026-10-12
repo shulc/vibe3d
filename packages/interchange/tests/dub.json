@@ -25,9 +25,6 @@
   ],
   "dflags": [],
   "dependencies": {
-    "vibe3d-common": {
-      "path": "../../common"
-    },
     "vibe3d-log": {
       "path": "../../../util/log"
     },
@@ -36,6 +33,9 @@
     },
     "vibe3d-mesh": {
       "path": "../../mesh"
+    },
+    "vibe3d-document-model": {
+      "path": "../../document-model"
     }
   },
   "toolchainRequirements": {
@@ -46,10 +46,10 @@
     {
       "name": "interchange",
       "subConfigurations": {
-        "vibe3d-common": "isolated-tests",
         "vibe3d-log": "isolated-tests",
         "vibe3d-math": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests"
+        "vibe3d-mesh": "isolated-tests",
+        "vibe3d-document-model": "isolated-tests"
       }
     }
   ]

@@ -20,7 +20,7 @@ version-ceiling 10
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
 # no file may hold more than its own row.
 block packages/alignment-ops/source/tools/alignment/align_kernels.d 1
-block packages/common/source/argstring.d 38
+block packages/param-schema/source/argstring.d 38
 block packages/common/source/command.d 2
 block packages/common/source/command_history.d 14
 block packages/common/source/command_registry.d 1
@@ -29,7 +29,7 @@ block packages/common/source/commands/select/element.d 1
 block packages/common/source/io/image_decode.d 5
 block packages/common/source/io/native.d 13
 block packages/common/source/record_observer_hub.d 1
-block packages/common/source/toolpipe/pipeline.d 6
+block packages/pipe-runtime/source/toolpipe/pipeline.d 6
 block packages/common/source/view.d 26
 block packages/input-events/source/eventlog.d 13
 block packages/input-events/source/tool_input.d 6

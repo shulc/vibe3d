@@ -691,8 +691,8 @@ private enum StripSignalRow[] kStripSignalLedger = [
     StripSignalRow("source/ui/retained_item.d", 0, 0, 0, 0, 0),
     StripSignalRow("source/ui/item_rename.d", 0, 0, 0, 0, 0),
     StripSignalRow("source/commands/image/commands.d", 14, 0, 0, 0, 0),
-    StripSignalRow("packages/common/source/document.d", 4, 0, 0, 1, 0),
-    StripSignalRow("packages/common/source/document_selection.d", 5, 0, 0, 1, 0),
+    StripSignalRow("packages/document-model/source/document.d", 4, 0, 0, 1, 0),
+    StripSignalRow("packages/document-model/source/document_selection.d", 5, 0, 0, 1, 0),
 ];
 
 private enum kStripSignalTokens =
@@ -762,7 +762,7 @@ unittest { // 6040 census: production binder, call sites, retired EditorApp path
         && panels.count("import ui.item_rename") == 0,
         "6040 retired panel path: ui.panels still defines or feeds the Images rename owner");
     size_t sourceFiles, oldSig;
-    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source"), repoRoot.buildPath("packages/input-events/source"), repoRoot.buildPath("packages/display-policy/source"), repoRoot.buildPath("packages/viewport-gpu/source"), repoRoot.buildPath("packages/subpatch-preview/source"), repoRoot.buildPath("packages/edit-contracts/source"), repoRoot.buildPath("packages/mesh-change/source"), repoRoot.buildPath("packages/mesh-contracts/source"), repoRoot.buildPath("packages/mesh-edit-log/source"), repoRoot.buildPath("packages/mesh-edit-replay/source"), repoRoot.buildPath("packages/mesh-snapshot/source"), repoRoot.buildPath("packages/mesh-topology/source"), repoRoot.buildPath("packages/mesh/source"), repoRoot.buildPath("packages/profiling/source"), repoRoot.buildPath("packages/spatial/source"), repoRoot.buildPath("util/log/source"), repoRoot.buildPath("util/math/source"), repoRoot.buildPath("util/parallel/source"), repoRoot.buildPath("util/plane-bytes/source"), repoRoot.buildPath("util/screen-buckets/source")])
+    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source"), repoRoot.buildPath("packages/document-model/source"), repoRoot.buildPath("packages/param-schema/source"), repoRoot.buildPath("packages/pipe-runtime/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source"), repoRoot.buildPath("packages/input-events/source"), repoRoot.buildPath("packages/display-policy/source"), repoRoot.buildPath("packages/viewport-gpu/source"), repoRoot.buildPath("packages/subpatch-preview/source"), repoRoot.buildPath("packages/edit-contracts/source"), repoRoot.buildPath("packages/mesh-change/source"), repoRoot.buildPath("packages/mesh-contracts/source"), repoRoot.buildPath("packages/mesh-edit-log/source"), repoRoot.buildPath("packages/mesh-edit-replay/source"), repoRoot.buildPath("packages/mesh-snapshot/source"), repoRoot.buildPath("packages/mesh-topology/source"), repoRoot.buildPath("packages/mesh/source"), repoRoot.buildPath("packages/profiling/source"), repoRoot.buildPath("packages/spatial/source"), repoRoot.buildPath("util/log/source"), repoRoot.buildPath("util/math/source"), repoRoot.buildPath("util/parallel/source"), repoRoot.buildPath("util/plane-bytes/source"), repoRoot.buildPath("util/screen-buckets/source")])
 
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
@@ -838,8 +838,8 @@ unittest { // 6530: read-role fence and strip-token signal
         "source/ui/retained_item.d",
         "source/ui/item_rename.d",
         "source/commands/image/commands.d",
-        "packages/common/source/document.d",
-        "packages/common/source/document_selection.d",
+        "packages/document-model/source/document.d",
+        "packages/document-model/source/document_selection.d",
     ];
     string[] rawSources;
     size_t sourceBytes;

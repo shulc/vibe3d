@@ -198,3 +198,14 @@ tools/cli/.boundary/
 /packages/mesh-change/libvibe3d-mesh-change.a
 /packages/mesh-contracts/libvibe3d-mesh-contracts.a
 /packages/mesh-topology/libvibe3d-mesh-topology.a
+
+# Wave10 ordinary owner and isolated algorithm outputs.
+/packages/document-model/libvibe3d-document-model.a
+/packages/document-model/vibe3d-document-model.lib
+/packages/document-model/tests/vibe3d-document-model-tests-test-*
+/packages/param-schema/libvibe3d-param-schema.a
+/packages/param-schema/vibe3d-param-schema.lib
+/packages/param-schema/tests/vibe3d-param-schema-tests-test-*
+/packages/pipe-runtime/libvibe3d-pipe-runtime.a
+/packages/pipe-runtime/vibe3d-pipe-runtime.lib
+/packages/pipe-runtime/tests/vibe3d-pipe-runtime-tests-test-*

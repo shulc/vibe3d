@@ -30,6 +30,12 @@
     },
     "vibe3d-pipe-contracts": {
       "path": "../pipe-contracts"
+    },
+    "vibe3d-document-model": {
+      "path": "../document-model"
+    },
+    "vibe3d-pipe-runtime": {
+      "path": "../pipe-runtime"
     }
   },
   "toolchainRequirements": {
@@ -182,7 +188,9 @@
         "vibe3d-mesh": "modeling",
         "vibe3d-math": "modeling",
         "vibe3d-profiling": "modeling",
-        "vibe3d-pipe-contracts": "modeling"
+        "vibe3d-pipe-contracts": "modeling",
+        "vibe3d-document-model": "modeling",
+        "vibe3d-pipe-runtime": "modeling"
       }
     },
     {
@@ -196,7 +204,9 @@
         "vibe3d-mesh": "modeling-noai",
         "vibe3d-math": "modeling-noai",
         "vibe3d-profiling": "modeling-noai",
-        "vibe3d-pipe-contracts": "modeling-noai"
+        "vibe3d-pipe-contracts": "modeling-noai",
+        "vibe3d-document-model": "modeling-noai",
+        "vibe3d-pipe-runtime": "modeling-noai"
       }
     },
     {
@@ -213,7 +223,9 @@
         "vibe3d-mesh": "with-render",
         "vibe3d-math": "with-render",
         "vibe3d-profiling": "with-render",
-        "vibe3d-pipe-contracts": "with-render"
+        "vibe3d-pipe-contracts": "with-render",
+        "vibe3d-document-model": "with-render",
+        "vibe3d-pipe-runtime": "with-render"
       }
     },
     {
@@ -229,7 +241,9 @@
         "vibe3d-mesh": "web",
         "vibe3d-math": "web",
         "vibe3d-profiling": "web",
-        "vibe3d-pipe-contracts": "web"
+        "vibe3d-pipe-contracts": "web",
+        "vibe3d-document-model": "web",
+        "vibe3d-pipe-runtime": "web"
       }
     },
     {
@@ -245,7 +259,9 @@
         "vibe3d-mesh": "root-tests",
         "vibe3d-math": "root-tests",
         "vibe3d-profiling": "root-tests",
-        "vibe3d-pipe-contracts": "root-tests"
+        "vibe3d-pipe-contracts": "root-tests",
+        "vibe3d-document-model": "root-tests",
+        "vibe3d-pipe-runtime": "root-tests"
       },
       "targetType": "sourceLibrary"
     },
@@ -260,7 +276,9 @@
         "vibe3d-mesh": "isolated-tests",
         "vibe3d-math": "isolated-tests",
         "vibe3d-profiling": "isolated-tests",
-        "vibe3d-pipe-contracts": "isolated-tests"
+        "vibe3d-pipe-contracts": "isolated-tests",
+        "vibe3d-document-model": "isolated-tests",
+        "vibe3d-pipe-runtime": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

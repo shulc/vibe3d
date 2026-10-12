@@ -26,9 +26,9 @@ private string rawBody(string source, string declaration) {
 unittest {
     const runner = file("run_test.d");
     const digest = rawBody(runner, "string sourceDigest()");
-    assert(digest.count("foreach (scanSourceRoot; [\"source\", \"packages/common/source\", \"packages/mesh-ops/source\", \"packages/interchange/source\", \"packages/interaction-query/source\", \"packages/pipe-evaluation/source\", \"packages/tool-state/source\", \"packages/transform-ops/source\", \"packages/creation-ops/source\", \"packages/alignment-ops/source\", \"packages/input-events/source\", \"packages/display-policy/source\", \"packages/viewport-gpu/source\", \"packages/subpatch-preview/source\", \"packages/edit-contracts/source\", \"packages/mesh-change/source\", \"packages/mesh-contracts/source\", \"packages/mesh-edit-log/source\", \"packages/mesh-edit-replay/source\", \"packages/mesh-snapshot/source\", \"packages/mesh-topology/source\", \"packages/mesh/source\", \"packages/profiling/source\", \"packages/spatial/source\", \"util/log/source\", \"util/math/source\", \"util/parallel/source\", \"util/plane-bytes/source\", \"util/screen-buckets/source\", \"packages/pipe-contracts/source\", \"packages/mesh-preview/source\", \"util/json-number/source\"])") == 1
+    assert(digest.count("foreach (scanSourceRoot; [\"source\", \"packages/common/source\", \"packages/document-model/source\", \"packages/param-schema/source\", \"packages/pipe-runtime/source\", \"packages/mesh-ops/source\", \"packages/interchange/source\", \"packages/interaction-query/source\", \"packages/pipe-evaluation/source\", \"packages/tool-state/source\", \"packages/transform-ops/source\", \"packages/creation-ops/source\", \"packages/alignment-ops/source\", \"packages/input-events/source\", \"packages/display-policy/source\", \"packages/viewport-gpu/source\", \"packages/subpatch-preview/source\", \"packages/edit-contracts/source\", \"packages/mesh-change/source\", \"packages/mesh-contracts/source\", \"packages/mesh-edit-log/source\", \"packages/mesh-edit-replay/source\", \"packages/mesh-snapshot/source\", \"packages/mesh-topology/source\", \"packages/mesh/source\", \"packages/profiling/source\", \"packages/spatial/source\", \"util/log/source\", \"util/math/source\", \"util/parallel/source\", \"util/plane-bytes/source\", \"util/screen-buckets/source\", \"packages/pipe-contracts/source\", \"packages/mesh-preview/source\", \"util/json-number/source\"])") == 1
         && digest.count("dirEntries(scanSourceRoot, pattern, SpanMode.depth)") == 1,
-        "standalone-wiring: freshness scans all thirty-two production ownership roots");
+        "standalone-wiring: freshness scans all thirty-five production ownership roots");
     const library = rawBody(runner, "string buildProjectLib(string scratch)");
     assert(library.count("\" --root=packages/tool-state\"") == 1,
         "standalone-wiring: suite unittest source grant tool-state");
@@ -42,11 +42,11 @@ unittest {
         "standalone-wiring: suite unittest source grant viewport-gpu");
     assert(library.count("\" --root=packages/subpatch-preview\"") == 1,
         "standalone-wiring: suite unittest source grant subpatch-preview");
-    assert(library.count("foreach (root; [\"\", \" --root=packages/common\", \" --root=util/json-number\", \" --root=packages/pipe-contracts\", \" --root=packages/mesh-preview\", \" --root=packages/mesh-ops\", \" --root=packages/tool-state\", \" --root=packages/transform-ops\", \" --root=packages/input-events\", \" --root=packages/display-policy\", \" --root=packages/viewport-gpu\", \" --root=packages/subpatch-preview\"])") == 1
+    assert(library.count("foreach (root; [\"\", \" --root=packages/common\", \" --root=packages/document-model\", \" --root=packages/param-schema\", \" --root=packages/pipe-runtime\", \" --root=util/json-number\", \" --root=packages/pipe-contracts\", \" --root=packages/mesh-preview\", \" --root=packages/mesh-ops\", \" --root=packages/tool-state\", \" --root=packages/transform-ops\", \" --root=packages/input-events\", \" --root=packages/display-policy\", \" --root=packages/viewport-gpu\", \" --root=packages/subpatch-preview\"])") == 1
         && library.count(" --config=modeling --data=source-files --data-list 2>/dev/null") == 1
         && library.count("dmd -lib -unittest%s %s -of=%s 2>&1") == 1
         && library.count("sourceCompileFlags(), srcs.join(\" \"), lib") == 1,
-        "standalone-wiring: suite compiles exactly twelve source inventories under unittest flags");
+        "standalone-wiring: suite compiles exactly fifteen source inventories under unittest flags");
 }
 
 unittest {
