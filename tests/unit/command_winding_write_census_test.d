@@ -130,7 +130,8 @@ unittest // no command writes a face winding by hand
       ~ "zero for the one reason that is not a finding");
 
     string[] paths;
-    foreach (scanSourceRoot; [zone, buildPath(repoRoot(), "packages/command-runtime/source", "commands")])
+    foreach (scanSourceRoot; [zone, buildPath(repoRoot(), "packages/command-runtime/source", "commands")]
+        ~ (exists(buildPath(repoRoot(), "packages/editor-commands/source/commands")) ? [buildPath(repoRoot(), "packages/editor-commands/source/commands")] : []))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) paths ~= e.name;
     foreach (relative; [
         "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",

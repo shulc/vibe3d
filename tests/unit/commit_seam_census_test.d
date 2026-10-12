@@ -3799,7 +3799,8 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
     size_t zoneTotal = 0;
     size_t rosterTotal = 0;
     string[] offenders;
-    foreach (scanSourceRoot; [zone, buildPath(repoRoot, "packages/command-runtime/source", "commands", "mesh")])
+    foreach (scanSourceRoot; [zone, buildPath(repoRoot, "packages/command-runtime/source", "commands", "mesh")]
+        ~ (exists(buildPath(repoRoot, "packages/editor-commands/source/commands/mesh")) ? [buildPath(repoRoot, "packages/editor-commands/source/commands/mesh")] : []))
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.shallow)) {
         ++scanned;
         immutable src = readCode(e.name);
@@ -4623,7 +4624,8 @@ unittest // Stage M - the closing MeshSnapshot declaration census
 {
     LedgerHit[] hits;
     size_t filesRead;
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source", "commands"), buildPath(repoRoot, "packages/command-runtime/source", "commands")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source", "commands"), buildPath(repoRoot, "packages/command-runtime/source", "commands")]
+        ~ (exists(buildPath(repoRoot, "packages/editor-commands/source/commands")) ? [buildPath(repoRoot, "packages/editor-commands/source/commands")] : []))
     foreach (e; dirEntries(scanSourceRoot, "*.d",
                            SpanMode.depth)) {
         ++filesRead;

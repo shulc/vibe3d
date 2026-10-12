@@ -181,6 +181,7 @@ private TreeScan scanRoot(string relRoot) {
     TreeScan r;
     foreach (scanSourceRoot; relRoot == "source/commands"
             ? [relRoot, "packages/command-runtime/source/commands"]
+                ~ (exists(buildPath(repoRoot, "packages/editor-commands/source/commands")) ? ["packages/editor-commands/source/commands"] : [])
             : relRoot == "source/tools"
             ? [relRoot, "packages/tool-state/source/tools", "packages/transform-ops/source/tools",
                "packages/creation-ops/source/tools", "packages/alignment-ops/source/tools"]
