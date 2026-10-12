@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 608
-task-citation-lines 5179
+task-citation-lines 5176
 citing-files 469
 long-comment-runs 258
 files-with-long-runs 142
@@ -17,7 +17,6 @@ files-with-long-runs 142
 # Exact per-file task-citation allowances, sorted by path.
 allow packages/alignment-ops/source/tools/alignment/align_kernels.d 6
 allow packages/common/source/app_version.d 1
-allow packages/param-schema/source/argstring.d 5
 allow packages/common/source/command.d 27
 allow packages/common/source/command_args.d 3
 allow packages/common/source/command_executor.d 7
@@ -30,24 +29,15 @@ allow packages/common/source/commands/mesh/session_edit.d 10
 allow packages/common/source/commands/mesh/triple.d 5
 allow packages/common/source/commands/mesh/vertex_edit.d 5
 allow packages/common/source/commands/select/invert.d 2
-allow packages/document-model/source/document.d 37
-allow packages/document-model/source/document_selection.d 63
-allow packages/pipe-runtime/source/falloff.d 7
 allow packages/common/source/http_json.d 8
-allow packages/document-model/source/image_data.d 7
 allow packages/common/source/io/file_model.d 1
 allow packages/common/source/io/image_decode.d 3
 allow packages/common/source/io/image_path.d 5
 allow packages/common/source/io/native.d 56
-allow packages/document-model/source/item_kinds.d 12
 allow packages/common/source/layer_params.d 19
-allow packages/param-schema/source/params.d 20
 allow packages/common/source/record_observer_hub.d 1
 allow packages/common/source/session_owner.d 2
 allow packages/common/source/tool_activation_ownership.d 6
-allow packages/pipe-runtime/source/toolpipe/pipeline.d 9
-allow packages/pipe-runtime/source/toolpipe/stage.d 11
-allow packages/pipe-runtime/source/toolpipe/subject.d 3
 allow packages/common/source/view.d 11
 allow packages/creation-ops/source/tools/create/pen_geometry.d 1
 allow packages/display-policy/source/camera_stamp.d 3
@@ -57,6 +47,10 @@ allow packages/display-policy/source/vertex_normals.d 1
 allow packages/display-policy/source/viewport_overlay_mode.d 6
 allow packages/display-policy/source/viewport_scheme.d 8
 allow packages/display-policy/source/weightmap_view.d 1
+allow packages/document-model/source/document.d 37
+allow packages/document-model/source/document_selection.d 63
+allow packages/document-model/source/image_data.d 7
+allow packages/document-model/source/item_kinds.d 12
 allow packages/edit-contracts/source/seltype.d 3
 allow packages/input-events/source/eventlog.d 1
 allow packages/input-events/source/input_context.d 3
@@ -112,6 +106,8 @@ allow packages/mesh/source/mesh.d 500
 allow packages/mesh/source/mesh_morph.d 1
 allow packages/mesh/source/mesh_planes.d 29
 allow packages/mesh/source/mesh_selsets.d 3
+allow packages/param-schema/source/argstring.d 5
+allow packages/param-schema/source/params.d 20
 allow packages/pipe-contracts/source/toolpipe/packets.d 12
 allow packages/pipe-evaluation/source/toolpipe/obbox.d 1
 allow packages/pipe-evaluation/source/toolpipe/package.d 1
@@ -123,6 +119,10 @@ allow packages/pipe-evaluation/source/toolpipe/stages/path.d 1
 allow packages/pipe-evaluation/source/toolpipe/stages/snap.d 10
 allow packages/pipe-evaluation/source/toolpipe/stages/symmetry.d 17
 allow packages/pipe-evaluation/source/toolpipe/stages/workplane.d 12
+allow packages/pipe-runtime/source/falloff.d 7
+allow packages/pipe-runtime/source/toolpipe/pipeline.d 6
+allow packages/pipe-runtime/source/toolpipe/stage.d 11
+allow packages/pipe-runtime/source/toolpipe/subject.d 3
 allow packages/profiling/source/perf_probe.d 54
 allow packages/spatial/source/item_xform.d 5
 allow packages/spatial/source/spatial.d 13
@@ -494,19 +494,17 @@ allow-runs packages/common/source/command_history.d 1
 allow-runs packages/common/source/commands/mesh/gesture_payload.d 1
 allow-runs packages/common/source/commands/mesh/selection_undo.d 1
 allow-runs packages/common/source/commands/mesh/session_edit.d 1
-allow-runs packages/document-model/source/document.d 2
-allow-runs packages/document-model/source/document_selection.d 4
-allow-runs packages/pipe-runtime/source/falloff.d 1
 allow-runs packages/common/source/http_json.d 1
-allow-runs packages/document-model/source/image_data.d 1
 allow-runs packages/common/source/io/image_path.d 1
 allow-runs packages/common/source/io/native.d 1
-allow-runs packages/document-model/source/item_kinds.d 1
 allow-runs packages/common/source/layer_params.d 2
-allow-runs packages/param-schema/source/params.d 2
 allow-runs packages/display-policy/source/camera_stamp.d 1
 allow-runs packages/display-policy/source/display_state.d 1
 allow-runs packages/display-policy/source/weightmap_view.d 1
+allow-runs packages/document-model/source/document.d 2
+allow-runs packages/document-model/source/document_selection.d 4
+allow-runs packages/document-model/source/image_data.d 1
+allow-runs packages/document-model/source/item_kinds.d 1
 allow-runs packages/interaction-query/source/constraint.d 1
 allow-runs packages/interaction-query/source/mesh_visibility.d 1
 allow-runs packages/interaction-query/source/snap.d 5
@@ -536,11 +534,13 @@ allow-runs packages/mesh-ops/source/mesh_ops/triangulate.d 1
 allow-runs packages/mesh/source/mesh.d 23
 allow-runs packages/mesh/source/mesh_planes.d 3
 allow-runs packages/mesh/source/mesh_selsets.d 1
+allow-runs packages/param-schema/source/params.d 2
 allow-runs packages/pipe-contracts/source/toolpipe/packets.d 2
 allow-runs packages/pipe-evaluation/source/toolpipe/obbox.d 2
 allow-runs packages/pipe-evaluation/source/toolpipe/stages/actcenter.d 2
 allow-runs packages/pipe-evaluation/source/toolpipe/stages/axis.d 1
 allow-runs packages/pipe-evaluation/source/toolpipe/stages/falloff.d 1
+allow-runs packages/pipe-runtime/source/falloff.d 1
 allow-runs packages/profiling/source/perf_probe.d 2
 allow-runs packages/spatial/source/spatial.d 1
 allow-runs packages/subpatch-preview/source/subpatch_osd.d 3

@@ -14,13 +14,12 @@
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
 source-files 608
-unittest-blocks 588
+unittest-blocks 545
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
 # no file may hold more than its own row.
 block packages/alignment-ops/source/tools/alignment/align_kernels.d 1
-block packages/param-schema/source/argstring.d 38
 block packages/common/source/command.d 2
 block packages/common/source/command_history.d 14
 block packages/common/source/command_registry.d 1
@@ -29,7 +28,6 @@ block packages/common/source/commands/select/element.d 1
 block packages/common/source/io/image_decode.d 5
 block packages/common/source/io/native.d 13
 block packages/common/source/record_observer_hub.d 1
-block packages/pipe-runtime/source/toolpipe/pipeline.d 6
 block packages/common/source/view.d 26
 block packages/input-events/source/eventlog.d 13
 block packages/input-events/source/tool_input.d 6
@@ -49,6 +47,7 @@ block packages/mesh-ops/source/mesh_ops/triangulate.d 1
 block packages/mesh-topology/source/mesh_topo.d 2
 block packages/mesh/source/mesh.d 18
 block packages/mesh/source/mesh_planes.d 1
+block packages/param-schema/source/argstring.d 1
 block packages/pipe-evaluation/source/toolpipe/stages/actcenter.d 5
 block packages/pipe-evaluation/source/toolpipe/stages/axis.d 2
 block packages/pipe-evaluation/source/toolpipe/stages/constrain.d 1
