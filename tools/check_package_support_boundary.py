@@ -2604,13 +2604,15 @@ def check_raw_tree(project, owner):
                     'support descriptor contract: '+selected+(' tests' if tests else ' production'))
         found=sorted(p.resolve() for p in (root/'source').rglob('*.d'))
         require(found==production_files(project,selected),'support production source identity: '+selected)
-        require(all(p.is_file() for p in test_files(project,selected)), 'support missing compiler root: '+selected)
         test_root=root/'tests'
         expected_carriers=sorted((test_root/p).resolve() for p in spec['testSources'] if p.startswith('source/'))
         # C custody: cross-common cut is present for root only, never ops algorithm.
         if selected=='mesh-ops':expected_carriers=sorted(expected_carriers+[(test_root/'source/tests/unit/mesh_ops/cut_test.d').resolve()])
         require(sorted(p.resolve() for p in (test_root/'source').rglob('*.d'))==expected_carriers,
                 'support public carrier identity: '+selected)
+    # Only the selected algorithm suite owns testLower; subordinate isolated-tests
+    # packages contribute production source, not their separate algorithm suites.
+    require(all(p.is_file() for p in test_files(project,owner)), 'support missing compiler root: '+owner)
     if owner in FIXTURES:
         path,sha=FIXTURES[owner]
         require(hashlib.sha256((project/path).read_bytes()).hexdigest()==sha,'support fixture identity: '+owner)
