@@ -44,7 +44,7 @@ unittest {
     immutable press = ["TackTool.onMouseButtonDown", "MagnetTool.onMouseButtonDown",
         "LoopSliceTool.onMouseButtonDown", "EdgeSliceTool.onMouseButtonDown",
         "XfrmTransformTool.tryPickElement"];
-    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
+    foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
 
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
@@ -74,6 +74,41 @@ unittest {
             foreach (p; press) if (s.length >= p.length && s[$ - p.length .. $] == p
                                    && !pressSites.canFind(p)) pressSites ~= p;
         });
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
+
+        const rel = sourceCarrierPath[repoRoot.length + 1 .. $];
+        const code = blankUnittestBodies(blankNonCode(readText(sourceCarrierPath)));
+        const syms = enclosingSymbols(code);
+        string symOf(size_t at) { return symbolAt(syms, lineOf(code, at) - 1); }
+        foreach (name; kIds ~ kFlag)
+            hits(code, name, (at, write) {
+                const s = symOf(at);
+                if (write) { ++writes; if (!writers.canFind(s)) writers ~= s; return; }
+                if (name == kFlag || s == kWriter) return;   // the writer's own import
+                if (press.canFind!(p => s.length >= p.length && s[$ - p.length .. $] == p))
+                    rawPressReads ~= rel ~ ":" ~ s;
+                else if (rel != "packages/interaction-query/source/hover_state.d" && !frameReaders.canFind(rel))
+                    frameReaders ~= rel;
+            });
+        hits(code, "publishHover", (at, write) {
+            const pre = code[0 .. at].stripRight;   // skip its declaration and imports
+            if (!pre.endsWith("void") && !pre.endsWith(":")) publishers ~= symOf(at);
+        });
+        hits(code, "hoverAtPress", (at, write) {
+            if (!code[at + "hoverAtPress".length .. $].stripLeft.startsWith("(")) return;
+            if (code[0 .. at].stripRight.endsWith("HoverIds")) return;   // its declaration
+            const s = symOf(at);
+            ++pressCalls;
+            foreach (p; press) if (s.length >= p.length && s[$ - p.length .. $] == p
+                                   && !pressSites.canFind(p)) pressSites ~= p;
+        });
+
     }
     assert(files > 100, format("hover census: only %d source files scanned", files));
 

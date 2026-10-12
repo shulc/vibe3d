@@ -513,7 +513,7 @@ unittest {
     LedgerHit[] evalHits;            // assertion (b)
     LedgerHit[] workplaneHits;       // assertion (c)
 
-    foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/common/source"), buildPath(censusRepoRoot, "packages/document-model/source"), buildPath(censusRepoRoot, "packages/param-schema/source"), buildPath(censusRepoRoot, "packages/pipe-runtime/source"), buildPath(censusRepoRoot, "packages/mesh-ops/source"), buildPath(censusRepoRoot, "packages/interchange/source"), buildPath(censusRepoRoot, "packages/interaction-query/source"), buildPath(censusRepoRoot, "packages/pipe-evaluation/source"), buildPath(censusRepoRoot, "packages/tool-state/source"), buildPath(censusRepoRoot, "packages/transform-ops/source"), buildPath(censusRepoRoot, "packages/creation-ops/source"), buildPath(censusRepoRoot, "packages/alignment-ops/source"), buildPath(censusRepoRoot, "packages/input-events/source"), buildPath(censusRepoRoot, "packages/display-policy/source"), buildPath(censusRepoRoot, "packages/viewport-gpu/source"), buildPath(censusRepoRoot, "packages/subpatch-preview/source"), buildPath(censusRepoRoot, "packages/edit-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-change/source"), buildPath(censusRepoRoot, "packages/mesh-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-edit-log/source"), buildPath(censusRepoRoot, "packages/mesh-edit-replay/source"), buildPath(censusRepoRoot, "packages/mesh-snapshot/source"), buildPath(censusRepoRoot, "packages/mesh-topology/source"), buildPath(censusRepoRoot, "packages/mesh/source"), buildPath(censusRepoRoot, "packages/profiling/source"), buildPath(censusRepoRoot, "packages/spatial/source"), buildPath(censusRepoRoot, "util/log/source"), buildPath(censusRepoRoot, "util/math/source"), buildPath(censusRepoRoot, "util/parallel/source"), buildPath(censusRepoRoot, "util/plane-bytes/source"), buildPath(censusRepoRoot, "util/screen-buckets/source"), buildPath(censusRepoRoot, "packages/pipe-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-preview/source"), buildPath(censusRepoRoot, "util/json-number/source")])
+    foreach (scanSourceRoot; [dir, buildPath(censusRepoRoot, "packages/common/source"), buildPath(censusRepoRoot, "packages/camera-model/source"), buildPath(censusRepoRoot, "packages/document-channels/source"), buildPath(censusRepoRoot, "packages/image-codec/source"), buildPath(censusRepoRoot, "packages/document-io/source"), buildPath(censusRepoRoot, "packages/document-model/source"), buildPath(censusRepoRoot, "packages/param-schema/source"), buildPath(censusRepoRoot, "packages/pipe-runtime/source"), buildPath(censusRepoRoot, "packages/mesh-ops/source"), buildPath(censusRepoRoot, "packages/interchange/source"), buildPath(censusRepoRoot, "packages/interaction-query/source"), buildPath(censusRepoRoot, "packages/pipe-evaluation/source"), buildPath(censusRepoRoot, "packages/tool-state/source"), buildPath(censusRepoRoot, "packages/transform-ops/source"), buildPath(censusRepoRoot, "packages/creation-ops/source"), buildPath(censusRepoRoot, "packages/alignment-ops/source"), buildPath(censusRepoRoot, "packages/input-events/source"), buildPath(censusRepoRoot, "packages/display-policy/source"), buildPath(censusRepoRoot, "packages/viewport-gpu/source"), buildPath(censusRepoRoot, "packages/subpatch-preview/source"), buildPath(censusRepoRoot, "packages/edit-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-change/source"), buildPath(censusRepoRoot, "packages/mesh-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-edit-log/source"), buildPath(censusRepoRoot, "packages/mesh-edit-replay/source"), buildPath(censusRepoRoot, "packages/mesh-snapshot/source"), buildPath(censusRepoRoot, "packages/mesh-topology/source"), buildPath(censusRepoRoot, "packages/mesh/source"), buildPath(censusRepoRoot, "packages/profiling/source"), buildPath(censusRepoRoot, "packages/spatial/source"), buildPath(censusRepoRoot, "util/log/source"), buildPath(censusRepoRoot, "util/math/source"), buildPath(censusRepoRoot, "util/parallel/source"), buildPath(censusRepoRoot, "util/plane-bytes/source"), buildPath(censusRepoRoot, "util/screen-buckets/source"), buildPath(censusRepoRoot, "packages/pipe-contracts/source"), buildPath(censusRepoRoot, "packages/mesh-preview/source"), buildPath(censusRepoRoot, "util/json-number/source")])
 
 
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
@@ -546,6 +546,42 @@ unittest {
                                     "SubjectSource(", "SubjectSource"))
             if (h.key == "pickWorkplaneFrame|SubjectSource")
                 workplaneHits ~= h;
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = buildPath(censusRepoRoot, sourceCarrier);
+
+
+
+        immutable relPath = relativePath(sourceCarrierPath, censusRepoRoot);
+        immutable src      = readText(sourceCarrierPath);
+        immutable stripped = stripCommentsAndStrings(src);
+        const     symbols  = enclosingSymbols(stripped);
+        const     declared = declaredSubjectPacketVars(stripped);
+
+        auto assigns = scanFieldAssignments(stripped, declared);
+        foreach (a; assigns)
+            assignmentHits ~= LedgerHit(
+                symbolAt(symbols, a.line - 1) ~ "|assignment",
+                relPath, a.line, a.varName ~ "." ~ a.fieldName ~ "  [" ~ a.text ~ "]");
+
+        foreach (e; findEvaluateCalls(relPath, stripped))
+            evalHits ~= LedgerHit(
+                symbolAt(symbols, e.line - 1) ~ "|pipeline.evaluate",
+                relPath, e.line, "pipeline.evaluate(");
+
+        foreach (h; symbolTokenHits(stripped, relPath,
+                                    "viewOnlySubject(", "viewOnlySubject"))
+            if (h.key == "pickWorkplaneFrame|viewOnlySubject")
+                workplaneHits ~= h;
+        foreach (h; symbolTokenHits(stripped, relPath,
+                                    "SubjectSource(", "SubjectSource"))
+            if (h.key == "pickWorkplaneFrame|SubjectSource")
+                workplaneHits ~= h;
+
     }
 
     assert(filesScanned > 100,

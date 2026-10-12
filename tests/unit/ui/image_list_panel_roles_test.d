@@ -762,11 +762,21 @@ unittest { // 6040 census: production binder, call sites, retired EditorApp path
         && panels.count("import ui.item_rename") == 0,
         "6040 retired panel path: ui.panels still defines or feeds the Images rename owner");
     size_t sourceFiles, oldSig;
-    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source"), repoRoot.buildPath("packages/document-model/source"), repoRoot.buildPath("packages/param-schema/source"), repoRoot.buildPath("packages/pipe-runtime/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source"), repoRoot.buildPath("packages/input-events/source"), repoRoot.buildPath("packages/display-policy/source"), repoRoot.buildPath("packages/viewport-gpu/source"), repoRoot.buildPath("packages/subpatch-preview/source"), repoRoot.buildPath("packages/edit-contracts/source"), repoRoot.buildPath("packages/mesh-change/source"), repoRoot.buildPath("packages/mesh-contracts/source"), repoRoot.buildPath("packages/mesh-edit-log/source"), repoRoot.buildPath("packages/mesh-edit-replay/source"), repoRoot.buildPath("packages/mesh-snapshot/source"), repoRoot.buildPath("packages/mesh-topology/source"), repoRoot.buildPath("packages/mesh/source"), repoRoot.buildPath("packages/profiling/source"), repoRoot.buildPath("packages/spatial/source"), repoRoot.buildPath("util/log/source"), repoRoot.buildPath("util/math/source"), repoRoot.buildPath("util/parallel/source"), repoRoot.buildPath("util/plane-bytes/source"), repoRoot.buildPath("util/screen-buckets/source")])
+    foreach (scanSourceRoot; [repoRoot.buildPath("source"), repoRoot.buildPath("packages/common/source"), repoRoot.buildPath("packages/camera-model/source"), repoRoot.buildPath("packages/document-channels/source"), repoRoot.buildPath("packages/image-codec/source"), repoRoot.buildPath("packages/document-io/source"), repoRoot.buildPath("packages/document-model/source"), repoRoot.buildPath("packages/param-schema/source"), repoRoot.buildPath("packages/pipe-runtime/source"), repoRoot.buildPath("packages/mesh-ops/source"), repoRoot.buildPath("packages/interchange/source"), repoRoot.buildPath("packages/interaction-query/source"), repoRoot.buildPath("packages/pipe-evaluation/source"), repoRoot.buildPath("packages/tool-state/source"), repoRoot.buildPath("packages/transform-ops/source"), repoRoot.buildPath("packages/creation-ops/source"), repoRoot.buildPath("packages/alignment-ops/source"), repoRoot.buildPath("packages/input-events/source"), repoRoot.buildPath("packages/display-policy/source"), repoRoot.buildPath("packages/viewport-gpu/source"), repoRoot.buildPath("packages/subpatch-preview/source"), repoRoot.buildPath("packages/edit-contracts/source"), repoRoot.buildPath("packages/mesh-change/source"), repoRoot.buildPath("packages/mesh-contracts/source"), repoRoot.buildPath("packages/mesh-edit-log/source"), repoRoot.buildPath("packages/mesh-edit-replay/source"), repoRoot.buildPath("packages/mesh-snapshot/source"), repoRoot.buildPath("packages/mesh-topology/source"), repoRoot.buildPath("packages/mesh/source"), repoRoot.buildPath("packages/profiling/source"), repoRoot.buildPath("packages/spatial/source"), repoRoot.buildPath("util/log/source"), repoRoot.buildPath("util/math/source"), repoRoot.buildPath("util/parallel/source"), repoRoot.buildPath("util/plane-bytes/source"), repoRoot.buildPath("util/screen-buckets/source")])
 
     foreach (entry; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++sourceFiles;
         oldSig += blankNonCode(readText(entry.name)).count("drawImageListPanel(EditorApp");
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = repoRoot.buildPath(sourceCarrier);
+
+        oldSig += blankNonCode(readText(sourceCarrierPath)).count("drawImageListPanel(EditorApp");
+
     }
     assert(sourceFiles > 500 && oldSig == 0,
         "6040 source census: the EditorApp image-list overload survived");

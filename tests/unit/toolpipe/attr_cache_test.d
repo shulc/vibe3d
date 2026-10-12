@@ -350,10 +350,20 @@ unittest { // u7: the ONE clear is the script scene.reset automation tail
     // it): one `toolAttrCache.clear(` in the whole source tree.
     import std.file : SpanMode, dirEntries;
     size_t clears, files;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++files;
         clears += blankNonCode(readText(f.name)).count("toolAttrCache.clear(");
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = sourceCarrier;
+
+        clears += blankNonCode(readText(sourceCarrierPath)).count("toolAttrCache.clear(");
+
     }
     assert(files > 100, format("M5 u7: population floor - scanned %d source files", files));
     assert(clears == 1,

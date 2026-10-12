@@ -479,7 +479,7 @@ unittest
     assert(sourceDir.exists && sourceDir.isDir,
         "the L9 seam census cannot find source/ — it is measuring nothing");
 
-    foreach (scanSourceRoot; [sourceDir, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
+    foreach (scanSourceRoot; [sourceDir, buildPath(repoRoot, "packages/common/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source")])
 
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
@@ -529,6 +529,60 @@ unittest
             }
             ++i;
         }
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
+        immutable rel = relativePath(sourceCarrierPath, repoRoot);
+        immutable raw  = readText(sourceCarrierPath);
+        immutable code = blankNonCode(raw);
+        immutable moduleName = moduleNameOf(code);
+        bool inScopeModule;
+        foreach (scopeModule; kScopeModules)
+            if (moduleName == scopeModule) {
+                inScopeModule = true;
+                seenScopeModules[moduleName] = true;
+            }
+        const symbols = enclosingSymbols(code);
+        scannedBytes += raw.length;
+
+
+        size_t i, line0;
+        while (i < code.length) {
+            if (code[i] == '\n') { line0++; i++; continue; }
+
+            // The statement this open belongs to, up to its `;`.
+            bool matched;
+            string kind;
+            if (code[i .. $].length > 14 && code[i .. i + 14] == "MeshEditBatch.") {
+                size_t semi = i;
+                while (semi < code.length && code[semi] != ';') ++semi;
+                if (code[i .. semi].indexOfSub("kLoopSliceEditScope")
+                 && code[i .. semi].indexOfSub("unrecorded(")) {
+                    matched = true;
+                    kind = "unrecorded";
+                }
+            } else if (code[i .. $].length > 14
+                    && code[i .. i + 14] == "MeshEditBatch(") {
+                size_t semi = i;
+                while (semi < code.length && code[semi] != ';') ++semi;
+                if (code[i .. semi].indexOfSub("kLoopSliceEditScope")) {
+                    matched = true;
+                    kind = "recording";
+                }
+            }
+            if (matched) {
+                immutable symbol = symbolAt(symbols, line0);
+                if (inScopeModule || symbol in recordedSymbols)
+                    hits ~= LedgerHit(symbol ~ "|" ~ kind, rel, line0 + 1,
+                                      "MeshEditBatch " ~ kind);
+            }
+            ++i;
+        }
+
     }
 
     string bad = reconcile(kL9Seam, hits);

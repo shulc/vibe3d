@@ -201,7 +201,7 @@ unittest {
     // (c) `mirrorElement(` is called (outside its declaration) exactly in the
     // three pointer-gesture files — the set is EQUAL, not "at least".
     string[] callers;
-    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/document-model/source"), buildPath(kRepoRoot, "packages/param-schema/source"), buildPath(kRepoRoot, "packages/pipe-runtime/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source"), buildPath(kRepoRoot, "packages/edit-contracts/source"), buildPath(kRepoRoot, "packages/mesh-change/source"), buildPath(kRepoRoot, "packages/mesh-contracts/source"), buildPath(kRepoRoot, "packages/mesh-edit-log/source"), buildPath(kRepoRoot, "packages/mesh-edit-replay/source"), buildPath(kRepoRoot, "packages/mesh-snapshot/source"), buildPath(kRepoRoot, "packages/mesh-topology/source"), buildPath(kRepoRoot, "packages/mesh/source"), buildPath(kRepoRoot, "packages/profiling/source"), buildPath(kRepoRoot, "packages/spatial/source"), buildPath(kRepoRoot, "util/log/source"), buildPath(kRepoRoot, "util/math/source"), buildPath(kRepoRoot, "util/parallel/source"), buildPath(kRepoRoot, "util/plane-bytes/source"), buildPath(kRepoRoot, "util/screen-buckets/source"), buildPath(kRepoRoot, "packages/pipe-contracts/source"), buildPath(kRepoRoot, "packages/mesh-preview/source"), buildPath(kRepoRoot, "util/json-number/source")])
+    foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/camera-model/source"), buildPath(kRepoRoot, "packages/document-channels/source"), buildPath(kRepoRoot, "packages/image-codec/source"), buildPath(kRepoRoot, "packages/document-io/source"), buildPath(kRepoRoot, "packages/document-model/source"), buildPath(kRepoRoot, "packages/param-schema/source"), buildPath(kRepoRoot, "packages/pipe-runtime/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source"), buildPath(kRepoRoot, "packages/edit-contracts/source"), buildPath(kRepoRoot, "packages/mesh-change/source"), buildPath(kRepoRoot, "packages/mesh-contracts/source"), buildPath(kRepoRoot, "packages/mesh-edit-log/source"), buildPath(kRepoRoot, "packages/mesh-edit-replay/source"), buildPath(kRepoRoot, "packages/mesh-snapshot/source"), buildPath(kRepoRoot, "packages/mesh-topology/source"), buildPath(kRepoRoot, "packages/mesh/source"), buildPath(kRepoRoot, "packages/profiling/source"), buildPath(kRepoRoot, "packages/spatial/source"), buildPath(kRepoRoot, "util/log/source"), buildPath(kRepoRoot, "util/math/source"), buildPath(kRepoRoot, "util/parallel/source"), buildPath(kRepoRoot, "util/plane-bytes/source"), buildPath(kRepoRoot, "util/screen-buckets/source"), buildPath(kRepoRoot, "packages/pipe-contracts/source"), buildPath(kRepoRoot, "packages/mesh-preview/source"), buildPath(kRepoRoot, "util/json-number/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         const rel = de.name[kRepoRoot.length + 1 .. $];
@@ -209,6 +209,19 @@ unittest {
         size_t c = countOccurrences(code, "mirrorElement(");
         if (rel == "packages/interaction-query/source/symmetry.d") c -= countOccurrences(code, "uint mirrorElement(");
         if (c > 0) callers ~= rel;
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = buildPath(kRepoRoot, sourceCarrier);
+        const rel = sourceCarrierPath[kRepoRoot.length + 1 .. $];
+        const code = codeOf(rel);
+        size_t c = countOccurrences(code, "mirrorElement(");
+        if (rel == "packages/interaction-query/source/symmetry.d") c -= countOccurrences(code, "uint mirrorElement(");
+        if (c > 0) callers ~= rel;
+
     }
     callers.sort();
     assert(callers == ["source/input_router.d", "source/symmetry_pick.d",
@@ -436,7 +449,7 @@ unittest {
         int[string] got;
         string[] needles = ["placeAuthoringBase(", "notePlacementAt(", "notePlacement()",
                             "placeActionCentreOnInstall("];
-        foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/document-model/source"), buildPath(kRepoRoot, "packages/param-schema/source"), buildPath(kRepoRoot, "packages/pipe-runtime/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source"), buildPath(kRepoRoot, "packages/edit-contracts/source"), buildPath(kRepoRoot, "packages/mesh-change/source"), buildPath(kRepoRoot, "packages/mesh-contracts/source"), buildPath(kRepoRoot, "packages/mesh-edit-log/source"), buildPath(kRepoRoot, "packages/mesh-edit-replay/source"), buildPath(kRepoRoot, "packages/mesh-snapshot/source"), buildPath(kRepoRoot, "packages/mesh-topology/source"), buildPath(kRepoRoot, "packages/mesh/source"), buildPath(kRepoRoot, "packages/profiling/source"), buildPath(kRepoRoot, "packages/spatial/source"), buildPath(kRepoRoot, "util/log/source"), buildPath(kRepoRoot, "util/math/source"), buildPath(kRepoRoot, "util/parallel/source"), buildPath(kRepoRoot, "util/plane-bytes/source"), buildPath(kRepoRoot, "util/screen-buckets/source"), buildPath(kRepoRoot, "packages/pipe-contracts/source"), buildPath(kRepoRoot, "packages/mesh-preview/source"), buildPath(kRepoRoot, "util/json-number/source")])
+        foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/common/source"), buildPath(kRepoRoot, "packages/camera-model/source"), buildPath(kRepoRoot, "packages/document-channels/source"), buildPath(kRepoRoot, "packages/image-codec/source"), buildPath(kRepoRoot, "packages/document-io/source"), buildPath(kRepoRoot, "packages/document-model/source"), buildPath(kRepoRoot, "packages/param-schema/source"), buildPath(kRepoRoot, "packages/pipe-runtime/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source"), buildPath(kRepoRoot, "packages/edit-contracts/source"), buildPath(kRepoRoot, "packages/mesh-change/source"), buildPath(kRepoRoot, "packages/mesh-contracts/source"), buildPath(kRepoRoot, "packages/mesh-edit-log/source"), buildPath(kRepoRoot, "packages/mesh-edit-replay/source"), buildPath(kRepoRoot, "packages/mesh-snapshot/source"), buildPath(kRepoRoot, "packages/mesh-topology/source"), buildPath(kRepoRoot, "packages/mesh/source"), buildPath(kRepoRoot, "packages/profiling/source"), buildPath(kRepoRoot, "packages/spatial/source"), buildPath(kRepoRoot, "util/log/source"), buildPath(kRepoRoot, "util/math/source"), buildPath(kRepoRoot, "util/parallel/source"), buildPath(kRepoRoot, "util/plane-bytes/source"), buildPath(kRepoRoot, "util/screen-buckets/source"), buildPath(kRepoRoot, "packages/pipe-contracts/source"), buildPath(kRepoRoot, "packages/mesh-preview/source"), buildPath(kRepoRoot, "util/json-number/source")])
 
         foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             const rel = de.name[kRepoRoot.length + 1 .. $];
@@ -458,6 +471,32 @@ unittest {
                 }
             }
         }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = buildPath(kRepoRoot, sourceCarrier);
+            const rel = sourceCarrierPath[kRepoRoot.length + 1 .. $];
+            const code = codeOf(rel);
+
+            string[] syms;
+            foreach (nd; needles) {
+                size_t from = 0;
+                for (;;) {
+                    const i = code.indexOf(nd, from);
+                    if (i < 0) break;
+                    from = i + nd.length;
+                    // skip the declaration: `void name(`
+                    const pre = code[(i >= 12 ? i - 12 : 0) .. i];
+                    if (pre.indexOf("void ") >= 0) continue;
+                    if (syms.length == 0) syms = enclosingSymbols(code);
+                    const key = nd ~ " @ " ~ symbolAt(syms, lineOf(code, i) - 1);
+                    got[key] = got.get(key, 0) + 1;
+                }
+            }
+
+    }
         assert(files >= 500, "(u6)(c) census read " ~ files.to!string ~ " source files");
         int[string] want = [
             "placeAuthoringBase( @ ActionCenterStage.notePlacementAt": 1,

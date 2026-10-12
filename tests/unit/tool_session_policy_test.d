@@ -939,7 +939,7 @@ unittest { // (4c)
     string[] raw;
     size_t scanned;
     bool sessionScanned;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         const name = e.name;
@@ -947,6 +947,20 @@ unittest { // (4c)
         const c = rawBypass(readText(name));
         if (c[0] + c[1] + c[2])
             raw ~= format("raw:%s:%s/%s/%s", name, c[0], c[1], c[2]);
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = sourceCarrier;
+
+        const name = sourceCarrierPath;
+        if (name == "source/edit_session.d") sessionScanned = true;
+        const c = rawBypass(readText(name));
+        if (c[0] + c[1] + c[2])
+            raw ~= format("raw:%s:%s/%s/%s", name, c[0], c[1], c[2]);
+
     }
     assert(scanned >= 574 && sessionScanned,
            format("S2b floor: the raw scan read %s files of source/ (floor 574), session module "
@@ -977,7 +991,7 @@ unittest { // (4c)
         "postmodeArmed_=ToolSession.recordBeginRow_:1",
         "postmodeArmed_=ToolSession.settleAfterNavigation_:1",
         "raw:packages/common/source/http_json.d:2/0/0",
-        "raw:packages/common/source/io/native.d:4/9/0",
+        "raw:packages/document-io/source/io/native.d:4/9/0",
         "raw:packages/document-model/source/document.d:0/1/0",
         "raw:packages/mesh-contracts/source/mesh_plane_types.d:5/0/1",
         "raw:packages/mesh-edit-log/source/mesh_edit_delta.d:1/2/0",
@@ -1074,11 +1088,22 @@ unittest { // (4c)
     // orchestrateParameterChange; the preview gate's link is set at the arm only;
     // the one tool reading the gate in S2b is Mirror's evaluate (S6: 12 sites).
     string[] mps;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         auto code = blankUnittestBodies(blankNonCode(readText(e.name)));
         foreach (site; identSites(code, "scriptedWriteEndsOperation", false))
             mps ~= e.name ~ ":" ~ site;
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = sourceCarrier;
+        auto code = blankUnittestBodies(blankNonCode(readText(sourceCarrierPath)));
+        foreach (site; identSites(code, "scriptedWriteEndsOperation", false))
+            mps ~= sourceCarrierPath ~ ":" ~ site;
+
     }
     sort(mps);
     assert(mps == ["source/edit_session.d:<decl>:1",
@@ -1239,10 +1264,18 @@ unittest { // (4e)
     // composing the topology-step client mixin» (task 9429; the pen keeps its own
     // block) — 12, the table's files.
     string[] model;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         if (blankNonCode(readText(e.name)).canFind("mixin TopologyStepClientBody!"))
             model ~= e.name;
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = sourceCarrier;if (blankNonCode(readText(sourceCarrierPath)).canFind("mixin TopologyStepClientBody!"))
+            model ~= sourceCarrierPath;
+    }
     sort(model);
     assert(model == kRebaseBodyFiles.dup.sort.array, format("S6 floor: the captured model's "
            ~ "files are %s, the table %s", model, kRebaseBodyFiles));
@@ -1721,12 +1754,24 @@ unittest { // (4k)
     // the datum, every word occurrence in `source` (form item 12: a rule, not a list)
     string[] datum;
     size_t scanned;
-    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
+    foreach (scanSourceRoot; ["source", "packages/common/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         ++scanned;
         foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
                                   "redoPinsRefireImage", false))
             datum ~= f.name ~ " " ~ site;
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = sourceCarrier;
+
+        foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(sourceCarrierPath))),
+                                  "redoPinsRefireImage", false))
+            datum ~= sourceCarrierPath ~ " " ~ site;
+
     }
     sort(datum);
     assert(scanned > 300, format("S7r census: read %s source files", scanned));
@@ -2600,13 +2645,25 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
                       identSites(esU, "invalidateRedo", false)));
         string[] cuts;
         size_t files;
-        foreach (scanSourceRoot; ["source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
+        foreach (scanSourceRoot; ["source", "packages/common/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source"])
         foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
             ++files;
             foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(f.name))),
                                       "truncateRedo", false))
                 cuts ~= f.name ~ " " ~ site;
         }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = sourceCarrier;
+
+            foreach (site; identSites(blankUnittestBodies(blankNonCode(readText(sourceCarrierPath))),
+                                      "truncateRedo", false))
+                cuts ~= sourceCarrierPath ~ " " ~ site;
+
+    }
         sort(cuts);
         assert(files > 300, format("S5 census: read %s source files", files));
         assert(cuts == ["packages/common/source/command_history.d <decl>:1",

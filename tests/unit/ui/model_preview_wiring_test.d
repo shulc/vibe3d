@@ -20,7 +20,7 @@ unittest {
     assert(has(capability, "tool !is null && tool.modelPreview(candidate)"),
            "production queries final Tool operation");
     size_t files, adopters;
-    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source")])
+    foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/common/source"), buildPath(root, "packages/camera-model/source"), buildPath(root, "packages/document-channels/source"), buildPath(root, "packages/image-codec/source"), buildPath(root, "packages/document-io/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source")])
 
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
         if (!entry.isFile || !entry.name.endsWith(".d")) continue;
@@ -42,6 +42,33 @@ unittest {
             assert(sites.length == 1 && sites[0].key == expected,
                    "each preview adopter binds once in its constructor");
         }
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = buildPath(root, sourceCarrier);
+
+
+        auto code = blankNonCode(readText(sourceCarrierPath));
+        auto bindings = code.count("bindModelPreview(");
+        if (sourceCarrierPath == buildPath(root, "source/tool.d")) {
+            assert(bindings == 1, "Tool declares exactly one preview binder");
+            continue;
+        }
+        adopters += bindings;
+        if (bindings != 0) {
+            string expected;
+            if (sourceCarrierPath == buildPath(root, "source/tools/edit/bridge_tool.d")) expected = "BridgeTool.this";
+            if (sourceCarrierPath == buildPath(root, "source/tools/create/primitive_create_tool.d")) expected = "PrimitiveCreateTool.this";
+            if (sourceCarrierPath == buildPath(root, "source/tools/create/box.d")) expected = "BoxTool.this";
+            assert(expected.length != 0 && bindings == 1, "only three production constructor preview binders");
+            auto sites = symbolTokenHits(code, sourceCarrierPath, "bindModelPreview(");
+            assert(sites.length == 1 && sites[0].key == expected,
+                   "each preview adopter binds once in its constructor");
+        }
+
     }
     assert(files >= 580 && adopters == 3,
            "production preview binder census requires Bridge, primitive family and Box adopters");

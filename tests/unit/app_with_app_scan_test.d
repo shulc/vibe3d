@@ -275,7 +275,7 @@ unittest {
     size_t filesScanned;
     size_t scopeModulesScanned;
     const sourceDir = buildPath(gateRepoRoot, "source");
-    foreach (scanSourceRoot; [sourceDir, buildPath(gateRepoRoot, "packages/common/source"), buildPath(gateRepoRoot, "packages/document-model/source"), buildPath(gateRepoRoot, "packages/param-schema/source"), buildPath(gateRepoRoot, "packages/pipe-runtime/source"), buildPath(gateRepoRoot, "packages/mesh-ops/source"), buildPath(gateRepoRoot, "packages/interchange/source"), buildPath(gateRepoRoot, "packages/interaction-query/source"), buildPath(gateRepoRoot, "packages/pipe-evaluation/source"), buildPath(gateRepoRoot, "packages/tool-state/source"), buildPath(gateRepoRoot, "packages/transform-ops/source"), buildPath(gateRepoRoot, "packages/creation-ops/source"), buildPath(gateRepoRoot, "packages/alignment-ops/source"), buildPath(gateRepoRoot, "packages/input-events/source"), buildPath(gateRepoRoot, "packages/display-policy/source"), buildPath(gateRepoRoot, "packages/viewport-gpu/source"), buildPath(gateRepoRoot, "packages/subpatch-preview/source"), buildPath(gateRepoRoot, "packages/edit-contracts/source"), buildPath(gateRepoRoot, "packages/mesh-change/source"), buildPath(gateRepoRoot, "packages/mesh-contracts/source"), buildPath(gateRepoRoot, "packages/mesh-edit-log/source"), buildPath(gateRepoRoot, "packages/mesh-edit-replay/source"), buildPath(gateRepoRoot, "packages/mesh-snapshot/source"), buildPath(gateRepoRoot, "packages/mesh-topology/source"), buildPath(gateRepoRoot, "packages/mesh/source"), buildPath(gateRepoRoot, "packages/profiling/source"), buildPath(gateRepoRoot, "packages/spatial/source"), buildPath(gateRepoRoot, "util/log/source"), buildPath(gateRepoRoot, "util/math/source"), buildPath(gateRepoRoot, "util/parallel/source"), buildPath(gateRepoRoot, "util/plane-bytes/source"), buildPath(gateRepoRoot, "util/screen-buckets/source")])
+    foreach (scanSourceRoot; [sourceDir, buildPath(gateRepoRoot, "packages/common/source"), buildPath(gateRepoRoot, "packages/camera-model/source"), buildPath(gateRepoRoot, "packages/document-channels/source"), buildPath(gateRepoRoot, "packages/image-codec/source"), buildPath(gateRepoRoot, "packages/document-io/source"), buildPath(gateRepoRoot, "packages/document-model/source"), buildPath(gateRepoRoot, "packages/param-schema/source"), buildPath(gateRepoRoot, "packages/pipe-runtime/source"), buildPath(gateRepoRoot, "packages/mesh-ops/source"), buildPath(gateRepoRoot, "packages/interchange/source"), buildPath(gateRepoRoot, "packages/interaction-query/source"), buildPath(gateRepoRoot, "packages/pipe-evaluation/source"), buildPath(gateRepoRoot, "packages/tool-state/source"), buildPath(gateRepoRoot, "packages/transform-ops/source"), buildPath(gateRepoRoot, "packages/creation-ops/source"), buildPath(gateRepoRoot, "packages/alignment-ops/source"), buildPath(gateRepoRoot, "packages/input-events/source"), buildPath(gateRepoRoot, "packages/display-policy/source"), buildPath(gateRepoRoot, "packages/viewport-gpu/source"), buildPath(gateRepoRoot, "packages/subpatch-preview/source"), buildPath(gateRepoRoot, "packages/edit-contracts/source"), buildPath(gateRepoRoot, "packages/mesh-change/source"), buildPath(gateRepoRoot, "packages/mesh-contracts/source"), buildPath(gateRepoRoot, "packages/mesh-edit-log/source"), buildPath(gateRepoRoot, "packages/mesh-edit-replay/source"), buildPath(gateRepoRoot, "packages/mesh-snapshot/source"), buildPath(gateRepoRoot, "packages/mesh-topology/source"), buildPath(gateRepoRoot, "packages/mesh/source"), buildPath(gateRepoRoot, "packages/profiling/source"), buildPath(gateRepoRoot, "packages/spatial/source"), buildPath(gateRepoRoot, "util/log/source"), buildPath(gateRepoRoot, "util/math/source"), buildPath(gateRepoRoot, "util/parallel/source"), buildPath(gateRepoRoot, "util/plane-bytes/source"), buildPath(gateRepoRoot, "util/screen-buckets/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         filesScanned++;
@@ -313,6 +313,49 @@ unittest {
                      ~ "raise the hit count from %d to %d; the scanner saw %d",
                        moduleName, liveApp, liveApp + 1, canaryApp));
         }
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = buildPath(gateRepoRoot, sourceCarrier);
+
+        const rel = relativePath(sourceCarrierPath, gateRepoRoot);
+        const src = readText(sourceCarrierPath);
+        const code = blankNonCode(src);
+        const symbols = enclosingSymbols(code);
+        const moduleName = moduleNameOf(code);
+        const inOriginalScope = moduleName == "registration"
+                             || moduleName == "input_router";
+        if (inOriginalScope) scopeModulesScanned++;
+
+        const live = scanLiveWith(src);
+        foreach (h; live) {
+            if (h.subject != "app") continue;
+            const symbol = symbolAt(symbols, h.line - 1);
+            bool recorded;
+            foreach (row; kWithAppCensus)
+                if (row.key == symbol) { recorded = true; break; }
+            if (recorded || inOriginalScope)
+                ledgerHits ~= LedgerHit(symbol, rel, h.line, "with (app)");
+        }
+
+        // Keep the original differential canary on both scoped modules, but
+        // discover them by their D module declaration instead of their path.
+        if (inOriginalScope) {
+            const canaried = src
+                ~ "\nvoid _guardCanary() { with (app) { hoveredVertex = -1; } }\n";
+            size_t liveApp, canaryApp;
+            foreach (h; live) if (h.subject == "app") liveApp++;
+            foreach (h; scanLiveWith(canaried))
+                if (h.subject == "app") canaryApp++;
+            assert(canaryApp == liveApp + 1,
+                format("appending one live `with (app)` to module %s must "
+                     ~ "raise the hit count from %d to %d; the scanner saw %d",
+                       moduleName, liveApp, liveApp + 1, canaryApp));
+        }
+
     }
 
     string problems = reconcile(kWithAppCensus, ledgerHits);

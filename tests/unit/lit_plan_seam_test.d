@@ -212,7 +212,7 @@ unittest { // raw-text census of the spellings that bypass private: names, getMe
     size_t scanned, litFiles;
     string[] named;          // files outside shader.d naming a plan-uniform location
     string[string] reflect;  // LitShader-mentioning files with a bypass spelling -> counts
-    foreach (scanSourceRoot; [src, buildPath(root, "packages/common/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source")])
+    foreach (scanSourceRoot; [src, buildPath(root, "packages/common/source"), buildPath(root, "packages/camera-model/source"), buildPath(root, "packages/document-channels/source"), buildPath(root, "packages/image-codec/source"), buildPath(root, "packages/document-io/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source")])
 
     foreach (de; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
         immutable rel = relativePath(de.name, src).replace("\\", "/");
@@ -226,6 +226,25 @@ unittest { // raw-text census of the spellings that bypass private: names, getMe
         immutable g = countOccurrences(raw, "__traits(getMember");
         immutable m = positions(raw, mixinRe).length;
         if (t + g + m) reflect[rel] = format("tupleof=%d getMember=%d mixin=%d", t, g, m);
+    }
+    foreach (sourceCarrier; [
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        const sourceCarrierPath = buildPath(root, sourceCarrier);
+        immutable rel = relativePath(sourceCarrierPath, src).replace("\\", "/");
+        if (rel == "../packages/viewport-gpu/source/shader.d") continue;
+
+        immutable raw = readText(sourceCarrierPath);   // RAW: strings and comments included
+        if (positions(raw, nameRe).length) named ~= rel;
+        if (countOccurrences(raw, "LitShader") == 0) continue;
+        ++litFiles;
+        immutable t = countOccurrences(raw, ".tupleof");
+        immutable g = countOccurrences(raw, "__traits(getMember");
+        immutable m = positions(raw, mixinRe).length;
+        if (t + g + m) reflect[rel] = format("tupleof=%d getMember=%d mixin=%d", t, g, m);
+
     }
     // Floors on the two domains. Measured 2026-10-02:
     //   find source -name '*.d' | wc -l -> 582 (581 without shader.d);
