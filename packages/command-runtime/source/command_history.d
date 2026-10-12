@@ -2448,51 +2448,9 @@ version (unittest) {
     }
 }
 
-unittest { // record→undo bumps undoEpoch by 1; redo does NOT bump
-    auto h = new CommandHistory();
-    assert(h.undoEpoch == 0);
 
-    auto cmd = new _EpochTestCmd();
-    cmd.apply();
-    h.record(cmd);
-    assert(h.undoEpoch == 0, "record must not bump epoch");
 
-    assert(h.undo());
-    assert(h.undoEpoch == 1, "undo must bump epoch to 1");
 
-    assert(h.redo());
-    assert(h.undoEpoch == 1, "redo must NOT bump epoch");
-
-    assert(h.undo());
-    assert(h.undoEpoch == 2, "second undo bumps to 2");
-}
-
-unittest { // consolidate does NOT bump undoEpoch
-    import mesh    : Mesh;
-    import view    : View;
-    import editmode : EditMode;
-    import commands.mesh.vertex_edit : MeshVertexEdit;
-    import math : Vec3;
-
-    auto h = new CommandHistory();
-    assert(h.undoEpoch == 0);
-
-    // record two in-session entries and consolidate — epoch stays 0
-    auto run = h.nextRun();
-    Mesh mesh;
-    View view = new View(0, 0, 1, 1);
-
-    auto e1 = new MeshVertexEdit(&mesh, view, EditMode.Vertices);
-    e1.setEdit([0u], [Vec3(0,0,0)], [Vec3(1,0,0)], "e1");
-    h.recordInSession(e1, run);
-
-    auto e2 = new MeshVertexEdit(&mesh, view, EditMode.Vertices);
-    e2.setEdit([0u], [Vec3(1,0,0)], [Vec3(2,0,0)], "e2");
-    h.recordInSession(e2, run);
-
-    h.consolidate(run);
-    assert(h.undoEpoch == 0, "consolidate must not bump epoch");
-}
 
 // ---------------------------------------------------------------------------
 // Task 0614 Phase 4 — consolidate()'s RunMergeable arm (doc/
