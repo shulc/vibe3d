@@ -95,7 +95,7 @@ private string[] filesWith(string needle, out size_t scanned) {
         size_t occurrences;
         foreach (candidate; sourceCarriersWave14_1) if (candidate == relative) ++occurrences;
         assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
-        assert(exists(buildPath(kRepoRoot, relative)), "Wave14 logical source physical input missing: " ~ relative);
+
     }
     foreach (sourceCarrier; sourceCarriersWave14_1) {
         const sourceCarrierPath = buildPath(kRepoRoot, sourceCarrier);

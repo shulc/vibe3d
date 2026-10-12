@@ -426,7 +426,7 @@ unittest
         "packages/editor-commands/source/commands/mesh/axis_slice.d",
         "packages/editor-commands/source/commands/mesh/screen_slice.d",
         "packages/editor-commands/source/commands/mesh/edge_slice.d",
-        "packages/editor-commands/source/commands/mesh/cut.d",
+        "packages/editor-commands/source/commands/mesh/cut_.d",
     ];
     {
         auto uniquePaths = kFiles.dup.sort.uniq.array;
@@ -482,7 +482,7 @@ unittest
     // re-base again — `grep -rn 'private MeshSnapshot' source/commands/` —
     // never delete this block.
     {
-        immutable ctl = readText(buildPath(repo, "packages/editor-commands/source/commands/mesh/paste.d"));
+        immutable ctl = readText(buildPath(repo, "packages/editor-commands/source/commands/mesh/paste_.d"));
         size_t ctlSnaps = 0;
         foreach (line; ctl.split('\n'))
             if (declaresVarOfType(line, "MeshSnapshot")) ++ctlSnaps;

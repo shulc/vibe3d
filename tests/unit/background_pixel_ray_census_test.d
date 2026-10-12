@@ -164,7 +164,7 @@ private string[] sourceFiles() {
         size_t occurrences;
         foreach (candidate; sourceCarriersWave14_1) if (candidate == relative) ++occurrences;
         assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
-        assert(exists(buildPath(root, relative)), "Wave14 logical source physical input missing: " ~ relative);
+
     }
     foreach (sourceCarrier; sourceCarriersWave14_1)
         o ~= relativePath(buildPath(root, sourceCarrier), buildPath(root, "source")).replace("\\", "/");

@@ -95,7 +95,7 @@ unittest // the twelve are off the snapshot-only undo
     string firstGuardFile, firstRollbackFile, missingRecorded, missingEmptyOk;
 
     foreach (name; kL2Commands) {
-        immutable path = buildPath(repoRoot(), "source", "commands", "mesh", name);
+        immutable path = buildPath(repoRoot(), name == "add_point.d" ? "packages/editor-commands/source/commands/mesh/add_point.d" : name == "fix_orientation.d" ? "packages/editor-commands/source/commands/mesh/fix_orientation.d" : name == "flip.d" ? "packages/editor-commands/source/commands/mesh/flip.d" : name == "make_polygon.d" ? "packages/editor-commands/source/commands/mesh/make_polygon.d" : name == "polygon_align.d" ? "packages/editor-commands/source/commands/mesh/polygon_align.d" : name == "spikey.d" ? "packages/editor-commands/source/commands/mesh/spikey.d" : name == "spin_edge.d" ? "packages/editor-commands/source/commands/mesh/spin_edge.d" : name == "split_edge.d" ? "packages/editor-commands/source/commands/mesh/split_edge.d" : name == "split_face.d" ? "packages/editor-commands/source/commands/mesh/split_face.d" : name == "thicken.d" ? "packages/editor-commands/source/commands/mesh/thicken.d" : name == "vertex_new.d" ? "packages/editor-commands/source/commands/mesh/vertex_new.d" : name == "vertex_split.d" ? "packages/editor-commands/source/commands/mesh/vertex_split.d" : "source/commands/mesh/" ~ name);
         // TERM 2 — every literal exists, asserted BEFORE any count. A count
         // over a file that is not there is not zero, it is nothing.
         assert(exists(path),

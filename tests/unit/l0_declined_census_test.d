@@ -309,18 +309,18 @@ private Found[] scanDormant() {
         "packages/editor-commands/source/commands/macros/record.d",
         "packages/editor-commands/source/commands/macros/save_recorded.d",
         "packages/editor-commands/source/commands/mesh/add_point.d",
-        "packages/editor-commands/source/commands/mesh/array.d",
+        "packages/editor-commands/source/commands/mesh/array_.d",
         "packages/editor-commands/source/commands/mesh/axis_slice.d",
         "packages/editor-commands/source/commands/mesh/bevel.d",
         "packages/editor-commands/source/commands/mesh/bridge.d",
         "packages/editor-commands/source/commands/mesh/cleanup.d",
         "packages/editor-commands/source/commands/mesh/clone_.d",
         "packages/editor-commands/source/commands/mesh/collapse.d",
-        "packages/editor-commands/source/commands/mesh/copy.d",
-        "packages/editor-commands/source/commands/mesh/cut.d",
-        "packages/editor-commands/source/commands/mesh/delete.d",
+        "packages/editor-commands/source/commands/mesh/copy_.d",
+        "packages/editor-commands/source/commands/mesh/cut_.d",
+        "packages/editor-commands/source/commands/mesh/delete_.d",
         "packages/editor-commands/source/commands/mesh/detriangulate.d",
-        "packages/editor-commands/source/commands/mesh/duplicate.d",
+        "packages/editor-commands/source/commands/mesh/duplicate_.d",
         "packages/editor-commands/source/commands/mesh/edge_crease.d",
         "packages/editor-commands/source/commands/mesh/edge_extend.d",
         "packages/editor-commands/source/commands/mesh/edge_extrude.d",
@@ -337,19 +337,19 @@ private Found[] scanDormant() {
         "packages/editor-commands/source/commands/mesh/make_polygon.d",
         "packages/editor-commands/source/commands/mesh/map_edit_undo.d",
         "packages/editor-commands/source/commands/mesh/merge.d",
-        "packages/editor-commands/source/commands/mesh/mirror.d",
+        "packages/editor-commands/source/commands/mesh/mirror_.d",
         "packages/editor-commands/source/commands/mesh/morph_edit.d",
         "packages/editor-commands/source/commands/mesh/move_vertex.d",
-        "packages/editor-commands/source/commands/mesh/paste.d",
+        "packages/editor-commands/source/commands/mesh/paste_.d",
         "packages/editor-commands/source/commands/mesh/poly_inset.d",
         "packages/editor-commands/source/commands/mesh/polygon_align.d",
         "packages/editor-commands/source/commands/mesh/position_undo.d",
         "packages/editor-commands/source/commands/mesh/quadruple.d",
         "packages/editor-commands/source/commands/mesh/quantize.d",
         "packages/editor-commands/source/commands/mesh/radial_align.d",
-        "packages/editor-commands/source/commands/mesh/radial_array.d",
+        "packages/editor-commands/source/commands/mesh/radial_array_.d",
         "packages/editor-commands/source/commands/mesh/reduce.d",
-        "packages/editor-commands/source/commands/mesh/remove.d",
+        "packages/editor-commands/source/commands/mesh/remove_.d",
         "packages/editor-commands/source/commands/mesh/screen_slice.d",
         "packages/editor-commands/source/commands/mesh/selection_edit.d",
         "packages/editor-commands/source/commands/mesh/set_material.d",
@@ -546,7 +546,7 @@ unittest // GATE B — dense declarations and the absence of recorder calls
         }
         ++filesRead;
     }
-    foreach (sourceCarrier; [
+    const string[] denseSourceCarriers = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
         "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
         "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
@@ -564,9 +564,23 @@ unittest // GATE B — dense declarations and the absence of recorder calls
         "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
-        "packages/scene-query/tests/source/tests/unit/bvh_pick_test.d",
-        "packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d",
-]) {
+];
+    foreach (relative; [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+    ]) {
+        size_t occurrences;
+        foreach (candidate; denseSourceCarriers) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "Wave14 dense logical source input missing/duplicate: " ~ relative);
+    }
+    foreach (sourceCarrier; denseSourceCarriers) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
         const rel = sourceCarrierPath[repoRoot.length + 1 .. $];
         const raw = readText(sourceCarrierPath);

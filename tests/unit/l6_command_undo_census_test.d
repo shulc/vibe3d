@@ -111,7 +111,7 @@ unittest // the six are off the whole-mesh snapshot
     string[] scopeFiles;
 
     foreach (name; kL6Commands) {
-        immutable path = buildPath(repoRoot(), "source", "commands", "mesh", name);
+        immutable path = buildPath(repoRoot(), name == "array.d" ? "packages/editor-commands/source/commands/mesh/array_.d" : name == "clone_.d" ? "packages/editor-commands/source/commands/mesh/clone_.d" : name == "duplicate.d" ? "packages/editor-commands/source/commands/mesh/duplicate_.d" : name == "mirror.d" ? "packages/editor-commands/source/commands/mesh/mirror_.d" : name == "radial_array.d" ? "packages/editor-commands/source/commands/mesh/radial_array_.d" : name == "vertex_bevel.d" ? "packages/editor-commands/source/commands/mesh/vertex_bevel.d" : "source/commands/mesh/" ~ name);
         // TERM 2 — every literal exists, asserted BEFORE any count. A count
         // over a file that is not there is not zero, it is nothing.
         assert(exists(path),
@@ -273,7 +273,7 @@ unittest
     // Stage K's measured double-revert, on a path whose undo is now a delta.
     foreach (name; kL6Commands) {
         immutable code = codeOnly(readText(
-            buildPath(root, "source", "commands", "mesh", name)));
+            buildPath(root, name == "array.d" ? "packages/editor-commands/source/commands/mesh/array_.d" : name == "clone_.d" ? "packages/editor-commands/source/commands/mesh/clone_.d" : name == "duplicate.d" ? "packages/editor-commands/source/commands/mesh/duplicate_.d" : name == "mirror.d" ? "packages/editor-commands/source/commands/mesh/mirror_.d" : name == "radial_array.d" ? "packages/editor-commands/source/commands/mesh/radial_array_.d" : name == "vertex_bevel.d" ? "packages/editor-commands/source/commands/mesh/vertex_bevel.d" : "source/commands/mesh/" ~ name)));
         assert(countOf(code, "arrayFacesGrid") == 0,
             "source/commands/mesh/" ~ name ~ " now calls `arrayFacesGrid`. "
           ~ "Stage K measured that kernel's arming as making the revert WORSE "

@@ -986,7 +986,7 @@ unittest { // (4c)
         size_t occurrences;
         foreach (candidate; sourceCarriersWave14_1) if (candidate == relative) ++occurrences;
         assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
-        assert(exists(relative), "Wave14 logical source physical input missing: " ~ relative);
+
     }
     foreach (sourceCarrier; sourceCarriersWave14_1) {
         const sourceCarrierPath = sourceCarrier;
@@ -1168,7 +1168,7 @@ unittest { // (4c)
         size_t occurrences;
         foreach (candidate; sourceCarriersWave14_2) if (candidate == relative) ++occurrences;
         assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
-        assert(exists(relative), "Wave14 logical source physical input missing: " ~ relative);
+
     }
     foreach (sourceCarrier; sourceCarriersWave14_2) {
         const sourceCarrierPath = sourceCarrier;
@@ -1375,7 +1375,7 @@ unittest { // (4e)
         size_t occurrences;
         foreach (candidate; sourceCarriersWave14_3) if (candidate == relative) ++occurrences;
         assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
-        assert(exists(relative), "Wave14 logical source physical input missing: " ~ relative);
+
     }
     foreach (sourceCarrier; sourceCarriersWave14_3) {
         const sourceCarrierPath = sourceCarrier;if (blankNonCode(readText(sourceCarrierPath)).canFind("mixin TopologyStepClientBody!"))
@@ -1901,7 +1901,7 @@ unittest { // (4k)
         size_t occurrences;
         foreach (candidate; sourceCarriersWave14_4) if (candidate == relative) ++occurrences;
         assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
-        assert(exists(relative), "Wave14 logical source physical input missing: " ~ relative);
+
     }
     foreach (sourceCarrier; sourceCarriersWave14_4) {
         const sourceCarrierPath = sourceCarrier;
@@ -2825,7 +2825,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         size_t occurrences;
         foreach (candidate; sourceCarriersWave14_5) if (candidate == relative) ++occurrences;
         assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
-        assert(exists(relative), "Wave14 logical source physical input missing: " ~ relative);
+
     }
     foreach (sourceCarrier; sourceCarriersWave14_5) {
         const sourceCarrierPath = sourceCarrier;

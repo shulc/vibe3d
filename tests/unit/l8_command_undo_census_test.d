@@ -72,7 +72,7 @@ private enum string[2] kL8Declined = [
 
 private string codeOf(string name)
 {
-    immutable path = buildPath(repoRoot(), "source", "commands", "mesh", name);
+    immutable path = buildPath(repoRoot(), name == "face_extrude.d" ? "packages/editor-commands/source/commands/mesh/face_extrude.d" : name == "smooth_shift.d" ? "packages/editor-commands/source/commands/mesh/smooth_shift.d" : name == "stroke_extrude.d" ? "packages/editor-commands/source/commands/mesh/stroke_extrude.d" : name == "vertex_extrude.d" ? "packages/editor-commands/source/commands/mesh/vertex_extrude.d" : name == "edge_extrude.d" ? "packages/editor-commands/source/commands/mesh/edge_extrude.d" : name == "edge_extend.d" ? "packages/editor-commands/source/commands/mesh/edge_extend.d" : "source/commands/mesh/" ~ name);
     // Every literal exists, asserted BEFORE any count. A count over a file
     // that is not there is not zero, it is nothing.
     assert(exists(path),

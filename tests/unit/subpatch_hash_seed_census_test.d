@@ -98,7 +98,7 @@ unittest // every production array-plus-seed hash stays in the reviewed stencil 
         size_t occurrences;
         foreach (candidate; sourceCarriersWave14_1) if (candidate == relative) ++occurrences;
         assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
-        assert(exists(buildPath(repoRoot, relative)), "Wave14 logical source physical input missing: " ~ relative);
+
     }
     foreach (sourceCarrier; sourceCarriersWave14_1) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);

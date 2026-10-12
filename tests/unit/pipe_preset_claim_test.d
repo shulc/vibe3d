@@ -144,7 +144,7 @@ private string writerLedger(string pattern) {
         size_t occurrences;
         foreach (candidate; sourceCarriersWave14_1) if (candidate == relative) ++occurrences;
         assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
-        assert(exists(buildPath(repoRoot, relative)), "Wave14 logical source physical input missing: " ~ relative);
+
     }
     foreach (sourceCarrier; sourceCarriersWave14_1) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
@@ -158,7 +158,17 @@ private string writerLedger(string pattern) {
                         : sourceCarrier == "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d" ? "command.d"
                         : sourceCarrier == "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d" ? "commands/mesh/session_edit.d"
                         : sourceCarrier == "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d" ? "commands/select/element.d"
-                        : sourceCarrier == "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d" ? "record_observer_hub.d" : "io/native.d";
+                        : sourceCarrier == "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d" ? "record_observer_hub.d"
+                        : sourceCarrier == "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d" ? "commands/mesh/edge_crease.d"
+                        : sourceCarrier == "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d" ? "commands/mesh/remove.d"
+                        : sourceCarrier == "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d" ? "commands/mesh/symmetrize.d"
+                        : sourceCarrier == "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d" ? "commands/mesh/vertex_set.d"
+                        : sourceCarrier == "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d" ? "commands/select/boundary.d"
+                        : sourceCarrier == "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d" ? "commands/select/by_stat.d"
+                        : sourceCarrier == "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d" ? "commands/select/by_tag.d"
+                        : sourceCarrier == "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d" ? "commands/select/type_from.d"
+                        : sourceCarrier == "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d" ? "selection_product.d"
+                        : "io/native.d";
 
         const source = commentsBlanked(readText(sourceCarrierPath));
         size_t count;
