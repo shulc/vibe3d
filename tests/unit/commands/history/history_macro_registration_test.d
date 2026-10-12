@@ -262,7 +262,7 @@ unittest { // production wiring, scope fences, and the single panel owner
     const registration = readText(buildPath(repoRoot, "source", "registration.d"));
     const registrar = readText(buildPath(repoRoot, "source",
         "history_macro_registration.d"));
-    const pilot = readText(buildPath(repoRoot, "packages", "common", "source", "pilot_command_registration.d"));
+    const pilot = readText(buildPath(repoRoot, "packages", "application-core", "source", "pilot_command_registration.d"));
     const lifecycle = readText(buildPath(repoRoot, "source",
         "scene_file_lifecycle_registration.d"));
     const app = readText(buildPath(repoRoot, "source", "app.d"));

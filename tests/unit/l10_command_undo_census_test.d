@@ -67,7 +67,7 @@ private string repoRoot()
 /// deciding it belongs to L10.
 private enum string[13] kL10Commands = [
     "source/commands/mesh/bridge.d", "source/commands/mesh/collapse.d", "source/commands/mesh/detriangulate.d", "source/commands/mesh/edge_join.d", "source/commands/mesh/merge.d",
-    "source/commands/mesh/quadruple.d", "source/commands/mesh/reduce.d", "source/commands/mesh/sweep.d", "packages/common/source/commands/mesh/triple.d", "source/commands/mesh/unify.d",
+    "source/commands/mesh/quadruple.d", "source/commands/mesh/reduce.d", "source/commands/mesh/sweep.d", "packages/command-runtime/source/commands/mesh/triple.d", "source/commands/mesh/unify.d",
     "source/commands/mesh/vert_join.d", "source/commands/mesh/vert_merge.d", "source/commands/mesh/weld_vertex_pair.d",
 ];
 
@@ -100,7 +100,7 @@ unittest // the thirteen are off the whole-mesh snapshot
         // TERM 2 — every literal exists, asserted BEFORE any count. A count
         // over a file that is not there is not zero, it is nothing.
         assert(exists(path),
-            "cannot find source/commands/mesh/" ~ name ~ " at " ~ path
+            "cannot find " ~ name ~ " at " ~ path
           ~ " — the roster names a file that is not in the tree, so its rows "
           ~ "below would be measuring nothing.");
         immutable code = codeOnly(readText(path));
@@ -110,7 +110,7 @@ unittest // the thirteen are off the whole-mesh snapshot
         // stripper that ate the file would report 0 for every needle and pass
         // in silence.
         assert(countOf(code, "protected override void revertImpl()") == 1,
-            "source/commands/mesh/" ~ name ~ ": the comment stripper ate the "
+            name ~ ": the comment stripper ate the "
           ~ "file (or the command lost its `revertImpl` override) — every count "
           ~ "below would be 0 for the wrong reason.");
         scanned += code.length;
@@ -204,7 +204,7 @@ unittest // the thirteen are off the whole-mesh snapshot
     bool exemptHasDense = false;
     foreach (n; denseFiles) if (n == kDenseSelectionUndoExempt) exemptHasDense = true;
     assert(!exemptHasDense,
-        "source/commands/mesh/" ~ kDenseSelectionUndoExempt ~ " now holds a "
+        kDenseSelectionUndoExempt ~ " now holds a "
       ~ "`DenseSelectionUndo`, and it is the one member this census records as "
       ~ "NOT holding one — it carries a `SelectionSnapshot` plus "
       ~ "`captureSelectedEdgeEnds`, and BECAUSE of that it carries a standing "

@@ -1,6 +1,6 @@
 // Ownership-table ledger for tool activation (task 4053).
 //
-// `packages/common/source/tool_activation_ownership.d` is the ONE place that says which door
+// `packages/command-runtime/source/tool_activation_ownership.d` is the ONE place that says which door
 // owns which transition. This module is its ledger: it pins the partition so a
 // row cannot be flipped in passing, and it pins the table against the TREE so
 // a transition cannot be invented with no call site, or a call site added
@@ -44,7 +44,7 @@ private enum size_t kLegacyDrops = 12;   // task 9402: + primaryMoveDrop; task 9
 
 private string[] productionSources() {
     string[] files;
-    foreach (scanSourceRoot; [repoRoot ~ "/source", repoRoot ~ "/packages/common/source", repoRoot ~ "/packages/mesh-ops/source", repoRoot ~ "/packages/interchange/source", repoRoot ~ "/packages/interaction-query/source", repoRoot ~ "/packages/pipe-evaluation/source", repoRoot ~ "/packages/tool-state/source", repoRoot ~ "/packages/transform-ops/source", repoRoot ~ "/packages/creation-ops/source", repoRoot ~ "/packages/alignment-ops/source"])
+    foreach (scanSourceRoot; [repoRoot ~ "/source", repoRoot ~ "/packages/command-runtime/source", repoRoot ~ "/packages/application-core/source", repoRoot ~ "/packages/mesh-ops/source", repoRoot ~ "/packages/interchange/source", repoRoot ~ "/packages/interaction-query/source", repoRoot ~ "/packages/pipe-evaluation/source", repoRoot ~ "/packages/tool-state/source", repoRoot ~ "/packages/transform-ops/source", repoRoot ~ "/packages/creation-ops/source", repoRoot ~ "/packages/alignment-ops/source"])
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth))
         files ~= e.name;
     sort(files);
