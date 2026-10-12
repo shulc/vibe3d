@@ -61,5 +61,8 @@
         "bindbc-assimp6": "static"
       }
     }
-  ]
+  ],
+  "subConfigurations": {
+    "lwo2-writer": "core"
+  }
 }
