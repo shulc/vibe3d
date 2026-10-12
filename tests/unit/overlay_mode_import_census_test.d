@@ -197,7 +197,20 @@ unittest // K1-K9: whole-tree census
     size_t sourceFiles, testFiles;
     Scan renderer, editorApp;
     size_t rendererSeen, editorAppSeen;
-    foreach (root; ["source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"]) {
+    const string[] censusRoots = ["source", "packages/common/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/common/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source"];
+    const string[] historicalCarriers = [
+        "packages/camera-model/tests/source/tests/unit/view_test.d",
+        "packages/document-channels/tests/source/tests/unit/layer_params_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_test.d",
+        "packages/document-io/tests/source/tests/unit/io/image_path_test.d",
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ];
+    string[] inputPaths;
+    bool[] inputProduction;
+    foreach (root; censusRoots) {
         const production = root == "source"
             || root == "packages/alignment-ops/source"
             || root == "packages/common/source"
@@ -226,11 +239,71 @@ unittest // K1-K9: whole-tree census
             || root == "util/math/source"
             || root == "util/parallel/source"
             || root == "util/plane-bytes/source"
-            || root == "util/screen-buckets/source";
-        foreach (entry; dirEntries(buildPath(repoRoot, root), "*.d", SpanMode.depth)) {
-            const rel = relativePath(entry.name, repoRoot).replace("\\", "/");
+            || root == "util/screen-buckets/source"
+            || root == "packages/camera-model/source"
+            || root == "packages/document-channels/source"
+            || root == "packages/image-codec/source"
+            || root == "packages/document-io/source";
+        foreach (de; dirEntries(buildPath(repoRoot, root), "*.d", SpanMode.depth)) {
+            inputPaths ~= de.name;
+            inputProduction ~= production;
+        }
+    }
+    foreach (relative; historicalCarriers) {
+        inputPaths ~= buildPath(repoRoot, relative);
+        inputProduction ~= false;
+    }
+    foreach (relative; [
+        "packages/camera-model/source",
+        "packages/document-channels/source",
+        "packages/image-codec/source",
+        "packages/document-io/source",
+    ]) {
+        size_t occurrences;
+        foreach (candidate; censusRoots) if (candidate == relative) ++occurrences;
+        assert(occurrences == 1, "overlay census production root membership: " ~ relative);
+    }
+    foreach (relative; [
+        "packages/camera-model/source/view.d",
+        "packages/document-channels/source/layer_params.d",
+        "packages/image-codec/source/io/image_decode.d",
+        "packages/document-io/source/io/native.d",
+        "packages/document-io/source/io/image_path.d",
+        "packages/document-io/source/io/file_model.d",
+    ]) {
+        size_t occurrences, classifiedOccurrences;
+        foreach (i, candidate; inputPaths)
+            if (candidate == buildPath(repoRoot, relative)) {
+                ++occurrences;
+                if (inputProduction[i] == true) ++classifiedOccurrences;
+            }
+        assert(occurrences == 1 && classifiedOccurrences == 1,
+               "overlay census historical source input membership and classification: " ~ relative);
+    }
+    foreach (relative; [
+        "packages/camera-model/tests/source/tests/unit/view_test.d",
+        "packages/document-channels/tests/source/tests/unit/layer_params_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_test.d",
+        "packages/document-io/tests/source/tests/unit/io/image_path_test.d",
+        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
+        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
+        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
+    ]) {
+        size_t occurrences, classifiedOccurrences;
+        foreach (i, candidate; inputPaths)
+            if (candidate == buildPath(repoRoot, relative)) {
+                ++occurrences;
+                if (inputProduction[i] == false) ++classifiedOccurrences;
+            }
+        assert(occurrences == 1 && classifiedOccurrences == 1,
+               "overlay census historical test input membership and classification: " ~ relative);
+    }
+    foreach (i, inputPath; inputPaths) {
+        const production = inputProduction[i];
+            const rel = relativePath(inputPath, repoRoot).replace("\\", "/");
             if (production) ++sourceFiles; else ++testFiles;
-            const source = readText(entry.name);
+            const source = readText(inputPath);
             auto found = scan(source);
             if (found.definesMode) definers ~= rel;
             if (found.definesResolver) resolverDefiners ~= rel;
@@ -254,7 +327,7 @@ unittest // K1-K9: whole-tree census
             if (found.publicImportOfPolicyModule) publicImports ~= rel;
             if (production && found.usesResolver)
                 productionResolverUsers ~= rel;
-        }
+
     }
     users.sort;
     importers.sort;
