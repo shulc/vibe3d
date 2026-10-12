@@ -128,7 +128,7 @@ void fillSubject(out SubjectPacket subj, in SubjectSource src) {
     // (plan §1.3); every other migrated site leaves the packet's own
     // `MapKind.unclassified` / empty-string defaults alone.
     if (src.resolveMorphTarget && src.mesh !is null) {
-        import morph_target : resolveMorphTarget;
+        import morph_preview : resolveMorphTarget;
         string  mtName;
         MapKind mtKind;
         if (resolveMorphTarget(src.mesh, mtName, mtKind)) {

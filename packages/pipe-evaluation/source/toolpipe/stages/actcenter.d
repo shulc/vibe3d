@@ -401,14 +401,14 @@ private:
     /// this unrouted (the BVH already follows the draw) while the gizmo sits
     /// on the base. The two need separate assertions.
     private Vec3 acenVertex(size_t vi) const {
-        import morph_target : displayPosition;
+        import morph_preview : displayPosition;
         return displayPosition(mesh_, vi);
     }
 
     /// Is a morph preview live on this stage's mesh? Wrapper so the import
     /// sits in one place.
     private bool morphPreviewActive(const Mesh* m) const {
-        import morph_target : mtActive = morphPreviewActive;
+        import morph_preview : mtActive = morphPreviewActive;
         return mtActive(m);
     }
     EditMode* editMode_;
