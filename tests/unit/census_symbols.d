@@ -2609,7 +2609,7 @@ public string wave15ReadText(string path) {
             else {
                 const carrier = buildPath(root, fragment.destination);
                 if (exists(carrier)) original = wave15FragmentText(readText(carrier), fragment, matches);
-                text ~= "\n" ~ original;
+                if (fragment.destination != move.newPath) text ~= "\n" ~ original;
             }
             wave15RecordInput(normal ~ ":" ~ fragment.id, matches == 1);
         }
