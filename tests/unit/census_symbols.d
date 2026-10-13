@@ -2454,7 +2454,7 @@ private bool wave15Match(string path, string relative, out string root) {
     import std.algorithm : endsWith;
     if (!path.endsWith("/" ~ relative)) return false;
     root = path[0 .. $ - relative.length - 1];
-    return true;
+    return root == wave15Normalize(repoRoot);
 }
 
 public string wave15LogicalPath(string path) {
