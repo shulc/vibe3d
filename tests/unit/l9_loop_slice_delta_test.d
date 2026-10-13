@@ -26,7 +26,7 @@
 // reddens two of these cells by running them in isolation.
 module tests.unit.l9_loop_slice_delta_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 import mesh_edit_replay : apply, revert;
 
@@ -458,6 +458,7 @@ private static immutable LedgerRow[] kL9Seam = [
 
 unittest
 {
+    auto wave15Inputs = wave15InputStart();
     import std.file : SpanMode;
 import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, isDir = wave15IsDir, readText = wave15ReadText;
     import std.path  : buildPath, dirName, relativePath;
@@ -633,7 +634,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
     if (seenScopeModules.length != kScopeModules.length)
         bad ~= format("\n    module scope — expected %d module(s), found %d",
                       kScopeModules.length, seenScopeModules.length);
-    assert((bad.length == 0) && wave15InputsIntact(), format(
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "task 1903 L9 (W-9-SEAM): the loop-slice family's batch-open SET no "
       ~ "longer matches the recorded table.\n\n  A recording batch on the "
       ~ "PREVIEW path builds and discards a full op-log at 60 Hz and NOTHING "

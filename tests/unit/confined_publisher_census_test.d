@@ -117,7 +117,7 @@
 // path-keyed checks elsewhere reddened on nothing.
 module tests.unit.confined_publisher_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -352,6 +352,7 @@ PROBE";
 // THE GATE.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     // NO "recorded file still exists" PRE-CHECK ANY MORE. It was there to
     // turn a moved module into a readable diagnosis; since task 4056 a moved
     // module is not a finding at all, and a RENAMED declaration gets that
@@ -367,7 +368,7 @@ unittest {
 
     const string bad = reconcile(kSites, led.data);
 
-    assert((bad.length == 0) && wave15InputsIntact(), format(
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "task 2000: the CONFINED-DELIVERY caller set no longer matches the "
       ~ "recorded one.%s\n\n"
       ~ "  Recorded: %d occurrence(s) over %d (declaration, name) pair(s). "

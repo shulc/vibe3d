@@ -22,7 +22,7 @@
 // in the same edit — and, on this evidence, only after that drop has a cell.
 module tests.unit.tool_activation_ownership_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : canFind, sort;
@@ -190,6 +190,7 @@ private immutable SiteCount[] kSites = [
 ];
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
     // ---- the table against the TREE ---------------------------------------
     // A transition with no call site is a row nobody consults; a call site is
     // what makes a row load-bearing. `shutdownDrop` has no `dropActiveTool`
@@ -261,7 +262,7 @@ unittest {
             drift ~= format("%s: found %s, recorded %s (%s)",
                             r.transition, got, r.count, r.why);
     }
-    assert((drift.data.length == 0) && wave15InputsIntact(),
+    assert((drift.data.length == 0) && wave15InputsIntact(wave15Inputs),
         format("task 4053: production site counts moved: %s — a count is not an "
                ~ "existence check on purpose: relabelling a site from one drop "
                ~ "transition to another keeps both names in the tree and both "

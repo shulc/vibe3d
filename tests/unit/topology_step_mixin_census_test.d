@@ -4,7 +4,7 @@
 // captured fold law). Order (form item 2): floor -> needle -> structural -> pin.
 module tests.unit.topology_step_mixin_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -89,6 +89,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
 }
 
 unittest { // the deleted copies live only in the home and the topology pen
+    auto wave15Inputs = wave15InputStart();
     auto code = sourceCode();
     assert(kHome in code && kPen in code, "9429 floor: the home or the topology pen is missing");
     // POSITIVE CONTROL: the needles find the bodies where they stand (form item 5).
@@ -102,7 +103,7 @@ unittest { // the deleted copies live only in the home and the topology pen
         if (s.indexOf(gizmo) >= 0) gizmos ~= f;
         if (s.indexOf(pair) >= 0) pairs ~= f;
     }
-    assert((carriers == [kHome]) && wave15InputsIntact(), format("9429 needle: a topology-step carrier body stands in "
+    assert((carriers == [kHome]) && wave15InputsIntact(wave15Inputs), format("9429 needle: a topology-step carrier body stands in "
                                        ~ "%s; expected the home only (the pen's is its own)", carriers));
     assert(gizmos == [kHome], format("9429 needle: a gizmo rebase body stands in %s; expected "
                                      ~ "the home only", gizmos));

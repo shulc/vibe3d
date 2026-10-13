@@ -61,7 +61,7 @@
 // LANE: `dub test --config=tests`.
 module tests.unit.tool_commit_seam_census_g2_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : sort;
@@ -332,6 +332,7 @@ unittest {
 //    so the needle is not narrowed to `alias`.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     string[] problems;
     size_t seamDecls = 0;
 
@@ -359,7 +360,7 @@ unittest {
                       ~ "`Tool.gestureFactory`.";
     }
 
-    assert((seamDecls == 1) && wave15InputsIntact(),
+    assert((seamDecls == 1) && wave15InputsIntact(wave15Inputs),
         "G2 census: `void setGestureBindings` is declared " ~ seamDecls.to!string
       ~ " time(s) in the population; exactly one, on `Tool`, is the point of it");
     assert(problems.length == 0,
@@ -469,6 +470,7 @@ unittest {
 //    confirmed that by running the mutation, not by reading the spec.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     string[] offenders;
     size_t scanned = 0;
 
@@ -521,7 +523,7 @@ unittest {
         "G2 census: the field scan visited only " ~ scanned.to!string
       ~ " alignment file(s); the shadowing guard below is vacuous over an "
       ~ "empty walk");
-    assert((offenders.length == 0) && wave15InputsIntact(),
+    assert((offenders.length == 0) && wave15InputsIntact(wave15Inputs),
         "G2 census: an alignment tool declares its own recording plumbing again.\n"
       ~ joinLines(offenders) ~ "\n"
       ~ "  `Tool.history` and `Tool.gestureFactory` are `protected` and bound "

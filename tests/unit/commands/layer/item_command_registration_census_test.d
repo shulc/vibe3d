@@ -1,6 +1,6 @@
 module tests.unit.commands.layer.item_command_registration_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : count;
@@ -47,6 +47,7 @@ private const(string) spanFor(const FactorySpan[] spans, string id) {
 }
 
 unittest { // C2/C4: per-factory arguments and narrow registrar contexts
+    auto wave15Inputs = wave15InputStart();
     const itemRaw = readText(buildPath(repoRoot, "source",
                                        "item_command_registration.d"));
     const aiRaw = readText(buildPath(repoRoot, "source",
@@ -123,7 +124,7 @@ unittest { // C2/C4: per-factory arguments and narrow registrar contexts
         }
     assert(lifecycleFiles >= 2,
         "6355 lifecycle census floor: command directories were not scanned");
-    assert((directResets == 0) && wave15InputsIntact(),
+    assert((directResets == 0) && wave15InputsIntact(wave15Inputs),
         "6355 lifecycle census: layer/image-plane commands must not reset morph routing directly");
 }
 

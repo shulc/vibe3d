@@ -42,7 +42,7 @@
 // live-response floor names the remaining provider/handler-degraded routes.
 module tests.unit.json_emitter_scan_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : canFind;
@@ -500,6 +500,7 @@ unittest {
 // visible only here.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     // Measured over the converted tree; 100 specifiers over 24 call sites.
     // Task 1903 Stage B raised it to 111: `http_json.meshPlanesJson` emits 11
     // floats at `%.9g` — 3 vertex components, 3 surface baseColor components
@@ -601,7 +602,7 @@ unittest {
     if (censusHits.length != 142)
         drift ~= format("\n    specifier population — recorded 142, scanner "
                       ~ "found %d", censusHits.length);
-    assert((drift.length == 0) && wave15InputsIntact(),
+    assert((drift.length == 0) && wave15InputsIntact(wave15Inputs),
         "the per-symbol specifier census moved. This is the ONLY check that can "
       ~ "see a specifier change whose OUTPUT is identical (`%f` <-> `%.6f`), "
       ~ "so a surprise here is worth reading carefully: either a call site's "

@@ -69,7 +69,7 @@
 // gave: a per-name count is immune to line drift, a per-line table is not.
 module tests.unit.revert_entry_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : canFind, startsWith;
@@ -478,7 +478,7 @@ bool applyUndo(Command cmd) {
 }
 PROBE";
     auto s = scanRevertSites("probe.d", probe);
-    assert((s.length == 1) && wave15InputsIntact(), format("the delegate take `&cmd.revert` scanned as %d "
+    assert(s.length == 1, format("the delegate take `&cmd.revert` scanned as %d "
         ~ "site(s), expected 1 — this is task 2007 finding #2's escape and the "
         ~ "whole reason the trigger is not the literal `.revert(`: %s",
         s.length, s));
@@ -686,6 +686,7 @@ unittest {
 // THE GATE.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     const scanned = scanTree();
 
     size_t[string] found;
@@ -714,7 +715,7 @@ unittest {
                 if (hits[j].key == s.symbol) { hits = hits[0 .. j] ~ hits[j + 1 .. $]; break; }
     const bad = reconcile(kRecorded, hits);
 
-    assert((bad.length == 0) && wave15InputsIntact(), format(
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "task 1932: the production `.revert()` call-site SET no longer "
       ~ "matches the recorded seven-row table.%s\n\n"
       ~ "  A `.revert()` call is not wrong by itself — all seven recorded "
@@ -910,6 +911,7 @@ private static immutable string[] kUndoImageReceivers = [
 
 unittest
 {
+    auto wave15Inputs = wave15InputStart();
     const scanned = scanTree();
 
     size_t total = 0;
@@ -929,7 +931,7 @@ unittest
 
     const bad = reconcile(kUndoImage, hits);
 
-    assert((bad.length == 0) && wave15InputsIntact(), format(
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "task 1903 stage N-d: the argument-bearing `.revert(` site set no "
       ~ "longer matches the 104-symbol roster.%s\n\n"
       ~ "  These are undo IMAGES — `MeshEditDelta.revert(*mesh)` and "

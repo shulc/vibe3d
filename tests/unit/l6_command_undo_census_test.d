@@ -56,7 +56,7 @@
 // LANE: `dub test --config=tests` (lane U) — a `tests/unit/**` block.
 module tests.unit.l6_command_undo_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -96,6 +96,7 @@ private enum string kSharedScopeExempt = "vertex_bevel.d";
 
 unittest // the six are off the whole-mesh snapshot
 {
+    auto wave15Inputs = wave15InputStart();
     // TERM 1 — the roster is six DISTINCT names. A typo throws loudly (the
     // `exists` assert below); a DUPLICATE is silent, and it leaves one command
     // unscanned while the count of ROWS still reads six.
@@ -128,7 +129,7 @@ unittest // the six are off the whole-mesh snapshot
         // the six is a `Command` with exactly one `revertImpl` override; a
         // stripper that ate the file would report 0 for every needle and pass
         // in silence.
-        assert((countOf(code, "protected override void revertImpl()") == 1) && wave15InputsIntact(),
+        assert(countOf(code, "protected override void revertImpl()") == 1,
             "source/commands/mesh/" ~ name ~ ": the comment stripper ate the "
           ~ "file (or the command lost its `revertImpl` override) — every count "
           ~ "below would be 0 for the wrong reason.");
@@ -167,7 +168,7 @@ unittest // the six are off the whole-mesh snapshot
              ~ "zero for the wrong reason", scanned));
 
     // ---- the three things the migration DELETES -------------------------
-    assert(snapType == 0,
+    assert((snapType == 0) && wave15InputsIntact(wave15Inputs),
         format("the L6/L7-d roster still names `MeshSnapshot` %d time(s), "
              ~ "first in %s, expected 0.\n"
              ~ "  This family has NO hatch arm — not one of the six ever "

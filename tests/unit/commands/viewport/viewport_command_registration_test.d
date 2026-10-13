@@ -352,7 +352,7 @@ unittest { // U2: primary, mode, and active cell resolve after registration
         foreach (k; 0 .. 4)
             if (command.viewRef is fixture.vpm.views[k].camera)
                 got = k;
-        assert((got == want) && wave15InputsIntact(),
+        assert(got == want,
             format("6010 live view witness: %s bound cell %d's camera, expected %d",
                    id, got, want));
         ++views;

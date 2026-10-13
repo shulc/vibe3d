@@ -44,7 +44,7 @@
 
 
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 import http_client : testBaseUrl;
 import http_command_helpers : commandBody;
 import std.net.curl;
@@ -192,6 +192,7 @@ immutable string[] blockAAllowlist = [
 ];
 
 unittest { // BlockA_BornClampedContract
+    auto wave15Inputs = wave15InputStart();
     auto reg = getRegistryWithParams();
     assert("commandParams" in reg.object, "registry missing commandParams — is ?params=1 wired?");
     assert("toolParams"    in reg.object, "registry missing toolParams — is ?params=1 wired?");
@@ -204,7 +205,7 @@ unittest { // BlockA_BornClampedContract
         "Block A: Bridge steps storage/schema changed — revisit its exemption");
     size_t stepsReferences;
     foreach (_; matchAll(bridgeSource, regex(`\b\w+\.steps\b`))) ++stepsReferences;
-    assert((stepsReferences == 2) && wave15InputsIntact(),
+    assert((stepsReferences == 2) && wave15InputsIntact(wave15Inputs),
         "Block A: Bridge steps gained a consumer — require a kernel cap");
     foreach (section; ["commandParams", "toolParams"]) {
         auto steps = reg[section]["mesh.bridgeTool"].array;

@@ -93,7 +93,7 @@
 // fresh. That is a convenience for the drill, never a substitute for the gate.)
 module tests.unit.tool_commit_seam_census_g4_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : sort, uniq;
@@ -439,6 +439,7 @@ unittest {
 //    file and its line, which the tree-wide one does not.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     string[] offenders;
     size_t mentions = 0;
 
@@ -480,7 +481,7 @@ unittest {
                    ~ kG4Files.length.to!string ~ " rostered file(s); at least "
                    ~ "one per file is expected. The scan read nothing, so a "
                    ~ "zero above is not evidence of anything";
-    assert((offenders.length == 0) && wave15InputsIntact(),
+    assert((offenders.length == 0) && wave15InputsIntact(wave15Inputs),
         "G4 census: a G4 tool declares its own CommandHistory field again.\n"
       ~ joinLines(offenders) ~ "\n"
       ~ "  `Tool.history` is `protected` and bound by `setGestureBindings`. A "

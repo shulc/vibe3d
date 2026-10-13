@@ -65,7 +65,7 @@
 // canary in front of the real message buries it.
 module tests.unit.sel_channel_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : canFind;
@@ -382,13 +382,14 @@ private static immutable LedgerRow[] kRemainder = [
 ];
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
     auto sites = scanTree();
     LedgerHit[] hits;
     foreach (ref s; sites)
         hits ~= LedgerHit(s.symbol, s.file, s.line, s.text);
     const bad = reconcile(kRemainder, hits);
 
-    assert((bad.length == 0) && wave15InputsIntact(), format(
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "task 1931: the onSelectionChanged registration SET no longer matches "
       ~ "the recorded remainder.%s\n\n"
       ~ "  The task's conclusion — per-type selection delivery is measured, "

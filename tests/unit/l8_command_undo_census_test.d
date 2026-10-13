@@ -43,7 +43,7 @@
 // isolation when scoring a mutation.
 module tests.unit.l8_command_undo_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -87,7 +87,7 @@ private string codeOf(string name)
     // A PER-FILE non-vacuity floor for the stripper. All six are `Command`s
     // with exactly one `revertImpl` override; a stripper that ate the file would
     // report 0 for every needle and pass in silence.
-    assert((countOf(code, "protected override void revertImpl()") == 1) && wave15InputsIntact(),
+    assert(countOf(code, "protected override void revertImpl()") == 1,
         "source/commands/mesh/" ~ name ~ ": the comment stripper ate the file "
       ~ "(or the command lost its `revertImpl` override) — every count below "
       ~ "would be 0 for the wrong reason.");
@@ -110,6 +110,7 @@ private void assertDistinct(const(string)[] roster, string which)
 
 unittest // half 1 — the FOUR are off the whole-mesh snapshot
 {
+    auto wave15Inputs = wave15InputStart();
     assertDistinct(kL8Migrated[], "migrated");
 
     size_t scanned = 0;
@@ -169,7 +170,7 @@ unittest // half 1 — the FOUR are off the whole-mesh snapshot
              ~ "zero for the wrong reason", scanned));
 
     // ---- the three things the migration DELETES -------------------------
-    assert(snapType == 0,
+    assert((snapType == 0) && wave15InputsIntact(wave15Inputs),
         format("the L8 migrated roster still names `MeshSnapshot` %d time(s), "
              ~ "first in %s, expected 0.\n"
              ~ "  A non-zero here is a command that kept, or got back, a "
@@ -225,9 +226,11 @@ unittest // half 1 — the FOUR are off the whole-mesh snapshot
 
 unittest // half 2 — the TWO declines still hold their snapshot, and say why
 {
+    auto wave15Inputs = wave15InputStart();
     assertDistinct(kL8Declined[], "declined");
 
     foreach (name; kL8Declined) {
+        wave15Inputs = wave15InputStart();
         immutable code = codeOf(name);
 
         // The decline is a STATE, and it is asserted as THREE TERMS, not one.
@@ -257,7 +260,7 @@ unittest // half 2 — the TWO declines still hold their snapshot, and say why
                 "no longer RESTORES from the snapshot, so its Ctrl+Z is a "
               ~ "no-op that still reports success",
         ]) {
-            assert((countOf(code, needle) == 1) && wave15InputsIntact(),
+            assert((countOf(code, needle) == 1) && wave15InputsIntact(wave15Inputs),
                 format("source/commands/mesh/%s %s (`%s` appears %d time(s), "
                      ~ "expected 1).\n"
                      ~ "  Stage L8-d DECLINED this command on a MEASUREMENT: "

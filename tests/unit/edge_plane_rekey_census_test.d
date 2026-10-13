@@ -105,7 +105,7 @@
 // carry, observed.
 module tests.unit.edge_plane_rekey_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -480,6 +480,7 @@ private static immutable LedgerRow[] kSites = [
 ];
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
     LedgerHit[] seam;
     foreach (ref h; scanTree()) {
         const string suffix = "|" ~ kClear;
@@ -488,7 +489,7 @@ unittest {
         seam ~= h;
     }
     const string bad = reconcile(kSites, seam);
-    assert((bad.length == 0) && wave15InputsIntact(),
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs),
         "THE EDGE-PLANE SEAM CENSUS MOVED (task 4191).\n"
       ~ "Every declaration that asks `rebuildEdges` for the KEY carry, and "
       ~ "every declaration that renumbers vertices, is recorded above with "

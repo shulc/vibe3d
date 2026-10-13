@@ -30,7 +30,7 @@
 // `tests/unit/l2_create_stable_delta_test.d`'s op-log-shape cells.
 module tests.unit.command_winding_write_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.file : SpanMode;
@@ -128,8 +128,9 @@ private size_t countSpliceShapes(string src, ref string firstHit)
 
 unittest // no command writes a face winding by hand
 {
+    auto wave15Inputs = wave15InputStart();
     immutable zone = buildPath(repoRoot(), "source", "commands");
-    assert((exists(zone) && isDir(zone)) && wave15InputsIntact(),
+    assert(exists(zone) && isDir(zone),
         "cannot find " ~ zone ~ " — the census would walk nothing and report "
       ~ "zero for the one reason that is not a finding");
 
@@ -188,7 +189,7 @@ unittest // no command writes a face winding by hand
              ~ "file(s) — the stripper ate the zone and every count below is "
              ~ "zero for the wrong reason", scanned, paths.length));
 
-    assert(indexed == 0,
+    assert((indexed == 0) && wave15InputsIntact(wave15Inputs),
         format("source/commands holds %d INDEXED face-winding write(s), "
              ~ "expected 0. First: `%s` in %s.\n"
              ~ "  A live winding written by hand reaches no op-log hook — "
@@ -203,7 +204,7 @@ unittest // no command writes a face winding by hand
              ~ "split_edge's splice survived three revisions of it.",
                indexed, firstIndexed, indexedFile.baseName));
 
-    assert(splices == 0,
+    assert((splices == 0) && wave15InputsIntact(wave15Inputs),
         format("source/commands holds %d open-coded winding SPLICE(s), "
              ~ "expected 0. First: `%s` in %s.\n"
              ~ "  This is `mesh.split_edge`'s own shape, deleted at stage "

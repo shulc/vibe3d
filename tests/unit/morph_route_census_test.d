@@ -1,6 +1,6 @@
 module tests.unit.morph_route_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 /// The files allowed to mention `MorphRoute`, repo-relative with `/`.
@@ -85,6 +85,7 @@ import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave1
 // (e.g. a comment in `source/mesh.d`) -> this reddens naming that file
 // (verified).
 unittest {
+    auto wave15Inputs = wave15InputStart();
     import std.algorithm : canFind;
     import std.format    : format;
 
@@ -100,7 +101,7 @@ unittest {
           ~ "files and must be in its own gate's input");
 
     auto bad = morphRouteOutsiders(hits);
-    assert((bad.length == 0) && wave15InputsIntact(),
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs),
         format("%s mention(s) MorphRoute and is not one of the seam's four "
              ~ "homes. A second routing site writes the map from somewhere "
              ~ "this file's reasoning does not cover — review it, then add it "

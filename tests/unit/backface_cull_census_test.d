@@ -7,7 +7,7 @@
 // blanks) are cut from the raw text.
 module tests.unit.backface_cull_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -112,6 +112,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
 }
 
 unittest { // (a) the cull POLICY reaches only the display: a picker reading it reddens here
+    auto wave15Inputs = wave15InputStart();
     // Polarity [E14]: stationary — TRUE before a mutation that makes a picker
     // (select_visibility, gpu_select, bvh_pick) read the display cull; the
     // offender list then names that file.
@@ -127,7 +128,7 @@ unittest { // (a) the cull POLICY reaches only the display: a picker reading it 
                ~ "ui/viewport_render.d; found in %s", holders));
     string[] offenders;
     foreach (h; holders) if (!allowed.canFind(h)) offenders ~= h;
-    assert((offenders.length == 0) && wave15InputsIntact(),
+    assert((offenders.length == 0) && wave15InputsIntact(wave15Inputs),
         format("cullBySurface is read outside the display (%s) — a picker reading the display cull "
                ~ "changes picking, which S1d pins unchanged", offenders));
     // The picking modules name none of the sidedness vocabulary.

@@ -35,7 +35,7 @@
 // Fast loop: tools/local/ut-standalone.sh tests/unit/tool_session_policy_test.d
 module tests.unit.tool_session_policy_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -399,7 +399,7 @@ private string squeeze(string s) {
 private void inOrder(string hay, string[] needles, string where) {
     ptrdiff_t last = -1;
     foreach (n; needles) {
-        assert((hay.count(n) == 1) && wave15InputsIntact(),
+        assert(hay.count(n) == 1,
                format("M1 wiring census: %s has %s x `%s`, expected 1", where, hay.count(n), n));
         const at = hay.indexOf(n);
         assert(at > last, format("M1 wiring census: %s: `%s` moved out of order", where, n));
@@ -768,6 +768,7 @@ private string[] identSites(string code, string ident, bool assignOnly) {
 }
 
 unittest { // (4b)
+    auto wave15Inputs = wave15InputStart();
     import tests.unit.production_tool_policies : productionPolicies;
     import tests.unit.census_symbols : blankUnittestBodies;
     // FLOOR: the production registry, every id built by its factory; the model
@@ -797,6 +798,7 @@ unittest { // (4b)
     // address, lambda; `.tupleof` / `__traits(getMember` / string `mixin(`
     // would reach it by a string the code view blanks, so those spellings are
     // counted too).
+    wave15Inputs = wave15InputStart();
     auto ptRaw = readText("source/prepared_tool_transition.d");
     auto pt = blankUnittestBodies(blankNonCode(ptRaw));
     const arm = bodyAt(pt, "PreparedArm prepareArm(ToolFactory factory");
@@ -804,13 +806,14 @@ unittest { // (4b)
            && identSites(arm, "firstStepCarriesActivation", false)[0].endsWith(":1")
            && identSites(arm, "recordCarriesActivation", false).length == 0
            && arm.count(".tupleof") == 0 && arm.count("getMember") == 0
-           && arm.count("mixin(") == 0) && wave15InputsIntact(),
+           && arm.count("mixin(") == 0) && wave15InputsIntact(wave15Inputs),
            "S2a needle: prepareArm must read firstStepCarriesActivation once and the declared "
            ~ "recordCarriesActivation never (a revert reddens HERE, before pin (5))");
     auto app = blankUnittestBodies(blankNonCode(readText("source/app.d")));
     assert(identSites(app, "postmodeStartsOnPressFor", false) == ["main.armPreparedTool:1"],
            format("S2a needle: app.d calls postmodeStartsOnPressFor at %s, expected once on the "
                   ~ "arm path (main.armPreparedTool)", identSites(app, "postmodeStartsOnPressFor", false)));
+    wave15Inputs = wave15InputStart();
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     // Stationary allowed sets (true after S2a; S2b/S5b/S7 each edit their row).
     assert(identSites(es, "settleAfterNavigation_", false)
@@ -834,7 +837,7 @@ unittest { // (4b)
     // its replay value. No pen suite reads the session's `armed` after a
     // navigation, so this needle is the gate's witness (mutation P1, card 8920).
     assert((identSites(bodyAt(es, "private bool boundModel_()"), "capturedTopologyModel", false)
-           == ["(module scope):1"]) && wave15InputsIntact(),
+           == ["(module scope):1"]) && wave15InputsIntact(wave15Inputs),
            "S2a needle: boundModel_ no longer gates on capturedTopologyModel");
     // The opener is asked with the token AFTER the step (the step re-binds the
     // tool and adopts its token): the argument is `aToken`, nothing taken before.
@@ -1261,6 +1264,7 @@ private enum string[] kRebaseBodyFiles = [
 ];
 
 unittest { // (4d)
+    auto wave15Inputs = wave15InputStart();
     import tests.unit.census_symbols : blankUnittestBodies;
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");   // EditSession forwards a notePointerDown
@@ -1276,7 +1280,7 @@ unittest { // (4d)
     // undone restart's base and S7 (6) the navigation tail — probe edits, form item 10).
     assert((identSites(es, "rebaseTopologyStep", false)
            == ["ToolSession.rebaseAfterTail_:1", "ToolSession.rebaseOnCurrent_:1",
-               "ToolSession.rebaseOnUndoneOperation_:1"]) && wave15InputsIntact(),
+               "ToolSession.rebaseOnUndoneOperation_:1"]) && wave15InputsIntact(wave15Inputs),
            format("S3 needle: edit_session.d rebases a tool at %s, expected only in "
                   ~ "rebaseOnCurrent_, (S7, PF-7) rebaseOnUndoneOperation_ and (S7 (6)) "
                   ~ "rebaseAfterTail_", identSites(es, "rebaseTopologyStep", false)));
@@ -1338,6 +1342,7 @@ unittest { // (4d)
 // dormancy. Order (form item 2): floor -> needle -> structural; the fence follows.
 // ---------------------------------------------------------------------------
 unittest { // (4e)
+    auto wave15Inputs = wave15InputStart();
     import std.file : SpanMode;
 import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
     import tests.unit.census_symbols : blankUnittestBodies;
@@ -1394,6 +1399,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
     sort(model);
     assert(model == kRebaseBodyFiles.dup.sort.array, format("S6 floor: the captured model's "
            ~ "files are %s, the table %s", model, kRebaseBodyFiles));
+    wave15Inputs = wave15InputStart();
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");
     foreach (m; ["private bool undoImpl_(out bool markerConsumed)", "private bool redoImpl_()",
@@ -1406,7 +1412,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
     // S6r (9270, probe edit, form item 10): every dormant arm takes the closed run's copy;
     // an arm-opening tool's activation then writes its reset over it (the §18.2 term is gone).
     assert((arm.canFind("topologyDormant_=capturedTopologyModel(t.sessionPolicy())&&")
-           && arm.canFind("if(topologyDormant_&&ownedAttrs.empty)ownedAttrs=closedAttrs;")) && wave15InputsIntact(),
+           && arm.canFind("if(topologyDormant_&&ownedAttrs.empty)ownedAttrs=closedAttrs;")) && wave15InputsIntact(wave15Inputs),
            "S6 needle: noteArm's dormant term is not the captured model's, or a dormant arm "
            ~ "does not take the closed run's copy (S6r: the §18.2 term returned?): " ~ arm);
     assert(identSites(es, "attrRowJoinsActivation_", false)
@@ -1467,6 +1473,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
 // the (4c) needle's keys (held, not re-introduced).
 // ---------------------------------------------------------------------------
 unittest { // (4f)
+    auto wave15Inputs = wave15InputStart();
     import tests.unit.census_symbols : blankUnittestBodies;
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");
@@ -1484,7 +1491,7 @@ unittest { // (4f)
     // stationary allowed sets, true after S7; false before (the pen's walk had three
     // callers — close twice, noteFoldRow_ — and the other two names did not exist).
     assert((identSites(es, "foldOpenRows_", false)
-           == ["<decl>:1", "ToolSession.endPendingOperation_:1"]) && wave15InputsIntact(),
+           == ["<decl>:1", "ToolSession.endPendingOperation_:1"]) && wave15InputsIntact(wave15Inputs),
            format("S7 needle: the pen's open-step walk is called at %s, expected only by "
                   ~ "endPendingOperation_", identSites(es, "foldOpenRows_", false)));
     assert(identSites(es, "foldOperationRows_", false)
@@ -1659,6 +1666,7 @@ shared static this() {
 }
 
 unittest { // (4j)
+    auto wave15Inputs = wave15InputStart();
     import tests.unit.census_symbols : blankUnittestBodies;
     import tests.unit.production_tool_policies : productionPolicies;
     import params : Param;
@@ -1673,7 +1681,7 @@ unittest { // (4j)
         assert(squeeze(bodyAt(ts, m)).length > 2, "S6r floor: the session body " ~ m ~ " is empty");
     // NEEDLES, by identifier (every spelling, a method address included).
     assert((identSites(es, "activate_", false)
-           == ["<decl>:1", "ToolSession.noteArm:1", "ToolSession.stepBegins:1"]) && wave15InputsIntact(),
+           == ["<decl>:1", "ToolSession.noteArm:1", "ToolSession.stepBegins:1"]) && wave15InputsIntact(wave15Inputs),
            format("S6r needle: activate_ is called at %s, expected the live arm and the press "
                   ~ "once each", identSites(es, "activate_", false)));
     assert(identSites(es, "instanceActive_", true)
@@ -1763,7 +1771,7 @@ unittest { // (4j)
     });
     assert(modelIds == 13 && seen.length == 12,
            format("S6r floor: %s model ids / %s classes built, measured 13 / 12", modelIds, seen.length));
-    assert((bad.length == 0) && wave15InputsIntact(), format("S6r structural: the activation-reset table differs: %s", bad));
+    assert(bad.length == 0, format("S6r structural: the activation-reset table differs: %s", bad));
     assert(nonEmpty == 8 && empty == 4,
            format("S6r structural: %s classes reset at activation, %s none — measured 8 / 4",
                   nonEmpty, empty));
@@ -1831,6 +1839,7 @@ static assert(ToolSessionPolicy.init.activationResetAttrs.length == 0);
 // ---------------------------------------------------------------------------
 
 unittest { // (4k)
+    auto wave15Inputs = wave15InputStart();
     import std.file : SpanMode;
 import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import tests.unit.census_symbols : blankUnittestBodies;
@@ -1838,6 +1847,7 @@ import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import tool : capturedTopologyModel;
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");
+    const wave15SessionInputs = wave15InputsIntact(wave15Inputs);
     // FLOOR (form item 4): the model's 12 class files and the four session bodies read.
     size_t files;
     foreach (f; kRebaseBodyFiles) if (readText(f).length) ++files;
@@ -1849,7 +1859,7 @@ import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     // NEEDLES, by identifier: writes and every spelling apart (form item 3).
     foreach (d; ["pinnedOperation_", "pinnedRedoImage_"])
         assert((identSites(es, d, true) == ["ToolSession.endOperation_:1",
-                                           "ToolSession.settleAfterNavigation_:1"]) && wave15InputsIntact(),
+                                           "ToolSession.settleAfterNavigation_:1"]) && wave15SessionInputs,
                format("S7r needle: %s is written at %s, expected the settle after a navigation "
                       ~ "(pin / release) and the operation's end alone", d, identSites(es, d, true)));
     assert(identSites(es, "pinnedRedoImage_", false)

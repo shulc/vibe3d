@@ -23,7 +23,7 @@
 // Evidence and the stall rig: doc/tasks (9526).
 module tests.unit.frame_fence_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : canFind, sort;
@@ -44,7 +44,7 @@ private string blankComments(string raw)
 {
     const codeOnly = blankNonCode(raw);
     const withComments = blankNonCode(raw, true);
-    assert((codeOnly.length == raw.length && withComments.length == raw.length) && wave15InputsIntact(),
+    assert(codeOnly.length == raw.length && withComments.length == raw.length,
         "9526 scanner control: lexer projections changed source byte length");
     auto result = raw.dup;
     foreach (i; 0 .. result.length)
@@ -127,6 +127,7 @@ private FileVerdict classify(string raw, const string[] flushed)
 
 unittest
 {
+    auto wave15Inputs = wave15InputStart();
     // ---- 1. floor + pin: the derived key set ----------------------------
     const flushed = frameFlushedKeys();
     assert(flushed == [
@@ -172,7 +173,7 @@ unittest
     }
     sort(readers); sort(offenders); sort(rawHelpers);
 
-    assert((readers.length == 15) && wave15InputsIntact(),
+    assert(readers.length == 15,
         format("9526 floor: %s suite files read a frame-published key, expected 15: %s",
             readers.length, readers));
     assert(rawFiles.length >= 30,
@@ -194,7 +195,7 @@ unittest
         "test_reduce.d",
         "test_retopology_lines_dots.d",
         "test_seltype_order.d",
-    ]) && wave15InputsIntact(),
+    ]) && wave15InputsIntact(wave15Inputs),
         format("9526: a file that reads a frame-published /api/changes key must read "
             ~ "it through http_client.settledChanges (frame fence first), not a raw "
             ~ "read: %s; reader inventory: %s", offenders, readers));

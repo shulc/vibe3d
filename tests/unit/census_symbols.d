@@ -1475,6 +1475,7 @@ PROBE";
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
     size_t registrationFiles;
     const registrationBytes = registrationFamilyBytes(
         repoRoot, registrationFiles);
@@ -1548,7 +1549,7 @@ private alias exists = wave15Exists;
 
     }
 
-    assert((bad.data.length == 0) && wave15InputsIntact(), format(
+    assert((bad.data.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "task 4056: the scope walker did not come out of %d module(s) with an "
       ~ "empty stack.%s\n\n"
       ~ "  An unbalanced walk is not a cosmetic fault: every symbol after the "
@@ -2068,6 +2069,22 @@ private immutable Wave15Fragment[] wave15Fragments = [
     Wave15Fragment("commands.layer.xform_edit:helper8", "source/commands/layer/xform_edit.d", "packages/editor-commands/tests/source/tests/unit/commands/layer/xform_edit_source_public_test.d", "version (unittest) {\n    import math : Vec3;\n    private ItemXform xf(float px) {\n        ItemXform x;\n        x.pos = Vec3(px, 0, 0);\n        return x;\n    }\n}", 160, "57a18df95208ea9467aaa950d87334bcda2ef5dabf59f2d93d98aee268f53603"),
  ];
 private bool[string] wave15InputValidity;
+private bool[] wave15InputReads;
+
+public size_t wave15InputStart() { return wave15InputReads.length; }
+
+private void wave15RecordInput(string key, bool valid) {
+    wave15InputValidity[key] = valid;
+    wave15InputReads ~= valid;
+}
+
+// A memoized source use belongs to its current consumer just like a file read.
+public void wave15UseInputs(string path) {
+    import std.algorithm : startsWith;
+    const prefix = wave15Normalize(wave15LogicalPath(path)) ~ ":";
+    foreach (key, valid; wave15InputValidity)
+        if (key.startsWith(prefix)) wave15InputReads ~= valid;
+}
 // These pins are independent of the admitted rows; deleting or duplicating an
 // admission cannot delete or duplicate its expectation with it.
 private immutable Wave15Move[] wave15MovePins = [
@@ -2548,8 +2565,8 @@ public string wave15ReadText(string path) {
     foreach (pin; wave15MovePins) {
         string root;
         if (wave15Match(normal, pin.oldPath, root)) {
-            wave15InputValidity[normal ~ ":move-row"] = wave15MoveRowIntact(pin);
-            wave15InputValidity[normal ~ ":fragment-rows"] = wave15FragmentRowsIntact(pin.oldPath);
+            wave15RecordInput(normal ~ ":move-row", wave15MoveRowIntact(pin));
+            wave15RecordInput(normal ~ ":fragment-rows", wave15FragmentRowsIntact(pin.oldPath));
         }
     }
     foreach (move; wave15Moves) {
@@ -2565,7 +2582,7 @@ public string wave15ReadText(string path) {
                 text = text.replace("import toolpipe.state_paths : setStatePath;", "import popup_state : setStatePath;");
             }
         }
-        wave15InputValidity[normal ~ ":physical"] = oldPresent != newPresent;
+        wave15RecordInput(normal ~ ":physical", oldPresent != newPresent);
         foreach (fragment; wave15Fragments) {
             if (fragment.origin != move.oldPath) continue;
             size_t matches;
@@ -2576,18 +2593,18 @@ public string wave15ReadText(string path) {
                 if (exists(carrier)) original = wave15FragmentText(readText(carrier), fragment, matches);
                 text ~= "\n" ~ original;
             }
-            wave15InputValidity[normal ~ ":" ~ fragment.id] = matches == 1;
+            wave15RecordInput(normal ~ ":" ~ fragment.id, matches == 1);
         }
         return text;
     }
     return readText(normal);
 }
 
-// This term is evaluated inside the original needle, after its original floors.
-// Every fragment has an independent frozen digest; omissions and duplicates are
-// retained as invalid admissions, never discarded by a set operation.
-public bool wave15InputsIntact() {
-    foreach (valid; wave15InputValidity.byValue) if (!valid) return false;
+// Each consuming domain owns a start before its reads (task 20262780). Its
+// original needle checks only those admissions after the original floors;
+// frozen fragment digests retain omitted and duplicate inputs as invalid.
+public bool wave15InputsIntact(size_t first) {
+    foreach (valid; wave15InputReads[first .. $]) if (!valid) return false;
     return true;
 }
 
@@ -2617,8 +2634,8 @@ public Wave15Entry[] wave15DirEntries(string directory, string pattern,
             const relative = relativePath(logical, normal);
             if (span == SpanMode.shallow && relative.canFind("/")) break;
             if (!globMatch(baseName(logical), pattern)) break;
-            wave15InputValidity[logical ~ ":directory-admission"] = wave15MoveRowIntact(pin)
-                && (exists(logical) != exists(buildPath(root, pin.newPath)));
+            wave15RecordInput(logical ~ ":directory-admission", wave15MoveRowIntact(pin)
+                && (exists(logical) != exists(buildPath(root, pin.newPath))));
             break;
         }
     }

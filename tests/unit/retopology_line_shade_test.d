@@ -12,7 +12,7 @@
 // locations are also `private`, cell 5a).
 module tests.unit.retopology_line_shade_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -139,6 +139,7 @@ unittest { // 4. positive control: the census sees each pre-slice upload shape
 }
 
 unittest { // 5. the rig is read and uploaded ONLY inside LitShader.useProgram
+    auto wave15Inputs = wave15InputStart();
     import std.array : replace;
     immutable src = buildPath(repoRoot, "source");
     // Domain from the RULE: every source file naming LitShader, plus shader.d
@@ -239,7 +240,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
     // Stationary assert over the ALLOWED set {LitShader.useProgram}: true
     // after task 9130. A red names the re-added hand upload (drawLitPreview,
     // PenTool.draw, or any create tool's lit preview).
-    assert((bad.length == 0) && wave15InputsIntact(), format("5: the light rig is read or uploaded outside "
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), format("5: the light rig is read or uploaded outside "
         ~ "LitShader.useProgram — a hand upload came back: %s", bad));
 }
 

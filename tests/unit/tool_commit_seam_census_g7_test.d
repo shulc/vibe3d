@@ -102,7 +102,7 @@
 // gate.
 module tests.unit.tool_commit_seam_census_g7_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : sort, uniq;
@@ -504,6 +504,7 @@ unittest {
 //    line, which the tree-wide one does not.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     string[] offenders;
     size_t   moduleDecls = 0;
 
@@ -547,7 +548,7 @@ unittest {
                    ~ "is expected. The scan read nothing, so a zero above is not "
                    ~ "evidence of anything";
 
-    assert((offenders.length == 0) && wave15InputsIntact(),
+    assert((offenders.length == 0) && wave15InputsIntact(wave15Inputs),
         "G7 census: a topology-pen module declares its own CommandHistory field "
       ~ "again.\n" ~ joinLines(offenders) ~ "\n"
       ~ "  `Tool.history` is `protected` and bound by `setGestureBindings`. A "
@@ -624,6 +625,7 @@ private enum string kBinderDecl  = "void setPenFactories(";
 private enum string kBuilderDecl = "TopoPenFactories buildTopoPenFactories()";
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
     immutable toolSrc = stripCommentsOnly(
         readText(buildPath(repoRoot, kPenDir, "tool.d")));
     immutable regSrc  = stripCommentsOnly(
@@ -810,7 +812,7 @@ unittest {
         bad ~= "    · CONTROL: the builder parse yielded " ~ rows.to!string
              ~ " row(s), expected " ~ kFrozenBinds.length.to!string
              ~ " — every comparison above is against a short list";
-    assert((bad.length == 0) && wave15InputsIntact(),
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs),
         "G7 named-binding census: " ~ bad.length.to!string
       ~ " finding(s) over source/app.d -> source/registration.d -> "
       ~ kPenDir ~ "/tool.d:\n" ~ joinLines(bad));

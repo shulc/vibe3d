@@ -6,7 +6,7 @@
 // hand-rolled copy; this reads the text.
 module tests.unit.falloff_plumbing_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -80,6 +80,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
 }
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
     auto code = sourceCode();
 
     // Floor: the scan read the tree, not an empty glob.
@@ -93,7 +94,7 @@ unittest {
     // Negative needles: no retired copy beside a home's client.
     foreach (path; ["source/commands/mesh/magnet.d", "source/tools/deform/magnet.d"])
         assert((countOccurrences(code[path], "FalloffType.Element") == 0
-               && countOccurrences(code[path], "ElementConnect.Ignore") == 0) && wave15InputsIntact(),
+               && countOccurrences(code[path], "ElementConnect.Ignore") == 0) && wave15InputsIntact(wave15Inputs),
                path ~ ": a hand-built magnet sphere is back; use magnetElementPacket");
     size_t puts;
     foreach (path, text; code) puts += countOccurrences(text, "vts.put(&falloff_)");

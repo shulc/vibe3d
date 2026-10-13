@@ -30,7 +30,7 @@
 // one at a time.
 module tests.unit.delete_remove_fork_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : canFind, startsWith;
@@ -68,6 +68,7 @@ private void scanFile(string rel, out string code, out size_t bytes)
 
 unittest // W-3-c1: the undo-tracker fork is gone from delete.d and remove.d
 {
+    auto wave15Inputs = wave15InputStart();
     // MUTATIONS, each scored on its own:
     //   (a) re-add one `if (undoTrackerEnabled())` arm to either file — the
     //       token assert reddens naming the file. On its own (a) is satisfied
@@ -168,7 +169,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
 
     }
 
-    assert((offenders.length == 0) && wave15InputsIntact(),
+    assert((offenders.length == 0) && wave15InputsIntact(wave15Inputs),
         format("Stage L3-b's two destructive commands regained an undo fork:%-(\n    %s%). "
              ~ "The default environment takes the delta branch either way, so "
              ~ "behavioural tests cannot see this regression.", offenders));

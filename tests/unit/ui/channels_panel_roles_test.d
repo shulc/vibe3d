@@ -1,6 +1,6 @@
 module tests.unit.ui.channels_panel_roles_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -878,7 +878,7 @@ unittest { // provider/model negative: a valid resolver may still return the wro
         "6503 provider/model negative floor: the valid resolver result was not accepted and stored");
     // The floor above reports "accepted a valid set"; this adjacent needle
     // reports the other half, "stored an item different from the model".
-    assert((!channelsProviderMatchesModel(state)) && wave15InputsIntact(),
+    assert(!channelsProviderMatchesModel(state),
         "6503 provider/model identity: the state accepted a valid identity set but stored a different member");
 }
 
@@ -904,7 +904,7 @@ unittest { // defensive miss: a failed resolver leaves no half-bound memo
         "6503 defensive miss floor: the index miss did not reach the null resolver result");
     // The floor above proves the defensive arm ran; this adjacent needle proves
     // its promised post-state, rather than merely counting its provider read.
-    assert((channelsFormProvider(state) is null) && wave15InputsIntact(),
+    assert(channelsFormProvider(state) is null,
         "6503 defensive miss: resolver failure left a half-bound provider in the memo");
 }
 
@@ -1068,6 +1068,7 @@ static assert(kChannelsStripSignalTokens ==
     "6503 strip signal token roster changed — every measured column must remain in the exact scan below");
 
 unittest { // M6a-d and the retired EditorApp path: production source census
+    auto wave15Inputs = wave15InputStart();
     import tests.unit.census_symbols : blankNonCode;
 
     const rawApp = readText(repoRoot.buildPath("source", "app.d"));
@@ -1120,7 +1121,7 @@ unittest { // M6a-d and the retired EditorApp path: production source census
     auto expectedStripPaths = ["source/ui/channel_rows.d",
                                "source/ui/channels_panel.d"];
     expectedStripPaths.sort;
-    assert((sortedStripPaths == expectedStripPaths) && wave15InputsIntact(),
+    assert((sortedStripPaths == expectedStripPaths) && wave15InputsIntact(wave15Inputs),
         "6503 strip signal shape: the ledger does not name exactly the two owned files");
     foreach (path; expectedStripPaths) {
         size_t appearances;

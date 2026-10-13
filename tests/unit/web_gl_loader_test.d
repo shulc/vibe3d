@@ -1,7 +1,7 @@
 module tests.unit.web_gl_loader_test;
 
 import tests.unit.census_symbols : blankNonCode, countOccurrences, isIdentChar,
-    lineOf;
+    lineOf, wave15LogicalPath;
 
 import bindbc.opengl;
 import std.algorithm : canFind, sort, startsWith;

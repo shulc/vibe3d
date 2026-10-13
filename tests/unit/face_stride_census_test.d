@@ -13,7 +13,7 @@
 // Order per block: floor -> needles -> structure, each with a positive control.
 module tests.unit.face_stride_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -121,7 +121,7 @@ unittest { // the rule's own controls [E5]: the app.d shape is rejected, a real 
     // The stride needles find today's (pre-S1a) spellings.
     enum oldSubmit = "enum FACE_STRIDE = 6; glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, "
                    ~ "FACE_STRIDE * float.sizeof, cast(void*)0);";
-    assert((hits(oldSubmit, strideRe) == 2) && wave15InputsIntact(), "control: the FACE_STRIDE needle misses the old submitUploadGl");
+    assert(hits(oldSubmit, strideRe) == 2, "control: the FACE_STRIDE needle misses the old submitUploadGl");
     assert(hits("glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * float.sizeof, cast(void*)0);",
                 sixSizeRe) == 1, "control: the `6 * float.sizeof` needle misses the old gpu_select spelling");
     assert(hits("jsonNum(data[i * 6 + 0]); float[] d = new float[](n * 6]", sixIndexRe) == 2,
@@ -129,6 +129,7 @@ unittest { // the rule's own controls [E5]: the app.d shape is rejected, a real 
 }
 
 unittest { // the layout census: four files, one stride constant, no other spelling
+    auto wave15Inputs = wave15InputStart();
     string[] files;
     foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/command-runtime/source"), buildPath(root, "packages/application-core/source"), buildPath(root, "packages/camera-model/source"), buildPath(root, "packages/document-channels/source"), buildPath(root, "packages/image-codec/source"), buildPath(root, "packages/document-io/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source"), buildPath(root, "packages/pipe-contracts/source"), buildPath(root, "packages/mesh-preview/source"), buildPath(root, "util/json-number/source"), buildPath(root, "packages/selection-model/source"), buildPath(root, "packages/scene-query/source"), buildPath(root, "packages/editor-commands/source")])
 
@@ -186,7 +187,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
         format("census: the face-VBO layout rule selects %d files, expected 4: %s", files.length, files));
     foreach (f; files) {
         immutable code = codeOf(f);
-        assert(hits(code, strideRe) == 0, format("census: %s still spells FACE_STRIDE", f));
+        assert((hits(code, strideRe) == 0) && wave15InputsIntact(wave15Inputs), format("census: %s still spells FACE_STRIDE", f));
         assert(hits(code, sixSizeRe) == 0, format("census: %s still spells `6 * float.sizeof`", f));
         assert(hits(code, sixIndexRe) == 0,
             format("census: %s still indexes the face VBO with `* 6 +` / `* 6]`", f));
@@ -286,15 +287,16 @@ unittest { // the smoothing policy (S1e) travels, moves, empties and resets with
 }
 
 unittest { // the selected-vertex path reads the DRAWN positions only (task 1069 law)
+    auto wave15Inputs = wave15InputStart();
     // Positive control [E5]: the needle finds the pre-S1a edge walk.
-    assert((hits("Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];", baseVertRe) == 2) && wave15InputsIntact(),
+    assert(hits("Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];", baseVertRe) == 2,
         "control: the `mesh.vertices[` needle misses the old edge walk");
     immutable body_ = bodyAt(codeOf("../packages/viewport-gpu/source/mesh_gpu.d"), "void uploadSelectedVertices(");
     assert(body_.length > 500, "census: uploadSelectedVertices' body vanished");
     // Polarity: FALSE before S1a (the face fan and the edge walk read the
     // base), TRUE after. A hit here is a VBO walk that went back to base
     // positions and un-morphs a displayed morph mid-drag.
-    assert(hits(body_, baseVertRe) == 0,
+    assert((hits(body_, baseVertRe) == 0) && wave15InputsIntact(wave15Inputs),
         format("census: uploadSelectedVertices reads mesh.vertices[ %d time(s) — a VBO walk went "
              ~ "back to base positions instead of the drawn ones", hits(body_, baseVertRe)));
 }

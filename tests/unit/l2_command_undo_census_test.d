@@ -31,7 +31,7 @@
 // LANE: `dub test --config=tests` (lane U) — a `tests/unit/**` block.
 module tests.unit.l2_command_undo_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -82,6 +82,7 @@ size_t countOf(string hay, string needle)
 
 unittest // the twelve are off the snapshot-only undo
 {
+    auto wave15Inputs = wave15InputStart();
     // TERM 1 — the roster is twelve DISTINCT names. A typo throws loudly
     // (`readText` on a missing file, plus the `exists` assert below); a
     // DUPLICATE is silent, and it leaves one command unscanned while the count
@@ -111,7 +112,7 @@ unittest // the twelve are off the snapshot-only undo
         // TERM 3 — a PER-FILE non-vacuity floor for the stripper. Every one of
         // the twelve is a `Command` with a `revertImpl` override; a stripper that
         // ate the file would report 0 for every needle and pass in silence.
-        assert((countOf(code, "protected override void revertImpl()") == 1) && wave15InputsIntact(),
+        assert(countOf(code, "protected override void revertImpl()") == 1,
             "source/commands/mesh/" ~ name ~ ": the comment stripper ate the "
           ~ "file (or the command lost its `revertImpl` override) — every count "
           ~ "below would be 0 for the wrong reason.");
@@ -148,7 +149,7 @@ unittest // the twelve are off the snapshot-only undo
              ~ "twelve — the stripper ate the roster and every count below is "
              ~ "zero for the wrong reason", scanned));
 
-    assert(guards == 0,
+    assert((guards == 0) && wave15InputsIntact(wave15Inputs),
         format("the L2 roster still holds %d `!snap.filled` guard(s), first in "
              ~ "%s, expected 0.\n"
              ~ "  That guard is the pre-migration `revert()`: "

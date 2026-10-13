@@ -17,7 +17,7 @@
 // isolation when scoring a mutation.
 module tests.unit.l4_slice_cut_delta_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 import mesh_edit_replay : apply, revert;
 
@@ -415,6 +415,7 @@ unittest
 
 unittest
 {
+    auto wave15Inputs = wave15InputStart();
 
 import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : dirName, buildPath;
@@ -442,6 +443,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 
     size_t scanned = 0;
     foreach (rel; kFiles) {
+        wave15Inputs = wave15InputStart();
         immutable text = readText(buildPath(repo, rel));
         scanned += text.length;
         // TASK 3280 — THE NEEDLE IS THE DECLARATION, NOT ONE SPELLING OF IT.
@@ -455,7 +457,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
         size_t nSnap = 0;
         foreach (line; text.split('\n'))
             if (declaresVarOfType(line, "MeshSnapshot")) ++nSnap;
-        assert((nSnap == 0) && wave15InputsIntact(), format(
+        assert((nSnap == 0) && wave15InputsIntact(wave15Inputs), format(
             "%s still declares %d `MeshSnapshot` field(s). Task 1903 "
           ~ "stage L4 moved all five classes in this family onto a "
           ~ "`MeshEditDelta`; a surviving whole-mesh capture means either a "

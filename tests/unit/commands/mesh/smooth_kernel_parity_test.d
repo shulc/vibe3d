@@ -127,7 +127,7 @@ unittest { // preserve sampling: i < 10, the last iteration and every 100th
     int[] want;
     foreach (v; cell["projected_iterations"].array) want ~= cast(int)v.integer;
     assert(want.length == 12, "sampling population");
-    assert((got == want) && wave15InputsIntact(), format("preserve sampled %s, captured %s", got, want));
+    assert(got == want, format("preserve sampled %s, captured %s", got, want));
 }
 
 unittest { // selection mask and the three locks

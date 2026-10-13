@@ -26,7 +26,7 @@ import std.regex : ctRegex, matchAll;
 import std.string : splitLines;
 
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent,
-    wave15DirEntries, wave15ReadText, wave15LogicalPath, Wave15Entry, wave15InputsIntact;
+    wave15DirEntries, wave15ReadText, wave15LogicalPath, Wave15Entry, wave15InputsIntact, wave15InputStart;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -83,6 +83,7 @@ private string roster(const Src[] srcs, string ident) {
 
 unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
 {
+    auto wave15Inputs = wave15InputStart();
     const all = sources(false), prod = sources(true);
     // Historical 2026-10-05: 587 production plus one source test. Wave6 moves
     // that six-block carrier to transform tests; Wave9 adds triangulate/morph_preview; independent tracked union =608.
@@ -153,8 +154,8 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     }
 
     // Positive control of the counter and of the switch needle.
-    assert((countIdent("a.viewVectorQuantum(x); auto d = &viewVectorQuantum;",
-                      "viewVectorQuantum") == 2) && wave15InputsIntact(), "identifier counter is blind");
+    assert(countIdent("a.viewVectorQuantum(x); auto d = &viewVectorQuantum;",
+                      "viewVectorQuantum") == 2, "identifier counter is blind");
     // The index → unit-axis construction, in its two spellings: a switch whose
     // case body is ONE assignment, and the ternary triple.
     auto sw = ctRegex!(`case\s+0\s*:\s*\w+\s*=\s*Vec3\(\s*1\s*,\s*0\s*,\s*0\s*\)\s*;\s*break`);
@@ -173,7 +174,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         size_t n;
         string[] where;
         foreach (s; logicalRaw) if (auto k = countIdent(s.raw, dead)) { n += k; where ~= s.rel; }
-        assert((n == 0) && wave15InputsIntact(), format("%s still named %s times in %s", dead, n, where));
+        assert((n == 0) && wave15InputsIntact(wave15Inputs), format("%s still named %s times in %s", dead, n, where));
     }
 
     // STRUCTURAL: the index → unit-axis construction lives in `axisUnit` (the
@@ -234,5 +235,5 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         const got = roster(logicalCode, name);
         if (got != rows) bad ~= format("\n%s roster:\n  got  %s\n  want %s", name, got, rows);
     }
-    assert((bad.length == 0) && wave15InputsIntact(), bad);
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), bad);
 }

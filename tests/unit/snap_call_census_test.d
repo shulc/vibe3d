@@ -2,7 +2,7 @@
 // guide semantics through one resolver; no filename exemption.
 module tests.unit.snap_call_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -132,6 +132,7 @@ unittest // the scanner itself: positive controls on a scratch buffer
 
 unittest // every production snapCursor call declares guide semantics
 {
+    auto wave15Inputs = wave15InputStart();
     const files = productionSources();
     assert(files.length >= 500, format("population floor: %s source files scanned", files.length));
     Site[] calls, others;
@@ -151,7 +152,7 @@ unittest // every production snapCursor call declares guide semantics
     // A mutation removing any consumer's resolver must fail this assertion.
     Site[] bypasses;
     foreach (c; calls) if (c.file == "packages/interaction-query/source/snap.d" ? wordsAt(c.args, "guides").length != 1 : !consultsGuides(c.args)) bypasses ~= c;
-    assert((bypasses.length == 0) && wave15InputsIntact(),
+    assert((bypasses.length == 0) && wave15InputsIntact(wave15Inputs),
         format("snapCursor calls bypassing declared query semantics: %s", fileRoster(bypasses)));
     // Every site has a positive policy pin. These are contracts, not exemptions:
     // the same no-bypass assertion above applies to every row.
@@ -183,6 +184,7 @@ unittest // every production snapCursor call declares guide semantics
 
 unittest // one packet read, one finder: the deleted copies stay deleted
 {
+    auto wave15Inputs = wave15InputStart();
     const files = productionSources();
     assert(files.length >= 500, format("population floor: %s source files scanned", files.length));
     size_t[string] raw;
@@ -221,7 +223,7 @@ unittest // one packet read, one finder: the deleted copies stay deleted
     // reads it beside its other packets. Text needle: `get!(SnapPacket)` or
     // an alias would pass it.
     packetReads.sort();
-    assert((packetReads == ["packages/interaction-query/source/snap.d", "source/http_providers.d"]) && wave15InputsIntact(),
+    assert((packetReads == ["packages/interaction-query/source/snap.d", "source/http_providers.d"]) && wave15InputsIntact(wave15Inputs),
         format("get!SnapPacket production roster: %s", packetReads));
     liveCalls.sort();
     assert(liveCalls == ["packages/pipe-evaluation/source/toolpipe/stages/snap.d", "packages/pipe-evaluation/source/toolpipe/stages/snap.d",

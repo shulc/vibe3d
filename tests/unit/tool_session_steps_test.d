@@ -3076,7 +3076,7 @@ unittest { // U-INIT1 (CAP r1/r2): a command close deactivates the instance; the
     auto pa0 = t.pa();
     const p1 = initHaul(r.s, t, &r.m, 0.5f);
     if (pa0 == PressActivation.activates && t.pa() == PressActivation.active) ++activations;
-    assert((p1 == 0.0f) && wave15InputsIntact(), format("U-INIT1: the first press began from %s, expected the default 0 "
+    assert(p1 == 0.0f, format("U-INIT1: the first press began from %s, expected the default 0 "
         ~ "(the press of an inactive first-press instance activates it)", p1));
     r.s.closeOperation(CloseReason.command, CommandDoor.ui);
     r.s.finishClose();

@@ -3,7 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.symmetry_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -459,6 +459,7 @@ unittest {
 // (u6) CENSUS of the WIRING — the production call sites, which (u2)/(u5)/(u5b)
 // build their own collaborators for and cannot see.
 unittest {
+    auto wave15Inputs = wave15InputStart();
     import std.file : SpanMode;
 import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import std.path : buildPath;
@@ -502,6 +503,7 @@ import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     }
     // (c) THE WRITERS OF A — exact, per enclosing symbol.
     {
+        wave15Inputs = wave15InputStart();
         size_t files;
         int[string] got;
         string[] needles = ["placeAuthoringBase(", "notePlacementAt(", "notePlacement()",
@@ -607,7 +609,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
             r.sort();
             return r.join("; ");
         }
-        assert((got == want) && wave15InputsIntact(), "(u6)(c) authoring-side writers: " ~ show(got) ~ "\n  expected " ~ show(want));
+        assert((got == want) && wave15InputsIntact(wave15Inputs), "(u6)(c) authoring-side writers: " ~ show(got) ~ "\n  expected " ~ show(want));
         // The W3 sites: the placing branches, next to the relocate / pick pin.
         int[string] w3;
         foreach (rel; ["source/tools/transform/move.d", "source/tools/transform/rotate.d",

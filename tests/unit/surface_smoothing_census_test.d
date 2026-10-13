@@ -6,7 +6,7 @@
 // block: floor → needle → structure, each with a positive control.
 module tests.unit.surface_smoothing_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -193,26 +193,30 @@ unittest { // (c) ONE policy builder, referenced only by the three producers' ho
 }
 
 unittest { // (d) the lower-slot pair rule in BOTH producers, keyed on identifiers
+    auto wave15Inputs = wave15InputStart();
     // Controls [E5]: the needles find the rule lines and report a `max`.
     immutable dRule = "immutable float c = p.slotCos[min(sf, sg)]; p.faceSlot[g];";
     immutable gRule = "if (dot(ng, nf) < u_slotCos[min(sf, sg)]) continue; texelFetch(u_faceSlot, g)";
-    assert((hasIdentSeq(dRule, ["slotCos", "min", "sf", "sg"]) && identCount(dRule, "faceSlot") == 1) && wave15InputsIntact(),
+    assert(hasIdentSeq(dRule, ["slotCos", "min", "sf", "sg"]) && identCount(dRule, "faceSlot") == 1,
         "control: the D needle misses the rule line");
     assert(hasIdentSeq(gRule, ["u_slotCos", "min", "sf", "sg"]) && identCount(gRule, "u_faceSlot") == 1,
         "control: the GLSL needle misses the rule line");
     assert(identCount("p.slotCos[max(sf, sg)]", "max") == 1, "control: the `max` offender is not reported");
     immutable vn  = codeText(readText(buildPath(root, "packages/display-policy/source", "vertex_normals.d")));
     immutable cpu = bodyAt(vn, "private Vec3 smoothCorner(");
+    const wave15CpuInputs = wave15InputsIntact(wave15Inputs);
+    wave15Inputs = wave15InputStart();
     immutable fan = glslRegion(readText(buildPath(root, "packages/subpatch-preview/source", "subpatch_osd.d")),
                                "private enum string FAN_OUT_VERT_SRC");
+    const wave15GpuInputs = wave15InputsIntact(wave15Inputs);
     assert(cpu.length > 200 && fan.length > 500, "census floor: a rule region is empty");   // floor
     // One needle per producer: N = 2 surfaces, 2 reds under the "higher slot" mutation [E14].
     assert((hasIdentSeq(cpu, ["slotCos", "min", "sf", "sg"]) && identCount(cpu, "faceSlot") >= 1
-        && identCount(cpu, "max") == 0) && wave15InputsIntact(),
+        && identCount(cpu, "max") == 0) && wave15CpuInputs,
         "the CPU corner (vertex_normals.smoothCorner) no longer spells slotCos[min(sf, sg)] over faceSlot, "
       ~ "or names max");
-    assert(hasIdentSeq(fan, ["u_slotCos", "min", "sf", "sg"]) && identCount(fan, "u_faceSlot") >= 1
-        && identCount(fan, "max") == 0,
+    assert((hasIdentSeq(fan, ["u_slotCos", "min", "sf", "sg"]) && identCount(fan, "u_faceSlot") >= 1
+        && identCount(fan, "max") == 0) && wave15GpuInputs,
         "the GPU fan-out (FAN_OUT_VERT_SRC) no longer spells u_slotCos[min(sf, sg)] over u_faceSlot, "
       ~ "or names max");
 }

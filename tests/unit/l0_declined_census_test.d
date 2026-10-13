@@ -68,7 +68,7 @@
 // ===========================================================================
 module tests.unit.l0_declined_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -441,12 +441,13 @@ private Found[] scanDormant() {
 
 unittest // GATE A
 {
+    auto wave15Inputs = wave15InputStart();
     auto found = scanDormant();
     LedgerHit[] hits;
     foreach (ref f; found)
         hits ~= LedgerHit(f.symbol ~ "|" ~ f.ident, f.file, f.line, f.ident);
     const bad = reconcile(kDormant, hits);
-    assert((bad.length == 0) && wave15InputsIntact(), format(
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "L0 dormancy symbol ledger changed:%s\nA new caller means the kind is "
       ~ "no longer DORMANT; change the declaration and ledger together.", bad));
     assert(hits.length == 3,

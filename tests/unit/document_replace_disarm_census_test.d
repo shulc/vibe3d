@@ -10,7 +10,7 @@
 // nest undo.
 module tests.unit.document_replace_disarm_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : canFind, count;
@@ -270,10 +270,11 @@ PROBE";
 
 // K8 / C-B: mechanism identifiers and the policy literal are a closed set.
 unittest {
+    auto wave15Inputs = wave15InputStart();
     auto hits = scanTree(false);
     size_t recorded;
     const bad = compareSites(kCodeSites, hits, recorded);
-    assert((bad.length == 0) && wave15InputsIntact(), format(
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "task 3930: document-replace disarm CODE census changed.%s\n"
       ~ "Recorded %d occurrences in %d rows; scanner found %d. A new seam "
       ~ "caller or a second copy of the pre-apply policy needs an explicit "
@@ -286,10 +287,11 @@ unittest {
 
 // K9 / C-C: a new prose claim is a mandatory review, not silent documentation.
 unittest {
+    auto wave15Inputs = wave15InputStart();
     auto hits = scanTree(true);
     size_t recorded;
     const bad = compareSites(kCommentSites, hits, recorded);
-    assert((bad.length == 0) && wave15InputsIntact(), format(
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "task 3930: document-replace disarm COMMENT census changed.%s\n"
       ~ "Recorded %d checked comments in %d rows; scanner found %d. Read every "
       ~ "new or moved claim and record whether it is true today.",

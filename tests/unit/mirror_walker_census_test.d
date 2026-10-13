@@ -15,7 +15,7 @@
 // module at its first red).
 module tests.unit.mirror_walker_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -186,6 +186,7 @@ unittest { // (c2) ONE side test
 }
 
 unittest { // (c4) ONE work-plane symmetry plane function, ONE call
+    auto wave15Inputs = wave15InputStart();
     size_t scanned;
     const hits = filesWith("workplaneSymmetryPlane(", scanned);
     assert(scanned > 300, "(c4) floor: scanned " ~ scanned.to!string ~ " source files");
@@ -207,6 +208,7 @@ unittest { // (c4) ONE work-plane symmetry plane function, ONE call
     foreach (body_; [bodyAfter(pen, "void latchMirror("), ee])
         assert(countOccurrences(body_, "transformPoint(") == 0 && countOccurrences(body_, "transformDir(") == 0,
                "(c4) a caller keeps its own copy of the W map");
+    wave15Inputs = wave15InputStart();
     const st = codeOf("packages/pipe-evaluation/source/toolpipe/stages/symmetry.d");
     assert(countOccurrences(st, "workplaneSymmetryPlane(") == 2, "(c4) the stage does not define it and call it once");
     assert(countOccurrences(st, "mapByWorkplaneOnceMore(") == 1, "(c4) the stage does not hold the one W-twice body");
@@ -217,9 +219,9 @@ unittest { // (c4) ONE work-plane symmetry plane function, ONE call
     import std.regex : matchAll, regex;
     import std.range : walkLength;
     // Positive control: the needle sees an assignment spelt as the old body spelt it.
-    assert((walkLength(matchAll("pkt.planePoint  = wp.center;", regex(`\bplane(Normal|Point)\s*=[^=]`))) == 1) && wave15InputsIntact(),
+    assert(walkLength(matchAll("pkt.planePoint  = wp.center;", regex(`\bplane(Normal|Point)\s*=[^=]`))) == 1,
            "(c4) the assignment needle is blind");
-    assert(walkLength(matchAll(ev, regex(`\bplane(Normal|Point)\s*=[^=]`))) == 0,
+    assert((walkLength(matchAll(ev, regex(`\bplane(Normal|Point)\s*=[^=]`))) == 0) && wave15InputsIntact(wave15Inputs),
            "(c4) evaluate assigns the plane itself instead of reading currentPlane");
 }
 
@@ -492,6 +494,6 @@ unittest { // (w5) the routed POSITION walk stores the EXACT mirror of the drawn
     Vec3 st;
     assert(touched[1] && m.morphValue("mm", 1, st), "(w5) rig: the partner was not written");
     const Vec3 got = morphApply(route.base[1], st, MapKind.morphRelative, 1.0f);
-    assert((got == want) && wave15InputsIntact(), "(w5) routed position walk: partner drawn at " ~ v3(got)
+    assert(got == want, "(w5) routed position walk: partner drawn at " ~ v3(got)
            ~ ", expected the exact mirror " ~ v3(want));
 }

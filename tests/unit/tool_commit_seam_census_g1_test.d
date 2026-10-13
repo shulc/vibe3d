@@ -44,7 +44,7 @@
 // LANE: `dub test --config=tests`.
 module tests.unit.tool_commit_seam_census_g1_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : sort;
@@ -115,6 +115,7 @@ private string[] familyPaths() {
 //    tree unnoticed by the census that owns its family.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     string[] found;
     foreach (familyDir; [buildPath(repoRoot, "source", "tools", "create"), buildPath(repoRoot, "packages/creation-ops/source/tools/create")])
     foreach (e; dirEntries(familyDir,
@@ -141,7 +142,7 @@ unittest {
         foreach (x; found) if (x == f) { present = true; break; }
         if (!present) gone ~= (gone.length ? ", " : "") ~ f;
     }
-    assert((bad.length == 0 && gone.length == 0) && wave15InputsIntact(),
+    assert((bad.length == 0 && gone.length == 0) && wave15InputsIntact(wave15Inputs),
         "G1 census: the create family's file set moved.\n"
       ~ "    new, not in the roster: " ~ (bad.length ? bad : "(none)") ~ "\n"
       ~ "    rostered, now missing:  " ~ (gone.length ? gone : "(none)") ~ "\n"
@@ -331,6 +332,7 @@ private enum string[] kG1WireIds = [
 ];
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
     // RAW source here, not the stripped copy, and that is the one place in this
     // file where it has to be: the stripper blanks string literals, and the wire
     // id IS a string literal. The needle keeps `] = ` on the end so it matches
@@ -365,14 +367,14 @@ unittest {
                       ~ "to the wrong block";
     }
 
-    assert((checked == kG1WireIds.length) && wave15InputsIntact(),
+    assert(checked == kG1WireIds.length,
         "G1 census: located only " ~ checked.to!string ~ " of "
       ~ kG1WireIds.length.to!string ~ " registration blocks. The scan is "
       ~ "reading the wrong file or the stripper ate it — every per-id check "
       ~ "above then passes vacuously.");
     assert(createChecked == 11 && editChecked == 3,
         "G1 census: expected create/edit registration populations 11/3");
-    assert(problems.length == 0,
+    assert((problems.length == 0) && wave15InputsIntact(wave15Inputs),
         "G1 census: a registration left the base binder.\n" ~ joinLines(problems));
 }
 
@@ -387,6 +389,7 @@ unittest {
 //    impossible, and a later family cannot need to raise this number.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     string[] offenders;
     size_t scanned = 0;
 
@@ -419,7 +422,7 @@ unittest {
     assert(scanned >= 30,
         "G1 census: the walk of `source/tools/` visited only " ~ scanned.to!string
       ~ " file(s); the shadowing guard below is vacuous over an empty walk");
-    assert((offenders.length == 0) && wave15InputsIntact(),
+    assert((offenders.length == 0) && wave15InputsIntact(wave15Inputs),
         "G1 census: a tool declares its own CommandHistory field again.\n"
       ~ joinLines(offenders) ~ "\n"
       ~ "  `Tool.history` is `protected` and bound by `setGestureBindings`. A "

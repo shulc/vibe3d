@@ -34,7 +34,7 @@
 // `source/commands/mesh/smooth.d`. This reddens naming the file.
 module tests.unit.undo_hatch_removed_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : canFind;
@@ -263,9 +263,10 @@ private Scan scanRoots() {
 
 /// THE GATE.
 unittest {
+    auto wave15Inputs = wave15InputStart();
     const s = scanRoots();
 
-    assert((s.offenders.length == 0) && wave15InputsIntact(), format(
+    assert((s.offenders.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "task 1903 stage N: the `VIBE3D_UNDO_TRACKER` hatch has a CODE reader "
       ~ "again.%-(\n    %s%)\n\n"
       ~ "  The flag, its two accessors and the `undo.tracker.on/off` wire "

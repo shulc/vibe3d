@@ -6,7 +6,7 @@
 // changed roster, not as a silent pass.
 module tests.unit.view_work_plane_anchor_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -82,12 +82,13 @@ import tests.unit.census_symbols : exists = wave15Exists;
 }
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
     // Positive control first: the needle machinery finds the live readers.
     const world = roster("screenToPlacementWorld(");
     // tools/edit/edge_extend.d: the off-handle haul's anchor (task 9450, K-D D2)
     assert((world == ["falloff_handles.d:2", "tools/alignment/radial_array_tool.d:1",
                      "tools/common/command_wrapper.d:1", "tools/create/create_common.d:1",
-                     "tools/edit/edge_extend.d:1", "tools/transform/transform.d:1"]) && wave15InputsIntact(),
+                     "tools/edit/edge_extend.d:1", "tools/transform/transform.d:1"]) && wave15InputsIntact(wave15Inputs),
         format("screenToPlacementWorld( roster: %s", world));
     // The deleted reader and its mode enum: zero, every spelling.
     assert(roster("screenToConstructionPlane") == [] && roster("ConstructionPlaneMode") == [],

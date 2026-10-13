@@ -55,7 +55,7 @@
 // LANE: `dub test --config=tests`.
 module tests.unit.tool_commit_seam_census_g6_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : sort;
@@ -105,6 +105,7 @@ private string[] familyPaths() {
 // 1. THE FILE SET IS WALKED, NOT TRUSTED.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     string[] found;
     foreach (familyDir; [buildPath(repoRoot, "source", "tools", "common"), buildPath(repoRoot, "packages/tool-state/source/tools/common")])
     foreach (e; dirEntries(familyDir,
@@ -130,7 +131,7 @@ unittest {
         foreach (x; found) if (x == f) { present = true; break; }
         if (!present) gone ~= (gone.length ? ", " : "") ~ f;
     }
-    assert((bad.length == 0 && gone.length == 0) && wave15InputsIntact(),
+    assert((bad.length == 0 && gone.length == 0) && wave15InputsIntact(wave15Inputs),
         "G6 census: the command-wrapper family's file set moved.\n"
       ~ "    new, not in the roster: " ~ (bad.length ? bad : "(none)") ~ "\n"
       ~ "    rostered, now missing:  " ~ (gone.length ? gone : "(none)") ~ "\n"

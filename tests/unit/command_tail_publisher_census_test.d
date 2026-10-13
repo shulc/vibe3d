@@ -68,7 +68,7 @@
 // below with the same sentences.
 module tests.unit.command_tail_publisher_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : canFind, startsWith;
@@ -256,7 +256,7 @@ void f() {
 }
 PROBE";
     const code = codeView(probe);
-    assert((scanFunnels("probe.d", code).length == 0) && wave15InputsIntact());
+    assert(scanFunnels("probe.d", code).length == 0);
 }
 
 /// TASK 2007 FINDING #3 — THE DELEGATE ESCAPE, PINNED. A dead accumulate tail
@@ -272,7 +272,7 @@ void applyImpl() {
 PROBE";
     const code = codeView(probe);
     auto s = scanFunnels("probe.d", code);
-    assert((s.length == 1 && s[0].funnel == "noteChange") && wave15InputsIntact(),
+    assert(s.length == 1 && s[0].funnel == "noteChange",
         format("the delegate take `&mesh.noteChange` scanned as %d site(s), "
              ~ "expected 1 on `noteChange` — task 2007 finding #3's escape: %s",
                s.length, s));
@@ -348,6 +348,7 @@ PROBE";
 /// a nearby `noteChange` (a DIFFERENT identifier, `publishChange` is not a
 /// substring match of it) is not confused with it.
 unittest {
+    auto wave15Inputs = wave15InputStart();
     enum string withPublisher = q"PROBE
 void applyImpl() {
     mesh.publishChange(MeshEditScope.Position);
@@ -436,7 +437,7 @@ private void assertNoUnaccountedTails(string blockLabel, string rootLabel,
         hits ~= LedgerHit(s.symbol ~ "|" ~ s.funnel, s.file, s.line, s.funnel);
     const bad = reconcile(recorded, hits);
 
-    assert((bad.length == 0) && wave15InputsIntact(), format(
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "task 1932 (%s, %s): the accumulate-only funnel tail SET no longer "
       ~ "matches the recorded exception table.%s\n\n"
       ~ "  A command's tail must be a `publishChange` / `commitChange` / "

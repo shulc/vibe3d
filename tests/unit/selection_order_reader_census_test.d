@@ -63,7 +63,7 @@
 //     defect this gate is for.
 module tests.unit.selection_order_reader_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : canFind, sort;
@@ -322,11 +322,12 @@ private string render(const Site[] sites) {
 // Gate 1 — the named rule: no select command reads a rank plane
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     const sc = scanSource();
     Site[] offenders;
     foreach (st; sc.sites) if (st.path.startsWith(kZeroDir)) offenders ~= st;
 
-    assert((offenders.length == 0) && wave15InputsIntact(),
+    assert((offenders.length == 0) && wave15InputsIntact(wave15Inputs),
         format("A tenth hand-rolled selection-order scan has been written under " ~
                "%s:\n%s\n" ~
                "\"Which element was selected last\" is `Mesh." ~

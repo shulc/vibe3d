@@ -13,7 +13,7 @@
 // spellings that bypass `private`).
 module tests.unit.lit_plan_seam_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -113,6 +113,7 @@ unittest { // the bracket checker itself: rejects the three broken shapes, accep
 }
 
 unittest { // every lit face draw in the renderer sits inside one applyPlan / restorePlanDefaults bracket
+    auto wave15Inputs = wave15InputStart();
     immutable code = rendererCode();
     // Floor first: the renderer's lit face draws (drawPlainItem, the backdrop,
     // the primary's highlighted and plain draws). Measured 2026-10-02:
@@ -131,7 +132,7 @@ unittest { // every lit face draw in the renderer sits inside one applyPlan / re
     // Structural: per draw. True after task 9040; before it there was no
     // applyPlan at all, so every draw was reported.
     const string[] bad = bracketViolations(code);
-    assert((bad.length == 0) && wave15InputsIntact(),
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs),
         format("census: lit face draws outside the plan-uniform bracket: %s", bad));
 }
 
@@ -205,6 +206,7 @@ unittest { // compile fence: the four plan-uniform locations are unreachable fro
 }
 
 unittest { // raw-text census of the spellings that bypass private: names, getMember, mixin, tupleof
+    auto wave15Inputs = wave15InputStart();
     import std.array : replace;
     import std.file : SpanMode;
 import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
@@ -215,7 +217,7 @@ import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wav
     auto nameRe   = ctRegex!(`\b(locDim|locLightGain|locShading|locFillColor)\b`);
     auto mixinRe  = ctRegex!(`\bmixin\s*\(`);
     // Local positive control for the name needle (raw text: a string literal counts).
-    assert((positions(`__traits(getMember, lit, "locDim"); x.locFillColor`, nameRe).length == 2) && wave15InputsIntact(),
+    assert(positions(`__traits(getMember, lit, "locDim"); x.locFillColor`, nameRe).length == 2,
         "control: the location-name needle must find a bare and a quoted spelling");
     size_t scanned, litFiles;
     string[] named;          // files outside shader.d naming a plan-uniform location
@@ -302,7 +304,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
         ~ "the reflection domain shrank; re-measure", litFiles));
     // Needle 1 (stationary, true before and after any slice): nobody outside
     // shader.d names a plan-uniform location, in code, string or mixin.
-    assert(named.length == 0,
+    assert((named.length == 0) && wave15InputsIntact(wave15Inputs),
         format("census: plan-uniform location names outside shader.d: %s", named));
     // Needle 2 (stationary ALLOWED set): the bypass spellings in LitShader files
     // are the measured ones, none on a LitShader (registration field walks and
@@ -314,7 +316,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
         "edit_tool_registration.d": "tupleof=0 getMember=1 mixin=0",
         "tools/alignment/radial_sweep_tool.d": "tupleof=0 getMember=4 mixin=0",
     ];
-    assert(reflect == allowed,
+    assert((reflect == allowed) && wave15InputsIntact(wave15Inputs),
         format("census: reflection spellings beside a LitShader changed: found %s, allowed %s", reflect, allowed));
 }
 

@@ -102,7 +102,7 @@
 // gate would bury the message that matters.
 module tests.unit.version_poll_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 import std.algorithm : any, canFind, endsWith, startsWith;
@@ -746,6 +746,7 @@ private enum string kHandMaintained =
   ~ "(stamp-then-compare-whole; §3.6's second table)";
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
     // NO "recorded file still exists" PRE-CHECK ANY MORE, and its absence is
     // the point (task 4056). A symbol has no path to `exists()`, and the
     // diagnosis that check bought — "the module moved, move the row" — is now
@@ -763,7 +764,7 @@ unittest {
 
     const string bad = reconcile(kRemainder, hits.data);
 
-    assert((bad.length == 0) && wave15InputsIntact(), format(
+    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), format(
         "task 1906 §3.6: the surviving version-poll SET no longer matches the "
       ~ "recorded remainder.%s\n\n"
       ~ "  Recorded: %d compare(s) over %d symbol(s). Scanner: %d.\n\n"

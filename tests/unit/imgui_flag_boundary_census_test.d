@@ -4,7 +4,7 @@
 // values are behaviourally indistinguishable at those specific call sites.
 module tests.unit.imgui_flag_boundary_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -22,6 +22,7 @@ import tests.unit.census_symbols : blankNonCode, countOccurrences;
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest { // every used flag crosses one int(void) accessor and one D funnel
+    auto wave15Inputs = wave15InputStart();
     const cPath = buildPath(repoRoot, "source", "imgui_flag_abi.c");
     const cSource = readText(cPath);
     const cCode = blankNonCode(cSource);
@@ -129,7 +130,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
     }
     assert(dFiles > 500,
         format("flag-boundary census: source population collapsed to %s D files", dFiles));
-    assert((offenders.data.length == 0) && wave15InputsIntact(),
+    assert((offenders.data.length == 0) && wave15InputsIntact(wave15Inputs),
         "flag-boundary census: a consumer bypassed the canonical D funnel:"
         ~ offenders.data);
 

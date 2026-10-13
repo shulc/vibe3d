@@ -28,7 +28,7 @@
 // Fast loop: tools/local/ut-standalone.sh tests/unit/tool_model_census_test.d
 module tests.unit.tool_model_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
 
@@ -927,6 +927,7 @@ private string[] axis2Violators(const size_t[2][string] keys) {
 // The census. ONE unittest; the order of its steps is the contract above.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     // ===== (1) instrument floors =========================================
     const slots = hookSlots();
     const baseImpls = hookBaseImpls();
@@ -1007,7 +1008,7 @@ unittest {
 
     // Axis 3 surface pin and needle controls.
     const surface = historySurface();
-    assert((surface.length == kHistorySurface) && wave15InputsIntact(),
+    assert(surface.length == kHistorySurface,
            format("tool census: CommandHistory surface changed (%s public methods, pinned %s): %s",
                   surface.length, kHistorySurface, surface));
     size_t[string][string] writeMeasured;
@@ -1152,13 +1153,13 @@ unittest {
 
     // ===== (3) violator constants, axis 1 then axis 2 =====================
     const r1 = axis1Violators(recorded.tools);
-    foreach (n; v1) assert((r1.canFind(n)) && wave15InputsIntact(), "tool census: axis 1 violator added: " ~ n);
+    foreach (n; v1) assert(r1.canFind(n), "tool census: axis 1 violator added: " ~ n);
     foreach (n; r1)
         assert(v1.canFind(n), "tool census: axis 1 violator removed: " ~ n ~ ", lower the ledger");
     assert(recorded.axis1 == v1.length,
            format("tool census: axis 1 violator constant %s, measured %s", recorded.axis1, v1.length));
     const r2 = axis2Violators(recorded.keys);
-    foreach (f; v2) assert((r2.canFind(f)) && wave15InputsIntact(), "tool census: axis 2 violator added: " ~ f);
+    foreach (f; v2) assert(r2.canFind(f), "tool census: axis 2 violator added: " ~ f);
     foreach (f; r2)
         assert(v2.canFind(f), "tool census: axis 2 violator removed: " ~ f ~ ", lower the ledger");
     assert(recorded.axis2 == v2.length,
@@ -1226,7 +1227,7 @@ unittest {
         assert(!(m.snap > 0 && r.live == "no" && r.reason.length == 0),
                "tool census: live proxy (MeshSnapshot) dismissed without a reason: " ~ n);
         assert(r.reason.length > 0, "tool census: row " ~ n ~ " has no reason");
-        assert(toolLine(m) == toolLine(r),
+        assert((toolLine(m) == toolLine(r)) && wave15InputsIntact(wave15Inputs),
                "tool census: row changed\n  recorded: " ~ toolLine(r) ~ "\n  measured: " ~ toolLine(m));
     }
     foreach (f; (measured.keys.keys ~ recorded.keys.keys).sort)
@@ -1242,7 +1243,7 @@ unittest {
                    format("tool census: axis 3 count changed: %s %s recorded %s, measured %s",
                           f, p, r.get(p, 0), m.get(p, 0)));
     }
-    assert(measuredText == recordedText,
+    assert((measuredText == recordedText) && wave15InputsIntact(wave15Inputs),
            "tool census: ledger text differs from the measurement (header or ordering)");
 
     writeln(format("tool census: |P|=%s |S|=%s |E|=%s axis1=%s axis2=%s "
