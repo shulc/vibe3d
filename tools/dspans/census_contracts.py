@@ -63,7 +63,7 @@ def production_lexer_census(root):
             found[rel] = len(sp.lex_errors)
         if sp.parse_errors:
             parse.append(f"{rel}: {sp.parse_errors[0]}")
-    if found != KNOWN_LEX_ERRORS or not source_inputs_intact(first):
+    if found != KNOWN_LEX_ERRORS or (not failures and not source_inputs_intact(first)):
         failures.append(f"dspans lexer diagnostics on tree files {found}, expected exactly "
                         f"{KNOWN_LEX_ERRORS}: the census cannot trust its spans for a file "
                         "libdparse does not lex cleanly")
