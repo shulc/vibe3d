@@ -149,7 +149,7 @@ bool parseCoordRounding(string s, ref CoordinateRounding m) {
 /// can tick the active entry. Imported locally so this module keeps no
 /// project-level imports at module scope (see the header).
 void publishCoordRoundingState() {
-    import popup_state : setStatePath;
+    import toolpipe.state_paths : setStatePath;
     setStatePath("coordRounding/mode", coordRoundingName(g_mode));
 }
 
