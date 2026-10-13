@@ -109,6 +109,7 @@ __gshared int[]  testGroupPids;     // process-group leader pid of each RUNNING
                                     // the handler below has to deliver it.
 __gshared string helperObjHttp; // injected modules, prebuilt for HTTP-driver tests (buildHelperObject)
 __gshared string helperObjSrc;  // the same, prebuilt with the source-backed compile flags
+__gshared string censusHelperObj; // shared source readers, compiled without their module unittests
 __gshared string moldFlag;     // " -L-fuse-ld=mold" for the lib link path; "" when mold unusable
 
 enum workerDisplayEnv = "VIBE3D_TEST_DISPLAY";
@@ -1767,16 +1768,16 @@ string[] compileTests(string[] paths, string outDir) {
             }
             // Order is load-bearing: test.o, then the project lib, then the
             // dep archives/link tail (mold is order-strict).
-            cmd = format("dmd%s %s %s %s%s%s -of=%s 2>&1",
-                         sourceTestFlags(), p, helperObjSrc,
+            cmd = format("dmd%s %s %s %s %s%s%s -of=%s 2>&1",
+                         sourceTestFlags(), p, helperObjSrc, censusHelperObj,
                          projLibPath, sourceLinkTail(), moldFlag, of);
         } else {
             if (!helperObjHttp.length) {
                 writeln("  ", red("FAIL  "), name, ": no shared test-helper object");
                 return null;
             }
-            cmd = format("dmd%s %s %s -of=%s 2>&1",
-                         httpTestFlags(), p, helperObjHttp, of);
+            cmd = format("dmd%s %s %s %s -of=%s 2>&1",
+                         httpTestFlags(), p, helperObjHttp, censusHelperObj, of);
         }
         auto r = executeShell(cmd);
         if (r.status != 0) {
@@ -3372,6 +3373,18 @@ int main(string[] args) {
     // fallback costs about six times the peak RAM and cannot fit the CI VM.
     // The injected helper modules, once per run and per compile line (see
     // buildHelperObject); single-threaded, before the workers fan out.
+    // Shared source readers have their own module tests, so emit only their
+    // definitions here; the injected helpers keep their original unittest flags.
+    import std.string : replace;
+    const censusObj = buildPath(scratchDir, "census_symbols.o");
+    auto censusBuild = executeShell(format("dmd -c%s tests/unit/census_symbols.d -of=%s 2>&1",
+        httpTestFlags().replace(" -unittest", ""), censusObj));
+    if (censusBuild.status != 0 || !exists(censusObj)) {
+        stderr.writeln(red("shared source-reader object build failed"));
+        if (censusBuild.output.length) stderr.writeln(censusBuild.output);
+        return 1;
+    }
+    censusHelperObj = censusObj;
     if (tests.canFind!(t => !isSourceBackedTest(t))) {
         helperObjHttp = buildHelperObject(scratchDir, httpTestFlags(), "http");
         if (!helperObjHttp.length) return 1;
