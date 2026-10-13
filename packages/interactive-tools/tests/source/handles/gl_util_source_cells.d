@@ -3,7 +3,10 @@ module handles.gl_util_source_cells;
 import bindbc.opengl;
 import std.math : sqrt, PI, abs;
 import perf_probe : g_fc, DrawPass;
-import gl_thread_guard : glThreadGuard;
+version (web) {
+} else {
+    import gl_thread_guard : glThreadGuard;
+}
 import shader : seedSharedFragUniforms;
 import math;
 import spatial : Viewport;
