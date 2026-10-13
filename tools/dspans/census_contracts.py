@@ -47,7 +47,7 @@ def production_lexer_census(root):
     first = source_input_start()
     found, parse = {}, []
     files = sorted(path for sub in PRODUCTION_ROOTS
-                   for path in logical_source_paths(root / sub, "*.d"))
+                   for path in logical_source_paths(root / sub, "*.d", root=root))
     failures = []
     if len(files) < 608:
         failures.append(f"dspans production complement read {len(files)} files; floor 608")
@@ -58,7 +58,7 @@ def production_lexer_census(root):
                             f"floor {floor} (materialized 2026-10-10)")
     for path in files:
         rel = path.relative_to(root).as_posix()
-        sp = dspans_client.spans(read_source_text(path), parse=True)
+        sp = dspans_client.spans(read_source_text(path, root=root), parse=True)
         if sp.lex_errors:
             found[rel] = len(sp.lex_errors)
         if sp.parse_errors:
@@ -192,49 +192,59 @@ _SOURCE_FRAGMENT_PINS = (('source/drag.d', 'drag:UT1', 'packages/interactive-too
 _SOURCE_CARRIER_MODULES = ['drag_identity', 'drag_source_cells', 'drag_source_helpers', 'handles.arbiter_source_cells', 'handles.gizmo_metrics_source_cells', 'handles.gl_util_source_cells', 'handles.shapes_source_cells', 'image_plane_source_cells', 'overlay_space_source_cells', 'prepared_bridge_activation_source_cells', 'prepared_command_wrapper_activation_source_cells', 'prepared_edge_bevel_activation_source_cells', 'prepared_edge_extend_deactivate_source_cells', 'prepared_edge_extend_tool_activation_source_cells', 'prepared_edge_extrude_activation_source_cells', 'prepared_edge_slice_activation_source_cells', 'prepared_edge_slice_deactivate_source_cells', 'prepared_inherited_noop_source_cells', 'prepared_loop_slice_activation_source_cells', 'prepared_loop_slice_deactivate_source_cells', 'prepared_mirror_activation_source_cells', 'prepared_move_update_source_cells', 'prepared_pipe_activation_source_cells', 'prepared_poly_bevel_activation_source_cells', 'prepared_poly_extrude_activation_source_cells', 'prepared_poly_inset_activation_source_cells', 'prepared_private_state_source_cells', 'prepared_radial_array_transition_source_cells', 'prepared_radial_sweep_transition_source_cells', 'prepared_record_context_source_cells', 'prepared_rotate_update_source_cells', 'prepared_scale_update_source_cells', 'prepared_selection_profile_source_cells', 'prepared_slice_activation_source_cells', 'prepared_slice_deactivate_source_cells', 'prepared_smooth_shift_activation_source_cells', 'prepared_stroke_extrude_activation_source_cells', 'prepared_tack_activation_source_cells', 'prepared_topology_pen_activation_source_cells', 'prepared_topology_pen_deactivate_source_cells', 'prepared_topology_pen_update_source_cells', 'prepared_transform_activation_source_cells', 'prepared_transform_product_activation_source_cells', 'prepared_vertex_bevel_activation_source_cells', 'prepared_vertex_extrude_activation_source_cells', 'prepared_vertex_merge_activation_source_cells', 'prepared_xfrm_activation_session_source_cells', 'registry_source_cells', 'snap_render_source_cells', 'snap_render_source_helpers', 'tests.unit.commands.layer.xform_edit_source_public_test', 'tool_disarm_source_cells', 'tool_presets_source_cells', 'tools.alignment.mirror_source_cells', 'tools.create.arc_source_cells', 'tools.create.box_source_cells', 'tools.create.create_common_source_cells', 'tools.create.sphere_source_cells', 'tools.edit.bridge_tool_source_cells', 'tools.edit.edge_extend_source_cells', 'tools.transform.transform_source_cells']
 
 
-def physical_source_path(path):
+def _source_root(path, root=None):
+    from pathlib import Path
+    if root is not None:
+        return Path(root).absolute()
+    normal = Path(path).absolute()
+    # Task 20262780: match the full owner before its trailing source component.
+    # Keep lexical copy identity: owner and per-file links may omit one input.
+    domains = {Path(owner).parts for owner in PRODUCTION_ROOTS}
+    relatives = [relative for pair in _SOURCE_MOVE_PINS for relative in pair]
+    relatives += [destination for origin, ident, destination in _SOURCE_FRAGMENT_PINS]
+    for relative in relatives:
+        parts = Path(relative).parts
+        end = parts.index('source') + 1 if 'source' in parts else 1
+        domains.add(parts[:end])
+    for parts in sorted(domains, key=lambda value: (-len(value), value)):
+        for ancestor in (normal, *normal.parents):
+            if ancestor.parts[-len(parts):] == parts:
+                return ancestor.parents[len(parts) - 1]
+    return None
+
+
+def physical_source_path(path, *, root=None):
     from pathlib import Path
     path = Path(path).absolute()
+    root = _source_root(path, root)
     for old, new in SOURCE_MOVES:
-        if path.as_posix().endswith('/' + old):
-            root = Path(path.as_posix()[:-len(old)-1])
+        if root is not None and path == root / old:
             return path if path.exists() else root / new
     return path
 
 
-def logical_source_paths(directory, pattern):
+def logical_source_paths(directory, pattern, *, root=None):
     from pathlib import Path
     directory = Path(directory)
     normal = directory.absolute()
+    root = _source_root(normal, root)
     result = []
     for old, new in _SOURCE_MOVE_PINS:
-        ancestor = Path(old).parent
-        while ancestor.as_posix() != '.':
-            suffix = '/' + ancestor.as_posix()
-            if normal.as_posix().endswith(suffix):
-                root = Path(normal.as_posix()[:-len(suffix)])
-                logical = root / old
-                if logical.match(pattern):
-                    _source_validity.append((
-                        sum(a == old for a, b in SOURCE_MOVES) == 1
-                        and sum(a == old and b == new for a, b in SOURCE_MOVES) == 1
-                        and logical.exists() != (root / new).exists()))
-                break
-            ancestor = ancestor.parent
+        if root is not None:
+            logical = root / old
+            if logical.is_relative_to(normal) and logical.match(pattern):
+                _source_validity.append((
+                    sum(a == old for a, b in SOURCE_MOVES) == 1
+                    and sum(a == old and b == new for a, b in SOURCE_MOVES) == 1
+                    and logical.exists() != (root / new).exists()))
     for path in directory.rglob(pattern):
-        if not any(path.absolute().as_posix().endswith('/' + new) for new in (new for old, new in SOURCE_MOVES)):
+        if not any(root is not None and path.absolute() == root / new for old, new in SOURCE_MOVES):
             result.append(path)
     for old, new in SOURCE_MOVES:
-        ancestor = Path(old).parent
-        while ancestor.as_posix() != '.':
-            suffix = '/' + ancestor.as_posix()
-            if normal.as_posix().endswith(suffix):
-                root = Path(normal.as_posix()[:-len(suffix)])
-                logical = root / old
-                if logical.match(pattern) and (root / new).exists():
-                    result.append(directory / logical.relative_to(normal))
-                break
-            ancestor = ancestor.parent
+        if root is not None:
+            logical = root / old
+            if logical.is_relative_to(normal) and logical.match(pattern) and (root / new).exists():
+                result.append(directory / logical.relative_to(normal))
     return result
 
 
@@ -267,11 +277,12 @@ def _without_carrier_imports(source):
                   lambda match: ''.join('\n' if c == '\n' else ' ' for c in match.group()), source)
 
 
-def read_source_text(path, **kwargs):
+def read_source_text(path, *, root=None, **kwargs):
     from pathlib import Path
     path = Path(path).absolute()
+    root = _source_root(path, root)
     for old, new in _SOURCE_MOVE_PINS:
-        if path.as_posix().endswith('/' + old):
+        if root is not None and path == root / old:
             _source_validity.append((sum(a == old for a, b in SOURCE_MOVES) == 1
                 and sum(a == old and b == new for a, b in SOURCE_MOVES) == 1))
             _source_validity.append(all(
@@ -279,9 +290,8 @@ def read_source_text(path, **kwargs):
                     for f in SOURCE_FRAGMENTS) == 1
                 for origin, ident, destination in _SOURCE_FRAGMENT_PINS if origin == old))
     for old, new in SOURCE_MOVES:
-        if not path.as_posix().endswith('/' + old):
+        if root is None or path != root / old:
             continue
-        root = Path(path.as_posix()[:-len(old)-1])
         destination = root / new
         before, after = path.exists(), destination.exists()
         text = (path if before else destination).read_text(**kwargs)
