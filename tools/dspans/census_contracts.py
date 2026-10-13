@@ -252,6 +252,21 @@ def _original_fragment(text, fragment):
     import hashlib
     if fragment['id'] == 'prepared_topology_pen_activation:UT1':
         text = text.replace('import toolpipe.state_paths : getStatePath;', 'import popup_state : getStatePath;')
+    declarations = ()
+    if fragment['id'] == 'drag:helper2':
+        declarations = ('immutable Cam[] corpusCams =', 'Viewport corpusViewport(',
+                        'float vlen(', 'Vec3 exactPlaneDelta(')
+    elif fragment['id'] == 'snap_render:helper6':
+        declarations = ('float[16] t0619Matrix(', 'Viewport t0619Viewport(',
+                        'Mesh t0619Mesh(', 'void t0619DrawnPx(', 'void t0619IdentityPx(',
+                        'double t0619Dist(', 'ItemXform t0619Xf(', 'void t0619PxUnder(',
+                        'Mesh t0619BgMeshA(', 'Mesh t0619BgMeshB(', 'void t0619InstallPrimary(')
+    if any('\n    public ' + declaration in text for declaration in declarations):
+        if any('\n    public ' + declaration not in text
+               or '\n    private ' + declaration in text for declaration in declarations):
+            return '', 0
+        for declaration in declarations:
+            text = text.replace('\n    public ' + declaration, '\n    private ' + declaration)
     encoded = text.encode('utf-8')
     prefix = fragment['prefix'].encode('utf-8')
     offset, matches, result = 0, 0, []
@@ -308,7 +323,8 @@ def read_source_text(path, *, root=None, **kwargs):
             else:
                 carrier = root / fragment['destination']
                 original, matches = _original_fragment(carrier.read_text(**kwargs), fragment) if carrier.exists() else ('', 0)
-                text += '\n' + original
+                if fragment['destination'] != new:
+                    text += '\n' + original
             _source_validity.append(matches == 1)
         return text
     return path.read_text(**kwargs)
