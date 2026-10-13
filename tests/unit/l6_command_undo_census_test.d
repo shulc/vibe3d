@@ -56,7 +56,11 @@
 // LANE: `dub test --config=tests` (lane U) — a `tests/unit/**` block.
 module tests.unit.l6_command_undo_census_test;
 
-import std.file   : readText, exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : readText = wave15ReadText, exists = wave15Exists;
 import std.path   : dirName, buildPath;
 import std.format : format;
 import std.algorithm : sort, uniq;
@@ -124,7 +128,7 @@ unittest // the six are off the whole-mesh snapshot
         // the six is a `Command` with exactly one `revertImpl` override; a
         // stripper that ate the file would report 0 for every needle and pass
         // in silence.
-        assert(countOf(code, "protected override void revertImpl()") == 1,
+        assert((countOf(code, "protected override void revertImpl()") == 1) && wave15InputsIntact(),
             "source/commands/mesh/" ~ name ~ ": the comment stripper ate the "
           ~ "file (or the command lost its `revertImpl` override) — every count "
           ~ "below would be 0 for the wrong reason.");

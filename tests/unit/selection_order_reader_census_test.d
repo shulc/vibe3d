@@ -63,8 +63,12 @@
 //     defect this gate is for.
 module tests.unit.selection_order_reader_census_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : canFind, sort;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : startsWith;
@@ -273,7 +277,8 @@ private Scan scanSource() {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -321,7 +326,7 @@ unittest {
     Site[] offenders;
     foreach (st; sc.sites) if (st.path.startsWith(kZeroDir)) offenders ~= st;
 
-    assert(offenders.length == 0,
+    assert((offenders.length == 0) && wave15InputsIntact(),
         format("A tenth hand-rolled selection-order scan has been written under " ~
                "%s:\n%s\n" ~
                "\"Which element was selected last\" is `Mesh." ~

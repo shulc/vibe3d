@@ -102,9 +102,13 @@
 // gate would bury the message that matters.
 module tests.unit.version_poll_census_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : any, canFind, endsWith, startsWith;
 import std.array     : appender, array;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : splitLines, strip, toLower;
@@ -284,7 +288,8 @@ private Site[] scanTree() {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -758,7 +763,7 @@ unittest {
 
     const string bad = reconcile(kRemainder, hits.data);
 
-    assert(bad.length == 0, format(
+    assert((bad.length == 0) && wave15InputsIntact(), format(
         "task 1906 §3.6: the surviving version-poll SET no longer matches the "
       ~ "recorded remainder.%s\n\n"
       ~ "  Recorded: %d compare(s) over %d symbol(s). Scanner: %d.\n\n"

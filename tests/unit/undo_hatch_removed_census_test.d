@@ -34,9 +34,13 @@
 // `source/commands/mesh/smooth.d`. This reddens naming the file.
 module tests.unit.undo_hatch_removed_census_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : canFind;
 import std.array     : appender;
-import std.file      : dirEntries, exists, isFile, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, isFile = wave15IsFile, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : splitLines;
@@ -261,7 +265,7 @@ private Scan scanRoots() {
 unittest {
     const s = scanRoots();
 
-    assert(s.offenders.length == 0, format(
+    assert((s.offenders.length == 0) && wave15InputsIntact(), format(
         "task 1903 stage N: the `VIBE3D_UNDO_TRACKER` hatch has a CODE reader "
       ~ "again.%-(\n    %s%)\n\n"
       ~ "  The flag, its two accessors and the `undo.tracker.on/off` wire "

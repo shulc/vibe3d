@@ -56,7 +56,8 @@
 module tests.unit.run_test_protocol_census_pin_test;
 
 import std.exception : enforce;
-import std.file      : exists, readText, tempDir, mkdirRecurse, rmdirRecurse;
+import std.file : tempDir, mkdirRecurse, rmdirRecurse;
+import tests.unit.census_symbols : exists = wave15Exists, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.process   : execute, environment, thisProcessID;

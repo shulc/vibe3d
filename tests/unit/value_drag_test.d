@@ -7,7 +7,8 @@ module tests.unit.value_drag_test;
 
 import std.algorithm : count;
 import std.exception : enforce;
-import std.file      : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.format    : format;
 import std.json;
 import std.math      : abs;

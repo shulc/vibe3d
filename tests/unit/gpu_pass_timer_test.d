@@ -2,12 +2,14 @@
 // enforces the GL nesting rule, plus the source census of its mark sites.
 module tests.unit.gpu_pass_timer_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import gpu_pass_timer;
 
 import std.algorithm : canFind, count;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.json : parseJSON, JSONType;
 import std.path : buildPath, dirName;
@@ -432,7 +434,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -510,7 +513,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

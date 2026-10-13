@@ -3,7 +3,11 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.symmetry_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : sort, max;
 import std.math      : abs;
@@ -90,7 +94,8 @@ version (unittest) {
         return dirName(dirName(dirName(__FILE_FULL_PATH__)));
     }();
     private string codeOf(string rel) {
-        import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
         import std.path : buildPath;
         import tests.unit.census_symbols : blankNonCode, blankUnittestBodies;
         return blankUnittestBodies(blankNonCode(readText(buildPath(kRepoRoot, rel))));
@@ -172,7 +177,8 @@ unittest {
 
 // (u4) CENSUS "a pair only at a pointer gesture".
 unittest {
-    import std.file : dirEntries, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import std.algorithm : canFind, sort;
     import std.array : array;
     import std.path : buildPath;
@@ -245,7 +251,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -452,7 +459,8 @@ unittest {
 // (u6) CENSUS of the WIRING — the production call sites, which (u2)/(u5)/(u5b)
 // build their own collaborators for and cannot see.
 unittest {
-    import std.file : dirEntries, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import std.path : buildPath;
     import std.string : indexOf, lastIndexOf;
     import std.algorithm : sort;
@@ -539,7 +547,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -598,7 +607,7 @@ unittest {
             r.sort();
             return r.join("; ");
         }
-        assert(got == want, "(u6)(c) authoring-side writers: " ~ show(got) ~ "\n  expected " ~ show(want));
+        assert((got == want) && wave15InputsIntact(), "(u6)(c) authoring-side writers: " ~ show(got) ~ "\n  expected " ~ show(want));
         // The W3 sites: the placing branches, next to the relocate / pick pin.
         int[string] w3;
         foreach (rel; ["source/tools/transform/move.d", "source/tools/transform/rotate.d",

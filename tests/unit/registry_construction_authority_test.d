@@ -2,12 +2,14 @@
 // capability fence and its bounded bypass census (task 6510).
 module tests.unit.registry_construction_authority_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : canFind, count, sort;
 import std.array : array;
 import std.exception : assertThrown;
-import std.file : SpanMode, dirEntries, readText;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.path : baseName, buildPath, buildNormalizedPath, dirName;
 import std.string : indexOf, splitLines;

@@ -4,9 +4,14 @@
 // captured fold law). Order (form item 2): floor -> needle -> structural -> pin.
 module tests.unit.topology_step_mixin_census_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
 
-import std.file : dirEntries, readText, SpanMode;
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
+
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.path : buildPath, dirName, relativePath;
 import std.string : indexOf, replace;
@@ -58,7 +63,8 @@ private string[string] sourceCode() {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -96,7 +102,7 @@ unittest { // the deleted copies live only in the home and the topology pen
         if (s.indexOf(gizmo) >= 0) gizmos ~= f;
         if (s.indexOf(pair) >= 0) pairs ~= f;
     }
-    assert(carriers == [kHome], format("9429 needle: a topology-step carrier body stands in "
+    assert((carriers == [kHome]) && wave15InputsIntact(), format("9429 needle: a topology-step carrier body stands in "
                                        ~ "%s; expected the home only (the pen's is its own)", carriers));
     assert(gizmos == [kHome], format("9429 needle: a gizmo rebase body stands in %s; expected "
                                      ~ "the home only", gizmos));

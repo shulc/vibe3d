@@ -2,9 +2,13 @@
 // executable tool handlers from reclaiming that key (task 5911, EL-c).
 module tests.unit.escape_ladder_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.array : appender;
 import std.algorithm.searching : canFind;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.path : buildPath, dirName, relativePath;
 import std.string : indexOf;
@@ -43,7 +47,7 @@ unittest { // EL-c: tool key handlers do not consume Escape.
             files, createFiles, sliceFiles));
     assert(keyHandlers >= 3,   // 3 since task 9470 removed Slice's
         format("EL-c: found only %s override bool onKeyDown handlers", keyHandlers));
-    assert(escapeSites == 0,
+    assert((escapeSites == 0) && wave15InputsIntact(),
         format("EL-c: active tools must not consume SDLK_ESCAPE; found %s site(s):%s",
             escapeSites, offenders.data));
 }
@@ -86,7 +90,7 @@ unittest { // EL-a: every fixture press resolves to its recorded ladder rung.
                 before["mode"].str == "item", before["sel"]["items"].integer != 0);
             const want = rungFromString(press["rung"].str);
             ++rungCounts[got];
-            assert(got == want,
+            assert((got == want) && wave15InputsIntact(),
                 format("EL-a: %s press %s resolved %s, expected %s",
                     cell["id"].str, i + 1, got, want));
             before = press["after"];

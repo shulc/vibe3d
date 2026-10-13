@@ -1,6 +1,10 @@
 module tests.unit.transform_registration_boundary_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 import std.algorithm : sort, canFind;
 
 import core.exception : AssertError;
@@ -17,7 +21,8 @@ import transform_tool_registration : TransformToolDeps,
 static import transform_tool_registration;
 
 import std.array : join;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.path : baseName, buildPath, dirName, relativePath;
 import std.exception : assertThrown;
@@ -210,7 +215,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -473,7 +479,7 @@ unittest {
     // disarm the named witness silently and leave only the text pin — the state
     // this ordering exists to prevent, one level up. H/J/K each scope their own
     // needle by their own marker, so each needs its own copy of this floor.
-    assert(policyAt >= 0 && deferredPolicy.length > 0,
+    assert((policyAt >= 0 && deferredPolicy.length > 0) && wave15InputsIntact(),
         "6506 policy-slice floor: the `app.pipeGizmoHost, ` marker vanished, so "
         ~ "the `app.ai` needle below is measuring an empty string");
     assert(countOccurrences(deferredPolicy, "app.ai") == 0,

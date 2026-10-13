@@ -1,6 +1,7 @@
 module tests.unit.topology_pen_election_consumers_test;
 import tools.edit.topology_pen.tool : TopologyPenTool;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath, dirName;
 import std.string : indexOf;
 import std.algorithm : canFind;

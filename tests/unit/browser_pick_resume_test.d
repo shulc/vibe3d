@@ -8,7 +8,8 @@ module tests.unit.browser_pick_resume_test;
 
 import std.algorithm : canFind;
 import std.conv : to;
-import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
+import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+import tests.unit.census_symbols : exists = wave15Exists;
 import std.format : format;
 import std.path : buildPath;
 import std.process : thisProcessID;
@@ -836,7 +837,8 @@ SAMPLE";
 // ends before the observation/notice ports run.
 // ---------------------------------------------------------------------------
 unittest {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.regex : regex, matchAll, matchFirst;
     import std.string : indexOf, lastIndexOf;
 
@@ -898,7 +900,8 @@ unittest {
 // R19 — the MEMFS root literal lives in exactly one place in source/.
 // ---------------------------------------------------------------------------
 unittest {
-    import std.file : dirEntries, readText, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
     string[] where;
     size_t files;
     foreach (scanSourceRoot; ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"])
@@ -926,7 +929,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",

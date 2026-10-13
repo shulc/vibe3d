@@ -3,7 +3,8 @@ module tests.unit.root_test_link_ownership_test;
 // Task 20262150: the root test target owns package D sources once; production
 // archives and isolated consumers retain their modeling settings.
 unittest {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.json : JSONValue, parseJSON;
     import std.path : buildPath, dirName;
     import std.algorithm : sort, canFind;

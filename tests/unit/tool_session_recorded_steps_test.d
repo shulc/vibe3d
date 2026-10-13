@@ -16,7 +16,8 @@ import tool_activation_ownership : postmodeArmedOnArm;
 import view : View;
 import mesh : Mesh;
 import math : Vec3;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.format : format;
 import std.string : indexOf;
 

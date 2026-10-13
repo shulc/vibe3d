@@ -9,7 +9,8 @@
 module tests.unit.tool_overlay_vao_census_test;
 
 import std.algorithm : sort;
-import std.file      : SpanMode, dirEntries, readText;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.regex     : matchFirst, regex;

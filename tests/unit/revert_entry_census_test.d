@@ -69,9 +69,13 @@
 // gave: a per-name count is immune to line drift, a per-line table is not.
 module tests.unit.revert_entry_census_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : canFind, startsWith;
 import std.array     : appender;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : strip;
@@ -346,7 +350,8 @@ private ScanResult scanTree() {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -473,7 +478,7 @@ bool applyUndo(Command cmd) {
 }
 PROBE";
     auto s = scanRevertSites("probe.d", probe);
-    assert(s.length == 1, format("the delegate take `&cmd.revert` scanned as %d "
+    assert((s.length == 1) && wave15InputsIntact(), format("the delegate take `&cmd.revert` scanned as %d "
         ~ "site(s), expected 1 — this is task 2007 finding #2's escape and the "
         ~ "whole reason the trigger is not the literal `.revert(`: %s",
         s.length, s));
@@ -709,7 +714,7 @@ unittest {
                 if (hits[j].key == s.symbol) { hits = hits[0 .. j] ~ hits[j + 1 .. $]; break; }
     const bad = reconcile(kRecorded, hits);
 
-    assert(bad.length == 0, format(
+    assert((bad.length == 0) && wave15InputsIntact(), format(
         "task 1932: the production `.revert()` call-site SET no longer "
       ~ "matches the recorded seven-row table.%s\n\n"
       ~ "  A `.revert()` call is not wrong by itself — all seven recorded "
@@ -924,7 +929,7 @@ unittest
 
     const bad = reconcile(kUndoImage, hits);
 
-    assert(bad.length == 0, format(
+    assert((bad.length == 0) && wave15InputsIntact(), format(
         "task 1903 stage N-d: the argument-bearing `.revert(` site set no "
       ~ "longer matches the 104-symbol roster.%s\n\n"
       ~ "  These are undo IMAGES — `MeshEditDelta.revert(*mesh)` and "

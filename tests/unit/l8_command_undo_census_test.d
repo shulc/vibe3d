@@ -43,7 +43,11 @@
 // isolation when scoring a mutation.
 module tests.unit.l8_command_undo_census_test;
 
-import std.file      : readText, exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : readText = wave15ReadText, exists = wave15Exists;
 import std.path      : dirName, buildPath;
 import std.format    : format;
 import std.algorithm : sort, uniq;
@@ -83,7 +87,7 @@ private string codeOf(string name)
     // A PER-FILE non-vacuity floor for the stripper. All six are `Command`s
     // with exactly one `revertImpl` override; a stripper that ate the file would
     // report 0 for every needle and pass in silence.
-    assert(countOf(code, "protected override void revertImpl()") == 1,
+    assert((countOf(code, "protected override void revertImpl()") == 1) && wave15InputsIntact(),
         "source/commands/mesh/" ~ name ~ ": the comment stripper ate the file "
       ~ "(or the command lost its `revertImpl` override) — every count below "
       ~ "would be 0 for the wrong reason.");
@@ -253,7 +257,7 @@ unittest // half 2 — the TWO declines still hold their snapshot, and say why
                 "no longer RESTORES from the snapshot, so its Ctrl+Z is a "
               ~ "no-op that still reports success",
         ]) {
-            assert(countOf(code, needle) == 1,
+            assert((countOf(code, needle) == 1) && wave15InputsIntact(),
                 format("source/commands/mesh/%s %s (`%s` appears %d time(s), "
                      ~ "expected 1).\n"
                      ~ "  Stage L8-d DECLINED this command on a MEASUREMENT: "

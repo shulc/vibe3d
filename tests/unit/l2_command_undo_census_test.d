@@ -31,7 +31,11 @@
 // LANE: `dub test --config=tests` (lane U) — a `tests/unit/**` block.
 module tests.unit.l2_command_undo_census_test;
 
-import std.file   : readText, exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : readText = wave15ReadText, exists = wave15Exists;
 import std.path   : dirName, buildPath;
 import std.format : format;
 import std.algorithm : sort, uniq;
@@ -107,7 +111,7 @@ unittest // the twelve are off the snapshot-only undo
         // TERM 3 — a PER-FILE non-vacuity floor for the stripper. Every one of
         // the twelve is a `Command` with a `revertImpl` override; a stripper that
         // ate the file would report 0 for every needle and pass in silence.
-        assert(countOf(code, "protected override void revertImpl()") == 1,
+        assert((countOf(code, "protected override void revertImpl()") == 1) && wave15InputsIntact(),
             "source/commands/mesh/" ~ name ~ ": the comment stripper ate the "
           ~ "file (or the command lost its `revertImpl` override) — every count "
           ~ "below would be 0 for the wrong reason.");
@@ -139,7 +143,7 @@ unittest // the twelve are off the snapshot-only undo
         else if (countOf(code, "undo_.revert(*mesh)") > 0) ++emptyOk;
     }
 
-    assert(scanned >= 30_000,
+    assert((scanned >= 30_000) && wave15InputsIntact(),
         format("the census read only %d byte(s) of stripped code across the "
              ~ "twelve — the stripper ate the roster and every count below is "
              ~ "zero for the wrong reason", scanned));

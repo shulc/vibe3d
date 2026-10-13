@@ -31,7 +31,11 @@
 // Fast loop: tools/local/ut-standalone.sh tests/unit/tool_session_steps_test.d
 module tests.unit.tool_session_steps_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import command_history : CommandHistory, HistoryFlags, UndoState;
 import commands.tool.lifecycle : ToolActivationCommand, ToolTaskClearCommand;
@@ -48,7 +52,8 @@ import tool_activation_ownership;
 import view : View;
 
 import std.algorithm : canFind, count;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.traits : EnumMembers;
@@ -540,7 +545,8 @@ unittest { // every consumer site of the array kinds has a PodArray arm (opponen
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -3070,7 +3076,7 @@ unittest { // U-INIT1 (CAP r1/r2): a command close deactivates the instance; the
     auto pa0 = t.pa();
     const p1 = initHaul(r.s, t, &r.m, 0.5f);
     if (pa0 == PressActivation.activates && t.pa() == PressActivation.active) ++activations;
-    assert(p1 == 0.0f, format("U-INIT1: the first press began from %s, expected the default 0 "
+    assert((p1 == 0.0f) && wave15InputsIntact(), format("U-INIT1: the first press began from %s, expected the default 0 "
         ~ "(the press of an inactive first-press instance activates it)", p1));
     r.s.closeOperation(CloseReason.command, CommandDoor.ui);
     r.s.finishClose();

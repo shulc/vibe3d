@@ -8,7 +8,8 @@ module tests.unit.toolpipe.attr_cache_test;
 
 import std.algorithm.searching : canFind, count;
 import std.conv : to;
-import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir, write;
+import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+import tests.unit.census_symbols : exists = wave15Exists, readText = wave15ReadText;
 import std.format : format;
 import std.math : abs;
 import std.path : buildPath;
@@ -348,7 +349,8 @@ unittest { // u7: the ONE clear is the script scene.reset automation tail
 
     // No other production site clears the cache (a user-visible reset keeps
     // it): one `toolAttrCache.clear(` in the whole source tree.
-    import std.file : SpanMode, dirEntries;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     size_t clears, files;
     foreach (scanSourceRoot; ["source", "packages/command-runtime/source", "packages/application-core/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"])
     foreach (f; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
@@ -374,7 +376,8 @@ unittest { // u7: the ONE clear is the script scene.reset automation tail
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

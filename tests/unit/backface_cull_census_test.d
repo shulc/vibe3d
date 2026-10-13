@@ -7,11 +7,16 @@
 // blanks) are cut from the raw text.
 module tests.unit.backface_cull_census_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : canFind, sort;
 import std.array : array;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.path : buildPath, dirName, relativePath;
 import std.string : indexOf, replace;
@@ -82,7 +87,8 @@ private string[] sourceFiles() {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
@@ -121,7 +127,7 @@ unittest { // (a) the cull POLICY reaches only the display: a picker reading it 
                ~ "ui/viewport_render.d; found in %s", holders));
     string[] offenders;
     foreach (h; holders) if (!allowed.canFind(h)) offenders ~= h;
-    assert(offenders.length == 0,
+    assert((offenders.length == 0) && wave15InputsIntact(),
         format("cullBySurface is read outside the display (%s) — a picker reading the display cull "
                ~ "changes picking, which S1d pins unchanged", offenders));
     // The picking modules name none of the sidedness vocabulary.

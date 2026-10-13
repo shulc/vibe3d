@@ -10,9 +10,13 @@
 // nest undo.
 module tests.unit.document_replace_disarm_census_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : canFind, count;
 import std.array : appender;
-import std.file : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.format : format;
 import std.path : buildPath, dirName;
 import std.string : indexOf, splitLines, strip;
@@ -207,7 +211,8 @@ private Hit[] scanTree(bool comments) {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -268,7 +273,7 @@ unittest {
     auto hits = scanTree(false);
     size_t recorded;
     const bad = compareSites(kCodeSites, hits, recorded);
-    assert(bad.length == 0, format(
+    assert((bad.length == 0) && wave15InputsIntact(), format(
         "task 3930: document-replace disarm CODE census changed.%s\n"
       ~ "Recorded %d occurrences in %d rows; scanner found %d. A new seam "
       ~ "caller or a second copy of the pre-apply policy needs an explicit "
@@ -284,7 +289,7 @@ unittest {
     auto hits = scanTree(true);
     size_t recorded;
     const bad = compareSites(kCommentSites, hits, recorded);
-    assert(bad.length == 0, format(
+    assert((bad.length == 0) && wave15InputsIntact(), format(
         "task 3930: document-replace disarm COMMENT census changed.%s\n"
       ~ "Recorded %d checked comments in %d rows; scanner found %d. Read every "
       ~ "new or moved claim and record whether it is true today.",

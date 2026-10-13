@@ -2,11 +2,16 @@
 // guide semantics through one resolver; no filename exemption.
 module tests.unit.snap_call_census_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : canFind, map, sort;
 import std.array     : array;
-import std.file      : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : indexOf, strip;
@@ -76,7 +81,8 @@ private string[2][] productionSources() {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -145,7 +151,7 @@ unittest // every production snapCursor call declares guide semantics
     // A mutation removing any consumer's resolver must fail this assertion.
     Site[] bypasses;
     foreach (c; calls) if (c.file == "packages/interaction-query/source/snap.d" ? wordsAt(c.args, "guides").length != 1 : !consultsGuides(c.args)) bypasses ~= c;
-    assert(bypasses.length == 0,
+    assert((bypasses.length == 0) && wave15InputsIntact(),
         format("snapCursor calls bypassing declared query semantics: %s", fileRoster(bypasses)));
     // Every site has a positive policy pin. These are contracts, not exemptions:
     // the same no-bypass assertion above applies to every row.
@@ -215,7 +221,7 @@ unittest // one packet read, one finder: the deleted copies stay deleted
     // reads it beside its other packets. Text needle: `get!(SnapPacket)` or
     // an alias would pass it.
     packetReads.sort();
-    assert(packetReads == ["packages/interaction-query/source/snap.d", "source/http_providers.d"],
+    assert((packetReads == ["packages/interaction-query/source/snap.d", "source/http_providers.d"]) && wave15InputsIntact(),
         format("get!SnapPacket production roster: %s", packetReads));
     liveCalls.sort();
     assert(liveCalls == ["packages/pipe-evaluation/source/toolpipe/stages/snap.d", "packages/pipe-evaluation/source/toolpipe/stages/snap.d",

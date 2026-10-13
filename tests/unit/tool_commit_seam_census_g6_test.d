@@ -55,10 +55,14 @@
 // LANE: `dub test --config=tests`.
 module tests.unit.tool_commit_seam_census_g6_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : sort;
 import std.array     : appender;
 import std.conv      : to;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.path      : baseName, buildPath, dirName;
 import std.string    : indexOf;
 
@@ -126,7 +130,7 @@ unittest {
         foreach (x; found) if (x == f) { present = true; break; }
         if (!present) gone ~= (gone.length ? ", " : "") ~ f;
     }
-    assert(bad.length == 0 && gone.length == 0,
+    assert((bad.length == 0 && gone.length == 0) && wave15InputsIntact(),
         "G6 census: the command-wrapper family's file set moved.\n"
       ~ "    new, not in the roster: " ~ (bad.length ? bad : "(none)") ~ "\n"
       ~ "    rostered, now missing:  " ~ (gone.length ? gone : "(none)") ~ "\n"

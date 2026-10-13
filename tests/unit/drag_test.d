@@ -308,7 +308,8 @@ unittest { // LAW B: signed half-step cells round spatial endpoints, not deltas.
 
 unittest { // Polygon free drag keeps the captured phase order in production.
     import std.algorithm : canFind;
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath, dirName;
     import std.string : count, indexOf;
 

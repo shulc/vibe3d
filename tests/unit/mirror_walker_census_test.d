@@ -15,7 +15,11 @@
 // module at its first red).
 module tests.unit.mirror_walker_census_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.conv : to;
 import std.algorithm : sort;
@@ -29,7 +33,8 @@ private enum string kRepoRoot = () {
 }();
 
 private string codeOf(string rel) {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath;
     return blankUnittestBodies(blankNonCode(readText(buildPath(kRepoRoot, rel))));
 }
@@ -50,7 +55,8 @@ private string v3(T)(T v) {
 
 /// Every production file under source/ that contains `needle`, repo-relative.
 private string[] filesWith(string needle, out size_t scanned) {
-    import std.file : dirEntries, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import std.path : buildPath;
     string[] hits;
     foreach (scanSourceRoot; [buildPath(kRepoRoot, "source"), buildPath(kRepoRoot, "packages/command-runtime/source"), buildPath(kRepoRoot, "packages/application-core/source"), buildPath(kRepoRoot, "packages/camera-model/source"), buildPath(kRepoRoot, "packages/document-channels/source"), buildPath(kRepoRoot, "packages/image-codec/source"), buildPath(kRepoRoot, "packages/document-io/source"), buildPath(kRepoRoot, "packages/document-model/source"), buildPath(kRepoRoot, "packages/param-schema/source"), buildPath(kRepoRoot, "packages/pipe-runtime/source"), buildPath(kRepoRoot, "packages/mesh-ops/source"), buildPath(kRepoRoot, "packages/interchange/source"), buildPath(kRepoRoot, "packages/interaction-query/source"), buildPath(kRepoRoot, "packages/pipe-evaluation/source"), buildPath(kRepoRoot, "packages/tool-state/source"), buildPath(kRepoRoot, "packages/transform-ops/source"), buildPath(kRepoRoot, "packages/creation-ops/source"), buildPath(kRepoRoot, "packages/alignment-ops/source"), buildPath(kRepoRoot, "packages/input-events/source"), buildPath(kRepoRoot, "packages/display-policy/source"), buildPath(kRepoRoot, "packages/viewport-gpu/source"), buildPath(kRepoRoot, "packages/subpatch-preview/source"), buildPath(kRepoRoot, "packages/edit-contracts/source"), buildPath(kRepoRoot, "packages/mesh-change/source"), buildPath(kRepoRoot, "packages/mesh-contracts/source"), buildPath(kRepoRoot, "packages/mesh-edit-log/source"), buildPath(kRepoRoot, "packages/mesh-edit-replay/source"), buildPath(kRepoRoot, "packages/mesh-snapshot/source"), buildPath(kRepoRoot, "packages/mesh-topology/source"), buildPath(kRepoRoot, "packages/mesh/source"), buildPath(kRepoRoot, "packages/profiling/source"), buildPath(kRepoRoot, "packages/spatial/source"), buildPath(kRepoRoot, "util/log/source"), buildPath(kRepoRoot, "util/math/source"), buildPath(kRepoRoot, "util/parallel/source"), buildPath(kRepoRoot, "util/plane-bytes/source"), buildPath(kRepoRoot, "util/screen-buckets/source"), buildPath(kRepoRoot, "packages/pipe-contracts/source"), buildPath(kRepoRoot, "packages/mesh-preview/source"), buildPath(kRepoRoot, "util/json-number/source"), buildPath(kRepoRoot, "packages/selection-model/source"), buildPath(kRepoRoot, "packages/scene-query/source"), buildPath(kRepoRoot, "packages/editor-commands/source")])
@@ -79,7 +85,8 @@ private string[] filesWith(string needle, out size_t scanned) {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -210,7 +217,7 @@ unittest { // (c4) ONE work-plane symmetry plane function, ONE call
     import std.regex : matchAll, regex;
     import std.range : walkLength;
     // Positive control: the needle sees an assignment spelt as the old body spelt it.
-    assert(walkLength(matchAll("pkt.planePoint  = wp.center;", regex(`\bplane(Normal|Point)\s*=[^=]`))) == 1,
+    assert((walkLength(matchAll("pkt.planePoint  = wp.center;", regex(`\bplane(Normal|Point)\s*=[^=]`))) == 1) && wave15InputsIntact(),
            "(c4) the assignment needle is blind");
     assert(walkLength(matchAll(ev, regex(`\bplane(Normal|Point)\s*=[^=]`))) == 0,
            "(c4) evaluate assigns the plane itself instead of reading currentPlane");
@@ -485,6 +492,6 @@ unittest { // (w5) the routed POSITION walk stores the EXACT mirror of the drawn
     Vec3 st;
     assert(touched[1] && m.morphValue("mm", 1, st), "(w5) rig: the partner was not written");
     const Vec3 got = morphApply(route.base[1], st, MapKind.morphRelative, 1.0f);
-    assert(got == want, "(w5) routed position walk: partner drawn at " ~ v3(got)
+    assert((got == want) && wave15InputsIntact(), "(w5) routed position walk: partner drawn at " ~ v3(got)
            ~ ", expected the exact mirror " ~ v3(want));
 }

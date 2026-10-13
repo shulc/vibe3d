@@ -68,9 +68,13 @@
 // below with the same sentences.
 module tests.unit.command_tail_publisher_census_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : canFind, startsWith;
 import std.array     : appender;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : strip;
@@ -252,7 +256,7 @@ void f() {
 }
 PROBE";
     const code = codeView(probe);
-    assert(scanFunnels("probe.d", code).length == 0);
+    assert((scanFunnels("probe.d", code).length == 0) && wave15InputsIntact());
 }
 
 /// TASK 2007 FINDING #3 — THE DELEGATE ESCAPE, PINNED. A dead accumulate tail
@@ -268,7 +272,7 @@ void applyImpl() {
 PROBE";
     const code = codeView(probe);
     auto s = scanFunnels("probe.d", code);
-    assert(s.length == 1 && s[0].funnel == "noteChange",
+    assert((s.length == 1 && s[0].funnel == "noteChange") && wave15InputsIntact(),
         format("the delegate take `&mesh.noteChange` scanned as %d site(s), "
              ~ "expected 1 on `noteChange` — task 2007 finding #3's escape: %s",
                s.length, s));
@@ -432,7 +436,7 @@ private void assertNoUnaccountedTails(string blockLabel, string rootLabel,
         hits ~= LedgerHit(s.symbol ~ "|" ~ s.funnel, s.file, s.line, s.funnel);
     const bad = reconcile(recorded, hits);
 
-    assert(bad.length == 0, format(
+    assert((bad.length == 0) && wave15InputsIntact(), format(
         "task 1932 (%s, %s): the accumulate-only funnel tail SET no longer "
       ~ "matches the recorded exception table.%s\n\n"
       ~ "  A command's tail must be a `publishChange` / `commitChange` / "

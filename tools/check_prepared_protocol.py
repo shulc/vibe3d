@@ -16,6 +16,7 @@ from prepared_writer_census import (scan as scan_writer_graph,
     persisted_manifest as persisted_writer_manifest,
     REGISTRATION_SOURCE_NAMES as writer_registration_source_names, paired_calls)
 import dspans_client  # made importable by prepared_writer_census (tools/dspans)
+from census_contracts import read_source_text, logical_source_paths, physical_source_path, source_inputs_intact
 
 ROOT = Path(__file__).resolve().parents[1]
 DMD_FLAGS_RUN = subprocess.run(
@@ -140,7 +141,7 @@ def prepared_module_source(legacy_module):
         path = module_path(ROOT, legacy_module, f"prepared.{suffix}")
     except ValueError as error:
         fail(f"P1.0b {error}")
-    return path.read_text()
+    return read_source_text(path)
 
 def legacy_prepared_module_name(module_name):
     return ("prepared_" + module_name.removeprefix("prepared.")) \
@@ -267,7 +268,7 @@ def validate_writer_graph(actual, expected):
     if canonical_writer_graph(actual) != canonical_writer_graph(expected):
         fail("P1.0b.0 direct-body/product census changed with names intact")
 
-WRITER_MANIFEST = json.loads(WRITER_MANIFEST_PATH.read_text())
+WRITER_MANIFEST = json.loads(read_source_text(WRITER_MANIFEST_PATH))
 validate_writer_manifest_schema(WRITER_MANIFEST, "persisted writer manifest")
 try:
     CURRENT_WRITERS = scan_writer_graph(ROOT)
@@ -547,7 +548,7 @@ converted_sources = {
     "source/tools/create/sphere.d": ("prepareAxisParam", "validatePreparedParam", "installLegacyPreparedParam"),
 }
 for relative, methods in converted_sources.items():
-    source = (ROOT / relative).read_text()
+    source = read_source_text((ROOT / relative))
     for method in methods:
         matches = list(re.finditer(r"\b" + method + r"\s*\([^;{}]*\)[^{;]*\bnothrow\b[^;{}]*\{", source))
         if len(matches) != 1:
@@ -560,7 +561,7 @@ for relative, methods in converted_sources.items():
                 fail(f"P1.0b.1 {relative} installer decodes an unvalidated carrier")
 
 TOOL_STATE_DEFERRED_ROWS = json.loads(
-    (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
+    read_source_text((ROOT / "tools/prepared_tool_state_deferred.json")))
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
     "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
 def validate_deferred_rows(rows, require_canonical=True):
@@ -638,8 +639,8 @@ if reason_replace:
 # may invoke another producer. No production door constructs the injected
 # context or imports the observer owner directly.
 b3d_modules = {module for module, _, _ in B3D_PREPARED_LEGACY}
-b3d_sources = {module: (ROOT / "source" /
-    (module.replace(".", "/") + ".d")).read_text() for module in b3d_modules}
+b3d_sources = {module: read_source_text((ROOT / "source" /
+    (module.replace(".", "/") + ".d"))) for module in b3d_modules}
 B3D_PRODUCER_DIGESTS = {
     "tools/alignment/array_tool":"1363ac0ac98e1f38dcd9d470e34a644d3b0388d9026569714f662326028c1404",
     "tools/alignment/clone_tool":"bac8ed6a847636082d473f2424fc64607e7a87bd64495c0dbaaeb17ff74c2798",
@@ -702,8 +703,8 @@ def installer_image_writes(pt, fields):
     return re.findall(r"(?:(?<![.\w])|(?<=\bthis\.))(" + "|".join(fields)
                       + r")\s*=(?!=)", body)
 
-prepared_source_texts = {path: path.read_text()
-                         for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (ROOT / sub).rglob("*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d')}
+prepared_source_texts = {path: read_source_text(path)
+                         for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((ROOT / sub), "*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d')}
 for path, text in prepared_source_texts.items():
     module = source_module_name(path, text)
     if imports_prepared_module(text, "prepared_record_context") and module not in b3d_modules | {
@@ -847,7 +848,7 @@ for module, guard, inverted in (
 
 # P1.0b.3a record-observer owner infrastructure. The exact legacy census stays
 # two app assignments until P1.0c; the prepared hub has no production caller.
-app_source = (ROOT / "source/app.d").read_text()
+app_source = read_source_text((ROOT / "source/app.d"))
 def validate_legacy_observer_census(source):
     closure = list(re.finditer(
         r"history\.onRecord\s*=\s*\(string line, uint flags\)\s*\{", source))
@@ -870,7 +871,7 @@ for label, mutant in (
         expected = "observer order drifted" if label == "reorder" else "observer callsite set changed"
         if expected not in str(error): fail(f"P1.0b.3a {label} observer mutation failed wrong")
     else: fail(f"P1.0b.3a {label} observer mutation did not RED")
-observer_source = (ROOT / "packages/command-runtime/source/record_observer_hub.d").read_text()
+observer_source = read_source_text((ROOT / "packages/command-runtime/source/record_observer_hub.d"))
 production_hub_refs = 0
 for path, hub_text in prepared_source_texts.items():
     hub_module = source_module_name(path, hub_text)
@@ -880,7 +881,7 @@ for path, hub_text in prepared_source_texts.items():
                           "prepared_record_context"):
         if "RecordObserverHub" in hub_text:
             production_hub_refs += without_unittests(hub_text).count("RecordObserverHub")
-macro_source = (ROOT / "packages/editor-commands/source/macro_recorder.d").read_text()
+macro_source = read_source_text((ROOT / "packages/editor-commands/source/macro_recorder.d"))
 if production_hub_refs != 7 or not all(x in app_source for x in (
         "auto recordObserverHub = new RecordObserverHub();",
         "macroRecorder.bindObserverHub(recordObserverHub);")) or not all(
@@ -940,9 +941,9 @@ for label, contract, wrong in observer_prepare_mutations:
         fail(f"P1.0b.3a {label} mutation did not RED")
 
 # P1.0b.3b history owner infrastructure remains unreachable from production.
-history_source = (ROOT / "packages/command-runtime/source/command_history.d").read_text()
-for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (ROOT / sub).rglob("*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
-    if path.name != "command_history.d" and ".prepareRecordBatch(" in path.read_text():
+history_source = read_source_text((ROOT / "packages/command-runtime/source/command_history.d"))
+for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((ROOT / sub), "*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
+    if path.name != "command_history.d" and ".prepareRecordBatch(" in read_source_text(path):
         fail("P1.0b.3b prepared history gained a pre-cutover caller")
 
 def validate_prepared_history(source):
@@ -973,8 +974,8 @@ if re.search(r"(?:prepareRecord|prepareConsolidate|prepareLifecycle|installPrepa
     fail("P1.0b.3b pending history image escaped through owner API")
 
 replace_run_tail_calls = []
-for path in (path for sub in ('source/tools', 'packages/tool-state/source/tools', 'packages/transform-ops/source/tools', 'packages/creation-ops/source/tools', 'packages/alignment-ops/source/tools') for path in (ROOT / sub).rglob("*.d")):
-    source = path.read_text()
+for path in (path for sub in ('source/tools', 'packages/tool-state/source/tools', 'packages/transform-ops/source/tools', 'packages/creation-ops/source/tools', 'packages/alignment-ops/source/tools') for path in logical_source_paths((ROOT / sub), "*.d")):
+    source = read_source_text(path)
     for match in re.finditer(r"recordGestureEdit\s*\([^;]*GestureRecordMode\.ReplaceRunTail\s*\)\s*;", source):
         replace_run_tail_calls.append((path.relative_to(ROOT).as_posix(), semantic_digest(match.group(0))))
 if replace_run_tail_calls != [("source/tools/create/box.d",
@@ -993,12 +994,12 @@ coalescing_doors = {
         "executor.applyOrRefire(command, RecordMode.Coalescing, null)",),
 }
 for relative, fingerprints in coalescing_doors.items():
-    source = (ROOT / relative).read_text()
+    source = read_source_text((ROOT / relative))
     for fingerprint in fingerprints:
         if source.count(fingerprint) != 1:
             fail("P1.0b.3b exact legacy coalescing door census changed")
-if sum(len(re.findall(r"[\w.]+\.recordCoalescing\(cmd\);", path.read_text()))
-       for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (ROOT / sub).rglob("*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d')
+if sum(len(re.findall(r"[\w.]+\.recordCoalescing\(cmd\);", read_source_text(path)))
+       for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((ROOT / sub), "*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d')
        if path.name != "command_history.d") != 2:
     fail("P1.0b.3b direct legacy coalescing callsite set changed")
 coalescing_pairs = (
@@ -1008,7 +1009,7 @@ coalescing_pairs = (
     "source/commands/layer/commands.d",
 )
 for relative in coalescing_pairs:
-    source = (ROOT / relative).read_text()
+    source = read_source_text((ROOT / relative))
     if len(re.findall(r"override\s+CompareResult\s+compareOp\s*\(", source)) != 1 or \
        len(re.findall(r"override\s+bool\s+mergeFrom\s*\(", source)) != 1:
         fail("P1.0b.3b exact compareOp/mergeFrom provider census changed")
@@ -1031,8 +1032,8 @@ except SystemExit as error:
 else:
     fail("P1.0b.3b live-top merge mutation did not RED")
 
-for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (ROOT / sub).rglob("*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
-    source = path.read_text()
+for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((ROOT / sub), "*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
+    source = read_source_text(path)
     if not path.as_posix().endswith("command_history.d") and \
        "prepared_tool" in path.name and re.search(
             r"\b(?:recordCoalescing|mergeFrom|CompareResult)\b", source):
@@ -1075,10 +1076,10 @@ for label, contract, wrong in history_mutations:
         fail(f"P1.0b.3b {label} mutation did not RED")
 
 # P1.0b.3c Layer-owned whole-Mesh image, still unreachable from production.
-mesh_source = (ROOT / "packages/mesh/source/mesh.d").read_text()
-document_source = (ROOT / "packages/document-model/source/document.d").read_text()
-for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (ROOT / sub).rglob("*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
-    if path.name != "document.d" and ".beginPreparedMesh(" in path.read_text():
+mesh_source = read_source_text((ROOT / "packages/mesh/source/mesh.d"))
+document_source = read_source_text((ROOT / "packages/document-model/source/document.d"))
+for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((ROOT / sub), "*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
+    if path.name != "document.d" and ".beginPreparedMesh(" in read_source_text(path):
         fail("P1.0b.3c prepared Mesh owner gained a pre-cutover caller")
 
 def validate_prepared_mesh(mesh, document):
@@ -1106,7 +1107,7 @@ if not re.search(r"struct\s+PreparedLayerMeshToken\s*\{\s*private:\s*ulong\s+bir
                  document_source):
     fail("P1.0b.3c prepared Mesh token stopped being scalar-only")
 if "static foreach (i; 0 .. R.tupleof.length)" not in mesh_source or \
-   "static assert(Mesh.tupleof.length == 55" not in (ROOT / "packages/mesh/source/mesh_planes.d").read_text():
+   "static assert(Mesh.tupleof.length == 55" not in read_source_text((ROOT / "packages/mesh/source/mesh_planes.d")):
     fail("P1.0b.3c complete Mesh field ownership census changed")
 if not re.search(r"void\s+installPreparedMeshImage\s*\([^)]*\)\s*nothrow\s+@nogc", mesh_source) or \
    not re.search(r"void\s+installPreparedMesh\s*\([^)]*\)\s*nothrow\s+@nogc", document_source):
@@ -1135,9 +1136,9 @@ for label, mutated_mesh, mutated_document in mesh_mutations:
 
 # P1.0b.4a dormant GL-resource owner. Raw GLuint sets stay owner-private;
 # production doors may carry only scalar identity/generation tokens.
-gpu_source = (ROOT / "packages/viewport-gpu/source/mesh_gpu.d").read_text()
-for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (ROOT / sub).rglob("*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
-    if path.name != "mesh_gpu.d" and ".beginPreparedDestroy(" in path.read_text():
+gpu_source = read_source_text((ROOT / "packages/viewport-gpu/source/mesh_gpu.d"))
+for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((ROOT / sub), "*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
+    if path.name != "mesh_gpu.d" and ".beginPreparedDestroy(" in read_source_text(path):
         fail("P1.0b.4a prepared GPU owner gained a pre-cutover caller")
 
 gpu_contracts = (
@@ -1215,7 +1216,7 @@ for label, old, new, expected_error in gpu_mutations:
 
 # Potency: changing the Arc producer to copy the original Drawing state must
 # RED the named producer contract, independently of the hook-body fingerprint.
-arc_source = (ROOT / "source/tools/create/arc.d").read_text()
+arc_source = read_source_text((ROOT / "source/tools/create/arc.d"))
 arc_contract = "cast(int) ArcState.Idle"
 def validate_arc_reset_contract(source):
     if source.count(arc_contract) != 3: # producer + validator + parity assertion
@@ -1236,7 +1237,7 @@ tool_state_value_contracts = (
     ("source/tools/transform/xfrm_transform.d", "preparedToolStateOwner,\n                                               uniformVal, uniformVal, uniformVal", "preparedToolStateOwner,\n                                               uniformVal, 1.0f, uniformVal"),
 )
 for relative, contract, wrong in tool_state_value_contracts:
-    source = (ROOT / relative).read_text()
+    source = read_source_text((ROOT / relative))
     def validate_value_contract(candidate):
         if candidate.count(contract) != 1:
             fail(f"P1.0b.1 {relative} prepared value contract changed")
@@ -1270,7 +1271,7 @@ p1b2_param_contracts = (
      "illegal axis refusal"),
 )
 for relative, contract, wrong, label in p1b2_param_contracts:
-    source = (ROOT / relative).read_text()
+    source = read_source_text((ROOT / relative))
     def validate_p1b2_contract(candidate):
         if candidate.count(contract) != 1:
             fail(f"P1.0b.2 {label} contract changed")
@@ -1293,7 +1294,7 @@ for row in converted_rows:
         fail("P1.0b.1 converted adapter is not fingerprinted")
     path = ROOT / "source" / Path(*row["module"].split("."))
     path = path.with_suffix(".d")
-    source = path.read_text()
+    source = read_source_text(path)
     match = re.search(r"\b(?:override\s+)?void\s+" + row["symbol"] +
                       r"\s*\([^;{}]*\)\s*\{", source)
     if not match: fail("P1.0b.1 converted adapter body vanished")
@@ -1404,7 +1405,7 @@ def add_reachable_override_set(root):
                  "override void onParamChanged(string name) {} "
                  "override Param[] params() { return []; } }")
     registration = root / "source/registration.d"
-    registration.write_text(registration.read_text() +
+    registration.write_text(read_source_text(registration) +
         '\nvoid p1ReachableMutant() { import tools.p1_census_mutant : P1CensusMutant; '
         'reg.registerTool("p1.reachable", typedToolFactory!P1CensusMutant('
         '() { return new P1CensusMutant(); })); }\n')
@@ -1441,7 +1442,7 @@ if not mutation_rejected(add_reachable_override_set, "hooks symbol mismatch",
 
 def change_factory_product(root):
     p = root / "source/transform_tool_registration.d"
-    text = p.read_text()
+    text = read_source_text(p)
     anchor = 'reg.registerTool("xfrm.push", typedToolFactory!PushTool(() {'
     begin = text.find(anchor)
     product = text.find("new PushTool(", begin)
@@ -1468,7 +1469,7 @@ for label, edit in (
 
 def drop_expression_factory_helper_write(root):
     p = root / "source/transform_tool_registration.d"
-    text = p.read_text()
+    text = read_source_text(p)
     needle = "    t.setItemUndoFactory(deps.itemEditFactory());\n"
     if needle not in text:
         fail("P1.0b.0 expression-helper body mutation anchor vanished")
@@ -1479,7 +1480,7 @@ if not mutation_rejected(drop_expression_factory_helper_write,
 
 def change_expression_factory_defaults_row(root):
     p = root / "source/transform_tool_registration.d"
-    text = p.read_text()
+    text = read_source_text(p)
     needle = "buildUnifiedTransform(owner, live, deps, TransformFactoryDefaults.move)"
     if needle not in text:
         fail("P1.0b.0 expression-factory defaults mutation anchor vanished")
@@ -1491,7 +1492,7 @@ if not mutation_rejected(change_expression_factory_defaults_row,
 
 def capture_paired_factory_early(root):
     p = root / "source/create_tool_registration.d"
-    text = p.read_text()
+    text = read_source_text(p)
     assign = "    reg.registerTool(id, typedToolFactory!T(factory));\n"
     lookup = "                                id, regPtr.toolFactory(id)));\n"
     if text.count(assign) != 1 or text.count(lookup) != 1:
@@ -1506,7 +1507,7 @@ if not mutation_rejected(capture_paired_factory_early,
 
 def swap_paired_factory_row(root):
     p = root / "source/create_tool_registration.d"
-    text = p.read_text()
+    text = read_source_text(p)
     sphere = ("new SphereTool(() => &owner.activeMesh(), deps.gpu(), "
               "deps.litShader());")
     ellipsoid = ("new SphereTool(() => &owner.activeMesh(), deps.gpu(),\n"
@@ -1523,7 +1524,7 @@ if not mutation_rejected(swap_paired_factory_row,
     fail("P1.0b.0 paired factory-row swap did not RED fingerprint")
 
 # Exercise the actual paired-call adapter, including its resolved construction type.
-paired_source = (ROOT / "source/create_tool_registration.d").read_text()
+paired_source = read_source_text((ROOT / "source/create_tool_registration.d"))
 bridge_call = "registerHeadlessTool!(BridgeTool, BridgeHeadlessCommand)"
 for form, command in (("registerHeadlessTool!BridgeTool", "ToolHeadlessCommand"),
                       ("registerHeadlessTool!(BridgeTool)", "ToolHeadlessCommand"),
@@ -1550,7 +1551,7 @@ if len(paired_calls(paired_source + '\n// registerHeadlessTool!(Fake, FakeC)(reg
 
 def change_paired_command(root, replacement):
     p = root / "source/create_tool_registration.d"
-    text = p.read_text()
+    text = read_source_text(p)
     needle = "registerHeadlessTool!(BridgeTool, BridgeHeadlessCommand)"
     if text.count(needle) != 1:
         fail("P1.0b.0 explicit paired command mutation anchor vanished")
@@ -1563,7 +1564,7 @@ for replacement in ("registerHeadlessTool!BridgeTool",
 
 def change_paired_default(root):
     p = root / "source/create_tool_registration.d"
-    text = p.read_text()
+    text = read_source_text(p)
     needle = "C : ToolHeadlessCommand = ToolHeadlessCommand"
     if text.count(needle) != 1:
         fail("P1.0b.0 paired default mutation anchor vanished")
@@ -1574,7 +1575,7 @@ if not mutation_rejected(change_paired_default, "direct-body/product census chan
 
 def add_domain_without_renaming(root):
     p = root / "source/tools/transform/transform.d"
-    text = p.read_text()
+    text = read_source_text(p)
     needle = "override void deactivate() {"
     if needle not in text: fail("P1.0b.0 name-only mutation anchor vanished")
     p.write_text(text.replace(needle, needle + " history.p1CensusWrite();", 1))
@@ -1583,7 +1584,7 @@ if not mutation_rejected(add_domain_without_renaming, "direct-body/product censu
 
 def add_ref_escape_without_renaming(root):
     p = root / "source/tools/transform/transform.d"
-    text = p.read_text()
+    text = read_source_text(p)
     needle = "override void deactivate() {"
     if needle not in text: fail("P1.0b.0 ref-escape mutation anchor vanished")
     p.write_text(text.replace(needle, needle + " auto escaped = mesh.vertices[];", 1))
@@ -1592,7 +1593,7 @@ if not mutation_rejected(add_ref_escape_without_renaming, "direct-body/product c
 
 def add_bypass_callsite(root):
     p = module_path(root, "prepared_tool_transition", "prepared.tool_transition")
-    p.write_text(p.read_text() +
+    p.write_text(read_source_text(p) +
         "\nbool p1Unauthorized(ref Tool active, ref string id, "
         "ref PreparedArm prepared) nothrow { return commitPreparedArm(active, id, prepared); }\n")
     compiled = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(p)], cwd=root, text=True,
@@ -1606,7 +1607,7 @@ if not mutation_rejected(add_bypass_callsite, "activation/lifecycle bypass calls
 # answers false must leave the lifecycle product set.
 def clear_activation_row(root):
     p = root / "source/tools/transform/xfrm_transform.d"
-    text = p.read_text()
+    text = read_source_text(p)
     # Slice M2 added the command-close field beside it (one policy literal).
     needle = "activationRow: true, commandClose: CommandClose.allDoors,"
     if text.count(needle) != 1: fail("P1.0b.0 activationRow mutation anchor vanished")
@@ -1891,8 +1892,8 @@ def prepared_token_declarations():
     Validated*Token struct under source/. The name pattern is the D census's
     own predicate, spelled here over the tree instead of over one module."""
     rows = {}
-    sources = [(path, path.read_text())
-               for path in sorted(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (ROOT / sub).rglob("*.d"))]
+    sources = [(path, read_source_text(path))
+               for path in sorted(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((ROOT / sub), "*.d"))]
     pair_uses = [(path, text, use.group(1)) for path, text in sources
                  for use in TOKEN_PAIR_MIXIN_RE.finditer(mask_d_comments(text))]
     pair_template_disabled = False
@@ -1950,8 +1951,8 @@ def prepared_non_token_noncopyable():
     """{(module, TypeName)} for every non-copyable Prepared*/Validated* struct
     under source/ that is NOT spelled `*Token`."""
     rows = set()
-    for path in sorted(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (ROOT / sub).rglob("*.d")):
-        text = path.read_text()
+    for path in sorted(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((ROOT / sub), "*.d")):
+        text = read_source_text(path)
         head = re.search(r"^\s*module\s+([\w.]+)\s*;", text, re.M)
         if not head:
             continue
@@ -2093,7 +2094,7 @@ if len(token_declarations) < 100:
     fail(f"prepared-token walk found only {len(token_declarations)} tokens -- "
          f"the declaration pattern stopped matching, and every comparison "
          f"below would then be true over almost nothing")
-token_census_source = TOKEN_CENSUS_D.read_text()
+token_census_source = read_source_text(TOKEN_CENSUS_D)
 token_stray = sorted(p.name for p in ROOT.glob("tests/compile_fail/*.d"))
 # No separate floor: the roster is compared to the walk in both directions, so
 # a regex that stopped matching empties the walk and every one of the six
@@ -2180,7 +2181,7 @@ with tempfile.TemporaryDirectory(prefix="vibe3d-prepared-carrier-mut-") as td:
 # P1.0b.4b dormant full-upload owner. Keep production at zero callers until
 # P1.0c, and freeze the closed prepare/validate/nothrow-consume boundary plus
 # the original-state identity guards that make refusal zero-live.
-mesh_gpu = (ROOT / "packages/viewport-gpu/source/mesh_gpu.d").read_text()
+mesh_gpu = read_source_text((ROOT / "packages/viewport-gpu/source/mesh_gpu.d"))
 upload_contracts = (
     "bool beginPreparedUpload(ref const Mesh mesh,",
     "bool validatePreparedUpload(ref PreparedGpuUploadToken token,",
@@ -2197,10 +2198,10 @@ upload_contracts = (
 for contract in upload_contracts:
     if mesh_gpu.count(contract) != 1:
         fail(f"P1.0b.4b upload-owner contract drift: {contract}")
-for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (ROOT / sub).rglob("*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
+for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((ROOT / sub), "*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
     if path.name == "mesh_gpu.d" and path.parent == ROOT / "packages/viewport-gpu/source":
         continue
-    if re.search(r"\.beginPreparedUpload\s*\(", path.read_text()):
+    if re.search(r"\.beginPreparedUpload\s*\(", read_source_text(path)):
         fail(f"P1.0b.4b early prepared-upload caller: {path.relative_to(ROOT)}")
 
 def upload_owner_gate(text):
@@ -2221,7 +2222,7 @@ for old, new, label in (
 # private to PreparedRecordContext; the journal vocabulary is closed and the
 # eventual consumer performs one validation pass before deterministic install.
 record_context = prepared_module_source("prepared_record_context")
-handler_shapes = (ROOT / "source/handles/shapes.d").read_text()
+handler_shapes = read_source_text((ROOT / "source/handles/shapes.d"))
 resource_contracts = (
     "private enum PreparedResourceKind : ubyte {",
     "GpuUpload, ClickPointDestroy, BoxHandlerBatchDestroy",
@@ -2329,7 +2330,7 @@ b4c2_digests = {
     "source/tools/transform/transform.d": ("prepareDeactivateGpu", "50cd6d5c97ea2325bafd53a8b76ec530cee4a9144dc0a1ce79bbcbb6171ec0c5"),
 }
 for relative, contracts in b4c2_contracts.items():
-    producer_source = (ROOT / relative).read_text()
+    producer_source = read_source_text((ROOT / relative))
     for contract in contracts:
         if producer_source.count(contract) != 1:
             fail(f"P1.0b.4c.2 producer contract drift: {relative}: {contract}")
@@ -2374,7 +2375,7 @@ for relative, old, new, label in (
     ("source/tools/transform/transform.d", "gpu.suppressCageUpload) {", "false) {", "drop suppress refusal"),
     ("source/tools/transform/transform.d", "if (!prepared) context.discard();", "", "drop upload failure discard"),
 ):
-    source = (ROOT / relative).read_text()
+    source = read_source_text((ROOT / relative))
     mutant = source.replace(old, new, 1)
     if mutant == source or b4c2_digest_accepts(relative, mutant):
         fail(f"P1.0b.4c.2 named mutation did not RED exact digest: {label}")
@@ -2385,11 +2386,11 @@ for relative, old, new, label in (
 # both upload and suppress branches without entering a legacy hook.
 b5_sources = {
     "effect": prepared_module_source("prepared_tool_effect"),
-    "bus": (ROOT / "packages/mesh-change/source/change_bus.d").read_text(),
-    "mesh": (ROOT / "packages/mesh/source/mesh.d").read_text(),
-    "document": (ROOT / "packages/document-model/source/document.d").read_text(),
+    "bus": read_source_text((ROOT / "packages/mesh-change/source/change_bus.d")),
+    "mesh": read_source_text((ROOT / "packages/mesh/source/mesh.d")),
+    "document": read_source_text((ROOT / "packages/document-model/source/document.d")),
     "context": record_context,
-    "transform": (ROOT / "source/tools/transform/transform.d").read_text(),
+    "transform": read_source_text((ROOT / "source/tools/transform/transform.d")),
 }
 b5_contracts = {
     "effect": ("struct PreparedSubjectToken", "PreparedSubjectToken subject;"),
@@ -2450,8 +2451,8 @@ for name, old, new, label in (
 # validated, and reset as one closed value. No production tool calls either
 # context enlistment seam in this infrastructure-only phase.
 b5c_sources = {
-    "gpu": (ROOT / "packages/viewport-gpu/source/mesh_gpu.d").read_text(),
-    "snap": (ROOT / "source/snap_render.d").read_text(),
+    "gpu": read_source_text((ROOT / "packages/viewport-gpu/source/mesh_gpu.d")),
+    "snap": read_source_text((ROOT / "source/snap_render.d")),
     "context": record_context,
 }
 b5c_contracts = {
@@ -2517,8 +2518,8 @@ for name, old, new, label in (
     mutant[name] = mutant[name].replace(old, new, 1)
     if mutant[name] == b5c_sources[name] or b5c_gate(mutant):
         fail(f"P1.0b.5c named mutation did not RED: {label}")
-for path in (path for sub in ('source/tools', 'packages/tool-state/source/tools', 'packages/transform-ops/source/tools', 'packages/creation-ops/source/tools', 'packages/alignment-ops/source/tools') for path in (ROOT / sub).rglob("*.d")):
-    body = path.read_text()
+for path in (path for sub in ('source/tools', 'packages/tool-state/source/tools', 'packages/transform-ops/source/tools', 'packages/creation-ops/source/tools', 'packages/alignment-ops/source/tools') for path in logical_source_paths((ROOT / sub), "*.d")):
+    body = read_source_text(path)
     if (".prepareCreate(" in body or ".prepareSnapClear(" in body) and \
             path.relative_to(ROOT).as_posix() not in {
                 "source/tools/create/vertex_place.d",
@@ -2532,7 +2533,7 @@ for path in (path for sub in ('source/tools', 'packages/tool-state/source/tools'
 
 # P1.0b.5p exact Box activation: private reset, prepared GL-name transfer,
 # then NoHistory. The legacy virtual remains frozen until unified cutover.
-box_activation = (ROOT / "source/tools/create/box.d").read_text()
+box_activation = read_source_text((ROOT / "source/tools/create/box.d"))
 def box_activation_gate(box, private, context):
     start = box.find("final PreparedSessionActivateEffect prepareActivate(")
     end = box.find("final GpuMesh* preparedPreviewGpu", start)
@@ -2609,7 +2610,7 @@ for target, old, new, label in (
 
 # Exact Pen activation uses the same closed private→legacy-init GPU→NoHistory
 # grammar but a distinct fixed private projection.
-pen_activation = (ROOT / "source/tools/create/pen.d").read_text()
+pen_activation = read_source_text((ROOT / "source/tools/create/pen.d"))
 def pen_activation_gate(pen, private, context):
     start = pen.find("final PreparedSessionActivateEffect prepareActivate(")
     end = pen.find("final GpuMesh* preparedPreviewGpu", start)
@@ -2841,7 +2842,7 @@ def producer_mixin(tool):
 # The PreviewRebuild cache image (the Edge Extend deactivate product's
 # witness, gated with that product below) compares the scratch cage exactly.
 preview_image_sources = {
-    "preview": (ROOT / "packages/tool-state/source/tools/edit/preview_rebuild.d").read_text(),
+    "preview": read_source_text((ROOT / "packages/tool-state/source/tools/edit/preview_rebuild.d")),
 }
 def preview_image_gate(s):
     return all(x in s["preview"] for x in (
@@ -2949,7 +2950,7 @@ for label, path, cls, kernel, identity in (
     ("Reduction", "edit/reduce.d", "ReductionTool", "ed.reduceToTarget(keep, pb_)",
      "memcmp(&ratio, &other.ratio, float.sizeof) == 0"),
 ):
-    sources = {"tool": (ROOT / "source/tools" / path).read_text()}
+    sources = {"tool": read_source_text((ROOT / "source/tools" / path))}
     gate = state_param_gate(cls, kernel, identity)
     if not gate(sources):
         fail(f"{label} onParamChanged prepared contract drift")
@@ -2966,7 +2967,7 @@ for label, path, cls, kernel, identity in (
 
 # Slice's parameter image is state only too; it names the axis latch.
 slice_param_sources = {
-    "tool": (ROOT / "source/tools/slice/slice_tool.d").read_text(),
+    "tool": read_source_text((ROOT / "source/tools/slice/slice_tool.d")),
 }
 SLICE_PARAM_REGION = ("final PreparedSliceParamImage buildPreparedParamUpdate",
                       "// Tool Properties param edit")
@@ -2992,7 +2993,7 @@ mutate_param_region("Slice", slice_param_sources, slice_param_gate, (
 ), {"tool": SLICE_PARAM_REGION})
 
 slice_deactivate_sources = {
-    "tool": (ROOT / "source/tools/slice/slice_tool.d").read_text(),
+    "tool": read_source_text((ROOT / "source/tools/slice/slice_tool.d")),
     "owner": prepared_module_source("prepared_slice_deactivate"),
     "context": record_context,
     "effect": prepared_module_source("prepared_tool_effect"),
@@ -3081,7 +3082,7 @@ for target, old, new, label in (
         fail(f"Slice deactivate mutation did not RED: {label}")
 
 edge_slice_deactivate_sources = {
-    "tool": (ROOT / "source/tools/slice/edge_slice_tool.d").read_text(),
+    "tool": read_source_text((ROOT / "source/tools/slice/edge_slice_tool.d")),
     "owner": prepared_module_source("prepared_edge_slice_deactivate"),
     "context": record_context,
     "effect": prepared_module_source("prepared_tool_effect"),
@@ -3137,7 +3138,7 @@ for target, old, new, label in (
         fail(f"Edge Slice deactivate mutation did not RED: {label}")
 
 loop_slice_deactivate_sources = {
-    "tool": (ROOT / "source/tools/slice/loop_slice_tool.d").read_text(),
+    "tool": read_source_text((ROOT / "source/tools/slice/loop_slice_tool.d")),
     "owner": prepared_module_source("prepared_loop_slice_deactivate"),
     "context": record_context,
     "effect": edge_slice_deactivate_sources["effect"],
@@ -3203,7 +3204,7 @@ for target, old, new, label in (
 
 edge_slice_param_sources = {
     "tool": edge_slice_deactivate_sources["tool"],
-    "history": (ROOT / "packages/command-runtime/source/command_history.d").read_text(),
+    "history": read_source_text((ROOT / "packages/command-runtime/source/command_history.d")),
     "effect": edge_slice_deactivate_sources["effect"],
 }
 def edge_slice_param_gate(s):
@@ -3244,7 +3245,7 @@ mutate_param_region("Edge Slice", edge_slice_param_sources, edge_slice_param_gat
     "history": ("PreparedHistoryResult prepareInvalidateRedo", "ulong prepareNextRun")})
 
 loop_slice_param_sources = {
-    "tool": (ROOT / "source/tools/slice/loop_slice_tool.d").read_text(),
+    "tool": read_source_text((ROOT / "source/tools/slice/loop_slice_tool.d")),
     "effect": edge_slice_deactivate_sources["effect"],
 }
 def loop_slice_param_gate(s):
@@ -3276,7 +3277,7 @@ mutate_param_region("Loop Slice", loop_slice_param_sources, loop_slice_param_gat
              "override void onParamChanged")})
 
 edge_extend_param_sources = {
-    "tool": (ROOT / "source/tools/edit/edge_extend.d").read_text(),
+    "tool": read_source_text((ROOT / "source/tools/edit/edge_extend.d")),
     "effect": edge_slice_deactivate_sources["effect"],
 }
 def edge_extend_param_gate(s):
@@ -3307,12 +3308,12 @@ mutate_param_region("Edge Extend", edge_extend_param_sources, edge_extend_param_
              "override void onParamChanged")})
 
 edge_extend_deactivate_sources = {
-    "tool": (ROOT / "source/tools/edit/edge_extend.d").read_text(),
+    "tool": read_source_text((ROOT / "source/tools/edit/edge_extend.d")),
     "owner": prepared_module_source("prepared_edge_extend_deactivate"),
     "context": record_context,
-    "xfrm": (ROOT / "source/tools/transform/xfrm_transform.d").read_text(),
-    "transform": (ROOT / "source/tools/transform/transform.d").read_text(),
-    "scale": (ROOT / "source/tools/transform/scale.d").read_text(),
+    "xfrm": read_source_text((ROOT / "source/tools/transform/xfrm_transform.d")),
+    "transform": read_source_text((ROOT / "source/tools/transform/transform.d")),
+    "scale": read_source_text((ROOT / "source/tools/transform/scale.d")),
     "effect": edge_slice_deactivate_sources["effect"],
 }
 def edge_extend_deactivate_gate(s):
@@ -3389,11 +3390,11 @@ for target, old, new, label in (
 # products. Its closed projection preserves each leaf's resetSession law and
 # installs private state -> legacy-init GL header -> NoHistory atomically.
 primitive_activation_sources = {
-    "base": (ROOT / "source/tools/create/primitive_create_tool.d").read_text(),
+    "base": read_source_text((ROOT / "source/tools/create/primitive_create_tool.d")),
     "private": prepared_module_source("prepared_private_state"),
-    "sphere": (ROOT / "source/tools/create/sphere.d").read_text(),
-    "torus": (ROOT / "source/tools/create/torus.d").read_text(),
-    "tube": (ROOT / "source/tools/create/tube.d").read_text(),
+    "sphere": read_source_text((ROOT / "source/tools/create/sphere.d")),
+    "torus": read_source_text((ROOT / "source/tools/create/torus.d")),
+    "tube": read_source_text((ROOT / "source/tools/create/tube.d")),
 }
 def primitive_activation_gate(s):
     start = s["base"].find("final PreparedSessionActivateEffect prepareActivate(")
@@ -3486,9 +3487,9 @@ for name, old, new, label in (
 # Exact StrokeExtrude activation: a deep cage snapshot plus fixed session
 # reset, followed by NoHistory. Production activate stays legacy until cutover.
 stroke_activation_owner = prepared_module_source("prepared_stroke_extrude_activation")
-stroke_activation_tool = (ROOT /
-    "source/tools/deform/stroke_extrude_tool.d").read_text()
-stroke_activation_snapshot = (ROOT / "packages/mesh-snapshot/source/snapshot.d").read_text()
+stroke_activation_tool = read_source_text((ROOT /
+    "source/tools/deform/stroke_extrude_tool.d"))
+stroke_activation_snapshot = read_source_text((ROOT / "packages/mesh-snapshot/source/snapshot.d"))
 stroke_snapshot_match_checks = (
     "vertices != mesh.vertices", "edges != mesh.edges",
     "vertexMarks != mesh.vertexMarks", "edgeMarks != mesh.edgeMarks",
@@ -3614,8 +3615,8 @@ for check in stroke_snapshot_match_checks:
 # Exact VertexMerge activation: full cage baseline plus the four-field legacy
 # reset, followed by NoHistory. The production hook remains frozen for cutover.
 vertex_merge_activation_owner = prepared_module_source("prepared_vertex_merge_activation")
-vertex_merge_activation_tool = (ROOT /
-    "source/tools/edit/vert_merge_tool.d").read_text()
+vertex_merge_activation_tool = read_source_text((ROOT /
+    "source/tools/edit/vert_merge_tool.d"))
 def vertex_merge_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
@@ -3700,8 +3701,8 @@ for target, old, new, label in (
 # Exact PolyInset activation uses the same deep-baseline atomic grammar, but
 # its closed product/reset/effect are independently mutation-proven.
 poly_inset_activation_owner = prepared_module_source("prepared_poly_inset_activation")
-poly_inset_activation_tool = (ROOT /
-    "source/tools/edit/poly_inset_tool.d").read_text()
+poly_inset_activation_tool = read_source_text((ROOT /
+    "source/tools/edit/poly_inset_tool.d"))
 def poly_inset_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
@@ -3789,8 +3790,8 @@ for target, old, new, label in (
 # frame. Pin both the atomic snapshot grammar and the shared legacy/prepared
 # formula so a cutover cannot silently move the handle or its extrusion axis.
 poly_extrude_activation_owner = prepared_module_source("prepared_poly_extrude_activation")
-poly_extrude_activation_tool = (ROOT /
-    "source/tools/edit/poly_extrude.d").read_text()
+poly_extrude_activation_tool = read_source_text((ROOT /
+    "source/tools/edit/poly_extrude.d"))
 def poly_extrude_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
@@ -3936,8 +3937,8 @@ for target, old, new, label in (
 # Exact SmoothShift activation owns the cage baseline and its five-vector
 # selection frame while preserving all five preset/sticky parameter fields.
 smooth_shift_activation_owner = prepared_module_source("prepared_smooth_shift_activation")
-smooth_shift_activation_tool = (ROOT /
-    "source/tools/deform/smooth_shift_tool.d").read_text()
+smooth_shift_activation_tool = read_source_text((ROOT /
+    "source/tools/deform/smooth_shift_tool.d"))
 def smooth_shift_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
@@ -4079,10 +4080,10 @@ for target, old, new, label in (
 # Exact EdgeBevel activation also resets its private PreviewRebuild scratch;
 # that destructive release belongs only to install, never detached prepare.
 edge_bevel_activation_owner = prepared_module_source("prepared_edge_bevel_activation")
-edge_bevel_activation_tool = (ROOT /
-    "source/tools/edit/edge_bevel.d").read_text()
-preview_rebuild_source = (ROOT /
-    "packages/tool-state/source/tools/edit/preview_rebuild.d").read_text()
+edge_bevel_activation_tool = read_source_text((ROOT /
+    "source/tools/edit/edge_bevel.d"))
+preview_rebuild_source = read_source_text((ROOT /
+    "packages/tool-state/source/tools/edit/preview_rebuild.d"))
 def edge_bevel_activation_gate(owner, context, tool, preview):
     po = without_unittests(owner); pt = without_unittests(tool)
     start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
@@ -4253,8 +4254,8 @@ for target, old, new, label in (
 # Exact PolyBevel activation detaches the undo baseline and polygon gizmo
 # frame while preserving the user's group/segments/square presets.
 poly_bevel_activation_owner = prepared_module_source("prepared_poly_bevel_activation")
-poly_bevel_activation_tool = (ROOT /
-    "source/tools/edit/poly_bevel.d").read_text()
+poly_bevel_activation_tool = read_source_text((ROOT /
+    "source/tools/edit/poly_bevel.d"))
 def poly_bevel_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
@@ -4391,8 +4392,8 @@ for target, old, new, label in (
 # Exact VertexBevel activation owns its detached baseline and vertex-normal
 # gizmo frame; prepare must not touch any live session field.
 vertex_bevel_activation_owner = prepared_module_source("prepared_vertex_bevel_activation")
-vertex_bevel_activation_tool = (ROOT /
-    "source/tools/edit/vertex_bevel_tool.d").read_text()
+vertex_bevel_activation_tool = read_source_text((ROOT /
+    "source/tools/edit/vertex_bevel_tool.d"))
 def vertex_bevel_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
@@ -4518,8 +4519,8 @@ for target, old, new, label in (
 # Exact VertexExtrude activation detaches the baseline and the two-axis
 # vertex-normal frame while preserving every drag/viewport field.
 vertex_extrude_activation_owner = prepared_module_source("prepared_vertex_extrude_activation")
-vertex_extrude_activation_tool = (ROOT /
-    "source/tools/edit/vertex_extrude_tool.d").read_text()
+vertex_extrude_activation_tool = read_source_text((ROOT /
+    "source/tools/edit/vertex_extrude_tool.d"))
 def vertex_extrude_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
@@ -4651,8 +4652,8 @@ for target, old, new, label in (
         fail(f"VertexExtrude activation mutation did not RED: {label}")
 
 edge_extrude_activation_owner = prepared_module_source("prepared_edge_extrude_activation")
-edge_extrude_activation_tool = (ROOT /
-    "source/tools/edit/edge_extrude.d").read_text()
+edge_extrude_activation_tool = read_source_text((ROOT /
+    "source/tools/edit/edge_extrude.d"))
 def edge_extrude_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
@@ -4789,8 +4790,8 @@ for target, old, new, label in (
         fail(f"EdgeExtrude activation mutation did not RED: {label}")
 
 edge_slice_activation_owner = prepared_module_source("prepared_edge_slice_activation")
-edge_slice_activation_tool = (ROOT /
-    "source/tools/slice/edge_slice_tool.d").read_text()
+edge_slice_activation_tool = read_source_text((ROOT /
+    "source/tools/slice/edge_slice_tool.d"))
 def edge_slice_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
@@ -4892,8 +4893,8 @@ for target, old, new, label in (
         fail(f"EdgeSlice activation mutation did not RED: {label}")
 
 loop_slice_activation_owner = prepared_module_source("prepared_loop_slice_activation")
-loop_slice_activation_tool = (ROOT /
-    "source/tools/slice/loop_slice_tool.d").read_text()
+loop_slice_activation_tool = read_source_text((ROOT /
+    "source/tools/slice/loop_slice_tool.d"))
 def loop_slice_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     bs = pt.find("final PreparedLoopSliceActivationImage buildPreparedActivation(")
@@ -4992,7 +4993,7 @@ for target, old, new, label in (
         fail(f"LoopSlice activation mutation did not RED: {label}")
 
 slice_activation_owner = prepared_module_source("prepared_slice_activation")
-slice_activation_tool = (ROOT / "source/tools/slice/slice_tool.d").read_text()
+slice_activation_tool = read_source_text((ROOT / "source/tools/slice/slice_tool.d"))
 def slice_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     bs = pt.find("final PreparedSliceActivationImage buildPreparedActivation(")
@@ -5083,7 +5084,7 @@ for target, old, new, label in (
         fail(f"Slice activation mutation did not RED: {label}")
 
 tack_activation_owner = prepared_module_source("prepared_tack_activation")
-tack_activation_tool = (ROOT / "source/tools/edit/tack.d").read_text()
+tack_activation_tool = read_source_text((ROOT / "source/tools/edit/tack.d"))
 def tack_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     bs = pt.find("final PreparedTackActivationImage buildPreparedActivation(")
@@ -5180,7 +5181,7 @@ for target, old, new, label in (
 command_wrapper_activation_owner = \
     prepared_module_source("prepared_command_wrapper_activation")
 command_wrapper_activation_tool = \
-    (ROOT / "source/tools/common/command_wrapper.d").read_text()
+    read_source_text((ROOT / "source/tools/common/command_wrapper.d"))
 def command_wrapper_activation_gate(owner, context, tool):
     return (has_prepared_token_pair(owner, "CommandWrapperActivation") and
         has_final_class(owner, "PreparedCommandWrapperActivationOwner") and
@@ -5234,7 +5235,7 @@ for target, old, new, label in (
         fail(f"CommandWrapper activation mutation did not RED: {label}")
 
 bridge_activation_owner = prepared_module_source("prepared_bridge_activation")
-bridge_activation_tool = (ROOT / "source/tools/edit/bridge_tool.d").read_text()
+bridge_activation_tool = read_source_text((ROOT / "source/tools/edit/bridge_tool.d"))
 def bridge_activation_gate(owner, context, tool, gpu):
     gpu_block = from_text_anchor(gpu, "final class GpuCreateUploadOwner")
     activation_block = before_declaration(
@@ -5312,7 +5313,7 @@ for target, old, new, label in (
         fail(f"Bridge activation mutation did not RED: {label}")
 
 mirror_activation_owner = prepared_module_source("prepared_mirror_activation")
-mirror_activation_tool = (ROOT / "source/tools/alignment/mirror.d").read_text()
+mirror_activation_tool = read_source_text((ROOT / "source/tools/alignment/mirror.d"))
 def mirror_activation_gate(owner, context, tool):
     # Task 7116: the activation image is baseline + mask + params only; no
     # detached preview mesh and no GPU arm (the copy is a live edit of the
@@ -5539,7 +5540,7 @@ for target, old, new, label in (
     if bridge_deactivate_producer_gate(t, e):
         fail(f"Bridge deactivation producer mutation did not RED: {label}")
 
-box_deactivate_tool = (ROOT / "source/tools/create/box.d").read_text()
+box_deactivate_tool = read_source_text((ROOT / "source/tools/create/box.d"))
 box_deactivate_owner = prepared_module_source("prepared_private_state")
 box_deactivate_effect = prepared_module_source("prepared_tool_effect")
 def box_deactivate_gate(tool, owner, effect):
@@ -5624,7 +5625,7 @@ for target, old, new, label in (
     if box_deactivate_gate(t, o, e):
         fail(f"Box deactivation mutation did not RED: {label}")
 
-pen_deactivate_tool = (ROOT / "source/tools/create/pen.d").read_text()
+pen_deactivate_tool = read_source_text((ROOT / "source/tools/create/pen.d"))
 pen_deactivate_owner = prepared_module_source("prepared_private_state")
 pen_deactivate_effect = prepared_module_source("prepared_tool_effect")
 def pen_deactivate_gate(tool, owner, effect, context, handlers):
@@ -5685,7 +5686,7 @@ def pen_deactivate_gate(tool, owner, effect, context, handlers):
             body.find("context.prepareUpload(previewEmptyUpload, emptyPreview)") <
             body.find("context.prepareDestroy(previewDestroy)") and
         "PreparedDeactivateKind.Pen, historyPrepared, ok);" in body)
-handler_shapes_for_pen = (ROOT / "source/handles/shapes.d").read_text()
+handler_shapes_for_pen = read_source_text((ROOT / "source/handles/shapes.d"))
 if not pen_deactivate_gate(pen_deactivate_tool, pen_deactivate_owner,
         pen_deactivate_effect, record_context, handler_shapes_for_pen):
     fail("Pen deactivation prepared contract drift")
@@ -5727,7 +5728,7 @@ for target, old, new, label in (
     if pen_deactivate_gate(t, o, e, record_context, handler_shapes_for_pen):
         fail(f"Pen deactivation mutation did not RED: {label}")
 
-primitive_deactivate_tool = (ROOT / "source/tools/create/primitive_create_tool.d").read_text()
+primitive_deactivate_tool = read_source_text((ROOT / "source/tools/create/primitive_create_tool.d"))
 primitive_deactivate_owner = prepared_module_source("prepared_private_state")
 primitive_deactivate_effect = prepared_module_source("prepared_tool_effect")
 def primitive_deactivate_gate(tool, owner, effect):
@@ -5807,7 +5808,7 @@ for target, old, new, label in (
     if primitive_deactivate_gate(t, o, e):
         fail(f"Primitive deactivation mutation did not RED: {label}")
 
-topology_update_tool = (ROOT / "source/tools/edit/topology_pen/tool.d").read_text()
+topology_update_tool = read_source_text((ROOT / "source/tools/edit/topology_pen/tool.d"))
 topology_update_owner = prepared_module_source("prepared_topology_pen_update")
 topology_update_effect = prepared_module_source("prepared_tool_effect")
 def topology_update_gate(tool, owner, context, effect):
@@ -5906,8 +5907,8 @@ for target, old, new, label in (
 
 edge_extend_tool_activation_owner = prepared_module_source(
     "prepared_edge_extend_tool_activation")
-edge_extend_tool_activation_tool = (
-    ROOT / "source/tools/edit/edge_extend.d").read_text()
+edge_extend_tool_activation_tool = read_source_text((
+    ROOT / "source/tools/edit/edge_extend.d"))
 def edge_extend_tool_activation_gate(owner, context, tool):
     return (has_prepared_token_pair(owner, "EdgeExtendToolActivationPre") and
         has_prepared_token_pair(owner, "EdgeExtendToolActivationPost") and
@@ -5991,12 +5992,12 @@ for target, old, new, label in (
 
 topology_pen_activation_owner = prepared_module_source(
     "prepared_topology_pen_activation")
-topology_pen_activation_tool = (
-    ROOT / "source/tools/edit/topology_pen/tool.d").read_text()
-topology_pen_snap = (ROOT / "packages/pipe-evaluation/source/toolpipe/stages/snap.d").read_text()
-topology_pen_constrain = (ROOT / "packages/pipe-evaluation/source/toolpipe/stages/constrain.d").read_text()
-topology_pen_pipeline = (ROOT / "packages/pipe-runtime/source/toolpipe/pipeline.d").read_text()
-topology_pen_popup = (ROOT / "packages/pipe-evaluation/source/toolpipe/state_paths.d").read_text()
+topology_pen_activation_tool = read_source_text((
+    ROOT / "source/tools/edit/topology_pen/tool.d"))
+topology_pen_snap = read_source_text((ROOT / "packages/pipe-evaluation/source/toolpipe/stages/snap.d"))
+topology_pen_constrain = read_source_text((ROOT / "packages/pipe-evaluation/source/toolpipe/stages/constrain.d"))
+topology_pen_pipeline = read_source_text((ROOT / "packages/pipe-runtime/source/toolpipe/pipeline.d"))
+topology_pen_popup = read_source_text((ROOT / "packages/pipe-evaluation/source/toolpipe/state_paths.d"))
 def topology_pen_activation_gate(owner, context, tool, snap, constrain,
                                  pipeline, popup):
     activation_start = tool.find(
@@ -6095,14 +6096,14 @@ for target, old, new, label in (
 b5d1_sources = {
     "owner": prepared_module_source("prepared_private_state"),
     "context": record_context,
-    "document": (ROOT / "packages/document-model/source/document.d").read_text(),
-    "primitive": (ROOT / "source/tools/create/primitive_create_tool.d").read_text(),
-    "sphere": (ROOT / "source/tools/create/sphere.d").read_text(),
+    "document": read_source_text((ROOT / "packages/document-model/source/document.d")),
+    "primitive": read_source_text((ROOT / "source/tools/create/primitive_create_tool.d")),
+    "sphere": read_source_text((ROOT / "source/tools/create/sphere.d")),
 }
 primitive_products = sorted(
     str(p.relative_to(ROOT)) for p in (ROOT / "source/tools/create").glob("*.d")
     if re.search(r"final class \w+\s*:\s*(?:PrimitiveCreateTool|HandledCreateTool|SizedRadialCreateTool)",
-                 p.read_text()))
+                 read_source_text(p)))
 expected_primitive_products = [
     "source/tools/create/capsule.d", "source/tools/create/cone.d",
     "source/tools/create/cylinder.d", "source/tools/create/sphere.d",
@@ -6160,8 +6161,8 @@ for name, old, new, label in (
     mutant = dict(b5d1_sources); mutant[name] = mutant[name].replace(old, new, 1)
     if mutant[name] == b5d1_sources[name] or b5d1_gate(mutant):
         fail(f"P1.0b.5d.1 named mutation did not RED: {label}")
-for path in (path for sub in ('source/tools', 'packages/tool-state/source/tools', 'packages/transform-ops/source/tools', 'packages/creation-ops/source/tools', 'packages/alignment-ops/source/tools') for path in (ROOT / sub).rglob("*.d")):
-    body = path.read_text()
+for path in (path for sub in ('source/tools', 'packages/tool-state/source/tools', 'packages/transform-ops/source/tools', 'packages/creation-ops/source/tools', 'packages/alignment-ops/source/tools') for path in logical_source_paths((ROOT / sub), "*.d")):
+    body = read_source_text(path)
     if (".preparePrivateState(" in body or ".prepareMeshImageCommit(" in body) and \
             path.relative_to(ROOT).as_posix() not in {
                 "source/tools/create/arc.d",
@@ -6207,14 +6208,14 @@ for old, new, label in (
 b5e_owner = prepared_module_source("prepared_private_state")
 b5e_context = record_context
 b5e_tools = {
-    name: (ROOT / path).read_text() for name, path in {
+    name: read_source_text((ROOT / path)) for name, path in {
         "array": "source/tools/alignment/array_tool.d",
         "clone": "source/tools/alignment/clone_tool.d",
         "magnet": "source/tools/deform/magnet.d",
         "reduction": "source/tools/edit/reduce.d",
     }.items()
 }
-b5e_snapshot = (ROOT / "packages/mesh-snapshot/source/snapshot.d").read_text()
+b5e_snapshot = read_source_text((ROOT / "packages/mesh-snapshot/source/snapshot.d"))
 def b5e_gate(owner, context, sources, snapshot=b5e_snapshot):
     return (all(kind in owner for kind in
                 ("ArraySession", "CloneSession", "MagnetSession", "ReductionSession")) and
@@ -6320,7 +6321,7 @@ for name, source in b5e_tools.items():
 # P1.0b.5g isolated closed Radial Sweep selection/profile session owner.
 b5g_owner = prepared_module_source("prepared_selection_profile")
 b5g_image = prepared_module_source("prepared_selection_profile_image")
-b5g_tool = (ROOT / "source/tools/alignment/radial_sweep_tool.d").read_text()
+b5g_tool = read_source_text((ROOT / "source/tools/alignment/radial_sweep_tool.d"))
 def b5g_gate(owner, image, context, tool):
     forbidden = ("void*", "delegate", "function(", "Variant", "ubyte[] payload")
     return (not any(x in without_unittests(owner) for x in forbidden) and
@@ -6583,8 +6584,8 @@ for target, old, new, label in (
     else: context = context.replace(old, new, 1)
     if (target == "gpu" and pos < 0) or combined_upload_gate(gpu, context):
         fail(f"combined GPU create-upload mutation did not RED: {label}")
-for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (ROOT / sub).rglob("*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
-    caller_text = path.read_text()
+for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((ROOT / sub), "*.d")), ROOT / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', ROOT / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', ROOT / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', ROOT / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', ROOT / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', ROOT / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
+    caller_text = read_source_text(path)
     caller_module = source_module_name(path, caller_text)
     if caller_module in ("mesh_gpu", "prepared_record_context",
                          "tools.alignment.radial_sweep_tool",
@@ -6596,7 +6597,7 @@ for path in (*(path for sub in ('source', 'packages/alignment-ops/source', 'pack
 # activate/deactivate private projections for later producers; topology/GPU/
 # history remain separate reviewed effects and the ledger is unchanged here.
 radial_array_owner = prepared_module_source("prepared_radial_array_transition")
-radial_array_tool = (ROOT / "source/tools/alignment/radial_array_tool.d").read_text()
+radial_array_tool = read_source_text((ROOT / "source/tools/alignment/radial_array_tool.d"))
 def radial_array_owner_gate(owner, context, tool):
     production = without_unittests(owner)
     return (has_final_class(owner, "PreparedRadialArrayTransitionOwner") and
@@ -6731,11 +6732,11 @@ for hook in ("override void activate()", "override void deactivate()",
 # Isolated shared activation projection for the exact registered LinearAlign
 # and RadialAlign products. No producer/hook calls it yet.
 transform_activation_owner = prepared_module_source("prepared_transform_activation")
-transform_tool = (ROOT / "source/tools/transform/transform.d").read_text()
-linear_align_tool = (ROOT / "source/tools/alignment/linear_align_tool.d").read_text()
-radial_align_tool = (ROOT / "source/tools/alignment/radial_align_tool.d").read_text()
-bend_tool = (ROOT / "source/tools/deform/bend.d").read_text()
-push_tool = (ROOT / "source/tools/deform/push.d").read_text()
+transform_tool = read_source_text((ROOT / "source/tools/transform/transform.d"))
+linear_align_tool = read_source_text((ROOT / "source/tools/alignment/linear_align_tool.d"))
+radial_align_tool = read_source_text((ROOT / "source/tools/alignment/radial_align_tool.d"))
+bend_tool = read_source_text((ROOT / "source/tools/deform/bend.d"))
+push_tool = read_source_text((ROOT / "source/tools/deform/push.d"))
 def transform_activation_gate(owner, context, tool):
     production = without_unittests(owner)
     builder_projection = (
@@ -6866,7 +6867,7 @@ for path, aggregate in (("tools/transform/transform.d", "TransformTool"),
                         ("tools/alignment/radial_align_tool.d", "RadialAlignTool"),
                         ("tools/deform/bend.d", "BendTool"),
                         ("tools/deform/push.d", "PushTool")):
-    source = (ROOT / "source" / path).read_text()
+    source = read_source_text((ROOT / "source" / path))
     start = source.find("override void activate()")
     body_start = source.find("{", start) + 1
     body = source[body_start:balanced_source(source, body_start)-1]
@@ -6877,7 +6878,7 @@ for path, aggregate in (("tools/transform/transform.d", "TransformTool"),
 # Wrapper-owned Xfrm activation reset image. This is intentionally only the
 # pre/post value projection: enabled sub-products and prepared history are not
 # yet composed, so the Xfrm/Transform declaration rows remain deferred.
-xfrm_activation_reset = (ROOT / "source/tools/transform/xfrm_transform.d").read_text()
+xfrm_activation_reset = read_source_text((ROOT / "source/tools/transform/xfrm_transform.d"))
 def xfrm_activation_reset_gate(source, transform):
     prepared_bodies = ""
     bodies = []
@@ -7109,9 +7110,9 @@ for target, old, new, label in (
 # Exact Move/Rotate/Scale activation owner infrastructure. Xfrm is excluded:
 # its activation owns subtool wiring and history-run lifecycle beyond this image.
 transform_product_owner = prepared_module_source("prepared_transform_product_activation")
-move_tool = (ROOT / "source/tools/transform/move.d").read_text()
-rotate_tool = (ROOT / "source/tools/transform/rotate.d").read_text()
-scale_tool = (ROOT / "source/tools/transform/scale.d").read_text()
+move_tool = read_source_text((ROOT / "source/tools/transform/move.d"))
+rotate_tool = read_source_text((ROOT / "source/tools/transform/rotate.d"))
+scale_tool = read_source_text((ROOT / "source/tools/transform/scale.d"))
 def transform_product_gate(owner, context, move, rotate, scale):
     production = without_unittests(owner)
     return (has_final_class(owner, "PreparedTransformProductActivationOwner") and
@@ -7492,7 +7493,7 @@ for target, old, new, label in (
 # Xfrm update tail is the fixed final phase after the typed T/R/S owners:
 # subject cache -> shared pose -> wrapper GPU projection.
 xfrm_tail_owner = prepared_module_source("prepared_xfrm_update_tail")
-xfrm_tail_handles = (ROOT / "source/tools/transform/xfrm_handles.d").read_text()
+xfrm_tail_handles = read_source_text((ROOT / "source/tools/transform/xfrm_handles.d"))
 def xfrm_update_tail_gate(owner, context, xfrm, handles):
     production = without_unittests(owner)
     prepared_handles_start = text_anchor(
@@ -7563,8 +7564,8 @@ for target, old, new, label in (
         fail(f"Xfrm update tail mutation did not RED: {label}")
 
 xfrm_close_owner = prepared_module_source("prepared_xfrm_update_edit_close")
-xfrm_transform_base = (ROOT / "source/tools/transform/transform.d").read_text()
-xfrm_item_source = (ROOT / "source/tools/transform/xfrm_item.d").read_text()
+xfrm_transform_base = read_source_text((ROOT / "source/tools/transform/transform.d"))
+xfrm_item_source = read_source_text((ROOT / "source/tools/transform/xfrm_item.d"))
 def xfrm_update_edit_close_gate(owner, context, xfrm, base, item):
     production = without_unittests(owner)
     def method(source, signature):
@@ -8377,13 +8378,13 @@ def p10c_door_capability_gate(context, sources, xfrm):
         "override bool prepareDoorActivate(" in xfrm and
         "return prepareActivate(context).accepted;" in xfrm)
 
-door_sources = {p: (ROOT / p).read_text() for p in
+door_sources = {p: read_source_text((ROOT / p)) for p in
     set(simple_door_clients) | set(private_state_door_clients) |
     set(cutting_door_clients) | set(gpu_layer_door_clients) |
     set(vertex_door_clients) | set(typed_context_door_clients) |
     set(resource_lifecycle_door_clients) | set(alignment_door_clients) |
     set(create_bridge_door_clients)}
-door_xfrm = (ROOT / "source/tools/transform/xfrm_transform.d").read_text()
+door_xfrm = read_source_text((ROOT / "source/tools/transform/xfrm_transform.d"))
 if not p10c_door_capability_gate(record_context, door_sources, door_xfrm):
     fail("P1.0c prepared door capability tranche drift")
 for target, old, new, label in (

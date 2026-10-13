@@ -81,7 +81,8 @@ module tests.unit.tool_commit_seam_census_g5_test;
 import std.algorithm : sort;
 import std.array     : appender;
 import std.conv      : to;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.path      : baseName, buildPath, dirName;
 import std.string    : indexOf, startsWith;
 
@@ -398,7 +399,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

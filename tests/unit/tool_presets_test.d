@@ -153,7 +153,8 @@ unittest {
 }
 
 unittest { // Pin the real generic factory writer and the arm-time seal.
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.algorithm : count, canFind;
     import std.string : indexOf;
     const factory = readText("source/tool_presets.d");

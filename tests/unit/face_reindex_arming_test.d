@@ -43,7 +43,8 @@ import mesh_edge_slice : splitFaceByVertices;
 
 import std.algorithm.sorting   : sort;
 import std.array               : join, split;
-import std.file                : readText, exists, isDir, dirEntries, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : readText = wave15ReadText, exists = wave15Exists, isDir = wave15IsDir, dirEntries = wave15DirEntries;
 import std.format              : format;
 import std.path                : buildPath, dirName, relativePath;
 import std.string              : indexOf, strip, startsWith;
@@ -1496,7 +1497,8 @@ private string[] productionSourceTree()
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

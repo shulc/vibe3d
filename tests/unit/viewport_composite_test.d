@@ -100,7 +100,8 @@ unittest { // positive control [E5]: the predicate rejects each illegal shape
 
 unittest { // census: every bind / attachment in viewport_composite.d goes through the two target functions
     import std.algorithm : canFind, count;
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath, dirName;
     import std.regex : ctRegex, matchAll;
     import std.string : indexOf;
@@ -208,7 +209,8 @@ unittest { // S3a census: the one production run call passes the cell's tap dist
     // `curvatureTapPx(v.fbo.w, v.camera.width)` from a literal 1: the
     // production argument is pinned as text (the function itself above).
     import std.algorithm : count;
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath, dirName;
     import std.regex : ctRegex, matchAll;
     import std.string : indexOf;

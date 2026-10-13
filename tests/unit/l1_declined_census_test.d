@@ -59,12 +59,17 @@
 // `./run_test.d`). See the task card (2230) for the verbatim messages.
 // ===========================================================================
 module tests.unit.l1_declined_census_test;
+
+import tests.unit.census_symbols : wave15InputsIntact;
+
 import mesh_edit_replay : apply, revert;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : startsWith;
-import std.file   : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.path   : buildPath, dirName;
 import std.string : splitLines;
@@ -201,7 +206,8 @@ unittest // GATE S1 — no recorder call in sets.d
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -282,7 +288,8 @@ unittest // GATE S2 — the dense captures the declarations promise are still th
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -314,7 +321,7 @@ unittest // GATE S2 — the dense captures the declarations promise are still th
 
     }
     const bad = reconcile(kSetsDense, hits);
-    assert(bad.length == 0, format("L1 dense-capture symbol ledger changed:%s", bad));
+    assert((bad.length == 0) && wave15InputsIntact(), format("L1 dense-capture symbol ledger changed:%s", bad));
     assert(hits.length == 19,
         format("L1 dense-capture population changed: expected 19, found %d", hits.length));
 

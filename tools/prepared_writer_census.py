@@ -31,6 +31,7 @@ def _mask_comments(text):
 # CONTRACT of the scanner it replaced (verbatim in tools/dspans/legacy_primitives.py).
 sys.path.insert(0, str(Path(__file__).resolve().parent / "dspans"))
 import dspans_client  # noqa: E402
+from census_contracts import read_source_text, logical_source_paths, physical_source_path, source_inputs_intact
 
 def _mask_unittests(text):
     """Blank every `unittest` block and braced `version(unittest)` branch."""
@@ -137,10 +138,10 @@ def module_path(root, *module_names):
     accepted = set(module_names)
     if root not in _MODULE_INDEX_CACHE:
         index = {}
-        for path in sorted(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (root / sub).rglob("*.d")):
+        for path in sorted(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((root / sub), "*.d")):
             # Module identity is a closed census, so its declaration cannot be
             # hidden by an arbitrary byte window (4051).
-            source = path.read_text(errors="replace")
+            source = read_source_text(path, errors="replace")
             head = re.search(r"^\s*module\s+([\w.]+)\s*;", source, re.M)
             if head:
                 index.setdefault(head.group(1), []).append(path)
@@ -174,7 +175,7 @@ def _domains(body):
     return word
 
 def _methods(path, names):
-    text = path.read_text()
+    text = read_source_text(path)
     module_match = re.search(r"^module\s+([\w.]+)\s*;", text, re.M)
     if not module_match: raise ValueError(f"missing module declaration: {path}")
     module = module_match.group(1)
@@ -227,7 +228,7 @@ def scan(root):
     # root gives 2 / 2 — the internal-publisher arm never fired, so a
     # publisher inside the transition module read as an unreviewed bypass.
     root = Path(root).resolve()
-    tool_files = sorted((path for sub in ('source/tools', 'packages/tool-state/source/tools', 'packages/transform-ops/source/tools', 'packages/creation-ops/source/tools', 'packages/alignment-ops/source/tools') for path in (root / sub).rglob("*.d")))
+    tool_files = sorted((path for sub in ('source/tools', 'packages/tool-state/source/tools', 'packages/transform-ops/source/tools', 'packages/creation-ops/source/tools', 'packages/alignment-ops/source/tools') for path in logical_source_paths((root / sub), "*.d")))
     hooks = []
     for p in [root / "source/tool.d", *tool_files]:
         hooks += _methods(p, ("activate", "update", "onParamChanged", "deactivate"))
@@ -245,7 +246,7 @@ def scan(root):
     assignment_count = 0
     for registration_source in registration_sources:
         try:
-            reg = registration_source.read_text()
+            reg = read_source_text(registration_source)
         except OSError as error:
             relative = registration_source.relative_to(root)
             raise ValueError(
@@ -331,7 +332,7 @@ def scan(root):
 
     # Runtime-generated preset ids are a production factory path too. Its
     # product is the product of the referenced base factory, not a new class.
-    presets = (root / "source/tool_presets.d").read_text()
+    presets = read_source_text((root / "source/tool_presets.d"))
     preset_assign = list(re.finditer(r"reg\.registerTool\(p\.id\s*,\s*typedPresetFactory\s*\);", presets))
     if len(preset_assign) != 1:
         raise ValueError("expected the single generated preset factory assignment")
@@ -356,7 +357,7 @@ def scan(root):
     # important production composition: Move/Rotate/Scale).
     classes = {}
     for path in [root / "source/tool.d", *tool_files]:
-        text = path.read_text()
+        text = read_source_text(path)
         module_match = re.search(r"^module\s+([\w.]+)\s*;", text, re.M)
         masked = _mask_comments(text)
         for cm in re.finditer(r"\bclass\s+(\w+)\s*(?::\s*([^\{]+))?\s*\{", masked):
@@ -370,7 +371,7 @@ def scan(root):
                                         _mask_comments(class_body)) is not None,
                                     "activation_row": _declares_activation_row(class_body)}
     by_id = {f["id"]: f for f in factories if not f["id"].startswith("<")}
-    preset_text = (root / "config/tool_presets.yaml").read_text()
+    preset_text = read_source_text((root / "config/tool_presets.yaml"))
     preset_bases = sorted(set(re.findall(r"^\s*base:\s*([^\s#]+)", preset_text, re.M)))
     unknown_bases = [base for base in preset_bases if base not in by_id]
     if unknown_bases: raise ValueError(f"preset base lacks factory descriptor: {unknown_bases}")
@@ -392,7 +393,7 @@ def scan(root):
     surfaces = []
     for path, symbol in ((root / "source/app.d", "activateToolById"),
                          (root / "source/commands/tool/set.d", "applyImpl")):
-        text = path.read_text()
+        text = read_source_text(path)
         match = re.search(r"\b" + symbol + r"\s*\([^;{}]*\)[^{;]*\{", _mask_comments(text))
         if not match: raise ValueError(f"legacy surface vanished: {symbol}")
         end = _balanced(text, match.end())
@@ -409,7 +410,7 @@ def scan(root):
     # The manifest keys this declaration by module identity. Keep the existing
     # logical spelling stable when the module moves into source/prepared/.
     transition_manifest_path = "source/prepared_tool_transition.d"
-    transition = _mask_comments(transition_path.read_text())
+    transition = _mask_comments(read_source_text(transition_path))
     classifier = re.search(
         r"\bbool\s+toolArmEmitsLifecycle\s*\([^;{}]*\)[^{;]*\{", transition)
     if not classifier:
@@ -452,8 +453,8 @@ def scan(root):
     # reviews. A pattern that matches nothing is normally a defect; this one
     # is a guard, and saying so is what makes the difference checkable.
     bypass_pattern = re.compile(r"\b(?:prepareArm|commitPreparedArm|prepareDrop|commitPreparedDrop|producePreparedEffects|installLegacyPreparedEffects)\s*\(")
-    for path in sorted((*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in (root / sub).rglob("*.d")), root / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', root / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', root / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', root / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', root / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', root / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', root / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', root / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', root / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d')):
-        text = _mask_comments(path.read_text())
+    for path in sorted((*(path for sub in ('source', 'packages/alignment-ops/source', 'packages/command-runtime/source', 'packages/application-core/source', 'packages/camera-model/source', 'packages/document-channels/source', 'packages/image-codec/source', 'packages/document-io/source', 'packages/document-model/source', 'packages/param-schema/source', 'packages/pipe-runtime/source', 'packages/creation-ops/source', 'packages/display-policy/source', 'packages/edit-contracts/source', 'packages/input-events/source', 'packages/interaction-query/source', 'packages/interchange/source', 'packages/mesh-change/source', 'packages/mesh-contracts/source', 'packages/mesh-edit-log/source', 'packages/mesh-edit-replay/source', 'packages/mesh-ops/source', 'packages/selection-model/source', 'packages/scene-query/source', 'packages/editor-commands/source', 'packages/mesh-snapshot/source', 'packages/mesh-topology/source', 'packages/mesh/source', 'packages/pipe-evaluation/source', 'packages/profiling/source', 'packages/spatial/source', 'packages/subpatch-preview/source', 'packages/tool-state/source', 'packages/transform-ops/source', 'packages/viewport-gpu/source', 'util/log/source', 'util/math/source', 'util/parallel/source', 'util/plane-bytes/source', 'util/screen-buckets/source', 'packages/pipe-contracts/source', 'packages/mesh-preview/source', 'util/json-number/source') for path in logical_source_paths((root / sub), "*.d")), root / 'packages/camera-model/tests/source/tests/unit/view_source_cells_test.d', root / 'packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d', root / 'packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d', root / 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', root / 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', root / 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', root / 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', root / 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', root / 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', root / 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d')):
+        text = _mask_comments(read_source_text(path))
         for match in bypass_pattern.finditer(text):
             row = {"path": transition_manifest_path if path == transition_path
                    else str(path.relative_to(root)),

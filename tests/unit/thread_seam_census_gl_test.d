@@ -4,7 +4,8 @@ import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
     isIdentChar;
 
 import std.algorithm : sort;
-import std.file : SpanMode, dirEntries, exists, readText, remove, tempDir;
+import std.file : SpanMode, remove, tempDir;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.format : format;
 import std.path : baseName, buildPath, dirName, relativePath;
 import std.process : Config, execute, thisProcessID;

@@ -31,7 +31,8 @@
 //     reason, the way the three current production entries are annotated.
 
 import std.regex : regex, matchFirst, Regex;
-import std.file  : dirEntries, SpanMode, readText, write, mkdirRecurse, rmdirRecurse, exists;
+import std.file : SpanMode, write, mkdirRecurse, rmdirRecurse;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText, exists = wave15Exists;
 import std.path  : buildPath, extension;
 import std.algorithm : sort, canFind, startsWith, count;
 import std.array  : array, replace;

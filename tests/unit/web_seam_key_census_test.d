@@ -25,7 +25,8 @@ module tests.unit.web_seam_key_census_test;
 
 import std.algorithm : canFind, filter, map, sum;
 import std.array     : array;
-import std.file      : dirEntries, SpanMode, readText, exists;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText, exists = wave15Exists;
 import std.path      : buildPath;
 import std.regex     : matchAll, regex;
 import std.string    : indexOf, count;
@@ -147,7 +148,8 @@ unittest // the browser seam key is exactly one identifier, and the alternative 
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

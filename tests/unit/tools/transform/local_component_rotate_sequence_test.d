@@ -1,6 +1,7 @@
 module tests.unit.tools.transform.local_component_rotate_sequence_test;
 
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.math : abs, PI, cos, sin;
 import std.format : format;

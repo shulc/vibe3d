@@ -1,12 +1,17 @@
 module tests.unit.ui.channels_panel_roles_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : count, sort;
 import core.exception : AssertError;
 import std.exception : assertThrown;
 import std.conv : to;
-import std.file : SpanMode, dirEntries, readText;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.range : walkLength;
 import std.regex : matchAll, regex;
@@ -873,7 +878,7 @@ unittest { // provider/model negative: a valid resolver may still return the wro
         "6503 provider/model negative floor: the valid resolver result was not accepted and stored");
     // The floor above reports "accepted a valid set"; this adjacent needle
     // reports the other half, "stored an item different from the model".
-    assert(!channelsProviderMatchesModel(state),
+    assert((!channelsProviderMatchesModel(state)) && wave15InputsIntact(),
         "6503 provider/model identity: the state accepted a valid identity set but stored a different member");
 }
 
@@ -899,7 +904,7 @@ unittest { // defensive miss: a failed resolver leaves no half-bound memo
         "6503 defensive miss floor: the index miss did not reach the null resolver result");
     // The floor above proves the defensive arm ran; this adjacent needle proves
     // its promised post-state, rather than merely counting its provider read.
-    assert(channelsFormProvider(state) is null,
+    assert((channelsFormProvider(state) is null) && wave15InputsIntact(),
         "6503 defensive miss: resolver failure left a half-bound provider in the memo");
 }
 
@@ -1115,7 +1120,7 @@ unittest { // M6a-d and the retired EditorApp path: production source census
     auto expectedStripPaths = ["source/ui/channel_rows.d",
                                "source/ui/channels_panel.d"];
     expectedStripPaths.sort;
-    assert(sortedStripPaths == expectedStripPaths,
+    assert((sortedStripPaths == expectedStripPaths) && wave15InputsIntact(),
         "6503 strip signal shape: the ledger does not name exactly the two owned files");
     foreach (path; expectedStripPaths) {
         size_t appearances;
@@ -1301,7 +1306,8 @@ unittest { // M6a-d and the retired EditorApp path: production source census
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

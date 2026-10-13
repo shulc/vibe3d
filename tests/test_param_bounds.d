@@ -42,6 +42,9 @@
 // was already in place; only the Param-layer bound was missing), so they now
 // satisfy Block A directly and are not allowlisted.
 
+
+
+import tests.unit.census_symbols : wave15InputsIntact;
 import http_client : testBaseUrl;
 import http_command_helpers : commandBody;
 import std.net.curl;
@@ -49,7 +52,8 @@ import std.json;
 import std.regex   : regex, matchFirst, matchAll;
 import std.conv     : to;
 import std.array    : join;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.algorithm : canFind;
 import std.datetime.stopwatch : StopWatch, AutoStart;
 
@@ -200,7 +204,7 @@ unittest { // BlockA_BornClampedContract
         "Block A: Bridge steps storage/schema changed — revisit its exemption");
     size_t stepsReferences;
     foreach (_; matchAll(bridgeSource, regex(`\b\w+\.steps\b`))) ++stepsReferences;
-    assert(stepsReferences == 2,
+    assert((stepsReferences == 2) && wave15InputsIntact(),
         "Block A: Bridge steps gained a consumer — require a kernel cap");
     foreach (section; ["commandParams", "toolParams"]) {
         auto steps = reg[section]["mesh.bridgeTool"].array;

@@ -6,9 +6,14 @@
 // hand-rolled copy; this reads the text.
 module tests.unit.falloff_plumbing_census_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
 
-import std.file      : dirEntries, readText, SpanMode;
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
+
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.regex     : regex, replaceAll;
@@ -47,7 +52,8 @@ private string[string] sourceCode() {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -86,8 +92,8 @@ unittest {
 
     // Negative needles: no retired copy beside a home's client.
     foreach (path; ["source/commands/mesh/magnet.d", "source/tools/deform/magnet.d"])
-        assert(countOccurrences(code[path], "FalloffType.Element") == 0
-               && countOccurrences(code[path], "ElementConnect.Ignore") == 0,
+        assert((countOccurrences(code[path], "FalloffType.Element") == 0
+               && countOccurrences(code[path], "ElementConnect.Ignore") == 0) && wave15InputsIntact(),
                path ~ ": a hand-built magnet sphere is back; use magnetElementPacket");
     size_t puts;
     foreach (path, text; code) puts += countOccurrences(text, "vts.put(&falloff_)");

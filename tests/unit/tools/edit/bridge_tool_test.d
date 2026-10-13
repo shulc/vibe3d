@@ -253,7 +253,8 @@ unittest {
 }
 
 unittest {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath, dirName;
     import std.string : indexOf;
     auto root = __FILE_FULL_PATH__.dirName.dirName.dirName.dirName.dirName;

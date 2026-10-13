@@ -1,5 +1,8 @@
 module tests.unit.morph_route_census_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 /// The files allowed to mention `MorphRoute`, repo-relative with `/`.
 private static immutable string[] morphRouteHomes = [
     "packages/transform-ops/source/tools/transform/morph_route.d",
@@ -27,7 +30,8 @@ version (unittest) {
     /// Every `.d` under `source/` whose text contains `MorphRoute`,
     /// repo-relative with `/` separators — the documented grep, in D.
     private string[] morphRouteHits(string root) {
-        import std.file      : dirEntries, exists, isDir, read, SpanMode;
+        import std.file : read, SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, isDir = wave15IsDir;
         import std.path      : buildPath, relativePath;
         import std.algorithm : canFind, sort;
         import std.array     : array, replace;
@@ -96,7 +100,7 @@ unittest {
           ~ "files and must be in its own gate's input");
 
     auto bad = morphRouteOutsiders(hits);
-    assert(bad.length == 0,
+    assert((bad.length == 0) && wave15InputsIntact(),
         format("%s mention(s) MorphRoute and is not one of the seam's four "
              ~ "homes. A second routing site writes the map from somewhere "
              ~ "this file's reasoning does not cover — review it, then add it "

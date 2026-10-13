@@ -138,7 +138,8 @@ unittest {
 // Production composition controls: the widget test must stay connected to the
 // shipped interactive callback and re-apply must retain the shared write site.
 unittest {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.algorithm.searching : canFind;
     import std.string : count;
     const pen=readText("source/tools/edit/topology_pen/tool.d");

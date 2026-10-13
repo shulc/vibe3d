@@ -93,10 +93,14 @@
 // fresh. That is a convenience for the drill, never a substitute for the gate.)
 module tests.unit.tool_commit_seam_census_g4_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : sort, uniq;
 import std.array     : appender, array;
 import std.conv      : to;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.path      : baseName, buildPath, dirName;
 import std.string    : indexOf;
 
@@ -476,7 +480,7 @@ unittest {
                    ~ kG4Files.length.to!string ~ " rostered file(s); at least "
                    ~ "one per file is expected. The scan read nothing, so a "
                    ~ "zero above is not evidence of anything";
-    assert(offenders.length == 0,
+    assert((offenders.length == 0) && wave15InputsIntact(),
         "G4 census: a G4 tool declares its own CommandHistory field again.\n"
       ~ joinLines(offenders) ~ "\n"
       ~ "  `Tool.history` is `protected` and bound by `setGestureBindings`. A "

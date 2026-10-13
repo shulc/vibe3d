@@ -7,7 +7,8 @@
 // notification/evaluate/session order.
 module tests.unit.param_change_orchestration_test;
 
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath, dirName;
 import std.string : count, indexOf, strip;
 

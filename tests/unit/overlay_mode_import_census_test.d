@@ -3,11 +3,13 @@
 // viewport renderer cannot reach editor_app even through a transitive import.
 module tests.unit.overlay_mode_import_census_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : canFind, sort;
 import std.array     : join, replace;
-import std.file      : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName, relativePath;
 import std.string    : indexOf, split, startsWith, strip;

@@ -11,7 +11,8 @@ import tests.unit.census_symbols : blankNonCode;
 
 import std.algorithm : canFind, sort;
 import std.array     : join;
-import std.file      : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : indexOf, split, strip;

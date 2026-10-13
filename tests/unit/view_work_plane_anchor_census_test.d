@@ -6,11 +6,16 @@
 // changed roster, not as a silent pass.
 module tests.unit.view_work_plane_anchor_census_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : count, sort;
 import std.array     : array;
-import std.file      : SpanMode, dirEntries, readText;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName, relativePath;
 import std.string    : indexOf;
@@ -47,7 +52,8 @@ private string[] roster(string needle) {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -79,9 +85,9 @@ unittest {
     // Positive control first: the needle machinery finds the live readers.
     const world = roster("screenToPlacementWorld(");
     // tools/edit/edge_extend.d: the off-handle haul's anchor (task 9450, K-D D2)
-    assert(world == ["falloff_handles.d:2", "tools/alignment/radial_array_tool.d:1",
+    assert((world == ["falloff_handles.d:2", "tools/alignment/radial_array_tool.d:1",
                      "tools/common/command_wrapper.d:1", "tools/create/create_common.d:1",
-                     "tools/edit/edge_extend.d:1", "tools/transform/transform.d:1"],
+                     "tools/edit/edge_extend.d:1", "tools/transform/transform.d:1"]) && wave15InputsIntact(),
         format("screenToPlacementWorld( roster: %s", world));
     // The deleted reader and its mode enum: zero, every spelling.
     assert(roster("screenToConstructionPlane") == [] && roster("ConstructionPlaneMode") == [],

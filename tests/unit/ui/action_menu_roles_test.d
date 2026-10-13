@@ -1,9 +1,11 @@
 module tests.unit.ui.action_menu_roles_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : count;
-import std.file : SpanMode, dirEntries, readText;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.json : parseJSON;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.string : indexOf;
@@ -859,7 +861,8 @@ unittest { // C13: production boundary, wiring, and private-reachability census
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

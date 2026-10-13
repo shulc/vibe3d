@@ -159,7 +159,8 @@ unittest {
 // The shared predicate owns discrete placement; both pen producers consume it.
 // The guide election must not acquire a private post-election pass.
 unittest {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.algorithm : count;
     import std.string : indexOf;
     import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent;

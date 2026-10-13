@@ -7,11 +7,13 @@
 // a site.
 module tests.unit.background_pixel_ray_census_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : canFind, sort;
 import std.array : array;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.path : buildPath, dirName, relativePath;
 import std.regex : matchAll, regex;
@@ -149,7 +151,8 @@ private string[] sourceFiles() {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",

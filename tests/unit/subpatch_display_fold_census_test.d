@@ -3,11 +3,13 @@
 // distinct from the broader cage-upload suppression policy.
 module tests.unit.subpatch_display_fold_census_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : count;
 import std.exception : enforce;
-import std.file      : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.path      : buildPath, dirName, extension;
 import std.string    : indexOf;
 
@@ -273,7 +275,8 @@ unittest // deleted ownership channels stay absent from executable code
         "packages/scene-query/tests/source/tests/unit/bvh_pick_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

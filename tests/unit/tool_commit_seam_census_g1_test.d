@@ -44,10 +44,14 @@
 // LANE: `dub test --config=tests`.
 module tests.unit.tool_commit_seam_census_g1_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : sort;
 import std.array     : appender;
 import std.conv      : to;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.path      : baseName, buildPath, dirName;
 import std.string    : indexOf, startsWith;
 
@@ -137,7 +141,7 @@ unittest {
         foreach (x; found) if (x == f) { present = true; break; }
         if (!present) gone ~= (gone.length ? ", " : "") ~ f;
     }
-    assert(bad.length == 0 && gone.length == 0,
+    assert((bad.length == 0 && gone.length == 0) && wave15InputsIntact(),
         "G1 census: the create family's file set moved.\n"
       ~ "    new, not in the roster: " ~ (bad.length ? bad : "(none)") ~ "\n"
       ~ "    rostered, now missing:  " ~ (gone.length ? gone : "(none)") ~ "\n"
@@ -361,7 +365,7 @@ unittest {
                       ~ "to the wrong block";
     }
 
-    assert(checked == kG1WireIds.length,
+    assert((checked == kG1WireIds.length) && wave15InputsIntact(),
         "G1 census: located only " ~ checked.to!string ~ " of "
       ~ kG1WireIds.length.to!string ~ " registration blocks. The scan is "
       ~ "reading the wrong file or the stripper ate it — every per-id check "
@@ -415,7 +419,7 @@ unittest {
     assert(scanned >= 30,
         "G1 census: the walk of `source/tools/` visited only " ~ scanned.to!string
       ~ " file(s); the shadowing guard below is vacuous over an empty walk");
-    assert(offenders.length == 0,
+    assert((offenders.length == 0) && wave15InputsIntact(),
         "G1 census: a tool declares its own CommandHistory field again.\n"
       ~ joinLines(offenders) ~ "\n"
       ~ "  `Tool.history` is `protected` and bound by `setGestureBindings`. A "

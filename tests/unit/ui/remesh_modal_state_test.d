@@ -1,6 +1,7 @@
 module tests.unit.ui.remesh_modal_state_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import core.time : MonoTime, msecs, seconds;
 import d_imgui.imgui_h : ImVec2;
@@ -43,7 +44,8 @@ private Vec3[] readObjVertices(string path) {
     import std.algorithm.iteration : splitter;
     import std.array : split;
     import std.conv : to;
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.string : startsWith, strip;
 
     Vec3[] result;
@@ -60,7 +62,8 @@ private Vec3[] readObjVertices(string path) {
 
 private void waitForCapture(RemeshJob job, string path) {
     import core.thread : Thread;
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
     const deadline = MonoTime.currTime + 5.seconds;
     while (!exists(path) && MonoTime.currTime < deadline) {
@@ -389,7 +392,8 @@ version (Posix)
 unittest { // selectedFaces reaches region mode exactly; empty means whole mesh
     import std.algorithm.searching : canFind;
     import std.conv : octal;
-    import std.file : readText, setAttributes, write;
+    import std.file : setAttributes, write;
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.process : environment;
 
     void writeRecorder(string script, string argvLog, string recordedInput) {
@@ -535,7 +539,8 @@ unittest { // selectedFaces reaches region mode exactly; empty means whole mesh
 unittest { // production census: one owner, live provider, no pointer-era path
     import std.algorithm : count;
     import std.algorithm.searching : canFind;
-    import std.file : dirEntries, readText, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
     import std.path : buildPath;
     import std.string : indexOf, lastIndexOf;
     import tests.unit.census_symbols : blankNonCode;
@@ -604,7 +609,8 @@ unittest { // production census: one owner, live provider, no pointer-era path
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

@@ -16,7 +16,11 @@
 // at a time.
 module tests.unit.pen_single_builder_census_test;
 
-import std.file : exists, readText;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists, readText = wave15ReadText;
 import std.format : format;
 import std.path : buildPath, dirName;
 
@@ -68,7 +72,7 @@ unittest // pen.d appends no geometry except through the one builder
     // addWeightMap, addMeshMapOfKind). The three geometry producers the pen
     // used must be inside it.
     const adders = meshAdders();
-    assert(adders.length == 8, format("Mesh adder rule now selects %s names "
+    assert((adders.length == 8) && wave15InputsIntact(), format("Mesh adder rule now selects %s names "
         ~ "(%s); measured 8 — re-measure and pin, never widen blindly",
         adders.length, adders));
     foreach (must; ["addVertex", "addEdge", "addFace"]) {
@@ -94,7 +98,7 @@ unittest // pen.d appends no geometry except through the one builder
         const n = countIdent(code, a);
         if (n) counts[a] = n;
     }
-    assert(counts.length == 0, format("pen.d appends geometry outside "
+    assert((counts.length == 0) && wave15InputsIntact(), format("pen.d appends geometry outside "
         ~ "appendPenGeometry: %s (expected none — route it through the builder)",
         counts));
 
@@ -157,11 +161,11 @@ unittest // every pen point comes from the one resolver (wave plan S3a, task 935
     const size_t[string] want = ["snapLocalHit": 2,
         "workplaneCursorPlaneHit": 2, "localCursorPlane": 0,
         "pickWorkplaneFrame": 0];
-    assert(want.length == 4, "resolver needle table lost a row");
+    assert((want.length == 4) && wave15InputsIntact(), "resolver needle table lost a row");
     // Positive control: each needle, spelled as in the table, is countable.
     foreach (name, n; want)
-        assert(countIdent("a." ~ name ~ "(x); auto d = &" ~ name ~ ";", name)
-            == 2, "identifier counter cannot see " ~ name);
+        assert((countIdent("a." ~ name ~ "(x); auto d = &" ~ name ~ ";", name)
+            == 2) && wave15InputsIntact(), "identifier counter cannot see " ~ name);
     foreach (name, n; want) {
         const got = countIdent(code, name);
         assert(got == n, format("pen.d names %s %s times; expected %s — a "

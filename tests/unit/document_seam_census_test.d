@@ -47,7 +47,8 @@ module tests.unit.document_seam_census_test;
 
 import std.algorithm : canFind, sort, startsWith;
 import std.array : appender, join;
-import std.file : dirEntries, exists, isDir, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, isDir = wave15IsDir, readText = wave15ReadText;
 import std.format : format;
 import std.path : buildNormalizedPath, buildPath, dirName, relativePath;
 import std.regex : ctRegex, matchAll, matchFirst, regex, Regex;

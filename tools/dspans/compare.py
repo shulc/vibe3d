@@ -51,6 +51,7 @@ from collections import defaultdict
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import legacy_primitives  # noqa: E402
 import dspans_client  # noqa: E402
+from census_contracts import read_source_text, logical_source_paths, physical_source_path, source_inputs_intact
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -188,7 +189,7 @@ def run_census(recorder: Recorder, inject: bool):
     original_read_text = pathlib.Path.read_text
     injected = {"hits": 0}
     if inject:
-        target = (ROOT / CONTROL_FILE).resolve()
+        target = physical_source_path(ROOT / CONTROL_FILE).resolve()
 
         def read_text(self, *a, **kw):
             text = original_read_text(self, *a, **kw)
@@ -208,7 +209,7 @@ def run_census(recorder: Recorder, inject: bool):
     mon.register_callback(tool, mon.events.PY_START, recorder.callback)
     mon.set_events(tool, mon.events.PY_START)
     namespace = {"__name__": "__main__", "__file__": str(CENSUS)}
-    code = compile(CENSUS.read_text(), str(CENSUS), "exec")
+    code = compile(read_source_text(CENSUS), str(CENSUS), "exec")
     saved_argv = sys.argv
     sys.argv = [str(CENSUS)]
     exit_code = 0
@@ -958,15 +959,15 @@ def label_texts(texts):
     longest prefix), else the file it is a slice of."""
     files = {}
     for sub in ("packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/camera-model/tests/source", "packages/document-channels/tests/source", "packages/image-codec/tests/source", "packages/document-io/tests/source", "source", "packages/command-runtime/source", "packages/application-core/source", "packages/mesh-ops/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "tests", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source"):
-        for p in sorted((ROOT / sub).rglob("*.d")):
+        for p in sorted(logical_source_paths((ROOT / sub), "*.d")):
             try:
-                files[p.relative_to(ROOT).as_posix()] = p.read_text()
+                files[p.relative_to(ROOT).as_posix()] = read_source_text(p)
             except (OSError, UnicodeDecodeError):
                 continue
     for relative in ['packages/command-runtime/tests/source/tests/unit/base_revert_flag_test.d', 'packages/command-runtime/tests/source/tests/unit/command_apply_anchor_test.d', 'packages/command-runtime/tests/source/tests/unit/command_bindargs_test.d', 'packages/command-runtime/tests/source/tests/unit/command_registry_test.d', 'packages/command-runtime/tests/source/tests/unit/session_edit_payload_test.d', 'packages/application-core/tests/source/tests/unit/command_invocation_test.d', 'packages/application-core/tests/source/tests/unit/standalone_application_test.d', 'packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d', 'packages/command-runtime/tests/source/tests/unit/command_source_public_test.d', 'packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d', 'packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d', 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d', 'packages/scene-query/tests/source/tests/unit/bvh_pick_test.d', 'packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d']:
         p = ROOT / relative
         try:
-            files[relative] = p.read_text()
+            files[relative] = read_source_text(p)
         except (OSError, UnicodeDecodeError):
             continue
     by_sha = {}
@@ -1011,7 +1012,7 @@ def controls(scratch):
     sys.path.insert(0, str(TOOLS))
     import prepared_writer_census as w
     ns = {"__name__": "controls"}
-    src = CENSUS.read_text()
+    src = read_source_text(CENSUS)
     # The census's CURRENT mask/span helpers, taken from its source verbatim
     # rather than executing the whole census; the old ones are the frozen
     # copies in legacy_primitives.py.
@@ -1151,7 +1152,7 @@ def controls(scratch):
     # 2: a loop reusing `got`/`want` made the versionUnittest check compare
     # the last cell with itself).
     import census_contracts
-    wsrc = CENSUS.read_text()
+    wsrc = read_source_text(CENSUS)
     ws = wsrc.index("def without_unittests(source):")
     we = wsrc.index("prepared_source_texts =", ws)
     exec(wsrc[ws:we], ns)
@@ -1270,7 +1271,7 @@ def swap_trial(scratch):
         "d_declaration_span": lambda source, kind, name: new_declaration_span(spans_of(source), source, kind, name),
         "without_unittests": lambda source: new_without_unittests(spans_of(source), source),
     }.items()}
-    tree = ast.parse(CENSUS.read_text(), str(CENSUS))
+    tree = ast.parse(read_source_text(CENSUS), str(CENSUS))
     body, rebound = [], []
     for node in tree.body:
         body.append(node)

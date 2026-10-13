@@ -6,11 +6,16 @@
 // block: floor → needle → structure, each with a positive control.
 module tests.unit.surface_smoothing_census_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : sort, canFind;
 import std.array     : array;
-import std.file      : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : baseName, buildPath, dirName, relativePath;
 import std.string    : indexOf;
@@ -47,7 +52,8 @@ private string[string] sourceCode() {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -190,7 +196,7 @@ unittest { // (d) the lower-slot pair rule in BOTH producers, keyed on identifie
     // Controls [E5]: the needles find the rule lines and report a `max`.
     immutable dRule = "immutable float c = p.slotCos[min(sf, sg)]; p.faceSlot[g];";
     immutable gRule = "if (dot(ng, nf) < u_slotCos[min(sf, sg)]) continue; texelFetch(u_faceSlot, g)";
-    assert(hasIdentSeq(dRule, ["slotCos", "min", "sf", "sg"]) && identCount(dRule, "faceSlot") == 1,
+    assert((hasIdentSeq(dRule, ["slotCos", "min", "sf", "sg"]) && identCount(dRule, "faceSlot") == 1) && wave15InputsIntact(),
         "control: the D needle misses the rule line");
     assert(hasIdentSeq(gRule, ["u_slotCos", "min", "sf", "sg"]) && identCount(gRule, "u_faceSlot") == 1,
         "control: the GLSL needle misses the rule line");
@@ -201,8 +207,8 @@ unittest { // (d) the lower-slot pair rule in BOTH producers, keyed on identifie
                                "private enum string FAN_OUT_VERT_SRC");
     assert(cpu.length > 200 && fan.length > 500, "census floor: a rule region is empty");   // floor
     // One needle per producer: N = 2 surfaces, 2 reds under the "higher slot" mutation [E14].
-    assert(hasIdentSeq(cpu, ["slotCos", "min", "sf", "sg"]) && identCount(cpu, "faceSlot") >= 1
-        && identCount(cpu, "max") == 0,
+    assert((hasIdentSeq(cpu, ["slotCos", "min", "sf", "sg"]) && identCount(cpu, "faceSlot") >= 1
+        && identCount(cpu, "max") == 0) && wave15InputsIntact(),
         "the CPU corner (vertex_normals.smoothCorner) no longer spells slotCos[min(sf, sg)] over faceSlot, "
       ~ "or names max");
     assert(hasIdentSeq(fan, ["u_slotCos", "min", "sf", "sg"]) && identCount(fan, "u_faceSlot") >= 1
@@ -258,7 +264,7 @@ unittest { // (f) app.d routes a Material commit to the live preview and its ful
         "kSubpatchTriggers lost MeshEditScope.Material — a Material-only commit never reaches rebuildIfStale");
     // The upload condition: floor on its pre-S1e terms, then needle 2.
     immutable ptrdiff_t c = app.indexOf("else if ((wantPreview && (versionChanged");
-    assert(c >= 0, "census floor: the preview upload condition `else if ((wantPreview && (versionChanged` moved");
+    assert((c >= 0) && wave15InputsIntact(), "census floor: the preview upload condition `else if ((wantPreview && (versionChanged` moved");
     immutable ptrdiff_t brace = app[c .. $].indexOf('{');
     immutable cond = app[c .. c + brace];
     assert(identCount(cond, "previewInstalledThisFrame") == 1, "census floor: the upload condition lost its install term");

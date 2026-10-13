@@ -16,6 +16,9 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — run the blocks in
 // isolation when scoring a mutation.
 module tests.unit.l4_slice_cut_delta_test;
+
+import tests.unit.census_symbols : wave15InputsIntact;
+
 import mesh_edit_replay : apply, revert;
 
 import std.conv   : to;
@@ -412,7 +415,8 @@ unittest
 
 unittest
 {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : dirName, buildPath;
     import std.algorithm : sort, uniq, count;
     import std.array : array, split;
@@ -451,7 +455,7 @@ unittest
         size_t nSnap = 0;
         foreach (line; text.split('\n'))
             if (declaresVarOfType(line, "MeshSnapshot")) ++nSnap;
-        assert(nSnap == 0, format(
+        assert((nSnap == 0) && wave15InputsIntact(), format(
             "%s still declares %d `MeshSnapshot` field(s). Task 1903 "
           ~ "stage L4 moved all five classes in this family onto a "
           ~ "`MeshEditDelta`; a surviving whole-mesh capture means either a "

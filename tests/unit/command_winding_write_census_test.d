@@ -30,7 +30,11 @@
 // `tests/unit/l2_create_stable_delta_test.d`'s op-log-shape cells.
 module tests.unit.command_winding_write_census_test;
 
-import std.file   : readText, dirEntries, SpanMode, exists, isDir;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+import std.file : SpanMode;
+import tests.unit.census_symbols : readText = wave15ReadText, dirEntries = wave15DirEntries, exists = wave15Exists, isDir = wave15IsDir;
 import std.path   : dirName, buildPath, baseName;
 import std.format : format;
 import std.algorithm : sort, uniq;
@@ -125,7 +129,7 @@ private size_t countSpliceShapes(string src, ref string firstHit)
 unittest // no command writes a face winding by hand
 {
     immutable zone = buildPath(repoRoot(), "source", "commands");
-    assert(exists(zone) && isDir(zone),
+    assert((exists(zone) && isDir(zone)) && wave15InputsIntact(),
         "cannot find " ~ zone ~ " — the census would walk nothing and report "
       ~ "zero for the one reason that is not a finding");
 
@@ -161,7 +165,7 @@ unittest // no command writes a face winding by hand
     // FILE-COUNT AND BYTE FLOORS, asserted BEFORE any count is taken. A walk
     // that found nothing is not a zero, it is a broken read; and a stripper
     // that ate its input reports zero for every needle.
-    assert(paths.length >= 90,
+    assert((paths.length >= 90) && wave15InputsIntact(),
         format("the census found only %d file(s) under source/commands — the "
              ~ "zone holds well over ninety and a short walk reports zero raw "
              ~ "writes for the wrong reason", paths.length));

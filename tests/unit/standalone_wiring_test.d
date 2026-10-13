@@ -1,5 +1,6 @@
 module tests.unit.standalone_wiring_test;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : dirName, buildPath;
 import std.string : count, indexOf;
 import tests.unit.census_symbols : blankNonCode, balancedSpan;

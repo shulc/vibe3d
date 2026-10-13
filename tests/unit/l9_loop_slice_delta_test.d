@@ -25,6 +25,9 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — score a mutation that
 // reddens two of these cells by running them in isolation.
 module tests.unit.l9_loop_slice_delta_test;
+
+import tests.unit.census_symbols : wave15InputsIntact;
+
 import mesh_edit_replay : apply, revert;
 
 import std.conv   : to;
@@ -455,7 +458,8 @@ private static immutable LedgerRow[] kL9Seam = [
 
 unittest
 {
-    import std.file  : dirEntries, exists, isDir, readText, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, isDir = wave15IsDir, readText = wave15ReadText;
     import std.path  : buildPath, dirName, relativePath;
 
     enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -549,7 +553,8 @@ unittest
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -628,7 +633,7 @@ unittest
     if (seenScopeModules.length != kScopeModules.length)
         bad ~= format("\n    module scope — expected %d module(s), found %d",
                       kScopeModules.length, seenScopeModules.length);
-    assert(bad.length == 0, format(
+    assert((bad.length == 0) && wave15InputsIntact(), format(
         "task 1903 L9 (W-9-SEAM): the loop-slice family's batch-open SET no "
       ~ "longer matches the recorded table.\n\n  A recording batch on the "
       ~ "PREVIEW path builds and discards a full op-log at 60 Hz and NOTHING "

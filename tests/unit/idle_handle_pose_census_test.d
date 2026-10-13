@@ -1,7 +1,8 @@
 module tests.unit.idle_handle_pose_census_test;
 
 import std.algorithm : count;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath, dirName;
 import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode;

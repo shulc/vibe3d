@@ -1,7 +1,11 @@
 module tests.unit.commands.layer.item_command_registration_census_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : count;
-import std.file : dirEntries, isFile, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, isFile = wave15IsFile, readText = wave15ReadText;
 import std.format : format;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.regex : ctRegex, matchAll, replaceAll;
@@ -119,7 +123,7 @@ unittest { // C2/C4: per-factory arguments and narrow registrar contexts
         }
     assert(lifecycleFiles >= 2,
         "6355 lifecycle census floor: command directories were not scanned");
-    assert(directResets == 0,
+    assert((directResets == 0) && wave15InputsIntact(),
         "6355 lifecycle census: layer/image-plane commands must not reset morph routing directly");
 }
 

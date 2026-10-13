@@ -3,7 +3,11 @@
 // scene_file_lifecycle_registration_test (task 6480).
 module tests.unit.commands.scene.scene_reset_effects_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import core.exception : AssertError;
 import mesh : MapKind, Mesh, SubpatchTrace, makeCube;
@@ -109,7 +113,8 @@ private string[] fullPipeResetSites(string code, string file, ref size_t loops) 
 
 unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneReset's
     import std.algorithm : endsWith;
-    import std.file : dirEntries, readText, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
     import std.meta : AliasSeq;
     import std.path : buildNormalizedPath, dirName, relativePath;
     import std.string : indexOf;
@@ -161,7 +166,8 @@ unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneRe
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -192,7 +198,7 @@ unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneRe
     // Floor, then the needle, then the pin (measured 2026-10-05: `grep -rnow
     // allMut source --include=*.d | wc -l` = 10: nine uses plus the declaration
     // in toolpipe/pipeline.d).
-    assert(loops >= 10, "9465 floor: allMut sites scanned " ~ loops.to!string);
+    assert((loops >= 10) && wave15InputsIntact(), "9465 floor: allMut sites scanned " ~ loops.to!string);
     assert(retiredIdent == 0,
         "9465: resetAllPipeStages returned — the second stage reset per scene reset");
     assert(sites.length == 1 && sites[0].indexOf("source/commands/scene/reset.d:") == 0,

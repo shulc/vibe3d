@@ -1,7 +1,8 @@
 module tests.unit.haul_axis_latch_test;
 
 import tools.edit.haul_axis_latch : HaulAxisLatch, HaulAxis;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.string : indexOf;
 import std.algorithm : count;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies;

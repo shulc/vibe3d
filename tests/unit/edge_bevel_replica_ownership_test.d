@@ -18,7 +18,8 @@ import overlay_space : OverlaySpace;
 import perf_probe : g_fc, DrawPass;
 import shader : LitShader, Shader;
 import std.conv : to;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.format : format;
 import std.math : abs;
 import std.json : JSONValue, parseJSON;
@@ -1079,7 +1080,8 @@ private void runReplicaOwnershipWitness() {
 
 unittest { // task 20261290: measured asymmetric source owner frame
     import std.json : parseJSON;
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/frame_source.json"));
     auto receipt = parseJSON(readText("tests/fixtures/edge_bevel/two_handles_live.json"));
     Mesh source;

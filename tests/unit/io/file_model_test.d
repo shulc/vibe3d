@@ -1,12 +1,14 @@
 module tests.unit.io.file_model_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import io.file_model : browserFileModel, selectBrowserBackendForTest;
 static import io.file_dialog;
 import std.algorithm : canFind, startsWith;
 import std.array : join;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.exception : assertThrown;
 import core.exception : AssertError;
 import std.path : dirName, buildPath;

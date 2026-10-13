@@ -1,13 +1,15 @@
 module tests.unit.commands.tool.tool_host_read_view_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import commands.tool.host : ToolHost, ToolHostReadView;
 import core.exception : AssertError;
 import std.algorithm : count, sort;
 import std.array : join;
 import std.exception : assertThrown;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.string : indexOf;
@@ -226,7 +228,8 @@ unittest { // V5: the owner address is confined to ToolHostReadView
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

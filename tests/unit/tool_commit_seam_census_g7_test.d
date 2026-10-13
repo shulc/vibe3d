@@ -102,10 +102,14 @@
 // gate.
 module tests.unit.tool_commit_seam_census_g7_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : sort, uniq;
 import std.array     : appender, array, split;
 import std.conv      : to;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.path      : baseName, buildPath, dirName;
 import std.regex     : regex, matchAll, replaceAll;
 import std.string    : indexOf, strip;
@@ -543,7 +547,7 @@ unittest {
                    ~ "is expected. The scan read nothing, so a zero above is not "
                    ~ "evidence of anything";
 
-    assert(offenders.length == 0,
+    assert((offenders.length == 0) && wave15InputsIntact(),
         "G7 census: a topology-pen module declares its own CommandHistory field "
       ~ "again.\n" ~ joinLines(offenders) ~ "\n"
       ~ "  `Tool.history` is `protected` and bound by `setGestureBindings`. A "
@@ -806,7 +810,7 @@ unittest {
         bad ~= "    · CONTROL: the builder parse yielded " ~ rows.to!string
              ~ " row(s), expected " ~ kFrozenBinds.length.to!string
              ~ " — every comparison above is against a short list";
-    assert(bad.length == 0,
+    assert((bad.length == 0) && wave15InputsIntact(),
         "G7 named-binding census: " ~ bad.length.to!string
       ~ " finding(s) over source/app.d -> source/registration.d -> "
       ~ kPenDir ~ "/tool.d:\n" ~ joinLines(bad));

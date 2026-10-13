@@ -94,7 +94,11 @@ import std.array     : appender, join;
 import std.conv      : to;
 import std.exception : assertThrown;
 import core.exception : AssertError;
-import std.file      : dirEntries, exists, isFile, readText, SpanMode;
+import std.file : SpanMode;
+private alias dirEntries = wave15DirEntries;
+private alias exists = wave15Exists;
+private alias isFile = wave15IsFile;
+private alias readText = wave15ReadText;
 import std.format    : format;
 import std.path      : baseName, buildPath, dirName;
 import std.regex     : ctRegex, matchAll, regex;
@@ -1512,7 +1516,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+private alias exists = wave15Exists;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
@@ -1543,7 +1548,7 @@ unittest {
 
     }
 
-    assert(bad.data.length == 0, format(
+    assert((bad.data.length == 0) && wave15InputsIntact(), format(
         "task 4056: the scope walker did not come out of %d module(s) with an "
       ~ "empty stack.%s\n\n"
       ~ "  An unbalanced walk is not a cosmetic fault: every symbol after the "
@@ -1725,4 +1730,929 @@ unittest {
     }
     assertThrown!AssertError(requirePilotDesktopCaller(caller("registerHistoryNavigationCommands(other, deps, history);"), name, entry));
     assertThrown!AssertError(requirePilotDesktopCaller(caller("registerHistoryNavigationCommands(reg, deps, history); registerHistoryNavigationCommands(other, deps, history);"), name, entry));
+}
+
+// Finite logical source admission for the approved body relocation. Keep each
+// reader's existing roots, depth, labels and masks; carrier headers are excluded.
+// Task 20262780; source/fragment custody and actual later controls are in the
+// private Wave15 P execution receipt.
+private struct Wave15Move { string oldPath, newPath; }
+private immutable Wave15Move[] wave15Moves = [
+    Wave15Move("source/ai/interaction.d", "packages/interaction-data/source/ai/interaction.d"),
+    Wave15Move("source/bg_gpu_cache.d", "packages/viewport-host/source/bg_gpu_cache.d"),
+    Wave15Move("source/commands/tool/attr.d", "packages/interactive-tools/source/commands/tool/attr.d"),
+    Wave15Move("source/commands/tool/begin_session.d", "packages/interactive-tools/source/commands/tool/begin_session.d"),
+    Wave15Move("source/commands/tool/bridge_headless.d", "packages/interactive-tools/source/commands/tool/bridge_headless.d"),
+    Wave15Move("source/commands/tool/do_apply.d", "packages/interactive-tools/source/commands/tool/do_apply.d"),
+    Wave15Move("source/commands/tool/headless.d", "packages/interactive-tools/source/commands/tool/headless.d"),
+    Wave15Move("source/commands/tool/host.d", "packages/interactive-tools/source/commands/tool/host.d"),
+    Wave15Move("source/commands/tool/lifecycle.d", "packages/interactive-tools/source/commands/tool/lifecycle.d"),
+    Wave15Move("source/commands/tool/panel_edit.d", "packages/interactive-tools/source/commands/tool/panel_edit.d"),
+    Wave15Move("source/commands/tool/pipe.d", "packages/interactive-tools/source/commands/tool/pipe.d"),
+    Wave15Move("source/commands/tool/reset.d", "packages/interactive-tools/source/commands/tool/reset.d"),
+    Wave15Move("source/commands/tool/set.d", "packages/interactive-tools/source/commands/tool/set.d"),
+    Wave15Move("source/deform_magnet.d", "packages/interactive-tools/source/deform_magnet.d"),
+    Wave15Move("source/display_sync.d", "packages/viewport-gpu/source/display_sync.d"),
+    Wave15Move("source/drag.d", "packages/interactive-tools/source/drag.d"),
+    Wave15Move("source/drag_identity.d", "packages/interactive-tools/tests/source/drag_identity.d"),
+    Wave15Move("source/edit_session.d", "packages/interactive-tools/source/edit_session.d"),
+    Wave15Move("source/evaluated_move_weld.d", "packages/interactive-tools/source/evaluated_move_weld.d"),
+    Wave15Move("source/falloff_handles.d", "packages/interactive-tools/source/falloff_handles.d"),
+    Wave15Move("source/falloff_render.d", "packages/interactive-tools/source/falloff_render.d"),
+    Wave15Move("source/gizmo.d", "packages/interactive-tools/source/gizmo.d"),
+    Wave15Move("source/handler.d", "packages/interactive-tools/source/handler.d"),
+    Wave15Move("source/handles/arbiter.d", "packages/interactive-tools/source/handles/arbiter.d"),
+    Wave15Move("source/handles/gizmo_metrics.d", "packages/interactive-tools/source/handles/gizmo_metrics.d"),
+    Wave15Move("source/handles/gl_util.d", "packages/interactive-tools/source/handles/gl_util.d"),
+    Wave15Move("source/handles/shapes.d", "packages/interactive-tools/source/handles/shapes.d"),
+    Wave15Move("source/image_cache.d", "packages/viewport-host/source/image_cache.d"),
+    Wave15Move("source/image_plane.d", "packages/viewport-host/source/image_plane.d"),
+    Wave15Move("source/model_preview.d", "packages/interactive-tools/source/model_preview.d"),
+    Wave15Move("source/overlay_space.d", "packages/interactive-tools/source/overlay_space.d"),
+    Wave15Move("source/pipe_gizmo_host.d", "packages/interactive-tools/source/pipe_gizmo_host.d"),
+    Wave15Move("source/prepared_box_param.d", "packages/interactive-tools/source/prepared_box_param.d"),
+    Wave15Move("source/prepared_bridge_activation.d", "packages/interactive-tools/source/prepared_bridge_activation.d"),
+    Wave15Move("source/prepared_command_wrapper_activation.d", "packages/interactive-tools/source/prepared_command_wrapper_activation.d"),
+    Wave15Move("source/prepared_edge_bevel_activation.d", "packages/interactive-tools/source/prepared_edge_bevel_activation.d"),
+    Wave15Move("source/prepared_edge_extend_deactivate.d", "packages/interactive-tools/source/prepared_edge_extend_deactivate.d"),
+    Wave15Move("source/prepared_edge_extend_tool_activation.d", "packages/interactive-tools/source/prepared_edge_extend_tool_activation.d"),
+    Wave15Move("source/prepared_edge_extrude_activation.d", "packages/interactive-tools/source/prepared_edge_extrude_activation.d"),
+    Wave15Move("source/prepared_edge_slice_activation.d", "packages/interactive-tools/source/prepared_edge_slice_activation.d"),
+    Wave15Move("source/prepared_edge_slice_deactivate.d", "packages/interactive-tools/source/prepared_edge_slice_deactivate.d"),
+    Wave15Move("source/prepared_inherited_noop.d", "packages/interactive-tools/source/prepared_inherited_noop.d"),
+    Wave15Move("source/prepared_loop_slice_activation.d", "packages/interactive-tools/source/prepared_loop_slice_activation.d"),
+    Wave15Move("source/prepared_loop_slice_deactivate.d", "packages/interactive-tools/source/prepared_loop_slice_deactivate.d"),
+    Wave15Move("source/prepared_mirror_activation.d", "packages/interactive-tools/source/prepared_mirror_activation.d"),
+    Wave15Move("source/prepared_move_update.d", "packages/interactive-tools/source/prepared_move_update.d"),
+    Wave15Move("source/prepared_param_update.d", "packages/interactive-tools/source/prepared_param_update.d"),
+    Wave15Move("source/prepared_pipe_activation.d", "packages/interactive-tools/source/prepared_pipe_activation.d"),
+    Wave15Move("source/prepared_poly_bevel_activation.d", "packages/interactive-tools/source/prepared_poly_bevel_activation.d"),
+    Wave15Move("source/prepared_poly_extrude_activation.d", "packages/interactive-tools/source/prepared_poly_extrude_activation.d"),
+    Wave15Move("source/prepared_poly_inset_activation.d", "packages/interactive-tools/source/prepared_poly_inset_activation.d"),
+    Wave15Move("source/prepared_private_state.d", "packages/interactive-tools/source/prepared_private_state.d"),
+    Wave15Move("source/prepared_radial_array_transition.d", "packages/interactive-tools/source/prepared_radial_array_transition.d"),
+    Wave15Move("source/prepared_radial_sweep_transition.d", "packages/interactive-tools/source/prepared_radial_sweep_transition.d"),
+    Wave15Move("source/prepared_record_context.d", "packages/interactive-tools/source/prepared_record_context.d"),
+    Wave15Move("source/prepared_rotate_update.d", "packages/interactive-tools/source/prepared_rotate_update.d"),
+    Wave15Move("source/prepared_scale_update.d", "packages/interactive-tools/source/prepared_scale_update.d"),
+    Wave15Move("source/prepared_selection_profile.d", "packages/interactive-tools/source/prepared_selection_profile.d"),
+    Wave15Move("source/prepared_selection_profile_image.d", "packages/interactive-tools/source/prepared_selection_profile_image.d"),
+    Wave15Move("source/prepared_slice_activation.d", "packages/interactive-tools/source/prepared_slice_activation.d"),
+    Wave15Move("source/prepared_slice_deactivate.d", "packages/interactive-tools/source/prepared_slice_deactivate.d"),
+    Wave15Move("source/prepared_smooth_shift_activation.d", "packages/interactive-tools/source/prepared_smooth_shift_activation.d"),
+    Wave15Move("source/prepared_stroke_extrude_activation.d", "packages/interactive-tools/source/prepared_stroke_extrude_activation.d"),
+    Wave15Move("source/prepared_tack_activation.d", "packages/interactive-tools/source/prepared_tack_activation.d"),
+    Wave15Move("source/prepared_tool_transition.d", "packages/interactive-tools/source/prepared_tool_transition.d"),
+    Wave15Move("source/prepared_topology_pen_activation.d", "packages/interactive-tools/source/prepared_topology_pen_activation.d"),
+    Wave15Move("source/prepared_topology_pen_deactivate.d", "packages/interactive-tools/source/prepared_topology_pen_deactivate.d"),
+    Wave15Move("source/prepared_topology_pen_update.d", "packages/interactive-tools/source/prepared_topology_pen_update.d"),
+    Wave15Move("source/prepared_transform_activation.d", "packages/interactive-tools/source/prepared_transform_activation.d"),
+    Wave15Move("source/prepared_transform_product_activation.d", "packages/interactive-tools/source/prepared_transform_product_activation.d"),
+    Wave15Move("source/prepared_vertex_bevel_activation.d", "packages/interactive-tools/source/prepared_vertex_bevel_activation.d"),
+    Wave15Move("source/prepared_vertex_extrude_activation.d", "packages/interactive-tools/source/prepared_vertex_extrude_activation.d"),
+    Wave15Move("source/prepared_vertex_merge_activation.d", "packages/interactive-tools/source/prepared_vertex_merge_activation.d"),
+    Wave15Move("source/prepared_xfrm_activation_session.d", "packages/interactive-tools/source/prepared_xfrm_activation_session.d"),
+    Wave15Move("source/prepared_xfrm_refire_state.d", "packages/interactive-tools/source/prepared_xfrm_refire_state.d"),
+    Wave15Move("source/prepared_xfrm_replay.d", "packages/interactive-tools/source/prepared_xfrm_replay.d"),
+    Wave15Move("source/prepared_xfrm_slot_poll.d", "packages/interactive-tools/source/prepared_xfrm_slot_poll.d"),
+    Wave15Move("source/prepared_xfrm_update_boundary.d", "packages/interactive-tools/source/prepared_xfrm_update_boundary.d"),
+    Wave15Move("source/prepared_xfrm_update_edit_close.d", "packages/interactive-tools/source/prepared_xfrm_update_edit_close.d"),
+    Wave15Move("source/prepared_xfrm_update_tail.d", "packages/interactive-tools/source/prepared_xfrm_update_tail.d"),
+    Wave15Move("source/property_panel.d", "packages/interactive-tools/source/property_panel.d"),
+    Wave15Move("source/registry.d", "packages/interactive-tools/source/registry.d"),
+    Wave15Move("source/snap_render.d", "packages/interactive-tools/source/snap_render.d"),
+    Wave15Move("source/tool.d", "packages/interactive-tools/source/tool.d"),
+    Wave15Move("source/tool_attr_bounds.d", "packages/interactive-tools/source/tool_attr_bounds.d"),
+    Wave15Move("source/tool_disarm.d", "packages/interactive-tools/source/tool_disarm.d"),
+    Wave15Move("source/tool_presets.d", "packages/interactive-tools/source/tool_presets.d"),
+    Wave15Move("source/tools/alignment/array_tool.d", "packages/interactive-tools/source/tools/alignment/array_tool.d"),
+    Wave15Move("source/tools/alignment/clone_tool.d", "packages/interactive-tools/source/tools/alignment/clone_tool.d"),
+    Wave15Move("source/tools/alignment/linear_align_tool.d", "packages/interactive-tools/source/tools/alignment/linear_align_tool.d"),
+    Wave15Move("source/tools/alignment/mirror.d", "packages/interactive-tools/source/tools/alignment/mirror.d"),
+    Wave15Move("source/tools/alignment/radial_align_tool.d", "packages/interactive-tools/source/tools/alignment/radial_align_tool.d"),
+    Wave15Move("source/tools/alignment/radial_array_tool.d", "packages/interactive-tools/source/tools/alignment/radial_array_tool.d"),
+    Wave15Move("source/tools/alignment/radial_sweep_tool.d", "packages/interactive-tools/source/tools/alignment/radial_sweep_tool.d"),
+    Wave15Move("source/tools/common/command_wrapper.d", "packages/interactive-tools/source/tools/common/command_wrapper.d"),
+    Wave15Move("source/tools/create/arc.d", "packages/interactive-tools/source/tools/create/arc.d"),
+    Wave15Move("source/tools/create/box.d", "packages/interactive-tools/source/tools/create/box.d"),
+    Wave15Move("source/tools/create/capsule.d", "packages/interactive-tools/source/tools/create/capsule.d"),
+    Wave15Move("source/tools/create/cone.d", "packages/interactive-tools/source/tools/create/cone.d"),
+    Wave15Move("source/tools/create/create_common.d", "packages/interactive-tools/source/tools/create/create_common.d"),
+    Wave15Move("source/tools/create/cylinder.d", "packages/interactive-tools/source/tools/create/cylinder.d"),
+    Wave15Move("source/tools/create/pen.d", "packages/interactive-tools/source/tools/create/pen.d"),
+    Wave15Move("source/tools/create/primitive_create_tool.d", "packages/interactive-tools/source/tools/create/primitive_create_tool.d"),
+    Wave15Move("source/tools/create/sphere.d", "packages/interactive-tools/source/tools/create/sphere.d"),
+    Wave15Move("source/tools/create/torus.d", "packages/interactive-tools/source/tools/create/torus.d"),
+    Wave15Move("source/tools/create/tube.d", "packages/interactive-tools/source/tools/create/tube.d"),
+    Wave15Move("source/tools/create/vertex_place.d", "packages/interactive-tools/source/tools/create/vertex_place.d"),
+    Wave15Move("source/tools/deform/bend.d", "packages/interactive-tools/source/tools/deform/bend.d"),
+    Wave15Move("source/tools/deform/magnet.d", "packages/interactive-tools/source/tools/deform/magnet.d"),
+    Wave15Move("source/tools/deform/push.d", "packages/interactive-tools/source/tools/deform/push.d"),
+    Wave15Move("source/tools/deform/smooth_shift_tool.d", "packages/interactive-tools/source/tools/deform/smooth_shift_tool.d"),
+    Wave15Move("source/tools/deform/stroke_extrude_tool.d", "packages/interactive-tools/source/tools/deform/stroke_extrude_tool.d"),
+    Wave15Move("source/tools/edit/bridge_tool.d", "packages/interactive-tools/source/tools/edit/bridge_tool.d"),
+    Wave15Move("source/tools/edit/edge_bevel.d", "packages/interactive-tools/source/tools/edit/edge_bevel.d"),
+    Wave15Move("source/tools/edit/edge_extend.d", "packages/interactive-tools/source/tools/edit/edge_extend.d"),
+    Wave15Move("source/tools/edit/edge_extrude.d", "packages/interactive-tools/source/tools/edit/edge_extrude.d"),
+    Wave15Move("source/tools/edit/haul_axis_latch.d", "packages/interactive-tools/source/tools/edit/haul_axis_latch.d"),
+    Wave15Move("source/tools/edit/poly_bevel.d", "packages/interactive-tools/source/tools/edit/poly_bevel.d"),
+    Wave15Move("source/tools/edit/poly_extrude.d", "packages/interactive-tools/source/tools/edit/poly_extrude.d"),
+    Wave15Move("source/tools/edit/poly_inset_tool.d", "packages/interactive-tools/source/tools/edit/poly_inset_tool.d"),
+    Wave15Move("source/tools/edit/reduce.d", "packages/interactive-tools/source/tools/edit/reduce.d"),
+    Wave15Move("source/tools/edit/smooth_relax.d", "packages/interactive-tools/source/tools/edit/smooth_relax.d"),
+    Wave15Move("source/tools/edit/tack.d", "packages/interactive-tools/source/tools/edit/tack.d"),
+    Wave15Move("source/tools/edit/topology_pen/defs.d", "packages/interactive-tools/source/tools/edit/topology_pen/defs.d"),
+    Wave15Move("source/tools/edit/topology_pen/json.d", "packages/interactive-tools/source/tools/edit/topology_pen/json.d"),
+    Wave15Move("source/tools/edit/topology_pen/package.d", "packages/interactive-tools/source/tools/edit/topology_pen/package.d"),
+    Wave15Move("source/tools/edit/topology_pen/render.d", "packages/interactive-tools/source/tools/edit/topology_pen/render.d"),
+    Wave15Move("source/tools/edit/topology_pen/snap_guide.d", "packages/interactive-tools/source/tools/edit/topology_pen/snap_guide.d"),
+    Wave15Move("source/tools/edit/topology_pen/tool.d", "packages/interactive-tools/source/tools/edit/topology_pen/tool.d"),
+    Wave15Move("source/tools/edit/vert_merge_tool.d", "packages/interactive-tools/source/tools/edit/vert_merge_tool.d"),
+    Wave15Move("source/tools/edit/vertex_bevel_tool.d", "packages/interactive-tools/source/tools/edit/vertex_bevel_tool.d"),
+    Wave15Move("source/tools/edit/vertex_extrude_tool.d", "packages/interactive-tools/source/tools/edit/vertex_extrude_tool.d"),
+    Wave15Move("source/tools/slice/edge_slice_tool.d", "packages/interactive-tools/source/tools/slice/edge_slice_tool.d"),
+    Wave15Move("source/tools/slice/edge_slide.d", "packages/interactive-tools/source/tools/slice/edge_slide.d"),
+    Wave15Move("source/tools/slice/loop_slice_tool.d", "packages/interactive-tools/source/tools/slice/loop_slice_tool.d"),
+    Wave15Move("source/tools/slice/slice_tool.d", "packages/interactive-tools/source/tools/slice/slice_tool.d"),
+    Wave15Move("source/tools/topology_step.d", "packages/interactive-tools/source/tools/topology_step.d"),
+    Wave15Move("source/tools/transform/move.d", "packages/interactive-tools/source/tools/transform/move.d"),
+    Wave15Move("source/tools/transform/rotate.d", "packages/interactive-tools/source/tools/transform/rotate.d"),
+    Wave15Move("source/tools/transform/scale.d", "packages/interactive-tools/source/tools/transform/scale.d"),
+    Wave15Move("source/tools/transform/transform.d", "packages/interactive-tools/source/tools/transform/transform.d"),
+    Wave15Move("source/tools/transform/xfrm_apply.d", "packages/interactive-tools/source/tools/transform/xfrm_apply.d"),
+    Wave15Move("source/tools/transform/xfrm_handles.d", "packages/interactive-tools/source/tools/transform/xfrm_handles.d"),
+    Wave15Move("source/tools/transform/xfrm_item.d", "packages/interactive-tools/source/tools/transform/xfrm_item.d"),
+    Wave15Move("source/tools/transform/xfrm_transform.d", "packages/interactive-tools/source/tools/transform/xfrm_transform.d"),
+    Wave15Move("source/viewport.d", "packages/viewport-host/source/viewport.d"),
+    Wave15Move("source/viewport_composite.d", "packages/viewport-host/source/viewport_composite.d"),
+    Wave15Move("source/coord_rounding.d", "packages/interactive-tools/source/coord_rounding.d"),
+    Wave15Move("source/value_drag.d", "packages/interactive-tools/source/value_drag.d"),
+    Wave15Move("source/params_widgets.d", "packages/interactive-tools/source/params_widgets.d"),
+    Wave15Move("source/commands/layer/xform_edit.d", "packages/editor-commands/source/commands/layer/xform_edit.d"),
+    Wave15Move("source/io/doc_state.d", "packages/application-core/source/io/doc_state.d"),
+    Wave15Move("source/ai/advisor.d", "packages/interaction-data/source/ai/advisor.d"),
+    Wave15Move("source/ai/debug_trace.d", "packages/interaction-data/source/ai/debug_trace.d"),
+    Wave15Move("source/commands/mesh/smooth.d", "packages/interactive-tools/source/commands/mesh/smooth.d"),
+    Wave15Move("tests/unit/ai/advisor_test.d", "packages/interaction-data/tests/source/tests/unit/ai/advisor_test.d"),
+    Wave15Move("tests/unit/ai/debug_trace_test.d", "packages/interaction-data/tests/source/tests/unit/ai/debug_trace_test.d"),
+    Wave15Move("tests/unit/ai/interaction_test.d", "packages/interaction-data/tests/source/tests/unit/ai/interaction_test.d"),
+    Wave15Move("tests/unit/bevel_cold_arm_param_image_test.d", "packages/interactive-tools/tests/source/tests/unit/bevel_cold_arm_param_image_test.d"),
+    Wave15Move("tests/unit/camera_intrinsics_test.d", "packages/viewport-host/tests/source/tests/unit/camera_intrinsics_test.d"),
+    Wave15Move("tests/unit/close_reason_table_test.d", "packages/interactive-tools/tests/source/tests/unit/close_reason_table_test.d"),
+    Wave15Move("tests/unit/command_history_test.d", "packages/interactive-tools/tests/source/tests/unit/command_history_test.d"),
+    Wave15Move("tests/unit/command_wrapper_result_test.d", "packages/interactive-tools/tests/source/tests/unit/command_wrapper_result_test.d"),
+    Wave15Move("tests/unit/commands/mesh/edge_slide_result_builder_test.d", "packages/interactive-tools/tests/source/tests/unit/commands/mesh/edge_slide_result_builder_test.d"),
+    Wave15Move("tests/unit/commands/mesh/jitter_result_builder_test.d", "packages/interactive-tools/tests/source/tests/unit/commands/mesh/jitter_result_builder_test.d"),
+    Wave15Move("tests/unit/constraint_surface_at_test.d", "packages/interactive-tools/tests/source/tests/unit/constraint_surface_at_test.d"),
+    Wave15Move("tests/unit/deform_magnet_test.d", "packages/interactive-tools/tests/source/tests/unit/deform_magnet_test.d"),
+    Wave15Move("tests/unit/dirty_key_camera_stamp_test.d", "packages/viewport-host/tests/source/tests/unit/dirty_key_camera_stamp_test.d"),
+    Wave15Move("tests/unit/dirty_key_tool_preview_test.d", "packages/viewport-host/tests/source/tests/unit/dirty_key_tool_preview_test.d"),
+    Wave15Move("tests/unit/dirty_key_weightmap_test.d", "packages/viewport-host/tests/source/tests/unit/dirty_key_weightmap_test.d"),
+    Wave15Move("tests/unit/drag_gain_oblique_test.d", "packages/interactive-tools/tests/source/tests/unit/drag_gain_oblique_test.d"),
+    Wave15Move("tests/unit/edge_slice_locate_base_test.d", "packages/interactive-tools/tests/source/tests/unit/edge_slice_locate_base_test.d"),
+    Wave15Move("tests/unit/edit_session_test.d", "packages/interactive-tools/tests/source/tests/unit/edit_session_test.d"),
+    Wave15Move("tests/unit/falloff_rmb_discipline_test.d", "packages/interactive-tools/tests/source/tests/unit/falloff_rmb_discipline_test.d"),
+    Wave15Move("tests/unit/gesture_carrier_interface_test.d", "packages/interactive-tools/tests/source/tests/unit/gesture_carrier_interface_test.d"),
+    Wave15Move("tests/unit/gesture_record_belt_test.d", "packages/interactive-tools/tests/source/tests/unit/gesture_record_belt_test.d"),
+    Wave15Move("tests/unit/handles/gl_util_test.d", "packages/interactive-tools/tests/source/tests/unit/handles/gl_util_test.d"),
+    Wave15Move("tests/unit/handles/shapes_test.d", "packages/interactive-tools/tests/source/tests/unit/handles/shapes_test.d"),
+    Wave15Move("tests/unit/image_cache_test.d", "packages/viewport-host/tests/source/tests/unit/image_cache_test.d"),
+    Wave15Move("tests/unit/image_plane_test.d", "packages/viewport-host/tests/source/tests/unit/image_plane_test.d"),
+    Wave15Move("tests/unit/mesh_ops/bridge_frozen_kernel_test.d", "packages/interactive-tools/tests/source/tests/unit/mesh_ops/bridge_frozen_kernel_test.d"),
+    Wave15Move("tests/unit/model_preview_test.d", "packages/interactive-tools/tests/source/tests/unit/model_preview_test.d"),
+    Wave15Move("tests/unit/overlay_space_test.d", "packages/interactive-tools/tests/source/tests/unit/overlay_space_test.d"),
+    Wave15Move("tests/unit/prepared_param_update_test.d", "packages/interactive-tools/tests/source/tests/unit/prepared_param_update_test.d"),
+    Wave15Move("tests/unit/prepared_tool_transition_test.d", "packages/interactive-tools/tests/source/tests/unit/prepared_tool_transition_test.d"),
+    Wave15Move("tests/unit/quad_overlay_eligibility_test.d", "packages/interactive-tools/tests/source/tests/unit/quad_overlay_eligibility_test.d"),
+    Wave15Move("tests/unit/shared_hover_record_test.d", "packages/interactive-tools/tests/source/tests/unit/shared_hover_record_test.d"),
+    Wave15Move("tests/unit/tool_gesture_runopen_test.d", "packages/interactive-tools/tests/source/tests/unit/tool_gesture_runopen_test.d"),
+    Wave15Move("tests/unit/tool_single_operation_equivalence_test.d", "packages/interactive-tools/tests/source/tests/unit/tool_single_operation_equivalence_test.d"),
+    Wave15Move("tests/unit/toolpipe/local_component_frame_test.d", "packages/interactive-tools/tests/source/tests/unit/toolpipe/local_component_frame_test.d"),
+    Wave15Move("tests/unit/tools/alignment/mirror_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/alignment/mirror_test.d"),
+    Wave15Move("tests/unit/tools/alignment/radial_sweep_tool_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/alignment/radial_sweep_tool_test.d"),
+    Wave15Move("tests/unit/tools/create/arc_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/create/arc_test.d"),
+    Wave15Move("tests/unit/tools/create/box_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/create/box_test.d"),
+    Wave15Move("tests/unit/tools/create/create_common_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/create/create_common_test.d"),
+    Wave15Move("tests/unit/tools/create/tube_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/create/tube_test.d"),
+    Wave15Move("tests/unit/tools/edit/preview_topology_churn_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/edit/preview_topology_churn_test.d"),
+    Wave15Move("tests/unit/tools/edit/smooth_relax_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/edit/smooth_relax_test.d"),
+    Wave15Move("tests/unit/tools/edit/tack_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/edit/tack_test.d"),
+    Wave15Move("tests/unit/tools/edit/topology_pen/move_protocol_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/edit/topology_pen/move_protocol_test.d"),
+    Wave15Move("tests/unit/tools/edit/topology_pen/press_compatibility_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/edit/topology_pen/press_compatibility_test.d"),
+    Wave15Move("tests/unit/tools/slice/edge_slice_tool_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/slice/edge_slice_tool_test.d"),
+    Wave15Move("tests/unit/tools/slice/loop_slice_tool_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/slice/loop_slice_tool_test.d"),
+    Wave15Move("tests/unit/tools/slice/slice_tool_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/slice/slice_tool_test.d"),
+    Wave15Move("tests/unit/tools/transform/move_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/transform/move_test.d"),
+    Wave15Move("tests/unit/tools/transform/rotate_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/transform/rotate_test.d"),
+    Wave15Move("tests/unit/tools/transform/scale_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/transform/scale_test.d"),
+    Wave15Move("tests/unit/tools/transform/transform_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/transform/transform_test.d"),
+    Wave15Move("tests/unit/topology_step_mixin_test.d", "packages/interactive-tools/tests/source/tests/unit/topology_step_mixin_test.d"),
+    Wave15Move("tests/unit/viewport_plane_turn_test.d", "packages/viewport-host/tests/source/tests/unit/viewport_plane_turn_test.d"),
+    Wave15Move("tests/unit/viewport_test.d", "packages/viewport-host/tests/source/tests/unit/viewport_test.d"),
+    Wave15Move("tests/unit/wrapper_shift_apply_inheritance_test.d", "packages/interactive-tools/tests/source/tests/unit/wrapper_shift_apply_inheritance_test.d"),
+ ];
+private struct Wave15Fragment {
+    string id, origin, destination, prefix;
+    size_t bytes;
+    string digest;
+}
+private immutable Wave15Fragment[] wave15Fragments = [
+    Wave15Fragment("drag:UT1", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "unittest {  // LAW A ported: the gain IS the reference's own reported pixel size.\n    import std.math : PI, tan, abs;\n\n    // Our pinned pane, our hard-coded 45-degree vertical fov.\n    Viewpo", 2209, "a50d55d5bb1a2f570b88216eca30b6afa8d63d14865c7a062e6a12dd905b8098"),
+    Wave15Fragment("drag:UT2", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "unittest {  // LAW A ported: NO foreshortening compensation. The headline.\n    import std.math : PI, cos, abs;\n\n    auto vp = corpusViewport(corpusCams[0]);\n    // Base at the view focus, so i", 3634, "db3780863c5ef6adb301f08eb59233a6823736069b08b6a0c04776757cf1a40a"),
+    Wave15Fragment("drag:UT3", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "unittest {  // LAW A ported: measured from the press, and linear in the offset.\n    auto vp = corpusViewport(corpusCams[0]);\n    Vec3 base = Vec3(0.1f, 0.4f, -0.2f);\n    Vec3 axis = Vec3(1, 0,", 3157, "cf896861ffcfe92085becbfbd87d6645fe7ca89e6d975776d6b6efabe90427ec"),
+    Wave15Fragment("drag:UT4", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "unittest {  // LAW A ported: THE STAIRCASE, scored on 19 reference rows.\n    import std.math : abs;\n    import std.conv : to;\n    import std.format : format;\n\n    // 1. The law, row by row, ov", 3338, "976ef7691ecca61954a88be25dc401f955d82c84f585190d0cf198a9bc5a15ea"),
+    Wave15Fragment("drag:UT5", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "unittest {  // LAW A ported: the ROUNDING, against the reference's own six rows.\n    import std.math : abs, floor;\n    import std.conv : to;\n    import std.format : format;\n\n    // The step th", 6698, "99eea92420f1049c46beb816808957f48a1d9fa92afac27d28477559bf214d9b"),
+    Wave15Fragment("drag:UT6", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "unittest {  // LAW A ported: the GATE — `None` is the exact identity.\n    import std.math : abs;\n    import std.format : format;\n\n    // The whole path has one gate and it is `step > 0`. The", 2651, "602ac03a74b5d2165403d435ed02cdcb9ec80ec0fe9a10f239942b22adbf24be"),
+    Wave15Fragment("drag:UT7", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "unittest {  // LAW B: the finite-difference step is a STEP, not a gain.\n    // The matrix divides by the same step it differenced with, so the step\n    // cancels to first order and a four-dec", 2338, "626a44ccd397ec32a98bd4263639bbe86842566813cd877feeb8ba60df7e30bd"),
+    Wave15Fragment("drag:UT8", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "unittest {  // LAW B: linear in the pixel offset => invariant in the event count.\n    // The harness asserts this across the process boundary (same total\n    // displacement at N = 1, 5, 20 mu", 904, "982c4f20eae92b687c2d142ad396cc9d418447b025eab860d0e67ec1a99c22e4"),
+    Wave15Fragment("drag:UT9", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "unittest {  // LAW B: under an affine projection the port IS the exact solve.\n    // Orthographic projection has no perspective divide, so the screen map is\n    // affine and its first-order l", 1129, "251faecbfedd0c18f1ee517a412ba8d8b900701d7aed059fbb67c5986a3f5a70"),
+    Wave15Fragment("drag:UT10", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "unittest {  // LAW B: how far the frozen linearisation is from the exact solve.\n    // The behaviour a user can feel, stated as a number rather than as \"it\n    // drifts\". Same camera, same an", 1992, "a5b59c9c0b8f3448aa644c21a2534d054f20d1085f29a5c6f64dd2922f6595b8"),
+    Wave15Fragment("drag:UT13", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "unittest {  // LAW B: the result stays in the plane, whatever the in-plane basis.\n    auto vp = corpusViewport(corpusCams[3]);   // side camera, X-dominant\n    Vec3 center = Vec3(0.2f, -0.1f, ", 970, "cd39587b9969e8e80b20c9955f3f7b0a44b3f04c091404b481009b430cc8e386"),
+    Wave15Fragment("drag_identity:UT1", "source/drag_identity.d", "packages/interactive-tools/tests/source/drag_identity.d", "unittest {\n    // --- cameras: near/far, oblique, near-top-down, offset viewport, ortho ---\n    Viewport[] vps = [\n        mkVp(Vec3(0,    0,   5),    Vec3(0,0,0), false, 1280, 720,  0,  0),\n ", 6084, "bd219fea3ecfc116ac26d10268b073dc6dc1f833a786906990a6baeab5e14fad"),
+    Wave15Fragment("handles.arbiter:UT1", "source/handles/arbiter.d", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d", "unittest {\n    Viewport vp;\n    auto pool = new ToolHandles();\n    auto hovered = new EngageProbeHandle(true);\n    auto missed  = new EngageProbeHandle(false);\n\n    pool.begin();\n    pool.add(", 584, "089e41f660eb20579295928d3cad7b20afd85af05bff78c762b0b381a17dcc9d"),
+    Wave15Fragment("handles.arbiter:UT2", "source/handles/arbiter.d", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d", "unittest {\n    Viewport vp;\n    auto pool = new ToolHandles();\n    auto grabbed = new EngageProbeHandle(false);   // pointer has moved off it\n    auto other   = new EngageProbeHandle(true);   ", 874, "345f6364967e57c76f53f6f4be629c0493334de9c9ff603c989fcbbf41c5b151"),
+    Wave15Fragment("handles.arbiter:UT3", "source/handles/arbiter.d", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d", "unittest {\n    Viewport vp;\n    auto pool = new ToolHandles();\n    auto h = new EngageProbeHandle(true);\n\n    pool.begin();\n    pool.add(h, 7);\n    pool.setHaul(7);\n    pool.suppress();\n    po", 332, "504dceb12c4862d1addefb6e26413d8ae111d73c05c3990b3931736464b21c2c"),
+    Wave15Fragment("handles.gizmo_metrics:UT1", "source/handles/gizmo_metrics.d", "packages/interactive-tools/tests/source/handles/gizmo_metrics_source_cells.d", "unittest {\n    import std.math : abs;\n\n    // Build a simple lookAt view (camera at +Z looking at origin, +Y up).\n    float[16] view = lookAt(Vec3(0, 0, 10), Vec3(0, 0, 0), Vec3(0, 1, 0));\n\n  ", 2488, "f8372bb565f9388e28d381cc626c80b7da281f0d8eaf87482cf378cba729265e"),
+    Wave15Fragment("handles.gl_util:UT1", "source/handles/gl_util.d", "packages/interactive-tools/tests/source/handles/gl_util_source_cells.d", "unittest {\n    // The arrowhead is a CLOSED, CAPPED tetrahedron wound uniformly outward,\n    // and its body sits in one quadrant. Every claim below is re-derived from\n    // the emitted float", 4017, "7c6547df1390585caa354aad8c51698d4276a7ad925ebc673d966b46a121eba5"),
+    Wave15Fragment("handles.shapes:UT1", "source/handles/shapes.d", "packages/interactive-tools/tests/source/handles/shapes_source_cells.d", "unittest {\n    // Task 0604 — the shaft's batch really carries a SECOND, identical segment,\n    // and `doubledShaft` really selects it.\n    //\n    // This is the pin the pixel tests cannot ", 2181, "e1591b08f6dd5ed19b0ec3d2fc90b3c3af34d04b8e9f9e56ce2c9a18599c5c57"),
+    Wave15Fragment("image_plane:UT1", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    auto p = planeData();\n    ItemXform x;                       // identity: pos 0, rot 0, scl 1, pivot 0\n    auto r = place(p, 512, 256, x);\n\n    a", 1123, "b6c402bd891c334524ac4c1e28acd2735710426154baf4c87a2363cdbc696dd3"),
+    Wave15Fragment("image_plane:UT2", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    import std.math   : cos, sin, PI;\n\n    auto p = planeData();\n    ItemXform x;\n    x.pos   = Vec3(1, 2, 3);\n    x.rot   = Vec3(0, 0, 30);\n    x.sc", 1820, "ed78f297d6da23408120c9951479d600fbad5fa0085c555eb5104789bdbd9b8a"),
+    Wave15Fragment("image_plane:UT3", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    ItemXform x;\n    struct Row { string tok; Vec3 halfU, halfV; }\n    immutable Row[6] rows = [\n        Row(\"top\",    Vec3( 2.56f, 0, 0),      Vec3(", 1314, "b4196e7267bfcd93badf67a2ffec7a8500523dc766e0a0d8ca7616ce9b1863a2"),
+    Wave15Fragment("image_plane:UT4", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    ItemXform x;\n    auto plain   = place(planeData(), 512, 256, x);\n    auto flipped = { auto p = planeData(); p.flipHorizontal = true;\n            ", 702, "93509597cd27be9ff916713d60f6f80be18cb731639c9f0951ed5f9b5434eb6d"),
+    Wave15Fragment("image_plane:UT5", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    ItemXform x;\n    foreach (bad; [ImagePlaneSource.Unbound, ImagePlaneSource.Dangling,\n                   ImagePlaneSource.Missing]) {\n        auto", 1136, "4c4fd8afa1a0d4c9592e63326bc1634cae0b7174f80eb2f5d6f34b0060642ea4"),
+    Wave15Fragment("image_plane:UT6", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    struct Row {\n        string label; int w, h; float p, sx, sy, sz; bool keepAspect;\n        float extU, extV;\n    }\n    immutable Row[] table = [\n", 2875, "7967c9529bc1f99752a75a7913078053c485e1f9832f9214c27735296887b9c5"),
+    Wave15Fragment("image_plane:UT7", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    auto p = planeData();\n    ItemXform unit;\n    auto base = place(p, 512, 256, unit);\n\n    foreach (scl; [Vec3(3, 1, 1), Vec3(1, 3, 1)]) {\n        ", 871, "a74a95d88ca23572763fa6084abb9a150f82e604af98f9ec692fc8f870e4c353"),
+    Wave15Fragment("image_plane:UT8", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    auto p = planeData();\n    p.pixelSize = float.nan;\n    ItemXform x;\n    auto r = place(p, 512, 256, x);\n    assert(r.halfU == Vec3(0, 0, 0) && r.", 1157, "572cfa90699a5b00877a2f71da545e45afd335c6fba2a2c13b23b640bd68bc9f"),
+    Wave15Fragment("image_plane:UT9", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    auto p = planeData(\"right\");\n    ItemXform x;\n    x.scl = Vec3(4, 1, 0.5f);          // the P0-d case\n    auto r = place(p, 512, 256, x, ViewPres", 557, "0725a07ce9104a9182efa9aa3a92b720a97389574edeada1021054a5137a340b"),
+    Wave15Fragment("image_plane:UT10", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    ItemXform x;\n    struct Row { ViewPreset cell; bool ortho; bool drawn; string why; }\n    immutable Row[] rows = [\n        Row(ViewPreset.Front, t", 1337, "279b242678ef829fab151291cdd098de16ca7ac07a2841303a0e6bf820cf89fd"),
+    Wave15Fragment("image_plane:UT11", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    Layer plane, target;\n    auto doc = planeFixture(plane, target);\n\n    ulong epoch = 0;\n    ulong h = imagePlaneDigest(doc, epoch);\n    void step(", 2579, "eb1a379a0aa887e1ac0acb56af62479265b742b5151010bcf2b63563f431bfa6"),
+    Wave15Fragment("overlay_space:UT1", "source/overlay_space.d", "packages/interactive-tools/tests/source/overlay_space_source_cells.d", "unittest { // The gain is the axis's OWN scale, not the mean and not the determinant.\n    // Two wrong-but-plausible implementations this separates:\n    //   * `worldPerLocal = cbrt(|det L|)` ", 977, "fe7b723c11f54b0d1d1360828eda1e5feacdfa1ec744093cdb609ec5887d8ff0"),
+    Wave15Fragment("overlay_space:UT2", "source/overlay_space.d", "packages/interactive-tools/tests/source/overlay_space_source_cells.d", "unittest { // `pos` is the FULL affine; `axis`/`toLocalDelta` are the LINEAR part.\n    // The wrong implementation this refuses is the one task 0649's\n    // `conjugate` doc warns about from t", 856, "30bc90cb71aec5dddde1bda399a49d91ac2a9f2be0f581a12dc2cb3f12d41264"),
+    Wave15Fragment("overlay_space:UT3", "source/overlay_space.d", "packages/interactive-tools/tests/source/overlay_space_source_cells.d", "unittest { // toLocal / toWorld invert each other, and toLocalDelta agrees with the axis gain.\n    import std.math : abs;\n    auto os = OverlaySpace(tiltedStand());\n    auto az = os.axis(Vec3(", 700, "acee624f94fb552bfcc4e9d35b5c16b44056b732cc5ccccbb3f110a5f65f0da3"),
+    Wave15Fragment("overlay_space:UT4", "source/overlay_space.d", "packages/interactive-tools/tests/source/overlay_space_source_cells.d", "unittest { // `toLocalPos` is the FULL affine inverse, not the linear one.\n    // The wrong implementation this refuses (task 0660): reusing\n    // `toLocalDelta` for a POINT, i.e. dropping th", 1838, "baf4cd303f613b3060dd64a832a10a871c24e01f58290edf839175fcf850cf6d"),
+    Wave15Fragment("overlay_space:UT5", "source/overlay_space.d", "packages/interactive-tools/tests/source/overlay_space_source_cells.d", "unittest { // `rayModelSpace` honours `active`, it does not just hand out `ms`.\n    // The wrong implementation this refuses: returning `ms` unconditionally.\n    // A caller carrying a cursor ", 729, "8a0d4947631241d6fae2af4f415744210e7d8078889df004f004de870aa4301a"),
+    Wave15Fragment("overlay_space:UT6", "source/overlay_space.d", "packages/interactive-tools/tests/source/overlay_space_source_cells.d", "unittest { // A degenerate axis falls back instead of producing a NaN handle.\n    ModelSpace ms = tiltedStand();\n    // Collapse Z: the third column becomes zero, so toWorldDir(z) has no\n    /", 553, "8af7addd4da2f6d15fe262c16cbb1e25e59e7a434c7f838a134ad6ecad979e78"),
+    Wave15Fragment("overlay_space:UT7", "source/overlay_space.d", "packages/interactive-tools/tests/source/overlay_space_source_cells.d", "unittest { // A non-invertible item matrix is \"no conversion\", everywhere or nowhere.\n    // The wrong implementation: convert the handle position (which needs only\n    // `m`) but not the dra", 687, "de19806500e327970e14f5c46ddffa9420483b3836de522e16b8a487bf41f850"),
+    Wave15Fragment("prepared_bridge_activation:UT1", "source/prepared_bridge_activation.d", "packages/interactive-tools/tests/source/prepared_bridge_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import commands.mesh.session_edit : MeshSessionEdit;\n    import document : Layer;\n    import editmode : EditMode;\n    import math : ", 9701, "f94e25040b5cac876250899531377d1d507c1aa260df051a602fd02e34a741e1"),
+    Wave15Fragment("prepared_command_wrapper_activation:UT1", "source/prepared_command_wrapper_activation.d", "packages/interactive-tools/tests/source/prepared_command_wrapper_activation_source_cells.d", "unittest {\n    import commands.mesh.vertex_position_result : VertexPositionResultBuilder;\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import mesh : makeCub", 2961, "5871291f544d482b15565fe1935ba472addaf875263ccc8375041a6ad20ab416"),
+    Wave15Fragment("prepared_edge_bevel_activation:UT1", "source/prepared_edge_bevel_activation.d", "packages/interactive-tools/tests/source/prepared_edge_bevel_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import prepared_r", 5887, "e090a28e91ba1faf90a6d769acc53e1262d28cc9ab5634e6fece73258363aff5"),
+    Wave15Fragment("prepared_edge_extend_deactivate:UT1", "source/prepared_edge_extend_deactivate.d", "packages/interactive-tools/tests/source/prepared_edge_extend_deactivate_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import mesh_gpu : GpuUploadOwner;\n    imp", 2720, "d2270f1159c8e908bce642c23b2488f4df200a1838d66086615870655ba116ce"),
+    Wave15Fragment("prepared_edge_extend_tool_activation:UT1", "source/prepared_edge_extend_tool_activation.d", "packages/interactive-tools/tests/source/prepared_edge_extend_tool_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import prepared_r", 3809, "080e5c41c2de3276240dec924ab9fad45f09654c55b9e6ce8d453c52f6e71333"),
+    Wave15Fragment("prepared_edge_extrude_activation:UT1", "source/prepared_edge_extrude_activation.d", "packages/interactive-tools/tests/source/prepared_edge_extrude_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import prepared_r", 5393, "f3cf73cf58197d8eae86e1730afaa0fc9e2c73d9fb8e9e529093bdb900f678c0"),
+    Wave15Fragment("prepared_edge_slice_activation:UT1", "source/prepared_edge_slice_activation.d", "packages/interactive-tools/tests/source/prepared_edge_slice_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import prepared_record_context : Prepared", 2696, "85013d5c7ba26ade4f30331ad5fa9c059d5b21ab0adfd7ef5308f1b94b23429c"),
+    Wave15Fragment("prepared_edge_slice_deactivate:UT1", "source/prepared_edge_slice_deactivate.d", "packages/interactive-tools/tests/source/prepared_edge_slice_deactivate_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import commands.mesh.session_edit : MeshSessionEdit;\n    import editmode : EditMode;\n    import mesh : makeCube;\n    import mesh_gpu", 3083, "b54270edf8a0ed5cdfff598fd9c3a82601ee023c46354497e67d96cb72410753"),
+    Wave15Fragment("prepared_inherited_noop:UT1", "source/prepared_inherited_noop.d", "packages/interactive-tools/tests/source/prepared_inherited_noop_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import mesh : Mesh;\n    import mesh_gpu : GpuMesh;\n    import prepared_record_context : PreparedRecordContext;\n    import record_obs", 5686, "890d598a16b89f90155a662064f7a3eb84aa77618cf458a5fc59821449a0d31d"),
+    Wave15Fragment("prepared_loop_slice_activation:UT1", "source/prepared_loop_slice_activation.d", "packages/interactive-tools/tests/source/prepared_loop_slice_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import prepared_record_context : Prepared", 4384, "1d46605edaca9478dd5fd86554f625f927402542bd4724170d6513bb5bc75e90"),
+    Wave15Fragment("prepared_loop_slice_deactivate:UT1", "source/prepared_loop_slice_deactivate.d", "packages/interactive-tools/tests/source/prepared_loop_slice_deactivate_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import commands.mesh.session_edit : MeshSessionEdit;\n    import editmode : EditMode;\n    import mesh : makeCube;\n    import mesh_gpu", 4035, "d358f00c2fb618d7adb9c34b9d7ea54690fffcf5e99b6efefe7136afc73b3938"),
+    Wave15Fragment("prepared_mirror_activation:UT1", "source/prepared_mirror_activation.d", "packages/interactive-tools/tests/source/prepared_mirror_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import document : Layer;\n    import math : Vec3;\nimport spatial : ModelSpace;\n    import mesh : makeCube;\n    import mesh_gpu : GpuM", 7913, "bfddf0718f8e84de83dfc93c7021f4efabdb918a8d1e86225e2812ee64bfaaa9"),
+    Wave15Fragment("prepared_move_update:UT1", "source/prepared_move_update.d", "packages/interactive-tools/tests/source/prepared_move_update_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3;\n    import mesh : Mesh, makeCube;\n    import mesh_gpu : GpuMesh;\n    import prep", 9758, "5db7a34948aeab8a1e3087ad2c6e6e6f89c2aeaae7739aee8e85ee567a64b35d"),
+    Wave15Fragment("prepared_pipe_activation:UT1", "source/prepared_pipe_activation.d", "packages/interactive-tools/tests/source/prepared_pipe_activation_source_cells.d", "unittest {\n    import toolpipe.packets : ConstrainGeom;\n    import pipe_gizmo_host : PipeGizmoHost;\n\n    Pipeline pipeline;\n    auto acen = new ActionCenterStage(null, null);\n    auto axis = n", 3688, "933c970abdf0d38328b0cc84b56f6840d5145b193e44d45202686521a2fd5ec0"),
+    Wave15Fragment("prepared_poly_bevel_activation:UT1", "source/prepared_poly_bevel_activation.d", "packages/interactive-tools/tests/source/prepared_poly_bevel_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3, cross;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import pre", 6047, "745a301218212aa0dc81951678ed82d28ad0708905dfd5eb3de6cbf41d727b90"),
+    Wave15Fragment("prepared_poly_extrude_activation:UT1", "source/prepared_poly_extrude_activation.d", "packages/interactive-tools/tests/source/prepared_poly_extrude_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3;\n    import prepared_record_context : PreparedRecordContext;\n    import prepared_", 4757, "e617a437ab49cb1f82abde093abe0fd2dcd927793c177e3ef284205c0a3a5b13"),
+    Wave15Fragment("prepared_poly_inset_activation:UT1", "source/prepared_poly_inset_activation.d", "packages/interactive-tools/tests/source/prepared_poly_inset_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3;\n    import prepared_record_context : PreparedRecordContext;\n    import prepared_", 3805, "016c698fa018e11eb136fd9a0987093318b0aadcd2efed435002553176259ce2"),
+    Wave15Fragment("prepared_private_state:UT2", "source/prepared_private_state.d", "packages/interactive-tools/tests/source/prepared_private_state_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import commands.mesh.session_edit : MeshSessionEdit;\n    import document : Layer;\n    import editmode : EditMode;\n    import mesh_gp", 4070, "4db7980a2dac1dba481de908edcbb3fbe361bd6c6b7764be38ff69df9eae89b7"),
+    Wave15Fragment("prepared_radial_array_transition:UT1", "source/prepared_radial_array_transition.d", "packages/interactive-tools/tests/source/prepared_radial_array_transition_source_cells.d", "unittest {\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import editmode : EditMode;\n    import shader : LitShader;\n    Mesh source = makeCube(); GpuMesh gpu; EditMode mode = ", 13340, "f084da843a5fa577d10fce15ee322324076247780aecd5f46a7f5508b5528bfa"),
+    Wave15Fragment("prepared_radial_sweep_transition:UT1", "source/prepared_radial_sweep_transition.d", "packages/interactive-tools/tests/source/prepared_radial_sweep_transition_source_cells.d", "unittest {\n    import math : Vec3;\n    import mesh : makeCube;\n    import editmode : EditMode;\n    import shader : LitShader;\n    import prepared_record_context : PreparedRecordContext;\n    im", 20679, "bb7342eaa1195eaf5cb91e507e0f6b25b53f83a0b239b0f7d289cfa39ea0385f"),
+    Wave15Fragment("prepared_record_context:UT1", "source/prepared_record_context.d", "packages/interactive-tools/tests/source/prepared_record_context_source_cells.d", "unittest {\n    import command : Command, CmdFlags;\n    import mesh : Mesh;\n    import view : View;\n    import editmode : EditMode;\n    final class C : Command {\n        private Mesh mesh_;\n   ", 3599, "d0b7bde1f5c183d77c0cee5afd8dec26dfbbb10ae2631085bbed5b1283768df6"),
+    Wave15Fragment("prepared_rotate_update:UT1", "source/prepared_rotate_update.d", "packages/interactive-tools/tests/source/prepared_rotate_update_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import record_observer_hub : RecordObserverHub;\n\n    auto layer = new Lay", 1570, "c2d9132da89ec224080d7c66eb9bfc12d5e58633fcc1379b4ce55fd2a0c14fac"),
+    Wave15Fragment("prepared_scale_update:UT1", "source/prepared_scale_update.d", "packages/interactive-tools/tests/source/prepared_scale_update_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import record_observer_hub : RecordObserverHub;\n\n    auto layer = new Lay", 1565, "76a48e2088306da80851fbf5cfe8298f0a585aaad81ebc7733d8b91e9be63e4a"),
+    Wave15Fragment("prepared_selection_profile:UT1", "source/prepared_selection_profile.d", "packages/interactive-tools/tests/source/prepared_selection_profile_source_cells.d", "unittest {\n    import mesh : makeCube;\n    Mesh source = makeCube();\n    source.syncSelection();\n    source.selectFace(0);\n    EditMode mode = EditMode.Polygons;\n    import shader : LitShader;", 2633, "b97d89a0a31b02712a232ec880a3eabcfd8226db4bfc1a90cdb2429754b0ebba"),
+    Wave15Fragment("prepared_slice_activation:UT1", "source/prepared_slice_activation.d", "packages/interactive-tools/tests/source/prepared_slice_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import prepared_record_context : Prepared", 3999, "153b43d9e68ef5af89acf85856ce6e4ad13d304f164d57cbd6c78cb8ba048802"),
+    Wave15Fragment("prepared_slice_deactivate:UT1", "source/prepared_slice_deactivate.d", "packages/interactive-tools/tests/source/prepared_slice_deactivate_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import commands.mesh.session_edit : MeshSessionEdit;\n    import editmode : EditMode;\n    import mesh : makeCube;\n    import mesh_gpu", 2450, "4ae7591c0a742e7231bc52976cd15747f4b6559cf5c8a9c620ac1b6480360af8"),
+    Wave15Fragment("prepared_smooth_shift_activation:UT1", "source/prepared_smooth_shift_activation.d", "packages/interactive-tools/tests/source/prepared_smooth_shift_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3, cross;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import pre", 6656, "2a5352e523cf43715f7afe6c753203c72dece33e612a939c66c468ea2b92eb68"),
+    Wave15Fragment("prepared_stroke_extrude_activation:UT1", "source/prepared_stroke_extrude_activation.d", "packages/interactive-tools/tests/source/prepared_stroke_extrude_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import mesh : Mesh, makeCube;\n    import mesh_gpu : GpuMesh;\n    import prepared_record_context : PreparedRecordContext;\n    import ", 4160, "08033b4929a8f018c2443fa7b16274eb9db238f9296e85477a1ecb82df5e77a5"),
+    Wave15Fragment("prepared_tack_activation:UT1", "source/prepared_tack_activation.d", "packages/interactive-tools/tests/source/prepared_tack_activation_source_cells.d", "unittest {\n    import editmode : EditMode;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import mesh_gpu : GpuCreateOwner;\n    import prepared_record_context : PreparedRecordC", 6952, "d235252f9533cfb8a3afa781c3b61c8fbdea75c88865a0b78cb22a6374af102a"),
+    Wave15Fragment("prepared_topology_pen_activation:UT1", "source/prepared_topology_pen_activation.d", "packages/interactive-tools/tests/source/prepared_topology_pen_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import popup_state : getStatePath;\n    import prepared_record_context : PreparedRecordContext;\n    import prepared_tool_effect : Pre", 5839, "780eef21a9c3e57d4636ecb7012f53496ed6cb1bba4348a0d7ce9ae7821aeee5"),
+    Wave15Fragment("prepared_topology_pen_deactivate:UT1", "source/prepared_topology_pen_deactivate.d", "packages/interactive-tools/tests/source/prepared_topology_pen_deactivate_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import prepared_tool_effect : PreparedDeactivateKind;\n    import record_observer_hub : RecordObserverHub;\n\n    auto savedPipe = g_pi", 1289, "4dc134736dbd9ce682838b092f745eb4a75fcb8ac58f4ad3bbdc228715d35751"),
+    Wave15Fragment("prepared_topology_pen_update:UT1", "source/prepared_topology_pen_update.d", "packages/interactive-tools/tests/source/prepared_topology_pen_update_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import prepared_record_context : PreparedRecordContext;\n    import record_observer_hub : RecordObserverHub;\n    import toolpipe.pack", 1782, "1ed0f00f9fcd9faf005e05a6a3836121a8ad631ccfc907e66166dce0f96b5ee0"),
+    Wave15Fragment("prepared_transform_activation:UT1", "source/prepared_transform_activation.d", "packages/interactive-tools/tests/source/prepared_transform_activation_source_cells.d", "unittest {\n    import mesh : Mesh, makeCube;\n    import mesh_gpu : GpuMesh;\n    import editmode : EditMode;\n    import prepared_record_context : PreparedRecordContext;\n    import command_histo", 7725, "ba7493f87aec60b60455222dc40f19ff0a6937c47c39b9a8eb327a48741c486d"),
+    Wave15Fragment("prepared_transform_product_activation:UT1", "source/prepared_transform_product_activation.d", "packages/interactive-tools/tests/source/prepared_transform_product_activation_source_cells.d", "unittest {\n    import mesh : Mesh, makeCube;\n    import mesh_gpu : GpuMesh;\n    import editmode : EditMode;\n    import math : Vec3;\n    import prepared_record_context : PreparedRecordContext;\n", 7894, "b18100fcc93ed0c40db8ed5c47d37a609013bc9fac06c20c2d4f333d0d4b066d"),
+    Wave15Fragment("prepared_vertex_bevel_activation:UT1", "source/prepared_vertex_bevel_activation.d", "packages/interactive-tools/tests/source/prepared_vertex_bevel_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import prepared_r", 5531, "d7b44247fad19d6b413cf3c49c340039a9f7bb05ba9b0c7095a5c3839a1a57db"),
+    Wave15Fragment("prepared_vertex_extrude_activation:UT1", "source/prepared_vertex_extrude_activation.d", "packages/interactive-tools/tests/source/prepared_vertex_extrude_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3, cross;\n    import mesh : makeCube;\n    import mesh_gpu : GpuMesh;\n    import pre", 5811, "1d4341cd9c02789f3acc97415c3d13fcda3434b74d88d187329755dedc1d14b1"),
+    Wave15Fragment("prepared_vertex_merge_activation:UT1", "source/prepared_vertex_merge_activation.d", "packages/interactive-tools/tests/source/prepared_vertex_merge_activation_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3;\n    import prepared_record_context : PreparedRecordContext;\n    import prepared_", 3843, "c6b117305c387d1e95479e6ae76e23a787fda3588f538fc4e5dfaaaf61f5d1c4"),
+    Wave15Fragment("prepared_xfrm_activation_session:UT1", "source/prepared_xfrm_activation_session.d", "packages/interactive-tools/tests/source/prepared_xfrm_activation_session_source_cells.d", "unittest {\n    import command_history : CommandHistory;\n    import editmode : EditMode;\n    import math : Vec3;\n    import mesh : Mesh, makeCube;\n    import mesh_gpu : GpuMesh;\n    import prep", 10309, "a927679e02e5e8902cbc9a477dc82e6f52baf6777b64bdc8ab83d27670297678"),
+    Wave15Fragment("registry:UT2", "source/registry.d", "packages/interactive-tools/tests/source/registry_source_cells.d", "unittest {\n    // The prepared descriptor owns every variable buffer.  A shallow AA dup\n    // passes value-only tests, so mutate all three producer buffers after the\n    // copy; this is the ", 663, "f4f021d1b0a7e7167f3aeb44a4b5f7f51f7da8096cf61a28329b17ff72363fb4"),
+    Wave15Fragment("snap_render:UT1", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_cells.d", "unittest {\n    auto owner = new SnapOverlayOwner();\n    SnapResult seeded; seeded.snapped = true; seeded.targetIndex = 17;\n    publishLastSnap(seeded);\n    assert(owner.beginClear());\n    asse", 669, "f361bee5b7618c40b40a91d0135388891b56285d5a7f264aae674a2fb023d5f0"),
+    Wave15Fragment("snap_render:UT2", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_cells.d", "unittest { // 0619: the highlighted VERTEX is marked where it is drawn.\n    auto saved = primaryModelSpaceResolver;\n    scope (exit) primaryModelSpaceResolver = saved;\n    t0619InstallPrimary(", 1743, "3f92d667b6d82584487706bc66ea0f551e78ec1175d609807d2e8034641f6ef1"),
+    Wave15Fragment("snap_render:UT3", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_cells.d", "unittest { // 0619: the highlighted EDGE is marked where it is drawn.\n    auto saved = primaryModelSpaceResolver;\n    scope (exit) primaryModelSpaceResolver = saved;\n    t0619InstallPrimary();", 1777, "b90d4a1ff0ee5ad43b1bb47b865be7b7a88726dfc35d02e9c0eb073e54a9db29"),
+    Wave15Fragment("snap_render:UT4", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_cells.d", "unittest { // 0619: the highlighted FACE outline follows the drawn corners.\n    auto saved = primaryModelSpaceResolver;\n    scope (exit) primaryModelSpaceResolver = saved;\n    t0619InstallPrim", 1213, "9c5eea5b183023d27001cd2f3e08aaf921ca9ff8622a2cb21118faa410a5f1d5"),
+    Wave15Fragment("snap_render:UT5", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_cells.d", "unittest { // 0619: a BACKGROUND source is marked through ITS OWN space.\n    // THE POINT OF THE SLOT MACHINERY. `snapSourceSpace` and the\n    // `targetSource >= 1` arm of `snapHighlightPixel", 4668, "f087c6350817bfaeaf53fc86df569b424257dd0a7861cc5d9e5a52a86b100bd6"),
+    Wave15Fragment("tool_disarm:UT1", "source/tool_disarm.d", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d", "unittest {\n    // Uninstalled: a no-op that reports nothing, and CLEARS a stale record.\n    g_lastDisarm = DisarmOutcome(true, 3, true, DisarmMode.cancelAndDrop);\n    g_disarmActiveTool = null", 812, "5cb31fbf40858004e3c84e0e44cf695bb5b21321effbb1fa1b5ddddc2dd8a2cd"),
+    Wave15Fragment("tool_disarm:UT2", "source/tool_disarm.d", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d", "unittest {\n    // A gesture that cancels in one step: recorded as one step, not armed.\n    bool armed = true;\n    g_disarmActiveTool = (DisarmMode) {\n        DisarmOutcome o;\n        o.hadTool", 779, "7dcf1ad936086f32777c5dbc659617dc1c5376948ab077a17456074b1503b882"),
+    Wave15Fragment("tool_disarm:UT3", "source/tool_disarm.d", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d", "unittest {\n    // THE CAP IS REAL, and this is the cell that shows it: a tool whose cancel\n    // NEVER clears must not spin. Without the `< kMaxDisarmSteps` term this\n    // loop does not ter", 947, "f10b3f264dc40a681a1bdf8bf7ea204ff9833494672696a5a91d41a620023362"),
+    Wave15Fragment("tool_disarm:UT4", "source/tool_disarm.d", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d", "unittest {\n    // A live edit is the population floor: without it, zero cancel calls says\n    // only that there was nothing for dropOnly to preserve.\n    bool armed = true;\n    int cancelStep", 1056, "2ba13c2d50d10af4027e254601687f449793fbc0a51e6e1974ebb6f7a9eb6bc2"),
+    Wave15Fragment("tool_presets:UT1", "source/tool_presets.d", "packages/interactive-tools/tests/source/tool_presets_source_cells.d", "unittest {\n    import toolpipe.attr_cache : PipelineAttrCache, kToolNode;\n    PipelineAttrCache cache;\n    char[] producerName = \"label\".dup;\n    char[] producerValue = \"owned-value\".dup;\n    ", 825, "12c0c703ac34dafdde8f745b548d7eb08e14d0a1c1467dca80f0a9235133b6e7"),
+    Wave15Fragment("tools.alignment.mirror:UT1", "source/tools/alignment/mirror.d", "packages/interactive-tools/tests/source/tools/alignment/mirror_source_cells.d", "unittest {\n    Mesh owned;\n    auto tool = new MirrorTool(() => &owned, null, LitShader.init);\n    tool.engaged = false; tool.havePreviewCache = true;\n    auto prepared = tool.prepareParamStat", 809, "4cad9917792b7644e7c6159eabc99db500d847e423182b041a619816d4324bc7"),
+    Wave15Fragment("tools.create.arc:UT1", "source/tools/create/arc.d", "packages/interactive-tools/tests/source/tools/create/arc_source_cells.d", "unittest {\n    Mesh owned;\n    auto tool = new ArcTool(() => &owned, null, LitShader.init);\n    tool.state = ArcState.Drawing;\n    auto prepared = tool.prepareIdleState();\n    assert(tool.stat", 720, "eba247176d32451494a5f37c5bd166303261967892bd05822afaa313eb4fda02"),
+    Wave15Fragment("tools.create.box:UT1", "source/tools/create/box.d", "packages/interactive-tools/tests/source/tools/create/box_source_cells.d", "unittest {\n    import record_observer_hub : RecordObserverHub;\n    import mesh_gpu : GpuMesh;\n    Layer layer = new Layer();\n    GpuMesh sceneGpu;\n    auto box = new BoxTool(() => &layer.meshR", 836, "d1febfbbd86ccec6929d087bfceec4f228d248e6aa83f63243c0c7dc0aa9123c"),
+    Wave15Fragment("tools.create.create_common:UT1", "source/tools/create/create_common.d", "packages/interactive-tools/tests/source/tools/create/create_common_source_cells.d", "unittest { // ortho: the in-plane answer is the click, NOT the click times distance\n    import std.math : abs, tan, PI;\n\n    immutable float dist = 3.0f;\n    immutable Vec3  focus = Vec3(0, 0,", 1587, "56c443548c56eb2743a827033dc993d119dba5bba527cb5d14e571eab26459a3"),
+    Wave15Fragment("tools.create.create_common:UT2", "source/tools/create/create_common.d", "packages/interactive-tools/tests/source/tools/create/create_common_source_cells.d", "unittest { // ortho: the plane's DEPTH is the focus snapped to q (K-W2 finding 2)\n    import std.math : abs;\n    // Focus depth OFF the q lattice; `placementPlaneHit` is UNQUANTISED, so\n    //", 953, "2c68975385f80efa5344f994673fca52a6b83cef621470ea284b45bbec7ecbaf"),
+    Wave15Fragment("tools.create.create_common:UT3", "source/tools/create/create_common.d", "packages/interactive-tools/tests/source/tools/create/create_common_source_cells.d", "unittest { // the placement click is TOTAL where the old floor plane refused\n    import std.math : abs;\n    import spatial : screenPointToRay;\n\n    immutable float dist  = 3.0f;\n    // The foc", 2350, "bad7d1c65291ab89716bed3741fd9df2b4ba0ef212834cb8a6978c20f776d82e"),
+    Wave15Fragment("tools.create.sphere:UT1", "source/tools/create/sphere.d", "packages/interactive-tools/tests/source/tools/create/sphere_source_cells.d", "unittest {\n    // The base choosePlane reads the pinned basis and keeps its unsigned normal.\n    import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;\n    import toolpipe.stages.workplane : W", 2990, "358c1b64f050939c225cd0bad08386c64f2b2a3ca875ddb560231ff2af23e785"),
+    Wave15Fragment("tools.edit.bridge_tool:UT1", "source/tools/edit/bridge_tool.d", "packages/interactive-tools/tests/source/tools/edit/bridge_tool_source_cells.d", "unittest {\n    Mesh owned;\n    auto tool = new BridgeTool(() => &owned, null, LitShader.init, null);\n    tool.engaged = false;\n    auto prepared = tool.prepareParamState(\"segments\");\n    asser", 589, "06265a66d3547c0af73013ed08a14a04b43edf4f59ae9909048a5738446b6067"),
+    Wave15Fragment("tools.edit.bridge_tool:UT2", "source/tools/edit/bridge_tool.d", "packages/interactive-tools/tests/source/tools/edit/bridge_tool_source_cells.d", "unittest { // Polygon mode, spans=1: remove=true/false are bit-exact both\n           // states (task 0357 Remove Polygons requirement).\n    Mesh m1 = makeTwoCapMesh();\n    m1.selectFace(0);\n  ", 1501, "4fcdbada7427f9bcd145c1adc1268e53bdd062408a7c08ff576d5aebbd0f20b6"),
+    Wave15Fragment("tools.edit.bridge_tool:UT3", "source/tools/edit/bridge_tool.d", "packages/interactive-tools/tests/source/tools/edit/bridge_tool_source_cells.d", "unittest { // Edge mode: remove=true generalizes to deleting a face that\n           // happens to be exactly bounded by a bridged loop (task 0357\n           // closes the \"edge-mode never remo", 1553, "7efbbbb297dad562d9aeb8ebf307c4710458e1c16687cdee6fb2a649ebbd6a16"),
+    Wave15Fragment("tools.edit.bridge_tool:UT4", "source/tools/edit/bridge_tool.d", "packages/interactive-tools/tests/source/tools/edit/bridge_tool_source_cells.d", "unittest { // rebuildBridgePreview is NON-CUMULATIVE — 5 repeat calls land\n           // on the identical vertex/face count (mirrors tools/mirror.d's\n           // / tools/tack.d's own non-c", 1454, "63335d3f278e4aa3b35d205765c5816ccc13b0a315e2d7f2706370f18dee06cd"),
+    Wave15Fragment("tools.edit.edge_extend:UT1", "source/tools/edit/edge_extend.d", "packages/interactive-tools/tests/source/tools/edit/edge_extend_source_cells.d", "unittest {\n    import record_observer_hub : RecordObserverHub;\n\n    auto layer = new Layer(); layer.meshRef() = makeCube();\n    GpuMesh gpu; EditMode mode = EditMode.Edges;\n    auto tool = new", 1034, "2de1732040d7120b6a7f661fc5b33fc1cac7e15e997121760c4fda7e86f28d01"),
+    Wave15Fragment("tools.transform.transform:UT1", "source/tools/transform/transform.d", "packages/interactive-tools/tests/source/tools/transform/transform_source_cells.d", "unittest {\n    import record_observer_hub : RecordObserverHub;\n    import command : Command, CmdFlags;\n    import view : View;\n    final class PreparedProbeCommand : Command {\n        private ", 6624, "396f828d723b5636fa9147c6c3de7a31cbb7401ed4f046c94bdeb2372a79d554"),
+    Wave15Fragment("commands.layer.xform_edit:UT1", "source/commands/layer/xform_edit.d", "packages/editor-commands/tests/source/tests/unit/commands/layer/xform_edit_source_public_test.d", "unittest { // mergeRunTail: single target, first-touch before + latest after.\n    Mesh mesh;\n    View view = new View(0, 0, 1, 1);\n    auto layer = new Layer();\n\n    auto c1 = new LayerXformEd", 882, "e72fb290588a7bf9b56756b734cdef357e67c9b4707b86bb1b9420f965d4c283"),
+    Wave15Fragment("commands.layer.xform_edit:UT2", "source/commands/layer/xform_edit.d", "packages/editor-commands/tests/source/tests/unit/commands/layer/xform_edit_source_public_test.d", "unittest { // mergeRunTail: two targets unioned by Layer IDENTITY.\n    Mesh mesh;\n    View view = new View(0, 0, 1, 1);\n    auto layerA = new Layer();\n    auto layerB = new Layer();\n\n    // Ge", 1662, "f912c2603f03e67230327092fb846679c355a8533adab29cb2cdb0e0a0bf7828"),
+    Wave15Fragment("commands.layer.xform_edit:UT3", "source/commands/layer/xform_edit.d", "packages/editor-commands/tests/source/tests/unit/commands/layer/xform_edit_source_public_test.d", "unittest { // apply()/revert() write the WHOLE xform, both directions.\n    Mesh mesh;\n    View view = new View(0, 0, 1, 1);\n    auto layer = new Layer();\n    layer.xform = xf(5);\n\n    auto cmd", 433, "0fa7e5d96149bcc467080c011ced6966ef4cf3016d9897440cd6460ecb408252"),
+    Wave15Fragment("drag:helper1", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_cells.d", "version (unittest) {\n    // The two reference cameras of the pixel-size read, verbatim: each row is\n    // the eye distance and the pixel size the REFERENCE ITSELF reported for\n    // that vie", 4047, "e2429771031414dd461ae663e3e88f28123c1e7d13618283f0640248b50260de"),
+    Wave15Fragment("drag:helper2", "source/drag.d", "packages/interactive-tools/tests/source/drag_source_helpers.d", "version (unittest) {\n    import std.math : PI, sin, cos, tan;\n\n    // The cameras the cross-engine drag corpus actually runs, in our own\n    // terms. `az`/`el`/`dist` came out of the corpus h", 2293, "d11cf6ecbfd3812c5c198678fb408101b6b0a9314511542ef13c3a625e1cfef5"),
+    Wave15Fragment("handles.arbiter:helper3", "source/handles/arbiter.d", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d", "version (unittest) {\n    private class EngageProbeHandle : Handler {\n        bool hits;\n        this(bool hits) { this.hits = hits; }\n        override protected bool hitTest(int mx, int my, co", 257, "968ef29f31df1881d9808640af11216448835f02614a56df891dbc86e0989699"),
+    Wave15Fragment("image_plane:helper4", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "version (unittest) {\n    import document : ItemKind, ImageData, ImagePlaneData;\n\n    /// [mesh, clipA, clipB(middle target), clipC, plane] — three clips, the\n    /// plane bound to the MIDDL", 1579, "5556c7308a9e92b9bd536f62a197beadd30b1a89fd202bc70b96408c70de1ba8"),
+    Wave15Fragment("image_plane:helper5", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "version (unittest) {\n    private bool near(float a, float b, float tol = 1e-4f) {\n        import std.math : abs, isFinite;\n        return isFinite(a) && isFinite(b) && abs(a - b) <= tol;\n    }", 1344, "1b97784f3dc2ab2c149f3501ba3a02407add7f70f725c8eaebb4dd8cee2021ce"),
+    Wave15Fragment("snap_render:helper6", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_helpers.d", "version (unittest) {\n    import math     : lookAt, perspectiveMatrix, transformPoint;\n    import document : ItemXform, primaryModelSpaceResolver;\n    import std.format : format;\n\n    // Delibe", 5384, "1ae5ceb2b775d10ce840c7776c2774539e318ff2678937f7c4979a0d228895d1"),
+    Wave15Fragment("tool_presets:helper7", "source/tool_presets.d", "packages/interactive-tools/tests/source/tool_presets_source_cells.d", "version (unittest) {\n    // Tiny ParamProvider fake — one float param — so the restore mechanism\n    // is testable without a GL-heavy real Tool. Records the names\n    // `onParamChanged` ", 752, "9dd00e7b6e793887c9f691191f3a036bded4e12f458187d6c1265a6bf56173c1"),
+    Wave15Fragment("commands.layer.xform_edit:helper8", "source/commands/layer/xform_edit.d", "packages/editor-commands/tests/source/tests/unit/commands/layer/xform_edit_source_public_test.d", "version (unittest) {\n    import math : Vec3;\n    private ItemXform xf(float px) {\n        ItemXform x;\n        x.pos = Vec3(px, 0, 0);\n        return x;\n    }\n}", 160, "57a18df95208ea9467aaa950d87334bcda2ef5dabf59f2d93d98aee268f53603"),
+ ];
+private bool[string] wave15InputValidity;
+// These pins are independent of the admitted rows; deleting or duplicating an
+// admission cannot delete or duplicate its expectation with it.
+private immutable Wave15Move[] wave15MovePins = [
+    Wave15Move("source/ai/interaction.d", "packages/interaction-data/source/ai/interaction.d"),
+    Wave15Move("source/bg_gpu_cache.d", "packages/viewport-host/source/bg_gpu_cache.d"),
+    Wave15Move("source/commands/tool/attr.d", "packages/interactive-tools/source/commands/tool/attr.d"),
+    Wave15Move("source/commands/tool/begin_session.d", "packages/interactive-tools/source/commands/tool/begin_session.d"),
+    Wave15Move("source/commands/tool/bridge_headless.d", "packages/interactive-tools/source/commands/tool/bridge_headless.d"),
+    Wave15Move("source/commands/tool/do_apply.d", "packages/interactive-tools/source/commands/tool/do_apply.d"),
+    Wave15Move("source/commands/tool/headless.d", "packages/interactive-tools/source/commands/tool/headless.d"),
+    Wave15Move("source/commands/tool/host.d", "packages/interactive-tools/source/commands/tool/host.d"),
+    Wave15Move("source/commands/tool/lifecycle.d", "packages/interactive-tools/source/commands/tool/lifecycle.d"),
+    Wave15Move("source/commands/tool/panel_edit.d", "packages/interactive-tools/source/commands/tool/panel_edit.d"),
+    Wave15Move("source/commands/tool/pipe.d", "packages/interactive-tools/source/commands/tool/pipe.d"),
+    Wave15Move("source/commands/tool/reset.d", "packages/interactive-tools/source/commands/tool/reset.d"),
+    Wave15Move("source/commands/tool/set.d", "packages/interactive-tools/source/commands/tool/set.d"),
+    Wave15Move("source/deform_magnet.d", "packages/interactive-tools/source/deform_magnet.d"),
+    Wave15Move("source/display_sync.d", "packages/viewport-gpu/source/display_sync.d"),
+    Wave15Move("source/drag.d", "packages/interactive-tools/source/drag.d"),
+    Wave15Move("source/drag_identity.d", "packages/interactive-tools/tests/source/drag_identity.d"),
+    Wave15Move("source/edit_session.d", "packages/interactive-tools/source/edit_session.d"),
+    Wave15Move("source/evaluated_move_weld.d", "packages/interactive-tools/source/evaluated_move_weld.d"),
+    Wave15Move("source/falloff_handles.d", "packages/interactive-tools/source/falloff_handles.d"),
+    Wave15Move("source/falloff_render.d", "packages/interactive-tools/source/falloff_render.d"),
+    Wave15Move("source/gizmo.d", "packages/interactive-tools/source/gizmo.d"),
+    Wave15Move("source/handler.d", "packages/interactive-tools/source/handler.d"),
+    Wave15Move("source/handles/arbiter.d", "packages/interactive-tools/source/handles/arbiter.d"),
+    Wave15Move("source/handles/gizmo_metrics.d", "packages/interactive-tools/source/handles/gizmo_metrics.d"),
+    Wave15Move("source/handles/gl_util.d", "packages/interactive-tools/source/handles/gl_util.d"),
+    Wave15Move("source/handles/shapes.d", "packages/interactive-tools/source/handles/shapes.d"),
+    Wave15Move("source/image_cache.d", "packages/viewport-host/source/image_cache.d"),
+    Wave15Move("source/image_plane.d", "packages/viewport-host/source/image_plane.d"),
+    Wave15Move("source/model_preview.d", "packages/interactive-tools/source/model_preview.d"),
+    Wave15Move("source/overlay_space.d", "packages/interactive-tools/source/overlay_space.d"),
+    Wave15Move("source/pipe_gizmo_host.d", "packages/interactive-tools/source/pipe_gizmo_host.d"),
+    Wave15Move("source/prepared_box_param.d", "packages/interactive-tools/source/prepared_box_param.d"),
+    Wave15Move("source/prepared_bridge_activation.d", "packages/interactive-tools/source/prepared_bridge_activation.d"),
+    Wave15Move("source/prepared_command_wrapper_activation.d", "packages/interactive-tools/source/prepared_command_wrapper_activation.d"),
+    Wave15Move("source/prepared_edge_bevel_activation.d", "packages/interactive-tools/source/prepared_edge_bevel_activation.d"),
+    Wave15Move("source/prepared_edge_extend_deactivate.d", "packages/interactive-tools/source/prepared_edge_extend_deactivate.d"),
+    Wave15Move("source/prepared_edge_extend_tool_activation.d", "packages/interactive-tools/source/prepared_edge_extend_tool_activation.d"),
+    Wave15Move("source/prepared_edge_extrude_activation.d", "packages/interactive-tools/source/prepared_edge_extrude_activation.d"),
+    Wave15Move("source/prepared_edge_slice_activation.d", "packages/interactive-tools/source/prepared_edge_slice_activation.d"),
+    Wave15Move("source/prepared_edge_slice_deactivate.d", "packages/interactive-tools/source/prepared_edge_slice_deactivate.d"),
+    Wave15Move("source/prepared_inherited_noop.d", "packages/interactive-tools/source/prepared_inherited_noop.d"),
+    Wave15Move("source/prepared_loop_slice_activation.d", "packages/interactive-tools/source/prepared_loop_slice_activation.d"),
+    Wave15Move("source/prepared_loop_slice_deactivate.d", "packages/interactive-tools/source/prepared_loop_slice_deactivate.d"),
+    Wave15Move("source/prepared_mirror_activation.d", "packages/interactive-tools/source/prepared_mirror_activation.d"),
+    Wave15Move("source/prepared_move_update.d", "packages/interactive-tools/source/prepared_move_update.d"),
+    Wave15Move("source/prepared_param_update.d", "packages/interactive-tools/source/prepared_param_update.d"),
+    Wave15Move("source/prepared_pipe_activation.d", "packages/interactive-tools/source/prepared_pipe_activation.d"),
+    Wave15Move("source/prepared_poly_bevel_activation.d", "packages/interactive-tools/source/prepared_poly_bevel_activation.d"),
+    Wave15Move("source/prepared_poly_extrude_activation.d", "packages/interactive-tools/source/prepared_poly_extrude_activation.d"),
+    Wave15Move("source/prepared_poly_inset_activation.d", "packages/interactive-tools/source/prepared_poly_inset_activation.d"),
+    Wave15Move("source/prepared_private_state.d", "packages/interactive-tools/source/prepared_private_state.d"),
+    Wave15Move("source/prepared_radial_array_transition.d", "packages/interactive-tools/source/prepared_radial_array_transition.d"),
+    Wave15Move("source/prepared_radial_sweep_transition.d", "packages/interactive-tools/source/prepared_radial_sweep_transition.d"),
+    Wave15Move("source/prepared_record_context.d", "packages/interactive-tools/source/prepared_record_context.d"),
+    Wave15Move("source/prepared_rotate_update.d", "packages/interactive-tools/source/prepared_rotate_update.d"),
+    Wave15Move("source/prepared_scale_update.d", "packages/interactive-tools/source/prepared_scale_update.d"),
+    Wave15Move("source/prepared_selection_profile.d", "packages/interactive-tools/source/prepared_selection_profile.d"),
+    Wave15Move("source/prepared_selection_profile_image.d", "packages/interactive-tools/source/prepared_selection_profile_image.d"),
+    Wave15Move("source/prepared_slice_activation.d", "packages/interactive-tools/source/prepared_slice_activation.d"),
+    Wave15Move("source/prepared_slice_deactivate.d", "packages/interactive-tools/source/prepared_slice_deactivate.d"),
+    Wave15Move("source/prepared_smooth_shift_activation.d", "packages/interactive-tools/source/prepared_smooth_shift_activation.d"),
+    Wave15Move("source/prepared_stroke_extrude_activation.d", "packages/interactive-tools/source/prepared_stroke_extrude_activation.d"),
+    Wave15Move("source/prepared_tack_activation.d", "packages/interactive-tools/source/prepared_tack_activation.d"),
+    Wave15Move("source/prepared_tool_transition.d", "packages/interactive-tools/source/prepared_tool_transition.d"),
+    Wave15Move("source/prepared_topology_pen_activation.d", "packages/interactive-tools/source/prepared_topology_pen_activation.d"),
+    Wave15Move("source/prepared_topology_pen_deactivate.d", "packages/interactive-tools/source/prepared_topology_pen_deactivate.d"),
+    Wave15Move("source/prepared_topology_pen_update.d", "packages/interactive-tools/source/prepared_topology_pen_update.d"),
+    Wave15Move("source/prepared_transform_activation.d", "packages/interactive-tools/source/prepared_transform_activation.d"),
+    Wave15Move("source/prepared_transform_product_activation.d", "packages/interactive-tools/source/prepared_transform_product_activation.d"),
+    Wave15Move("source/prepared_vertex_bevel_activation.d", "packages/interactive-tools/source/prepared_vertex_bevel_activation.d"),
+    Wave15Move("source/prepared_vertex_extrude_activation.d", "packages/interactive-tools/source/prepared_vertex_extrude_activation.d"),
+    Wave15Move("source/prepared_vertex_merge_activation.d", "packages/interactive-tools/source/prepared_vertex_merge_activation.d"),
+    Wave15Move("source/prepared_xfrm_activation_session.d", "packages/interactive-tools/source/prepared_xfrm_activation_session.d"),
+    Wave15Move("source/prepared_xfrm_refire_state.d", "packages/interactive-tools/source/prepared_xfrm_refire_state.d"),
+    Wave15Move("source/prepared_xfrm_replay.d", "packages/interactive-tools/source/prepared_xfrm_replay.d"),
+    Wave15Move("source/prepared_xfrm_slot_poll.d", "packages/interactive-tools/source/prepared_xfrm_slot_poll.d"),
+    Wave15Move("source/prepared_xfrm_update_boundary.d", "packages/interactive-tools/source/prepared_xfrm_update_boundary.d"),
+    Wave15Move("source/prepared_xfrm_update_edit_close.d", "packages/interactive-tools/source/prepared_xfrm_update_edit_close.d"),
+    Wave15Move("source/prepared_xfrm_update_tail.d", "packages/interactive-tools/source/prepared_xfrm_update_tail.d"),
+    Wave15Move("source/property_panel.d", "packages/interactive-tools/source/property_panel.d"),
+    Wave15Move("source/registry.d", "packages/interactive-tools/source/registry.d"),
+    Wave15Move("source/snap_render.d", "packages/interactive-tools/source/snap_render.d"),
+    Wave15Move("source/tool.d", "packages/interactive-tools/source/tool.d"),
+    Wave15Move("source/tool_attr_bounds.d", "packages/interactive-tools/source/tool_attr_bounds.d"),
+    Wave15Move("source/tool_disarm.d", "packages/interactive-tools/source/tool_disarm.d"),
+    Wave15Move("source/tool_presets.d", "packages/interactive-tools/source/tool_presets.d"),
+    Wave15Move("source/tools/alignment/array_tool.d", "packages/interactive-tools/source/tools/alignment/array_tool.d"),
+    Wave15Move("source/tools/alignment/clone_tool.d", "packages/interactive-tools/source/tools/alignment/clone_tool.d"),
+    Wave15Move("source/tools/alignment/linear_align_tool.d", "packages/interactive-tools/source/tools/alignment/linear_align_tool.d"),
+    Wave15Move("source/tools/alignment/mirror.d", "packages/interactive-tools/source/tools/alignment/mirror.d"),
+    Wave15Move("source/tools/alignment/radial_align_tool.d", "packages/interactive-tools/source/tools/alignment/radial_align_tool.d"),
+    Wave15Move("source/tools/alignment/radial_array_tool.d", "packages/interactive-tools/source/tools/alignment/radial_array_tool.d"),
+    Wave15Move("source/tools/alignment/radial_sweep_tool.d", "packages/interactive-tools/source/tools/alignment/radial_sweep_tool.d"),
+    Wave15Move("source/tools/common/command_wrapper.d", "packages/interactive-tools/source/tools/common/command_wrapper.d"),
+    Wave15Move("source/tools/create/arc.d", "packages/interactive-tools/source/tools/create/arc.d"),
+    Wave15Move("source/tools/create/box.d", "packages/interactive-tools/source/tools/create/box.d"),
+    Wave15Move("source/tools/create/capsule.d", "packages/interactive-tools/source/tools/create/capsule.d"),
+    Wave15Move("source/tools/create/cone.d", "packages/interactive-tools/source/tools/create/cone.d"),
+    Wave15Move("source/tools/create/create_common.d", "packages/interactive-tools/source/tools/create/create_common.d"),
+    Wave15Move("source/tools/create/cylinder.d", "packages/interactive-tools/source/tools/create/cylinder.d"),
+    Wave15Move("source/tools/create/pen.d", "packages/interactive-tools/source/tools/create/pen.d"),
+    Wave15Move("source/tools/create/primitive_create_tool.d", "packages/interactive-tools/source/tools/create/primitive_create_tool.d"),
+    Wave15Move("source/tools/create/sphere.d", "packages/interactive-tools/source/tools/create/sphere.d"),
+    Wave15Move("source/tools/create/torus.d", "packages/interactive-tools/source/tools/create/torus.d"),
+    Wave15Move("source/tools/create/tube.d", "packages/interactive-tools/source/tools/create/tube.d"),
+    Wave15Move("source/tools/create/vertex_place.d", "packages/interactive-tools/source/tools/create/vertex_place.d"),
+    Wave15Move("source/tools/deform/bend.d", "packages/interactive-tools/source/tools/deform/bend.d"),
+    Wave15Move("source/tools/deform/magnet.d", "packages/interactive-tools/source/tools/deform/magnet.d"),
+    Wave15Move("source/tools/deform/push.d", "packages/interactive-tools/source/tools/deform/push.d"),
+    Wave15Move("source/tools/deform/smooth_shift_tool.d", "packages/interactive-tools/source/tools/deform/smooth_shift_tool.d"),
+    Wave15Move("source/tools/deform/stroke_extrude_tool.d", "packages/interactive-tools/source/tools/deform/stroke_extrude_tool.d"),
+    Wave15Move("source/tools/edit/bridge_tool.d", "packages/interactive-tools/source/tools/edit/bridge_tool.d"),
+    Wave15Move("source/tools/edit/edge_bevel.d", "packages/interactive-tools/source/tools/edit/edge_bevel.d"),
+    Wave15Move("source/tools/edit/edge_extend.d", "packages/interactive-tools/source/tools/edit/edge_extend.d"),
+    Wave15Move("source/tools/edit/edge_extrude.d", "packages/interactive-tools/source/tools/edit/edge_extrude.d"),
+    Wave15Move("source/tools/edit/haul_axis_latch.d", "packages/interactive-tools/source/tools/edit/haul_axis_latch.d"),
+    Wave15Move("source/tools/edit/poly_bevel.d", "packages/interactive-tools/source/tools/edit/poly_bevel.d"),
+    Wave15Move("source/tools/edit/poly_extrude.d", "packages/interactive-tools/source/tools/edit/poly_extrude.d"),
+    Wave15Move("source/tools/edit/poly_inset_tool.d", "packages/interactive-tools/source/tools/edit/poly_inset_tool.d"),
+    Wave15Move("source/tools/edit/reduce.d", "packages/interactive-tools/source/tools/edit/reduce.d"),
+    Wave15Move("source/tools/edit/smooth_relax.d", "packages/interactive-tools/source/tools/edit/smooth_relax.d"),
+    Wave15Move("source/tools/edit/tack.d", "packages/interactive-tools/source/tools/edit/tack.d"),
+    Wave15Move("source/tools/edit/topology_pen/defs.d", "packages/interactive-tools/source/tools/edit/topology_pen/defs.d"),
+    Wave15Move("source/tools/edit/topology_pen/json.d", "packages/interactive-tools/source/tools/edit/topology_pen/json.d"),
+    Wave15Move("source/tools/edit/topology_pen/package.d", "packages/interactive-tools/source/tools/edit/topology_pen/package.d"),
+    Wave15Move("source/tools/edit/topology_pen/render.d", "packages/interactive-tools/source/tools/edit/topology_pen/render.d"),
+    Wave15Move("source/tools/edit/topology_pen/snap_guide.d", "packages/interactive-tools/source/tools/edit/topology_pen/snap_guide.d"),
+    Wave15Move("source/tools/edit/topology_pen/tool.d", "packages/interactive-tools/source/tools/edit/topology_pen/tool.d"),
+    Wave15Move("source/tools/edit/vert_merge_tool.d", "packages/interactive-tools/source/tools/edit/vert_merge_tool.d"),
+    Wave15Move("source/tools/edit/vertex_bevel_tool.d", "packages/interactive-tools/source/tools/edit/vertex_bevel_tool.d"),
+    Wave15Move("source/tools/edit/vertex_extrude_tool.d", "packages/interactive-tools/source/tools/edit/vertex_extrude_tool.d"),
+    Wave15Move("source/tools/slice/edge_slice_tool.d", "packages/interactive-tools/source/tools/slice/edge_slice_tool.d"),
+    Wave15Move("source/tools/slice/edge_slide.d", "packages/interactive-tools/source/tools/slice/edge_slide.d"),
+    Wave15Move("source/tools/slice/loop_slice_tool.d", "packages/interactive-tools/source/tools/slice/loop_slice_tool.d"),
+    Wave15Move("source/tools/slice/slice_tool.d", "packages/interactive-tools/source/tools/slice/slice_tool.d"),
+    Wave15Move("source/tools/topology_step.d", "packages/interactive-tools/source/tools/topology_step.d"),
+    Wave15Move("source/tools/transform/move.d", "packages/interactive-tools/source/tools/transform/move.d"),
+    Wave15Move("source/tools/transform/rotate.d", "packages/interactive-tools/source/tools/transform/rotate.d"),
+    Wave15Move("source/tools/transform/scale.d", "packages/interactive-tools/source/tools/transform/scale.d"),
+    Wave15Move("source/tools/transform/transform.d", "packages/interactive-tools/source/tools/transform/transform.d"),
+    Wave15Move("source/tools/transform/xfrm_apply.d", "packages/interactive-tools/source/tools/transform/xfrm_apply.d"),
+    Wave15Move("source/tools/transform/xfrm_handles.d", "packages/interactive-tools/source/tools/transform/xfrm_handles.d"),
+    Wave15Move("source/tools/transform/xfrm_item.d", "packages/interactive-tools/source/tools/transform/xfrm_item.d"),
+    Wave15Move("source/tools/transform/xfrm_transform.d", "packages/interactive-tools/source/tools/transform/xfrm_transform.d"),
+    Wave15Move("source/viewport.d", "packages/viewport-host/source/viewport.d"),
+    Wave15Move("source/viewport_composite.d", "packages/viewport-host/source/viewport_composite.d"),
+    Wave15Move("source/coord_rounding.d", "packages/interactive-tools/source/coord_rounding.d"),
+    Wave15Move("source/value_drag.d", "packages/interactive-tools/source/value_drag.d"),
+    Wave15Move("source/params_widgets.d", "packages/interactive-tools/source/params_widgets.d"),
+    Wave15Move("source/commands/layer/xform_edit.d", "packages/editor-commands/source/commands/layer/xform_edit.d"),
+    Wave15Move("source/io/doc_state.d", "packages/application-core/source/io/doc_state.d"),
+    Wave15Move("source/ai/advisor.d", "packages/interaction-data/source/ai/advisor.d"),
+    Wave15Move("source/ai/debug_trace.d", "packages/interaction-data/source/ai/debug_trace.d"),
+    Wave15Move("source/commands/mesh/smooth.d", "packages/interactive-tools/source/commands/mesh/smooth.d"),
+    Wave15Move("tests/unit/ai/advisor_test.d", "packages/interaction-data/tests/source/tests/unit/ai/advisor_test.d"),
+    Wave15Move("tests/unit/ai/debug_trace_test.d", "packages/interaction-data/tests/source/tests/unit/ai/debug_trace_test.d"),
+    Wave15Move("tests/unit/ai/interaction_test.d", "packages/interaction-data/tests/source/tests/unit/ai/interaction_test.d"),
+    Wave15Move("tests/unit/bevel_cold_arm_param_image_test.d", "packages/interactive-tools/tests/source/tests/unit/bevel_cold_arm_param_image_test.d"),
+    Wave15Move("tests/unit/camera_intrinsics_test.d", "packages/viewport-host/tests/source/tests/unit/camera_intrinsics_test.d"),
+    Wave15Move("tests/unit/close_reason_table_test.d", "packages/interactive-tools/tests/source/tests/unit/close_reason_table_test.d"),
+    Wave15Move("tests/unit/command_history_test.d", "packages/interactive-tools/tests/source/tests/unit/command_history_test.d"),
+    Wave15Move("tests/unit/command_wrapper_result_test.d", "packages/interactive-tools/tests/source/tests/unit/command_wrapper_result_test.d"),
+    Wave15Move("tests/unit/commands/mesh/edge_slide_result_builder_test.d", "packages/interactive-tools/tests/source/tests/unit/commands/mesh/edge_slide_result_builder_test.d"),
+    Wave15Move("tests/unit/commands/mesh/jitter_result_builder_test.d", "packages/interactive-tools/tests/source/tests/unit/commands/mesh/jitter_result_builder_test.d"),
+    Wave15Move("tests/unit/constraint_surface_at_test.d", "packages/interactive-tools/tests/source/tests/unit/constraint_surface_at_test.d"),
+    Wave15Move("tests/unit/deform_magnet_test.d", "packages/interactive-tools/tests/source/tests/unit/deform_magnet_test.d"),
+    Wave15Move("tests/unit/dirty_key_camera_stamp_test.d", "packages/viewport-host/tests/source/tests/unit/dirty_key_camera_stamp_test.d"),
+    Wave15Move("tests/unit/dirty_key_tool_preview_test.d", "packages/viewport-host/tests/source/tests/unit/dirty_key_tool_preview_test.d"),
+    Wave15Move("tests/unit/dirty_key_weightmap_test.d", "packages/viewport-host/tests/source/tests/unit/dirty_key_weightmap_test.d"),
+    Wave15Move("tests/unit/drag_gain_oblique_test.d", "packages/interactive-tools/tests/source/tests/unit/drag_gain_oblique_test.d"),
+    Wave15Move("tests/unit/edge_slice_locate_base_test.d", "packages/interactive-tools/tests/source/tests/unit/edge_slice_locate_base_test.d"),
+    Wave15Move("tests/unit/edit_session_test.d", "packages/interactive-tools/tests/source/tests/unit/edit_session_test.d"),
+    Wave15Move("tests/unit/falloff_rmb_discipline_test.d", "packages/interactive-tools/tests/source/tests/unit/falloff_rmb_discipline_test.d"),
+    Wave15Move("tests/unit/gesture_carrier_interface_test.d", "packages/interactive-tools/tests/source/tests/unit/gesture_carrier_interface_test.d"),
+    Wave15Move("tests/unit/gesture_record_belt_test.d", "packages/interactive-tools/tests/source/tests/unit/gesture_record_belt_test.d"),
+    Wave15Move("tests/unit/handles/gl_util_test.d", "packages/interactive-tools/tests/source/tests/unit/handles/gl_util_test.d"),
+    Wave15Move("tests/unit/handles/shapes_test.d", "packages/interactive-tools/tests/source/tests/unit/handles/shapes_test.d"),
+    Wave15Move("tests/unit/image_cache_test.d", "packages/viewport-host/tests/source/tests/unit/image_cache_test.d"),
+    Wave15Move("tests/unit/image_plane_test.d", "packages/viewport-host/tests/source/tests/unit/image_plane_test.d"),
+    Wave15Move("tests/unit/mesh_ops/bridge_frozen_kernel_test.d", "packages/interactive-tools/tests/source/tests/unit/mesh_ops/bridge_frozen_kernel_test.d"),
+    Wave15Move("tests/unit/model_preview_test.d", "packages/interactive-tools/tests/source/tests/unit/model_preview_test.d"),
+    Wave15Move("tests/unit/overlay_space_test.d", "packages/interactive-tools/tests/source/tests/unit/overlay_space_test.d"),
+    Wave15Move("tests/unit/prepared_param_update_test.d", "packages/interactive-tools/tests/source/tests/unit/prepared_param_update_test.d"),
+    Wave15Move("tests/unit/prepared_tool_transition_test.d", "packages/interactive-tools/tests/source/tests/unit/prepared_tool_transition_test.d"),
+    Wave15Move("tests/unit/quad_overlay_eligibility_test.d", "packages/interactive-tools/tests/source/tests/unit/quad_overlay_eligibility_test.d"),
+    Wave15Move("tests/unit/shared_hover_record_test.d", "packages/interactive-tools/tests/source/tests/unit/shared_hover_record_test.d"),
+    Wave15Move("tests/unit/tool_gesture_runopen_test.d", "packages/interactive-tools/tests/source/tests/unit/tool_gesture_runopen_test.d"),
+    Wave15Move("tests/unit/tool_single_operation_equivalence_test.d", "packages/interactive-tools/tests/source/tests/unit/tool_single_operation_equivalence_test.d"),
+    Wave15Move("tests/unit/toolpipe/local_component_frame_test.d", "packages/interactive-tools/tests/source/tests/unit/toolpipe/local_component_frame_test.d"),
+    Wave15Move("tests/unit/tools/alignment/mirror_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/alignment/mirror_test.d"),
+    Wave15Move("tests/unit/tools/alignment/radial_sweep_tool_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/alignment/radial_sweep_tool_test.d"),
+    Wave15Move("tests/unit/tools/create/arc_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/create/arc_test.d"),
+    Wave15Move("tests/unit/tools/create/box_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/create/box_test.d"),
+    Wave15Move("tests/unit/tools/create/create_common_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/create/create_common_test.d"),
+    Wave15Move("tests/unit/tools/create/tube_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/create/tube_test.d"),
+    Wave15Move("tests/unit/tools/edit/preview_topology_churn_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/edit/preview_topology_churn_test.d"),
+    Wave15Move("tests/unit/tools/edit/smooth_relax_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/edit/smooth_relax_test.d"),
+    Wave15Move("tests/unit/tools/edit/tack_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/edit/tack_test.d"),
+    Wave15Move("tests/unit/tools/edit/topology_pen/move_protocol_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/edit/topology_pen/move_protocol_test.d"),
+    Wave15Move("tests/unit/tools/edit/topology_pen/press_compatibility_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/edit/topology_pen/press_compatibility_test.d"),
+    Wave15Move("tests/unit/tools/slice/edge_slice_tool_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/slice/edge_slice_tool_test.d"),
+    Wave15Move("tests/unit/tools/slice/loop_slice_tool_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/slice/loop_slice_tool_test.d"),
+    Wave15Move("tests/unit/tools/slice/slice_tool_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/slice/slice_tool_test.d"),
+    Wave15Move("tests/unit/tools/transform/move_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/transform/move_test.d"),
+    Wave15Move("tests/unit/tools/transform/rotate_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/transform/rotate_test.d"),
+    Wave15Move("tests/unit/tools/transform/scale_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/transform/scale_test.d"),
+    Wave15Move("tests/unit/tools/transform/transform_test.d", "packages/interactive-tools/tests/source/tests/unit/tools/transform/transform_test.d"),
+    Wave15Move("tests/unit/topology_step_mixin_test.d", "packages/interactive-tools/tests/source/tests/unit/topology_step_mixin_test.d"),
+    Wave15Move("tests/unit/viewport_plane_turn_test.d", "packages/viewport-host/tests/source/tests/unit/viewport_plane_turn_test.d"),
+    Wave15Move("tests/unit/viewport_test.d", "packages/viewport-host/tests/source/tests/unit/viewport_test.d"),
+    Wave15Move("tests/unit/wrapper_shift_apply_inheritance_test.d", "packages/interactive-tools/tests/source/tests/unit/wrapper_shift_apply_inheritance_test.d"),
+];
+private struct Wave15FragmentPin { string origin, id, destination; }
+private immutable Wave15FragmentPin[] wave15FragmentPins = [
+    Wave15FragmentPin("source/drag.d", "drag:UT1", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag.d", "drag:UT2", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag.d", "drag:UT3", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag.d", "drag:UT4", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag.d", "drag:UT5", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag.d", "drag:UT6", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag.d", "drag:UT7", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag.d", "drag:UT8", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag.d", "drag:UT9", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag.d", "drag:UT10", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag.d", "drag:UT13", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag_identity.d", "drag_identity:UT1", "packages/interactive-tools/tests/source/drag_identity.d"),
+    Wave15FragmentPin("source/handles/arbiter.d", "handles.arbiter:UT1", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d"),
+    Wave15FragmentPin("source/handles/arbiter.d", "handles.arbiter:UT2", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d"),
+    Wave15FragmentPin("source/handles/arbiter.d", "handles.arbiter:UT3", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d"),
+    Wave15FragmentPin("source/handles/gizmo_metrics.d", "handles.gizmo_metrics:UT1", "packages/interactive-tools/tests/source/handles/gizmo_metrics_source_cells.d"),
+    Wave15FragmentPin("source/handles/gl_util.d", "handles.gl_util:UT1", "packages/interactive-tools/tests/source/handles/gl_util_source_cells.d"),
+    Wave15FragmentPin("source/handles/shapes.d", "handles.shapes:UT1", "packages/interactive-tools/tests/source/handles/shapes_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:UT1", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:UT2", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:UT3", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:UT4", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:UT5", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:UT6", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:UT7", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:UT8", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:UT9", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:UT10", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:UT11", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/overlay_space.d", "overlay_space:UT1", "packages/interactive-tools/tests/source/overlay_space_source_cells.d"),
+    Wave15FragmentPin("source/overlay_space.d", "overlay_space:UT2", "packages/interactive-tools/tests/source/overlay_space_source_cells.d"),
+    Wave15FragmentPin("source/overlay_space.d", "overlay_space:UT3", "packages/interactive-tools/tests/source/overlay_space_source_cells.d"),
+    Wave15FragmentPin("source/overlay_space.d", "overlay_space:UT4", "packages/interactive-tools/tests/source/overlay_space_source_cells.d"),
+    Wave15FragmentPin("source/overlay_space.d", "overlay_space:UT5", "packages/interactive-tools/tests/source/overlay_space_source_cells.d"),
+    Wave15FragmentPin("source/overlay_space.d", "overlay_space:UT6", "packages/interactive-tools/tests/source/overlay_space_source_cells.d"),
+    Wave15FragmentPin("source/overlay_space.d", "overlay_space:UT7", "packages/interactive-tools/tests/source/overlay_space_source_cells.d"),
+    Wave15FragmentPin("source/prepared_bridge_activation.d", "prepared_bridge_activation:UT1", "packages/interactive-tools/tests/source/prepared_bridge_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_command_wrapper_activation.d", "prepared_command_wrapper_activation:UT1", "packages/interactive-tools/tests/source/prepared_command_wrapper_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_edge_bevel_activation.d", "prepared_edge_bevel_activation:UT1", "packages/interactive-tools/tests/source/prepared_edge_bevel_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_edge_extend_deactivate.d", "prepared_edge_extend_deactivate:UT1", "packages/interactive-tools/tests/source/prepared_edge_extend_deactivate_source_cells.d"),
+    Wave15FragmentPin("source/prepared_edge_extend_tool_activation.d", "prepared_edge_extend_tool_activation:UT1", "packages/interactive-tools/tests/source/prepared_edge_extend_tool_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_edge_extrude_activation.d", "prepared_edge_extrude_activation:UT1", "packages/interactive-tools/tests/source/prepared_edge_extrude_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_edge_slice_activation.d", "prepared_edge_slice_activation:UT1", "packages/interactive-tools/tests/source/prepared_edge_slice_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_edge_slice_deactivate.d", "prepared_edge_slice_deactivate:UT1", "packages/interactive-tools/tests/source/prepared_edge_slice_deactivate_source_cells.d"),
+    Wave15FragmentPin("source/prepared_inherited_noop.d", "prepared_inherited_noop:UT1", "packages/interactive-tools/tests/source/prepared_inherited_noop_source_cells.d"),
+    Wave15FragmentPin("source/prepared_loop_slice_activation.d", "prepared_loop_slice_activation:UT1", "packages/interactive-tools/tests/source/prepared_loop_slice_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_loop_slice_deactivate.d", "prepared_loop_slice_deactivate:UT1", "packages/interactive-tools/tests/source/prepared_loop_slice_deactivate_source_cells.d"),
+    Wave15FragmentPin("source/prepared_mirror_activation.d", "prepared_mirror_activation:UT1", "packages/interactive-tools/tests/source/prepared_mirror_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_move_update.d", "prepared_move_update:UT1", "packages/interactive-tools/tests/source/prepared_move_update_source_cells.d"),
+    Wave15FragmentPin("source/prepared_pipe_activation.d", "prepared_pipe_activation:UT1", "packages/interactive-tools/tests/source/prepared_pipe_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_poly_bevel_activation.d", "prepared_poly_bevel_activation:UT1", "packages/interactive-tools/tests/source/prepared_poly_bevel_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_poly_extrude_activation.d", "prepared_poly_extrude_activation:UT1", "packages/interactive-tools/tests/source/prepared_poly_extrude_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_poly_inset_activation.d", "prepared_poly_inset_activation:UT1", "packages/interactive-tools/tests/source/prepared_poly_inset_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_private_state.d", "prepared_private_state:UT2", "packages/interactive-tools/tests/source/prepared_private_state_source_cells.d"),
+    Wave15FragmentPin("source/prepared_radial_array_transition.d", "prepared_radial_array_transition:UT1", "packages/interactive-tools/tests/source/prepared_radial_array_transition_source_cells.d"),
+    Wave15FragmentPin("source/prepared_radial_sweep_transition.d", "prepared_radial_sweep_transition:UT1", "packages/interactive-tools/tests/source/prepared_radial_sweep_transition_source_cells.d"),
+    Wave15FragmentPin("source/prepared_record_context.d", "prepared_record_context:UT1", "packages/interactive-tools/tests/source/prepared_record_context_source_cells.d"),
+    Wave15FragmentPin("source/prepared_rotate_update.d", "prepared_rotate_update:UT1", "packages/interactive-tools/tests/source/prepared_rotate_update_source_cells.d"),
+    Wave15FragmentPin("source/prepared_scale_update.d", "prepared_scale_update:UT1", "packages/interactive-tools/tests/source/prepared_scale_update_source_cells.d"),
+    Wave15FragmentPin("source/prepared_selection_profile.d", "prepared_selection_profile:UT1", "packages/interactive-tools/tests/source/prepared_selection_profile_source_cells.d"),
+    Wave15FragmentPin("source/prepared_slice_activation.d", "prepared_slice_activation:UT1", "packages/interactive-tools/tests/source/prepared_slice_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_slice_deactivate.d", "prepared_slice_deactivate:UT1", "packages/interactive-tools/tests/source/prepared_slice_deactivate_source_cells.d"),
+    Wave15FragmentPin("source/prepared_smooth_shift_activation.d", "prepared_smooth_shift_activation:UT1", "packages/interactive-tools/tests/source/prepared_smooth_shift_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_stroke_extrude_activation.d", "prepared_stroke_extrude_activation:UT1", "packages/interactive-tools/tests/source/prepared_stroke_extrude_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_tack_activation.d", "prepared_tack_activation:UT1", "packages/interactive-tools/tests/source/prepared_tack_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_topology_pen_activation.d", "prepared_topology_pen_activation:UT1", "packages/interactive-tools/tests/source/prepared_topology_pen_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_topology_pen_deactivate.d", "prepared_topology_pen_deactivate:UT1", "packages/interactive-tools/tests/source/prepared_topology_pen_deactivate_source_cells.d"),
+    Wave15FragmentPin("source/prepared_topology_pen_update.d", "prepared_topology_pen_update:UT1", "packages/interactive-tools/tests/source/prepared_topology_pen_update_source_cells.d"),
+    Wave15FragmentPin("source/prepared_transform_activation.d", "prepared_transform_activation:UT1", "packages/interactive-tools/tests/source/prepared_transform_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_transform_product_activation.d", "prepared_transform_product_activation:UT1", "packages/interactive-tools/tests/source/prepared_transform_product_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_vertex_bevel_activation.d", "prepared_vertex_bevel_activation:UT1", "packages/interactive-tools/tests/source/prepared_vertex_bevel_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_vertex_extrude_activation.d", "prepared_vertex_extrude_activation:UT1", "packages/interactive-tools/tests/source/prepared_vertex_extrude_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_vertex_merge_activation.d", "prepared_vertex_merge_activation:UT1", "packages/interactive-tools/tests/source/prepared_vertex_merge_activation_source_cells.d"),
+    Wave15FragmentPin("source/prepared_xfrm_activation_session.d", "prepared_xfrm_activation_session:UT1", "packages/interactive-tools/tests/source/prepared_xfrm_activation_session_source_cells.d"),
+    Wave15FragmentPin("source/registry.d", "registry:UT2", "packages/interactive-tools/tests/source/registry_source_cells.d"),
+    Wave15FragmentPin("source/snap_render.d", "snap_render:UT1", "packages/interactive-tools/tests/source/snap_render_source_cells.d"),
+    Wave15FragmentPin("source/snap_render.d", "snap_render:UT2", "packages/interactive-tools/tests/source/snap_render_source_cells.d"),
+    Wave15FragmentPin("source/snap_render.d", "snap_render:UT3", "packages/interactive-tools/tests/source/snap_render_source_cells.d"),
+    Wave15FragmentPin("source/snap_render.d", "snap_render:UT4", "packages/interactive-tools/tests/source/snap_render_source_cells.d"),
+    Wave15FragmentPin("source/snap_render.d", "snap_render:UT5", "packages/interactive-tools/tests/source/snap_render_source_cells.d"),
+    Wave15FragmentPin("source/tool_disarm.d", "tool_disarm:UT1", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d"),
+    Wave15FragmentPin("source/tool_disarm.d", "tool_disarm:UT2", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d"),
+    Wave15FragmentPin("source/tool_disarm.d", "tool_disarm:UT3", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d"),
+    Wave15FragmentPin("source/tool_disarm.d", "tool_disarm:UT4", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d"),
+    Wave15FragmentPin("source/tool_presets.d", "tool_presets:UT1", "packages/interactive-tools/tests/source/tool_presets_source_cells.d"),
+    Wave15FragmentPin("source/tools/alignment/mirror.d", "tools.alignment.mirror:UT1", "packages/interactive-tools/tests/source/tools/alignment/mirror_source_cells.d"),
+    Wave15FragmentPin("source/tools/create/arc.d", "tools.create.arc:UT1", "packages/interactive-tools/tests/source/tools/create/arc_source_cells.d"),
+    Wave15FragmentPin("source/tools/create/box.d", "tools.create.box:UT1", "packages/interactive-tools/tests/source/tools/create/box_source_cells.d"),
+    Wave15FragmentPin("source/tools/create/create_common.d", "tools.create.create_common:UT1", "packages/interactive-tools/tests/source/tools/create/create_common_source_cells.d"),
+    Wave15FragmentPin("source/tools/create/create_common.d", "tools.create.create_common:UT2", "packages/interactive-tools/tests/source/tools/create/create_common_source_cells.d"),
+    Wave15FragmentPin("source/tools/create/create_common.d", "tools.create.create_common:UT3", "packages/interactive-tools/tests/source/tools/create/create_common_source_cells.d"),
+    Wave15FragmentPin("source/tools/create/sphere.d", "tools.create.sphere:UT1", "packages/interactive-tools/tests/source/tools/create/sphere_source_cells.d"),
+    Wave15FragmentPin("source/tools/edit/bridge_tool.d", "tools.edit.bridge_tool:UT1", "packages/interactive-tools/tests/source/tools/edit/bridge_tool_source_cells.d"),
+    Wave15FragmentPin("source/tools/edit/bridge_tool.d", "tools.edit.bridge_tool:UT2", "packages/interactive-tools/tests/source/tools/edit/bridge_tool_source_cells.d"),
+    Wave15FragmentPin("source/tools/edit/bridge_tool.d", "tools.edit.bridge_tool:UT3", "packages/interactive-tools/tests/source/tools/edit/bridge_tool_source_cells.d"),
+    Wave15FragmentPin("source/tools/edit/bridge_tool.d", "tools.edit.bridge_tool:UT4", "packages/interactive-tools/tests/source/tools/edit/bridge_tool_source_cells.d"),
+    Wave15FragmentPin("source/tools/edit/edge_extend.d", "tools.edit.edge_extend:UT1", "packages/interactive-tools/tests/source/tools/edit/edge_extend_source_cells.d"),
+    Wave15FragmentPin("source/tools/transform/transform.d", "tools.transform.transform:UT1", "packages/interactive-tools/tests/source/tools/transform/transform_source_cells.d"),
+    Wave15FragmentPin("source/commands/layer/xform_edit.d", "commands.layer.xform_edit:UT1", "packages/editor-commands/tests/source/tests/unit/commands/layer/xform_edit_source_public_test.d"),
+    Wave15FragmentPin("source/commands/layer/xform_edit.d", "commands.layer.xform_edit:UT2", "packages/editor-commands/tests/source/tests/unit/commands/layer/xform_edit_source_public_test.d"),
+    Wave15FragmentPin("source/commands/layer/xform_edit.d", "commands.layer.xform_edit:UT3", "packages/editor-commands/tests/source/tests/unit/commands/layer/xform_edit_source_public_test.d"),
+    Wave15FragmentPin("source/drag.d", "drag:helper1", "packages/interactive-tools/tests/source/drag_source_cells.d"),
+    Wave15FragmentPin("source/drag.d", "drag:helper2", "packages/interactive-tools/tests/source/drag_source_helpers.d"),
+    Wave15FragmentPin("source/handles/arbiter.d", "handles.arbiter:helper3", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:helper4", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/image_plane.d", "image_plane:helper5", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
+    Wave15FragmentPin("source/snap_render.d", "snap_render:helper6", "packages/interactive-tools/tests/source/snap_render_source_helpers.d"),
+    Wave15FragmentPin("source/tool_presets.d", "tool_presets:helper7", "packages/interactive-tools/tests/source/tool_presets_source_cells.d"),
+    Wave15FragmentPin("source/commands/layer/xform_edit.d", "commands.layer.xform_edit:helper8", "packages/editor-commands/tests/source/tests/unit/commands/layer/xform_edit_source_public_test.d"),
+];
+
+private bool wave15MoveRowIntact(const Wave15Move pin) {
+    size_t rows;
+    foreach (move; wave15Moves)
+        if (move.oldPath == pin.oldPath) {
+            if (move.newPath != pin.newPath) return false;
+            ++rows;
+        }
+    return rows == 1;
+}
+
+private bool wave15FragmentRowsIntact(string origin) {
+    foreach (fragment; wave15Fragments) {
+        if (fragment.origin != origin) continue;
+        size_t pins;
+        foreach (pin; wave15FragmentPins)
+            if (pin.origin == fragment.origin && pin.id == fragment.id
+                    && pin.destination == fragment.destination) ++pins;
+        if (pins != 1) return false;
+    }
+    foreach (pin; wave15FragmentPins) {
+        if (pin.origin != origin) continue;
+        size_t rows;
+        foreach (fragment; wave15Fragments)
+            if (fragment.origin == pin.origin && fragment.id == pin.id
+                    && fragment.destination == pin.destination) ++rows;
+        if (rows != 1) return false;
+    }
+    return true;
+}
+
+
+private string wave15Normalize(string path) {
+    import std.path : absolutePath, buildNormalizedPath;
+    import std.string : replace;
+    return buildNormalizedPath(absolutePath(path)).replace("\\", "/");
+}
+
+private bool wave15Match(string path, string relative, out string root) {
+    import std.algorithm : endsWith;
+    if (!path.endsWith("/" ~ relative)) return false;
+    root = path[0 .. $ - relative.length - 1];
+    return true;
+}
+
+public string wave15LogicalPath(string path) {
+    const normal = wave15Normalize(path);
+    foreach (move; wave15Moves) {
+        string root;
+        if (wave15Match(normal, move.newPath, root))
+            return buildPath(root, move.oldPath);
+    }
+    return normal;
+}
+
+public string wave15PhysicalPath(string path) {
+    import std.file : exists;
+    const normal = wave15Normalize(path);
+    foreach (move; wave15Moves) {
+        string root;
+        if (wave15Match(normal, move.oldPath, root)) {
+            if (exists(normal)) return normal;
+            return buildPath(root, move.newPath);
+        }
+    }
+    return normal;
+}
+
+public bool wave15Exists(string path) {
+    import std.file : exists;
+    import std.algorithm : startsWith;
+    const normal = wave15Normalize(path);
+    if (exists(normal)) return true;
+    foreach (move; wave15Moves) {
+        string root;
+        if (wave15Match(normal, move.oldPath, root)
+                && exists(buildPath(root, move.newPath))) return true;
+        size_t prefix = move.oldPath.length;
+        while (prefix) {
+            import std.path : dirName;
+            const directory = dirName(move.oldPath[0 .. prefix]);
+            if (directory == "." || directory.length >= prefix) break;
+            prefix = directory.length;
+            if (wave15Match(normal, directory, root)
+                    && exists(buildPath(root, move.newPath))) return true;
+        }
+    }
+    return false;
+}
+
+public bool wave15IsFile(string path) {
+    import std.file : isFile;
+    return isFile(wave15PhysicalPath(path));
+}
+
+public bool wave15IsDir(string path) {
+    import std.file : exists, isDir;
+    return exists(wave15PhysicalPath(path))
+        ? isDir(wave15PhysicalPath(path)) : wave15Exists(path);
+}
+
+private string wave15FragmentText(string text, const Wave15Fragment fragment,
+        out size_t matches) {
+    import std.digest.sha : sha256Of;
+    import std.digest : toHexString;
+    import std.string : indexOf, toLower;
+    string result;
+    import std.string : replace;
+    if (fragment.id == "prepared_topology_pen_activation:UT1")
+        text = text.replace("import toolpipe.state_paths : getStatePath;", "import popup_state : getStatePath;");
+    size_t offset;
+    while (offset < text.length) {
+        const found = text[offset .. $].indexOf(fragment.prefix);
+        if (found < 0) break;
+        const begin = offset + cast(size_t) found;
+        const end = begin + fragment.bytes;
+        if (end <= text.length
+                && sha256Of(text[begin .. end]).toHexString().toLower == fragment.digest) {
+            ++matches;
+            result ~= text[begin .. end] ~ "\n";
+        }
+        offset = begin + 1;
+    }
+    return result;
+}
+
+
+private string wave15WithoutCarrierImports(string source) {
+    import std.regex : matchAll, regex;
+    import std.string : indexOf;
+    auto text = source.dup;
+    const code = blankNonCode(source);
+    foreach (site; matchAll(code, regex(`\bimport\s+([A-Za-z_][A-Za-z_0-9.]*)`))) {
+        bool carrier;
+        foreach (name; ["drag_identity", "drag_source_cells", "drag_source_helpers", "handles.arbiter_source_cells", "handles.gizmo_metrics_source_cells", "handles.gl_util_source_cells", "handles.shapes_source_cells", "image_plane_source_cells", "overlay_space_source_cells", "prepared_bridge_activation_source_cells", "prepared_command_wrapper_activation_source_cells", "prepared_edge_bevel_activation_source_cells", "prepared_edge_extend_deactivate_source_cells", "prepared_edge_extend_tool_activation_source_cells", "prepared_edge_extrude_activation_source_cells", "prepared_edge_slice_activation_source_cells", "prepared_edge_slice_deactivate_source_cells", "prepared_inherited_noop_source_cells", "prepared_loop_slice_activation_source_cells", "prepared_loop_slice_deactivate_source_cells", "prepared_mirror_activation_source_cells", "prepared_move_update_source_cells", "prepared_pipe_activation_source_cells", "prepared_poly_bevel_activation_source_cells", "prepared_poly_extrude_activation_source_cells", "prepared_poly_inset_activation_source_cells", "prepared_private_state_source_cells", "prepared_radial_array_transition_source_cells", "prepared_radial_sweep_transition_source_cells", "prepared_record_context_source_cells", "prepared_rotate_update_source_cells", "prepared_scale_update_source_cells", "prepared_selection_profile_source_cells", "prepared_slice_activation_source_cells", "prepared_slice_deactivate_source_cells", "prepared_smooth_shift_activation_source_cells", "prepared_stroke_extrude_activation_source_cells", "prepared_tack_activation_source_cells", "prepared_topology_pen_activation_source_cells", "prepared_topology_pen_deactivate_source_cells", "prepared_topology_pen_update_source_cells", "prepared_transform_activation_source_cells", "prepared_transform_product_activation_source_cells", "prepared_vertex_bevel_activation_source_cells", "prepared_vertex_extrude_activation_source_cells", "prepared_vertex_merge_activation_source_cells", "prepared_xfrm_activation_session_source_cells", "registry_source_cells", "snap_render_source_cells", "snap_render_source_helpers", "tests.unit.commands.layer.xform_edit_source_public_test", "tool_disarm_source_cells", "tool_presets_source_cells", "tools.alignment.mirror_source_cells", "tools.create.arc_source_cells", "tools.create.box_source_cells", "tools.create.create_common_source_cells", "tools.create.sphere_source_cells", "tools.edit.bridge_tool_source_cells", "tools.edit.edge_extend_source_cells", "tools.transform.transform_source_cells"])
+            if (site[1] == name) { carrier = true; break; }
+        if (!carrier) continue;
+        const begin = site.pre.length;
+        const tail = code[begin .. $].indexOf(';');
+        if (tail < 0) continue;
+        foreach (i; begin .. begin + cast(size_t) tail + 1)
+            if (text[i] != '\n' && text[i] != '\r') text[i] = ' ';
+    }
+    return text.idup;
+}
+
+public string wave15ReadText(string path) {
+    import std.file : exists, readText;
+    const normal = wave15Normalize(wave15LogicalPath(path));
+    foreach (pin; wave15MovePins) {
+        string root;
+        if (wave15Match(normal, pin.oldPath, root)) {
+            wave15InputValidity[normal ~ ":move-row"] = wave15MoveRowIntact(pin);
+            wave15InputValidity[normal ~ ":fragment-rows"] = wave15FragmentRowsIntact(pin.oldPath);
+        }
+    }
+    foreach (move; wave15Moves) {
+        string root;
+        if (!wave15Match(normal, move.oldPath, root)) continue;
+        const destination = buildPath(root, move.newPath);
+        const oldPresent = exists(normal), newPresent = exists(destination);
+        auto text = readText(oldPresent ? normal : destination);
+        if (!oldPresent) {
+            text = wave15WithoutCarrierImports(text);
+            if (move.oldPath == "source/coord_rounding.d") {
+                import std.string : replace;
+                text = text.replace("import toolpipe.state_paths : setStatePath;", "import popup_state : setStatePath;");
+            }
+        }
+        wave15InputValidity[normal ~ ":physical"] = oldPresent != newPresent;
+        foreach (fragment; wave15Fragments) {
+            if (fragment.origin != move.oldPath) continue;
+            size_t matches;
+            string original;
+            if (oldPresent) original = wave15FragmentText(text, fragment, matches);
+            else {
+                const carrier = buildPath(root, fragment.destination);
+                if (exists(carrier)) original = wave15FragmentText(readText(carrier), fragment, matches);
+                text ~= "\n" ~ original;
+            }
+            wave15InputValidity[normal ~ ":" ~ fragment.id] = matches == 1;
+        }
+        return text;
+    }
+    return readText(normal);
+}
+
+// This term is evaluated inside the original needle, after its original floors.
+// Every fragment has an independent frozen digest; omissions and duplicates are
+// retained as invalid admissions, never discarded by a set operation.
+public bool wave15InputsIntact() {
+    foreach (valid; wave15InputValidity.byValue) if (!valid) return false;
+    return true;
+}
+
+public struct Wave15Entry {
+    string name;
+    alias name this;
+    bool isFile, isDir;
+    ulong size;
+}
+
+public Wave15Entry[] wave15DirEntries(string directory, string pattern,
+        SpanMode span, bool followSymlink = true) {
+    import std.file : dirEntries, exists, isFile, isDir, getSize;
+    import std.path : baseName, dirName, globMatch, relativePath;
+    import std.algorithm : startsWith, canFind;
+    const normal = wave15Normalize(directory);
+    Wave15Entry[] result;
+    foreach (pin; wave15MovePins) {
+        string root;
+        size_t prefix = pin.oldPath.length;
+        while (prefix) {
+            const oldDirectory = dirName(pin.oldPath[0 .. prefix]);
+            if (oldDirectory == "." || oldDirectory.length >= prefix) break;
+            prefix = oldDirectory.length;
+            if (!wave15Match(normal, oldDirectory, root)) continue;
+            const logical = buildPath(root, pin.oldPath);
+            const relative = relativePath(logical, normal);
+            if (span == SpanMode.shallow && relative.canFind("/")) break;
+            if (!globMatch(baseName(logical), pattern)) break;
+            wave15InputValidity[logical ~ ":directory-admission"] = wave15MoveRowIntact(pin)
+                && (exists(logical) != exists(buildPath(root, pin.newPath)));
+            break;
+        }
+    }
+    if (exists(normal)) foreach (entry; dirEntries(directory, pattern, span, followSymlink)) {
+        bool movedDestination;
+        foreach (move; wave15Moves) {
+            string root;
+            if (wave15Match(wave15Normalize(entry.name), move.newPath, root)) { movedDestination = true; break; }
+        }
+        if (!movedDestination)
+            result ~= Wave15Entry(entry.name, entry.isFile, entry.isDir, entry.isFile ? entry.size : 0);
+    }
+    foreach (move; wave15Moves) {
+        string root;
+        size_t prefix = move.oldPath.length;
+        while (prefix) {
+            const oldDirectory = dirName(move.oldPath[0 .. prefix]);
+            if (oldDirectory == "." || oldDirectory.length >= prefix) break;
+            prefix = oldDirectory.length;
+            if (!wave15Match(normal, oldDirectory, root)) continue;
+            const logical = buildPath(root, move.oldPath);
+            const relative = relativePath(logical, normal);
+            if (span == SpanMode.shallow && relative.canFind("/")) break;
+            if (!globMatch(baseName(logical), pattern)) break;
+            const physical = buildPath(root, move.newPath);
+            if (exists(physical))
+                result ~= Wave15Entry(buildPath(directory, relative), isFile(physical), isDir(physical), isFile(physical) ? getSize(physical) : 0);
+            break;
+        }
+    }
+    return result;
+}
+
+public Wave15Entry[] wave15DirEntries(string directory, SpanMode span,
+        bool followSymlink = true) {
+    return wave15DirEntries(directory, "*", span, followSymlink);
 }

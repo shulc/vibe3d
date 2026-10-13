@@ -5,7 +5,8 @@
 module tests.unit.transform_input_bank_census_test;
 
 import std.conv : to;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath, dirName;
 import tests.unit.census_symbols : blankNonCode, countOccurrences;
 

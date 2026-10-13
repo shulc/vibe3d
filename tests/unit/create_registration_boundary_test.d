@@ -1,6 +1,7 @@
 module tests.unit.create_registration_boundary_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import core.exception : AssertError;
 import command_history : CommandHistory;
@@ -15,7 +16,8 @@ import tools.edit.topology_pen.defs : TopoPenFactories;
 
 import std.array : join;
 import std.algorithm : sort, canFind;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.path : buildPath, dirName;
 import std.exception : assertThrown;
@@ -254,7 +256,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

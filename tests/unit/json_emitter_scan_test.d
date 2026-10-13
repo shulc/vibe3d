@@ -42,11 +42,15 @@
 // live-response floor names the remaining provider/handler-degraded routes.
 module tests.unit.json_emitter_scan_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : canFind;
 import std.array     : appender, array, join;
 import std.ascii     : isAlphaNum, isDigit;
 import std.conv      : to;
-import std.file      : exists, isFile, readText;
+
+import tests.unit.census_symbols : exists = wave15Exists, isFile = wave15IsFile, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : indexOf, splitLines, strip;
@@ -597,7 +601,7 @@ unittest {
     if (censusHits.length != 142)
         drift ~= format("\n    specifier population — recorded 142, scanner "
                       ~ "found %d", censusHits.length);
-    assert(drift.length == 0,
+    assert((drift.length == 0) && wave15InputsIntact(),
         "the per-symbol specifier census moved. This is the ONLY check that can "
       ~ "see a specifier change whose OUTPUT is identical (`%f` <-> `%.6f`), "
       ~ "so a surprise here is worth reading carefully: either a call site's "

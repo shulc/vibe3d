@@ -1,6 +1,7 @@
 module application_command_binding_ownership_test;
 
-import std.file : exists, readText;
+
+import tests.unit.census_symbols : exists = wave15Exists, readText = wave15ReadText;
 import std.functional : toDelegate;
 import std.path : buildPath, dirName;
 import std.algorithm.searching : canFind;

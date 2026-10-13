@@ -1,5 +1,6 @@
 module tests.unit.camera_intrinsics_wiring_test;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath,dirName;
 import std.algorithm : canFind;
 import std.string : indexOf;

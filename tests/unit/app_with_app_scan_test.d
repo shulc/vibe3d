@@ -50,7 +50,8 @@ module tests.unit.app_with_app_scan_test;
 
 import std.array     : appender;
 import std.ascii     : isAlphaNum;
-import std.file      : dirEntries, exists, isFile, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, isFile = wave15IsFile, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName, relativePath;
 import std.string    : indexOf, strip;
@@ -333,7 +334,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",

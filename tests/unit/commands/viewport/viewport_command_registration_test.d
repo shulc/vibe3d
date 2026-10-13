@@ -1,12 +1,17 @@
 module tests.unit.commands.viewport.viewport_command_registration_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import core.exception : AssertError;
 import std.algorithm : count, sort;
 import std.array : join;
 import std.exception : assertThrown;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.math : fabs;
 import std.path : buildNormalizedPath, buildPath, dirName;
@@ -347,7 +352,7 @@ unittest { // U2: primary, mode, and active cell resolve after registration
         foreach (k; 0 .. 4)
             if (command.viewRef is fixture.vpm.views[k].camera)
                 got = k;
-        assert(got == want,
+        assert((got == want) && wave15InputsIntact(),
             format("6010 live view witness: %s bound cell %d's camera, expected %d",
                    id, got, want));
         ++views;
@@ -444,7 +449,8 @@ unittest { // U3: production uses the narrow registrar before LAST wrapping
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

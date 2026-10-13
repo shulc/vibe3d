@@ -5,7 +5,8 @@
 // moves/publishes the pin.
 module tests.unit.test_rs_relocate_commit_order;
 
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath, dirName;
 import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode;

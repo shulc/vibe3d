@@ -1,6 +1,7 @@
 module tests.unit.frame_probe_owner_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import tests.unit.http_test_client : receiveUntilClosed;
 
@@ -10,7 +11,8 @@ import core.time : Duration, MonoTime, msecs, seconds;
 import http_server : ClaimProbePoint, HttpServer;
 import perf_probe : g_frames, FrameProbe, FrameRec, Phase, toJson;
 import std.algorithm : canFind, count;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath, dirName;
 import std.socket : InternetAddress, Socket, SocketOption, SocketOptionLevel,
                     TcpSocket;
@@ -381,7 +383,8 @@ private string bodyAt(string code, string marker) {
 }
 
 unittest { // C-1: production wiring owns exactly these two routes
-    import std.file : dirEntries, exists, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists;
 
     immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     immutable serverPath = buildPath(root, "source", "http_server.d");
@@ -435,7 +438,8 @@ unittest { // C-1: production wiring owns exactly these two routes
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
     ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

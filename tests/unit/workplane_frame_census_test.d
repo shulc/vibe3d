@@ -25,7 +25,8 @@ import std.path : buildPath, dirName, baseName;
 import std.regex : ctRegex, matchAll;
 import std.string : splitLines;
 
-import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent;
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent,
+    wave15DirEntries, wave15ReadText, wave15LogicalPath, Wave15Entry, wave15InputsIntact;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -40,18 +41,29 @@ static assert([__traits(allMembers, tools.create.create_common)].canFind("axisUn
 static assert([__traits(allMembers, viewgrid)].canFind("viewVectorQuantum"));
 
 private struct Src { string rel, raw, code; }
+private Wave15Entry[] physicalEntries(string directory) {
+    Wave15Entry[] result;
+    foreach (entry; dirEntries(directory, "*.d", SpanMode.depth))
+        result ~= Wave15Entry(entry.name, entry.isFile, entry.isDir, entry.isFile ? entry.size : 0);
+    return result;
+}
+
 
 /// Every `source/**/*.d`; `production` drops the in-source `*_test.d` modules.
-private Src[] sources(bool production) {
+private Src[] sources(bool production, bool logical = false) {
     Src[] r;
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")]
         ~ (exists(buildPath(repoRoot, "packages/selection-model/source")) ? [buildPath(repoRoot, "packages/selection-model/source")] : [])
         ~ (exists(buildPath(repoRoot, "packages/scene-query/source")) ? [buildPath(repoRoot, "packages/scene-query/source")] : [])
-        ~ (exists(buildPath(repoRoot, "packages/editor-commands/source")) ? [buildPath(repoRoot, "packages/editor-commands/source")] : []))
+        ~ (exists(buildPath(repoRoot, "packages/editor-commands/source")) ? [buildPath(repoRoot, "packages/editor-commands/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/interactive-tools/source")) ? [buildPath(repoRoot, "packages/interactive-tools/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/viewport-host/source")) ? [buildPath(repoRoot, "packages/viewport-host/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/interaction-data/source")) ? [buildPath(repoRoot, "packages/interaction-data/source")] : []))
 
-    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
+    foreach (e; logical ? wave15DirEntries(scanSourceRoot, "*.d", SpanMode.depth)
+                       : physicalEntries(scanSourceRoot)) {
         if (production && e.name.endsWith("_test.d")) continue;
-        auto raw = readText(e.name);
+        auto raw = logical ? wave15ReadText(e.name) : readText(e.name);
         r ~= Src(e.name[repoRoot.length + 1 .. $], raw,
                  blankUnittestBodies(blankNonCode(raw)));
     }
@@ -98,7 +110,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    Src[] logicalRaw = all.dup, logicalCode = prod.dup;
+    Src[] logicalRaw = sources(false, true), logicalCode = sources(true, true);
     foreach (relative; sourceCarriers) {
         const raw = readText(buildPath(repoRoot, relative));
         const s = Src(relative, raw, blankUnittestBodies(blankNonCode(raw)));
@@ -134,15 +146,15 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
            "workplane logical production and source carrier population 625");
     foreach (physical; prod) {
         size_t rawOccurrences, codeOccurrences;
-        foreach (s; logicalRaw) if (s.rel == physical.rel) ++rawOccurrences;
-        foreach (s; logicalCode) if (s.rel == physical.rel) ++codeOccurrences;
+        foreach (s; logicalRaw) if (s.rel == wave15LogicalPath(buildPath(repoRoot, physical.rel))[repoRoot.length + 1 .. $]) ++rawOccurrences;
+        foreach (s; logicalCode) if (s.rel == wave15LogicalPath(buildPath(repoRoot, physical.rel))[repoRoot.length + 1 .. $]) ++codeOccurrences;
         assert(rawOccurrences == 1 && codeOccurrences == 1,
                "workplane logical physical source membership: " ~ physical.rel);
     }
 
     // Positive control of the counter and of the switch needle.
-    assert(countIdent("a.viewVectorQuantum(x); auto d = &viewVectorQuantum;",
-                      "viewVectorQuantum") == 2, "identifier counter is blind");
+    assert((countIdent("a.viewVectorQuantum(x); auto d = &viewVectorQuantum;",
+                      "viewVectorQuantum") == 2) && wave15InputsIntact(), "identifier counter is blind");
     // The index → unit-axis construction, in its two spellings: a switch whose
     // case body is ONE assignment, and the ternary triple.
     auto sw = ctRegex!(`case\s+0\s*:\s*\w+\s*=\s*Vec3\(\s*1\s*,\s*0\s*,\s*0\s*\)\s*;\s*break`);
@@ -161,7 +173,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         size_t n;
         string[] where;
         foreach (s; logicalRaw) if (auto k = countIdent(s.raw, dead)) { n += k; where ~= s.rel; }
-        assert(n == 0, format("%s still named %s times in %s", dead, n, where));
+        assert((n == 0) && wave15InputsIntact(), format("%s still named %s times in %s", dead, n, where));
     }
 
     // STRUCTURAL: the index → unit-axis construction lives in `axisUnit` (the
@@ -222,5 +234,5 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         const got = roster(logicalCode, name);
         if (got != rows) bad ~= format("\n%s roster:\n  got  %s\n  want %s", name, got, rows);
     }
-    assert(bad.length == 0, bad);
+    assert((bad.length == 0) && wave15InputsIntact(), bad);
 }

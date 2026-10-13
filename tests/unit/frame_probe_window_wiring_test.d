@@ -1,9 +1,11 @@
 // The frame-allocation probe excludes request-timed bridge work (task 5752).
 module tests.unit.frame_probe_window_wiring_test;
 
-import std.file : exists;
 
-import std.file : readText;
+import tests.unit.census_symbols : exists = wave15Exists;
+
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath, dirName;
 import std.string : count, indexOf, strip;
 import tests.unit.census_symbols : blankNonCode;
@@ -61,7 +63,8 @@ unittest {
 }
 
 unittest { // 6511: FrameProbe service is the second pre-probe owner boundary
-    import std.file : dirEntries, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import std.regex : matchAll, regex;
 
     immutable appPath = buildPath(repoRoot, "source", "app.d");
@@ -119,7 +122,8 @@ unittest { // 6511: FrameProbe service is the second pre-probe owner boundary
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -156,7 +160,8 @@ unittest { // 6511: FrameProbe service is the second pre-probe owner boundary
 }
 
 unittest { // 6357: frame-count service is the unique pre-probe owner boundary
-    import std.file : dirEntries, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import std.regex : matchAll, regex, replaceAll;
 
     immutable appPath = buildPath(repoRoot, "source", "app.d");
@@ -220,7 +225,8 @@ unittest { // 6357: frame-count service is the unique pre-probe owner boundary
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

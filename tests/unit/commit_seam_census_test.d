@@ -17,9 +17,13 @@
 // batch; an allowlist written before anything migrated would be a copy of
 // today's tree, which is a check that cannot come out differently.
 module tests.unit.commit_seam_census_test;
+
+import tests.unit.census_symbols : wave15InputsIntact;
+
 import mesh_edge_slice : edgeIndexOfVerts, insertEdgePoint, rebuildFacesWithChordSplits;
 
-import std.file   : dirEntries, readTextOnce = readText, exists, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readTextOnce = wave15ReadText, exists = wave15Exists;
 import std.format : format;
 import std.path   : buildPath, dirName;
 import std.algorithm : canFind;
@@ -64,8 +68,8 @@ unittest
     const commandPath = buildPath(repoRoot, "packages", "command-runtime", "source", "command.d");
     const meshCode = readCode(meshPath);
     const commandCode = readCode(commandPath);
-    assert(meshCode.canFind("struct Mesh {")
-        && !meshCode.canFind("class Command {"),
+    assert((meshCode.canFind("struct Mesh {")
+        && !meshCode.canFind("class Command {")) && wave15InputsIntact(),
         "readCode memo returned empty or foreign code for packages/mesh/source/mesh.d");
     assert(commandCode.canFind("class Command {")
         && !commandCode.canFind("struct Mesh {"),
@@ -380,7 +384,7 @@ unittest // no batch state on struct Mesh
             if (declaredVarName(line, "MeshEditTracker") == "editRecorder_")
                 ++recorderFields;
     }
-    assert(recorderFields == 0,
+    assert((recorderFields == 0) && wave15InputsIntact(),
         "`Mesh.editRecorder_` is a FIELD again — it must be a private accessor "
       ~ "over `g_editBatchStack`, or a wholesale `*mesh = …` mid-batch orphans "
       ~ "the recorder (task 1903 §2.2a item 2).");
@@ -410,7 +414,8 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
 {
     import std.algorithm : sort;
     import std.array     : replace;
-    import std.file      : dirEntries, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import std.path      : relativePath;
     import std.string    : indexOf;
 
@@ -475,7 +480,8 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -730,7 +736,7 @@ unittest // Stage C + D1 — the two pure-query families keep their receivers
     // `ed` → `edb` stayed green on the D2 row. Every one of these four
     // declarations takes a second parameter, so `,` is the delimiter that is
     // actually there; a nullary receiver would need `)` instead.
-    assert(countOccurrences(ops, "selectLoopEdges(ref const(Mesh) m,") == 1,
+    assert((countOccurrences(ops, "selectLoopEdges(ref const(Mesh) m,") == 1) && wave15InputsIntact(),
         "packages/mesh-ops/source/mesh_ops/select_loop.d no longer declares `selectLoopEdges` as "
       ~ "a free function over `ref const(Mesh)` — if the receiver changed, say "
       ~ "why here: `ref const(Mesh)` is what keeps `mesh.selectLoopEdges(seed)` "
@@ -902,7 +908,7 @@ unittest // Stage D3 — the bridge family, both receivers in one file
         "bridgeStripPaired", "bridgeOpenRows", "bridgeFanRows",
     ];
     foreach (name; kBatchKernels)
-        assert(countOccurrences(br, name ~ "(ref MeshEditBatch ed,") == 1,
+        assert((countOccurrences(br, name ~ "(ref MeshEditBatch ed,") == 1) && wave15InputsIntact(),
             format("packages/mesh-ops/source/mesh_ops/bridge.d no longer declares `%s` over "
                  ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
                  ~ "not the style: it is what makes a batchless call a COMPILE "
@@ -1027,7 +1033,7 @@ unittest // Stage E1 — the mesh-hygiene / orientation-repair family
         "unifyFaces", "cleanDegenerateFaces", "fixFaceOrientation",
     ];
     foreach (name; kNullaryBatchKernels)
-        assert(countOccurrences(cl, name ~ "(ref MeshEditBatch ed)") == 1,
+        assert((countOccurrences(cl, name ~ "(ref MeshEditBatch ed)") == 1) && wave15InputsIntact(),
             format("packages/mesh-ops/source/mesh_ops/cleanup.d no longer declares `%s` over "
                  ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
                  ~ "not the style: it is what makes a batchless call a COMPILE "
@@ -1166,7 +1172,7 @@ unittest // Stage E2 — the radial sweep / revolve + path-follow family
         "extrudeAlongPath",
     ];
     foreach (name; kBatchKernelsE2)
-        assert(countOccurrences(rv, name ~ "(ref MeshEditBatch ed,") == 1,
+        assert((countOccurrences(rv, name ~ "(ref MeshEditBatch ed,") == 1) && wave15InputsIntact(),
             format("packages/mesh-ops/source/mesh_ops/revolve.d no longer declares `%s` over "
                  ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
                  ~ "not the style: it is what makes a batchless call a COMPILE "
@@ -1182,7 +1188,7 @@ unittest // Stage E2 — the radial sweep / revolve + path-follow family
     // former — the trailing `(` in each needle is what keeps the two rows
     // independent.
     foreach (name; kBatchKernelsE2) {
-        assert(countOccurrences(rv, name ~ "(ref Mesh ") == 0,
+        assert((countOccurrences(rv, name ~ "(ref Mesh ") == 0) && wave15InputsIntact(),
             format("`%s` has a `ref Mesh` receiver again — that compiles, and "
                  ~ "it drops the batch: the kernel's internal commits go back "
                  ~ "to stamping one per appended face. Plan §4.4a REJECTED "
@@ -1328,7 +1334,7 @@ unittest // Stage E3 — the plane-cut family, first raw position write across t
         "planeCutCore", "splitAlongCutLoop",
     ];
     foreach (name; kBatchKernelsE3)
-        assert(countOccurrences(ct, name ~ "(ref MeshEditBatch ed,") == 1,
+        assert((countOccurrences(ct, name ~ "(ref MeshEditBatch ed,") == 1) && wave15InputsIntact(),
             format("packages/mesh-ops/source/mesh_ops/cut.d no longer declares `%s` over "
                  ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
                  ~ "not the style: it is what makes a batchless call a COMPILE "
@@ -1501,7 +1507,7 @@ unittest // Stage E4 — the two bevel families, one commit
     ];
     foreach (row; kBatchKernelsE4) {
         immutable src4 = (row[0] == "packages/mesh-ops/source/mesh_ops/bevel_fin.d") ? bf : bv;
-        assert(countOccurrences(src4, row[1] ~ "(ref MeshEditBatch ed,") == 1,
+        assert((countOccurrences(src4, row[1] ~ "(ref MeshEditBatch ed,") == 1) && wave15InputsIntact(),
             format("%s no longer declares `%s` over `ref MeshEditBatch ed`. That "
                  ~ "receiver is the enforcement, not the style: it is what makes "
                  ~ "a batchless call a COMPILE error, so one chamfer stamps, "
@@ -1700,7 +1706,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
     // `insertEdgeLoops` IS a prefix of `insertEdgeLoopsMulti`, which is why
     // the needle carries `(` — without it the two rows would not be
     // independent.
-    assert(countOccurrences(ls, "insertEdgeLoops(ref MeshEditBatch ed,") == 2,
+    assert((countOccurrences(ls, "insertEdgeLoops(ref MeshEditBatch ed,") == 2) && wave15InputsIntact(),
         format("packages/mesh-ops/source/mesh_ops/loop_slice.d declares %d `insertEdgeLoops` "
              ~ "overload(s) over `ref MeshEditBatch ed,`; expected exactly 2 "
              ~ "(the 2-arg forwarder and the 3-arg entry that reports the new "
@@ -1793,7 +1799,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
     // `alias EdgeRingEntry = …` putting the name back on `Mesh`, which
     // (measured at E2 and repeated at E3/E4) would make `hasMember` answer
     // `true` and blind the tripwire.
-    assert(countOccurrences(ls, "\nprivate struct EdgeRingEntry {") == 1,
+    assert((countOccurrences(ls, "\nprivate struct EdgeRingEntry {") == 1) && wave15InputsIntact(),
         "packages/mesh-ops/source/mesh_ops/loop_slice.d no longer declares `private struct "
       ~ "EdgeRingEntry` at MODULE scope (column 0). The mixin used to inject "
       ~ "it into `Mesh`; Stage F1 moved it out and kept it `private` because "
@@ -1909,7 +1915,8 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
     // it reddens if the qualifier comes back, which can only happen if
     // somebody re-adds the member and defeats the roster and the tripwire too.
     {
-        import std.file : dirEntries, SpanMode;
+        import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
         import std.path : relativePath;
         import std.string : replace;
         immutable srcRoot2 = buildPath(repoRoot, "source");
@@ -1942,7 +1949,8 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -2044,7 +2052,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     //     makes a FIFTH one visible to the stage that owns the remedy.
     // ---------------------------------------------------------------------
     immutable pbPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "poly_bevel.d");
-    assert(exists(pbPath), "cannot find packages/mesh-ops/source/mesh_ops/poly_bevel.d at " ~ pbPath);
+    assert((exists(pbPath)) && wave15InputsIntact(), "cannot find packages/mesh-ops/source/mesh_ops/poly_bevel.d at " ~ pbPath);
     immutable pb = readCode(pbPath);
     assert(countOccurrences(pb, "mixin template MeshPolyBevelOps") == 0,
         "packages/mesh-ops/source/mesh_ops/poly_bevel.d still declares `mixin template "
@@ -2058,7 +2066,7 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     static immutable string[3] kEntries = ["insetFacesByMask", "bevelFacesByMask",
                                            "spikeFacesByMask"];
     foreach (name; kEntries) {
-        assert(countOccurrences(pb, name ~ "(ref MeshEditBatch ed,") == 1,
+        assert((countOccurrences(pb, name ~ "(ref MeshEditBatch ed,") == 1) && wave15InputsIntact(),
             format("packages/mesh-ops/source/mesh_ops/poly_bevel.d no longer declares `%s` over "
                  ~ "`ref MeshEditBatch ed,`. That receiver is the enforcement, "
                  ~ "not the style: it is what makes a batchless call a COMPILE "
@@ -2295,7 +2303,8 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
     // which can only happen if somebody re-adds the member and defeats the
     // roster and the tripwire too.
     {
-        import std.file : dirEntries, SpanMode;
+        import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
         import std.path : relativePath;
         import std.string : replace;
         immutable srcRootF2 = buildPath(repoRoot, "source");
@@ -2328,7 +2337,8 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -2461,7 +2471,7 @@ unittest // Stage G — the manifold edge bevel family
     // MINOR-1): without it the needle is a PREFIX of the declaration, so
     // renaming the receiver `ed` -> `edb` would leave this pin green while the
     // name the pin exists to hold had changed.
-    assert(countOccurrences(eb, "bevelEdgesByMask(ref MeshEditBatch ed,") == 1,
+    assert((countOccurrences(eb, "bevelEdgesByMask(ref MeshEditBatch ed,") == 1) && wave15InputsIntact(),
         "packages/mesh-ops/source/mesh_ops/edge_bevel.d no longer declares `bevelEdgesByMask` "
       ~ "over `ref MeshEditBatch ed,`. That receiver is the enforcement, not "
       ~ "the style: it is what makes a batchless call a COMPILE error, so one "
@@ -2596,9 +2606,9 @@ unittest // Stage G — the manifold edge bevel family
     // reach them and this file must SPELL the qualifier. The §2.6 rows'
     // needles are receiver-agnostic and did not change — verified by the walk
     // in the widenings block below, not assumed.
-    assert(countOccurrences(eb, "Mesh.faceAttrOr(") == 2
+    assert((countOccurrences(eb, "Mesh.faceAttrOr(") == 2
         && countOccurrences(eb, "Mesh.combineFaceMarksWords(") == 1
-        && countOccurrences(eb, "Mesh.rebuildFaceWithVertexSubs(") == 1,
+        && countOccurrences(eb, "Mesh.rebuildFaceWithVertexSubs(") == 1) && wave15InputsIntact(),
         format("packages/mesh-ops/source/mesh_ops/edge_bevel.d spells `Mesh.faceAttrOr(` %d "
              ~ "time(s), `Mesh.combineFaceMarksWords(` %d and "
              ~ "`Mesh.rebuildFaceWithVertexSubs(` %d; Stage G measured 2 / 1 / "
@@ -2628,7 +2638,7 @@ unittest // Stage G — the manifold edge bevel family
     // (measured, task 0717). With the template gone it is an ordinary
     // module-level import — and it must stay in THIS file rather than migrate
     // to mesh.d, which is what the column-0 needle says.
-    assert(countOccurrences(eb, "\nimport mesh_ops.bevel_curves;") == 1,
+    assert((countOccurrences(eb, "\nimport mesh_ops.bevel_curves;") == 1) && wave15InputsIntact(),
         "packages/mesh-ops/source/mesh_ops/edge_bevel.d no longer imports `mesh_ops.bevel_curves` "
       ~ "at MODULE scope (column 0). It was a SCOPED import inside the mixin "
       ~ "template body — the shape a mixin forces — and Stage G's conversion is "
@@ -2763,7 +2773,8 @@ unittest // Stage G — the manifold edge bevel family
     // flip" is a hypothesis; grepped, there was none). The non-vacuity floor is
     // what stops a broken walk from reading as a clean tree.
     {
-        import std.file : dirEntries, SpanMode;
+        import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
         size_t scanned = 0;
         string[] offenders;
         foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source"), buildPath(repoRoot, "packages/selection-model/source"), buildPath(repoRoot, "packages/scene-query/source"), buildPath(repoRoot, "packages/editor-commands/source")])
@@ -2793,7 +2804,8 @@ unittest // Stage G — the manifold edge bevel family
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -2822,7 +2834,7 @@ unittest // Stage G — the manifold edge bevel family
         assert(scanned >= 100,
             format("the source/** walk found only %d .d files — a walk that "
                  ~ "stopped looking reports a clean tree for free", scanned));
-        assert(offenders.length == 0,
+        assert((offenders.length == 0) && wave15InputsIntact(),
             format("`Mesh.bevelEdgesByMask(` is spelled in %s. Stage G moved "
                  ~ "this kernel OUT of `struct Mesh`, so that qualifier can "
                  ~ "only resolve again if the family came back as a member — "
@@ -2855,7 +2867,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
         "smoothShiftFacesByMask(ref MeshEditBatch ed,",
     ];
     foreach (r; kReceivers)
-        assert(countOccurrences(ex, r) == 1,
+        assert((countOccurrences(ex, r) == 1) && wave15InputsIntact(),
             format("packages/mesh-ops/source/mesh_ops/extrude.d no longer declares `%s` "
                  ~ "exactly once. That receiver is the enforcement, not the "
                  ~ "style: it is what makes a batchless call a COMPILE error "
@@ -3069,7 +3081,8 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
     // resolved through the mixin's instantiation scope), so this is a NEW
     // row, not a flipped one (памятка 25).
     {
-        import std.file : dirEntries, SpanMode;
+        import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
         size_t scanned = 0;
         string[][string] offenders;
         foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source"), buildPath(repoRoot, "packages/selection-model/source"), buildPath(repoRoot, "packages/scene-query/source"), buildPath(repoRoot, "packages/editor-commands/source")])
@@ -3100,7 +3113,8 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -3194,7 +3208,7 @@ unittest // Stage H — the extrude/extend family (five kernels, the only tracke
 unittest // every §2.6 widening this stage made still has the caller it names
 {
     immutable brPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "bridge.d");
-    assert(exists(brPath), "cannot find packages/mesh-ops/source/mesh_ops/bridge.d at " ~ brPath);
+    assert((exists(brPath)) && wave15InputsIntact(), "cannot find packages/mesh-ops/source/mesh_ops/bridge.d at " ~ brPath);
     immutable br = readCode(brPath);
     immutable ctPath = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "cut.d");
     assert(exists(ctPath), "cannot find packages/mesh-ops/source/mesh_ops/cut.d at " ~ ctPath);
@@ -3497,7 +3511,8 @@ unittest // every §2.6 widening this stage made still has the caller it names
     size_t declFilesScanned;
     {
         import std.array : join;
-        import std.file : dirEntries, SpanMode;
+        import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
         import std.path : relativePath;
         import std.string : replace;
 
@@ -3534,7 +3549,8 @@ unittest // every §2.6 widening this stage made still has the caller it names
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -3678,7 +3694,8 @@ unittest // every §2.6 widening this stage made still has the caller it names
     LedgerHit[][string] callersOf;
     size_t filesScanned = 0;
     {
-        import std.file : dirEntries, SpanMode;
+        import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
         import std.path : relativePath;
         import std.string : replace;
 
@@ -3718,7 +3735,8 @@ unittest // every §2.6 widening this stage made still has the caller it names
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -3981,7 +3999,8 @@ unittest // L0-d — the nine files hold no raw position write
 
 unittest // L0-d — the zone total equals the nine plus the recorded remainder
 {
-    import std.file : dirEntries, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import std.path : baseName;
     import std.algorithm : canFind;
 
@@ -4302,7 +4321,7 @@ unittest // L0-b — the hole a zone boundary leaves: packages/interaction-query
         import std.conv : to;
         immutable size_t want = row[1].to!size_t;
         immutable size_t got  = countOccurrences(sy, row[0]);
-        assert(got == want,
+        assert((got == want) && wave15InputsIntact(),
             format("packages/interaction-query/source/symmetry.d spells `%s` %d time(s); the L0-b "
                  ~ "allowance is for exactly %d. Every one of this file's "
                  ~ "five raw position writes is named here, so a count row "
@@ -4335,7 +4354,7 @@ unittest // L0-b — the hole a zone boundary leaves: packages/interaction-query
         import std.conv : to;
         const want = row[1].to!size_t;
         const got = countOccurrences(fixture, row[0]);
-        assert(got == want, format("symmetry transferred fixture spelling `%s`: %d, expected %d", row[0], got, want));
+        assert((got == want) && wave15InputsIntact(), format("symmetry transferred fixture spelling `%s`: %d, expected %d", row[0], got, want));
         fixtureNamed += got;
     }
     assert(fixtureNamed == fixtureRaw,
@@ -4404,7 +4423,8 @@ unittest // L0-b — the recorder pins, one per command
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -4448,7 +4468,8 @@ unittest // L0-b — the recorder pins, one per command
 
 unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
 {
-    import std.file : dirEntries, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import std.path : relativePath;
 
     // WHY A CENSUS AND NOT JUST THE TWO PINS ABOVE. `recordPositionDiff` is a
@@ -4491,7 +4512,8 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

@@ -1,7 +1,8 @@
 module tests.unit.shared_hover_producers_test;
 
 unittest {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : dirName, buildPath;
     import std.string : indexOf;
     import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent;

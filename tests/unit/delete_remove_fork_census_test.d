@@ -30,8 +30,12 @@
 // one at a time.
 module tests.unit.delete_remove_fork_census_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : canFind, startsWith;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : splitLines;
@@ -124,7 +128,8 @@ unittest // W-3-c1: the undo-tracker fork is gone from delete.d and remove.d
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -163,7 +168,7 @@ unittest // W-3-c1: the undo-tracker fork is gone from delete.d and remove.d
 
     }
 
-    assert(offenders.length == 0,
+    assert((offenders.length == 0) && wave15InputsIntact(),
         format("Stage L3-b's two destructive commands regained an undo fork:%-(\n    %s%). "
              ~ "The default environment takes the delta branch either way, so "
              ~ "behavioural tests cannot see this regression.", offenders));

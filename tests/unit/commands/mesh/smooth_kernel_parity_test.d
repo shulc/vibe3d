@@ -3,8 +3,12 @@
 // Every cell drives the production builder on a mesh built from the captured rig.
 module tests.unit.commands.mesh.smooth_kernel_parity_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : max;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.format : format;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.math : fabs, sqrt;
@@ -123,7 +127,7 @@ unittest { // preserve sampling: i < 10, the last iteration and every 100th
     int[] want;
     foreach (v; cell["projected_iterations"].array) want ~= cast(int)v.integer;
     assert(want.length == 12, "sampling population");
-    assert(got == want, format("preserve sampled %s, captured %s", got, want));
+    assert((got == want) && wave15InputsIntact(), format("preserve sampled %s, captured %s", got, want));
 }
 
 unittest { // selection mask and the three locks

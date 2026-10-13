@@ -37,7 +37,8 @@ import selection_command_registration : SelectionTypeDoors,
 import std.algorithm : count, sort;
 import std.array : join, split;
 import std.exception : assertThrown;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.path : baseName, buildNormalizedPath, buildPath, dirName;
 import std.string : indexOf;

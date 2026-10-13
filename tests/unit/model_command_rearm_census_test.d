@@ -7,7 +7,8 @@
 // the tools' `commitOperation` overrides and the production wiring in app.d.
 module tests.unit.model_command_rearm_census_test;
 
-import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import command : CmdFlags, Command;
 import command_history : CommandHistory, RecordMode;
@@ -17,7 +18,8 @@ import editmode : EditMode;
 import registry : Registry;
 import std.algorithm : canFind, count;
 import std.conv : to;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.json : parseJSON;
 import std.path : buildPath, dirName;
 import std.regex : matchAll, regex;
@@ -231,7 +233,8 @@ unittest { // The tools that close their operation their own way, exactly.
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -307,7 +310,8 @@ unittest { // The production wiring names the close and its finish, once each.
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

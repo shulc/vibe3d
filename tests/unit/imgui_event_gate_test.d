@@ -183,7 +183,8 @@ unittest {
     // What it cannot see, said plainly: a call commented out in place still
     // reads as present. That is "someone deleted the fix by hand", not drift.
     import std.path : dirName, buildPath;
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.algorithm : canFind;
 
     enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -215,7 +216,8 @@ unittest {
     // `tests/unit/unittest_census_gate.d`. The denominator is asserted for the same
     // reason — a scan that reached zero files would satisfy every count below.
     import std.path : dirName, buildPath, relativePath;
-    import std.file : dirEntries, SpanMode, readText, exists, isDir;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText, exists = wave15Exists, isDir = wave15IsDir;
     import std.algorithm : canFind, sort;
     import std.array : array, replace;
 
@@ -258,7 +260,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

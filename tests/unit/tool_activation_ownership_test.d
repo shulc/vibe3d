@@ -22,10 +22,14 @@
 // in the same edit — and, on this evidence, only after that drop has a cell.
 module tests.unit.tool_activation_ownership_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : canFind, sort;
 import std.array : appender;
 import std.conv : to;
-import std.file : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format : format;
 import std.path : dirName;
 import std.string : indexOf, lastIndexOf;
@@ -257,7 +261,7 @@ unittest {
             drift ~= format("%s: found %s, recorded %s (%s)",
                             r.transition, got, r.count, r.why);
     }
-    assert(drift.data.length == 0,
+    assert((drift.data.length == 0) && wave15InputsIntact(),
         format("task 4053: production site counts moved: %s — a count is not an "
                ~ "existence check on purpose: relabelling a site from one drop "
                ~ "transition to another keeps both names in the tree and both "

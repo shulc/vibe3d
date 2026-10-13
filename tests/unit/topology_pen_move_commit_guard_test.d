@@ -13,7 +13,8 @@ module tests.unit.topology_pen_move_commit_guard_test;
 
 import tests.unit.census_symbols : balancedSpan, blankNonCode, countOccurrences;
 import std.conv : to;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath, dirName;
 import std.string : indexOf;
 

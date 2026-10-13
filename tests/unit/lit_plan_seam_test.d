@@ -13,13 +13,18 @@
 // spellings that bypass `private`).
 module tests.unit.lit_plan_seam_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.format : format;
 import std.regex  : ctRegex, matchAll;
 
 private string rendererCode() {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath, dirName;
     import tests.unit.census_symbols : blankNonCode, blankUnittestBodies;
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -126,12 +131,13 @@ unittest { // every lit face draw in the renderer sits inside one applyPlan / re
     // Structural: per draw. True after task 9040; before it there was no
     // applyPlan at all, so every draw was reported.
     const string[] bad = bracketViolations(code);
-    assert(bad.length == 0,
+    assert((bad.length == 0) && wave15InputsIntact(),
         format("census: lit face draws outside the plan-uniform bracket: %s", bad));
 }
 
 unittest { // the create-tool preview re-seeds the park through the seam's preview subset before its draw
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath, dirName;
     import std.string : indexOf;
     import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countOccurrences;
@@ -154,7 +160,8 @@ unittest { // the create-tool preview re-seeds the park through the seam's previ
 }
 
 unittest { // the preview subset parks every plan uniform: applyPreviewPlan's body calls restorePlanDefaults
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath, dirName;
     import std.string : indexOf;
     import tests.unit.census_symbols : balancedSpan, blankNonCode, blankUnittestBodies, countOccurrences;
@@ -199,7 +206,8 @@ unittest { // compile fence: the four plan-uniform locations are unreachable fro
 
 unittest { // raw-text census of the spellings that bypass private: names, getMember, mixin, tupleof
     import std.array : replace;
-    import std.file : dirEntries, readText, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
     import std.path : buildPath, dirName, relativePath;
     import tests.unit.census_symbols : countOccurrences;
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -207,7 +215,7 @@ unittest { // raw-text census of the spellings that bypass private: names, getMe
     auto nameRe   = ctRegex!(`\b(locDim|locLightGain|locShading|locFillColor)\b`);
     auto mixinRe  = ctRegex!(`\bmixin\s*\(`);
     // Local positive control for the name needle (raw text: a string literal counts).
-    assert(positions(`__traits(getMember, lit, "locDim"); x.locFillColor`, nameRe).length == 2,
+    assert((positions(`__traits(getMember, lit, "locDim"); x.locFillColor`, nameRe).length == 2) && wave15InputsIntact(),
         "control: the location-name needle must find a bare and a quoted spelling");
     size_t scanned, litFiles;
     string[] named;          // files outside shader.d naming a plan-uniform location
@@ -249,7 +257,8 @@ unittest { // raw-text census of the spellings that bypass private: names, getMe
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -359,7 +368,8 @@ unittest { // the backdrop upkeep: one gpuFor in draw, guarded by backdropKeepsU
 unittest {
     import std.algorithm : sort, uniq;
     import std.array : array;
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath, dirName;
     import std.string : indexOf;
     import tests.unit.census_symbols : balancedSpan, blankNonCode, blankUnittestBodies;
@@ -436,7 +446,8 @@ unittest {
 // draw set (WebGL2: INVALID_OPERATION; desktop GL permits it, so no pixel
 // reddens — the witness is text). Markers found once each FIRST.
 unittest {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath, dirName;
     import std.string : indexOf;
     import tests.unit.census_symbols : balancedSpan, blankNonCode, blankUnittestBodies, countOccurrences;

@@ -13,11 +13,16 @@
 // Order per block: floor -> needles -> structure, each with a positive control.
 module tests.unit.face_stride_census_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : sort, endsWith;
 import std.array     : array, replace;
-import std.file      : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName, relativePath;
 import std.regex     : ctRegex, matchAll, matchFirst;
@@ -116,7 +121,7 @@ unittest { // the rule's own controls [E5]: the app.d shape is rejected, a real 
     // The stride needles find today's (pre-S1a) spellings.
     enum oldSubmit = "enum FACE_STRIDE = 6; glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, "
                    ~ "FACE_STRIDE * float.sizeof, cast(void*)0);";
-    assert(hits(oldSubmit, strideRe) == 2, "control: the FACE_STRIDE needle misses the old submitUploadGl");
+    assert((hits(oldSubmit, strideRe) == 2) && wave15InputsIntact(), "control: the FACE_STRIDE needle misses the old submitUploadGl");
     assert(hits("glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * float.sizeof, cast(void*)0);",
                 sixSizeRe) == 1, "control: the `6 * float.sizeof` needle misses the old gpu_select spelling");
     assert(hits("jsonNum(data[i * 6 + 0]); float[] d = new float[](n * 6]", sixIndexRe) == 2,
@@ -150,7 +155,8 @@ unittest { // the layout census: four files, one stride constant, no other spell
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -281,7 +287,7 @@ unittest { // the smoothing policy (S1e) travels, moves, empties and resets with
 
 unittest { // the selected-vertex path reads the DRAWN positions only (task 1069 law)
     // Positive control [E5]: the needle finds the pre-S1a edge walk.
-    assert(hits("Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];", baseVertRe) == 2,
+    assert((hits("Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];", baseVertRe) == 2) && wave15InputsIntact(),
         "control: the `mesh.vertices[` needle misses the old edge walk");
     immutable body_ = bodyAt(codeOf("../packages/viewport-gpu/source/mesh_gpu.d"), "void uploadSelectedVertices(");
     assert(body_.length > 500, "census: uploadSelectedVertices' body vanished");

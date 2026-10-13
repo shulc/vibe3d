@@ -58,7 +58,8 @@ module tests.unit.tool_gesture_record_residue_test;
 
 import std.algorithm : sort;
 import std.conv      : to;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, readText = wave15ReadText;
 import std.path      : baseName, buildPath, dirName, relativePath;
 import std.string    : indexOf;
 

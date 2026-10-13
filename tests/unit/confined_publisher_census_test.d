@@ -117,11 +117,16 @@
 // path-keyed checks elsewhere reddened on nothing.
 module tests.unit.confined_publisher_census_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : sort;
 import std.array     : appender;
-import std.file      : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : splitLines;
@@ -243,7 +248,8 @@ private Hit[] scanTree() {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -361,7 +367,7 @@ unittest {
 
     const string bad = reconcile(kSites, led.data);
 
-    assert(bad.length == 0, format(
+    assert((bad.length == 0) && wave15InputsIntact(), format(
         "task 2000: the CONFINED-DELIVERY caller set no longer matches the "
       ~ "recorded one.%s\n\n"
       ~ "  Recorded: %d occurrence(s) over %d (declaration, name) pair(s). "

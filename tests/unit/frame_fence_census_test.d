@@ -23,9 +23,13 @@
 // Evidence and the stall rig: doc/tasks (9526).
 module tests.unit.frame_fence_census_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : canFind, sort;
 import std.array     : array;
-import std.file      : dirEntries, SpanMode, readText;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : baseName, buildPath, dirName;
 import std.regex     : ctRegex, matchAll;
@@ -40,7 +44,7 @@ private string blankComments(string raw)
 {
     const codeOnly = blankNonCode(raw);
     const withComments = blankNonCode(raw, true);
-    assert(codeOnly.length == raw.length && withComments.length == raw.length,
+    assert((codeOnly.length == raw.length && withComments.length == raw.length) && wave15InputsIntact(),
         "9526 scanner control: lexer projections changed source byte length");
     auto result = raw.dup;
     foreach (i; 0 .. result.length)
@@ -168,13 +172,13 @@ unittest
     }
     sort(readers); sort(offenders); sort(rawHelpers);
 
-    assert(readers.length == 15,
+    assert((readers.length == 15) && wave15InputsIntact(),
         format("9526 floor: %s suite files read a frame-published key, expected 15: %s",
             readers.length, readers));
     assert(rawFiles.length >= 30,
         format("9526 floor: only %s files read /api/changes raw; the needle desynced?",
             rawFiles.length));
-    assert(offenders.length == 0 && readers == [
+    assert((offenders.length == 0 && readers == [
         "test_axis_slice.d",
         "test_bus_layer_scale_rebuild_rate.d",
         "test_change_bus.d",
@@ -190,7 +194,7 @@ unittest
         "test_reduce.d",
         "test_retopology_lines_dots.d",
         "test_seltype_order.d",
-    ],
+    ]) && wave15InputsIntact(),
         format("9526: a file that reads a frame-published /api/changes key must read "
             ~ "it through http_client.settledChanges (frame fence first), not a raw "
             ~ "read: %s; reader inventory: %s", offenders, readers));

@@ -8,7 +8,8 @@ import http_client : getJson, postJson, frameFence;
 import http_command_helpers : commandBody;
 import std.algorithm.searching : canFind;
 import std.conv : to;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.math : PI, abs, cos, sqrt, sin, tan;

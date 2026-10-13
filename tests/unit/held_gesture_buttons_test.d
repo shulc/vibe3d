@@ -1,12 +1,16 @@
 module tests.unit.held_gesture_buttons_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 // Slice M1a (doc/tool_session_model_plan_2026-09-24.md, R4.4): no key is
 // dispatched while any mouse button is held. The set itself (u1, u2), and the
 // router's ORDER (u3), which no scenario log can witness: the viewport swallow
 // gate is off under --test, so a release it would have eaten never is there.
 
 import std.algorithm.searching : canFind, startsWith;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.string : indexOf, strip;
 import held_gesture_buttons : HeldGestureButtons, g_heldGestureButtons;
 import tests.unit.census_symbols : blankNonCode;
@@ -58,7 +62,7 @@ private string bodyAt(string code, string marker) {
 /// Offset of `needle` in `hay`, asserting it is there exactly once.
 private size_t once(string hay, string needle, string where) {
     const a = hay.indexOf(needle);
-    assert(a >= 0, "M1a census: " ~ where ~ " lost `" ~ needle ~ "`");
+    assert((a >= 0) && wave15InputsIntact(), "M1a census: " ~ where ~ " lost `" ~ needle ~ "`");
     assert(hay[a + needle.length .. $].indexOf(needle) < 0,
            "M1a census: " ~ where ~ " has `" ~ needle ~ "` twice");
     return cast(size_t) a;

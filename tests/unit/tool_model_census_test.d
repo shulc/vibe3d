@@ -28,7 +28,11 @@
 // Fast loop: tools/local/ut-standalone.sh tests/unit/tool_model_census_test.d
 module tests.unit.tool_model_census_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 // Pulls every production tool module into the import closure, so the runtime
 // population is the same under `dmd -i` (ut-standalone) as in the full gate.
@@ -47,7 +51,8 @@ import core.exception : AssertError;
 import std.algorithm : canFind, endsWith, sort, startsWith;
 import std.array     : appender, array, join, split;
 import std.conv      : to;
-import std.file      : dirEntries, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.stdio     : writeln;
@@ -360,7 +365,8 @@ private SrcFile[] sourceFiles(out size_t withoutModuleLine) {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -974,7 +980,7 @@ unittest {
         const c = keyCountsOf(f.src);
         if (c[0] || c[1]) keyMeasured[f.path] = c;
     }
-    assert(keyMeasured.get("source/tools/edit/bridge_tool.d", kNoKeys)[1] >= 1,
+    assert((keyMeasured.get("source/tools/edit/bridge_tool.d", kNoKeys)[1] >= 1) && wave15InputsIntact(),
            "tool census: axis 2 needle positive control failed: source/tools/edit/bridge_tool.d");
     // Task 7112 moved the slice tools to SessionMeshKey, so no production
     // file holds a MeshCacheKey field any more; the needle's CAPACITY to see
@@ -984,7 +990,7 @@ unittest {
     // SessionMeshKey fields (activation / deactivate images and the tool's own
     // key; slice M3 moved task 7137's first-gesture payload, and its key, into
     // the session; task 9489 took the param image's).
-    assert(keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys) == [0, 3],
+    assert((keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys) == [0, 3]) && wave15InputsIntact(),
            format("tool census: axis 2 flipped control failed: source/tools/slice/slice_tool.d reads %s, expected [0, 3]",
                   keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys)));
     // Axis 2 scope floor: the scanner reads type heads literally, so an alias
@@ -1001,7 +1007,7 @@ unittest {
 
     // Axis 3 surface pin and needle controls.
     const surface = historySurface();
-    assert(surface.length == kHistorySurface,
+    assert((surface.length == kHistorySurface) && wave15InputsIntact(),
            format("tool census: CommandHistory surface changed (%s public methods, pinned %s): %s",
                   surface.length, kHistorySurface, surface));
     size_t[string][string] writeMeasured;
@@ -1146,13 +1152,13 @@ unittest {
 
     // ===== (3) violator constants, axis 1 then axis 2 =====================
     const r1 = axis1Violators(recorded.tools);
-    foreach (n; v1) assert(r1.canFind(n), "tool census: axis 1 violator added: " ~ n);
+    foreach (n; v1) assert((r1.canFind(n)) && wave15InputsIntact(), "tool census: axis 1 violator added: " ~ n);
     foreach (n; r1)
         assert(v1.canFind(n), "tool census: axis 1 violator removed: " ~ n ~ ", lower the ledger");
     assert(recorded.axis1 == v1.length,
            format("tool census: axis 1 violator constant %s, measured %s", recorded.axis1, v1.length));
     const r2 = axis2Violators(recorded.keys);
-    foreach (f; v2) assert(r2.canFind(f), "tool census: axis 2 violator added: " ~ f);
+    foreach (f; v2) assert((r2.canFind(f)) && wave15InputsIntact(), "tool census: axis 2 violator added: " ~ f);
     foreach (f; r2)
         assert(v2.canFind(f), "tool census: axis 2 violator removed: " ~ f ~ ", lower the ledger");
     assert(recorded.axis2 == v2.length,

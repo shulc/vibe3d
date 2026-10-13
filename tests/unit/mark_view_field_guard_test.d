@@ -37,7 +37,8 @@ module tests.unit.mark_view_field_guard_test;
 
 import std.array     : appender, join;
 import std.ascii     : isAlphaNum, isWhite;
-import std.file      : dirEntries, exists, isDir, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, isDir = wave15IsDir, readText = wave15ReadText;
 import std.format    : format;
 import std.path      : buildPath, dirName, relativePath;
 import std.string    : strip;
@@ -368,7 +369,8 @@ unittest {
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

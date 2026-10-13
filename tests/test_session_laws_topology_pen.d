@@ -65,7 +65,8 @@ import topology_pen_session_helpers;
 import http_client : getJson;
 import drag_helpers : fetchCamera;
 import fixture_helpers : requireProvenance;
-import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.algorithm : canFind;
 import std.array : join;
 import std.format : format;
@@ -1644,7 +1645,8 @@ long[][] cyclesOf(const long[][] fs) {
 /// Distance from `p` to the background layer of `rigFile` (its faces fanned
 /// into triangles): the "on the background" read of a built vertex.
 double bgDistance(string rigPath, double[3] p) {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.math : sqrt;
     static double[3][] pos;
     static long[][] faces;
@@ -1910,7 +1912,8 @@ unittest {
         // dropped) between `case BuildCase.Tri:` and its `break;`, so a comment
         // that keeps the old call's spelling cannot satisfy it (task 8790).
         import std.algorithm : count;
-        import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
         import std.string : indexOf;
         const code = codeOnly(readText(buildPath(dirName(__FILE_FULL_PATH__), "..", "source", "tools",
                                                  "edit", "topology_pen", "render.d")));
@@ -2235,7 +2238,8 @@ unittest {
 /// the file itself (under /var/tmp) is deleted on scope exit. Floors: the save
 /// writes no history row and leaves the pen armed as it was.
 long[2][] penWireKeys(string what) {
-    import std.file : exists, remove;
+    import std.file : remove;
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.process : thisProcessID;
     import std.conv : to;
     const path = "/var/tmp/vibe3d_w1_wire_keys_" ~ thisProcessID.to!string ~ ".v3d";

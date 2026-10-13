@@ -1,7 +1,8 @@
 module tests.unit.ui.dock_wiring_census_test;
 
 import std.algorithm : canFind, count;
-import std.file : dirEntries, exists, isFile, readText, SpanMode;
+import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, isFile = wave15IsFile, readText = wave15ReadText;
 import std.path : buildPath, dirName;
 import std.string : indexOf, lastIndexOf;
 import tests.unit.census_symbols : blankNonCode;
@@ -65,7 +66,8 @@ unittest { // F4e: the removed node-level undock guard cannot creep back
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",

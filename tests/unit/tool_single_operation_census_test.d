@@ -14,9 +14,13 @@
 // a time.
 module tests.unit.tool_single_operation_census_test;
 
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
 import std.algorithm : startsWith;
 import std.array : split;
-import std.file : exists, readText;
+
+import tests.unit.census_symbols : exists = wave15Exists, readText = wave15ReadText;
 import std.format : format;
 import std.path : buildPath, dirName;
 
@@ -62,7 +66,7 @@ unittest // Slice: every plane-cut kernel call lives in `sliceCut` (and its spli
     // cutByPlane, cutByPlaneRestricted, cutByPlaneClipped, cutByPlaneEx,
     // cutByPlaneSplitGap.
     const kernels = planeCutKernels();
-    assert(kernels.length == 5, format("the cutByPlane rule now selects %s names "
+    assert((kernels.length == 5) && wave15InputsIntact(), format("the cutByPlane rule now selects %s names "
         ~ "(%s); measured 5 — re-measure and pin, never widen blindly",
         kernels.length, kernels));
 
@@ -92,7 +96,7 @@ unittest // Slice: every plane-cut kernel call lives in `sliceCut` (and its spli
         "sliceSplitGap|cutByPlaneEx": 1,
     ];
     auto got = identOwners(code, kernels);
-    assert(got == want, format("slice_tool.d calls a plane-cut kernel outside the "
+    assert((got == want) && wave15InputsIntact(), format("slice_tool.d calls a plane-cut kernel outside the "
         ~ "one operation `sliceCut`:\n  found    %s\n  expected %s", got, want));
 
     // STRUCTURAL: the bypasses that reach a member past the blanked view.
@@ -140,7 +144,7 @@ private size_t checkRows(const OperationRow[] rows) {
         size_t[string] want = [r.cls ~ ".operation|" ~ r.kernel: 1];
         if (r.imported) want["(module scope)|" ~ r.kernel] = 1;
         auto got = identOwners(code, [r.kernel]);
-        assert(got == want, format("%s calls `%s` outside its one operation:"
+        assert((got == want) && wave15InputsIntact(), format("%s calls `%s` outside its one operation:"
             ~ "\n  found    %s\n  expected %s", r.file, r.kernel, got, want));
 
         // STRUCTURAL: the spellings that reach a member past the blanked view.

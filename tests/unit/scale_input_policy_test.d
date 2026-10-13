@@ -4,7 +4,8 @@ import math : Vec3;
 import std.math : abs;
 
 unittest {
-    import std.file : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.string : indexOf;
     import std.algorithm : count;
     auto consumer = readText("source/tools/transform/xfrm_transform.d");
@@ -22,7 +23,8 @@ unittest {
 
 unittest {
     import tool_presets : loadToolPresets;
-    import std.file : write, remove, readText;
+    import std.file : write, remove;
+import tests.unit.census_symbols : readText = wave15ReadText;
     import std.string : indexOf;
     auto presets = loadToolPresets("config/tool_presets.yaml");
     size_t defaultCount, optedCount;

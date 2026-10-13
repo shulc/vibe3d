@@ -35,7 +35,11 @@
 // Fast loop: tools/local/ut-standalone.sh tests/unit/tool_session_policy_test.d
 module tests.unit.tool_session_policy_test;
 
-import std.file : exists;
+import tests.unit.census_symbols : wave15InputsIntact;
+
+
+
+import tests.unit.census_symbols : exists = wave15Exists;
 
 import create_tool_registration;
 import edit_tool_registration;
@@ -51,7 +55,8 @@ import commands.mesh.vertex_position_result : VertexPositionResultBuilder;
 import core.memory  : GC;
 import std.algorithm : canFind, count, endsWith, filter, sort;
 import std.array     : array, join;
-import std.file      : readText;
+
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.format    : format;
 import std.json      : JSONType, parseJSON;
 import std.conv      : to;
@@ -394,7 +399,7 @@ private string squeeze(string s) {
 private void inOrder(string hay, string[] needles, string where) {
     ptrdiff_t last = -1;
     foreach (n; needles) {
-        assert(hay.count(n) == 1,
+        assert((hay.count(n) == 1) && wave15InputsIntact(),
                format("M1 wiring census: %s has %s x `%s`, expected 1", where, hay.count(n), n));
         const at = hay.indexOf(n);
         assert(at > last, format("M1 wiring census: %s: `%s` moved out of order", where, n));
@@ -795,11 +800,11 @@ unittest { // (4b)
     auto ptRaw = readText("source/prepared_tool_transition.d");
     auto pt = blankUnittestBodies(blankNonCode(ptRaw));
     const arm = bodyAt(pt, "PreparedArm prepareArm(ToolFactory factory");
-    assert(identSites(arm, "firstStepCarriesActivation", false).length == 1
+    assert((identSites(arm, "firstStepCarriesActivation", false).length == 1
            && identSites(arm, "firstStepCarriesActivation", false)[0].endsWith(":1")
            && identSites(arm, "recordCarriesActivation", false).length == 0
            && arm.count(".tupleof") == 0 && arm.count("getMember") == 0
-           && arm.count("mixin(") == 0,
+           && arm.count("mixin(") == 0) && wave15InputsIntact(),
            "S2a needle: prepareArm must read firstStepCarriesActivation once and the declared "
            ~ "recordCarriesActivation never (a revert reddens HERE, before pin (5))");
     auto app = blankUnittestBodies(blankNonCode(readText("source/app.d")));
@@ -828,8 +833,8 @@ unittest { // (4b)
     // The settle is gated on the captured model: the pen (outside it) keeps
     // its replay value. No pen suite reads the session's `armed` after a
     // navigation, so this needle is the gate's witness (mutation P1, card 8920).
-    assert(identSites(bodyAt(es, "private bool boundModel_()"), "capturedTopologyModel", false)
-           == ["(module scope):1"],
+    assert((identSites(bodyAt(es, "private bool boundModel_()"), "capturedTopologyModel", false)
+           == ["(module scope):1"]) && wave15InputsIntact(),
            "S2a needle: boundModel_ no longer gates on capturedTopologyModel");
     // The opener is asked with the token AFTER the step (the step re-binds the
     // tool and adopts its token): the argument is `aToken`, nothing taken before.
@@ -923,7 +928,8 @@ private string guardOf(string code, size_t pos) {
 }
 
 unittest { // (4c)
-    import std.file : dirEntries, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import tests.unit.production_tool_policies : productionPolicies;
     import tests.unit.census_symbols : blankUnittestBodies;
     // FLOOR: the production registry's 71 ids, the model's 13; and the raw scan
@@ -970,7 +976,8 @@ unittest { // (4c)
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -1061,7 +1068,7 @@ unittest { // (4c)
     const arm = bodyAt(es, "void noteArm(string id, ulong token, bool postmodeArmed");
     const psw = bodyAt(es, "void scriptedWriteEndsOperation(Tool t)");
     foreach (b; [steB, steE, arm, psw])
-        assert(squeeze(b).length > 2, "S2b needle: a ToolSession body the needle reads is empty");
+        assert((squeeze(b).length > 2) && wave15InputsIntact(), "S2b needle: a ToolSession body the needle reads is empty");
     // (a) "A" decides by the armed post mode, never by the open operation; the
     // two branch choices read it, and `topologyDormant_` stands only on its
     // right-hand side (the dormant pair of `undoImpl_` is S6's).
@@ -1152,7 +1159,8 @@ unittest { // (4c)
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -1261,14 +1269,14 @@ unittest { // (4d)
                       "private void settleAfterNavigation_(bool isUndo)", "void notePointerDown()",
                       "void scriptedWriteEndsOperation(Tool t)",
                       "private void rebaseOnUndoneOperation_(Tool t, ulong tok)"])
-        assert(squeeze(bodyAt(ts, marker)).length > 2, "S3 floor: the session body " ~ marker
+        assert((squeeze(bodyAt(ts, marker)).length > 2) && wave15InputsIntact(), "S3 floor: the session body " ~ marker
                ~ " is empty");
     // NEEDLE, by identifier (a method address and both lambda forms count).
     // Polarity: allowed sets, true after S3 (S7 adds `close:1` to the second; S7 PF-7 the
     // undone restart's base and S7 (6) the navigation tail — probe edits, form item 10).
-    assert(identSites(es, "rebaseTopologyStep", false)
+    assert((identSites(es, "rebaseTopologyStep", false)
            == ["ToolSession.rebaseAfterTail_:1", "ToolSession.rebaseOnCurrent_:1",
-               "ToolSession.rebaseOnUndoneOperation_:1"],
+               "ToolSession.rebaseOnUndoneOperation_:1"]) && wave15InputsIntact(),
            format("S3 needle: edit_session.d rebases a tool at %s, expected only in "
                   ~ "rebaseOnCurrent_, (S7, PF-7) rebaseOnUndoneOperation_ and (S7 (6)) "
                   ~ "rebaseAfterTail_", identSites(es, "rebaseTopologyStep", false)));
@@ -1330,7 +1338,8 @@ unittest { // (4d)
 // dormancy. Order (form item 2): floor -> needle -> structural; the fence follows.
 // ---------------------------------------------------------------------------
 unittest { // (4e)
-    import std.file : dirEntries, readText, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
     import tests.unit.census_symbols : blankUnittestBodies;
     // FLOOR (form item 4): the model's classes, found by the rule «a class in source
     // composing the topology-step client mixin» (task 9429; the pen keeps its own
@@ -1359,7 +1368,8 @@ unittest { // (4e)
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -1395,8 +1405,8 @@ unittest { // (4e)
     const arm = squeeze(bodyAt(ts, "void noteArm(string id, ulong token, bool postmodeArmed = true)"));
     // S6r (9270, probe edit, form item 10): every dormant arm takes the closed run's copy;
     // an arm-opening tool's activation then writes its reset over it (the §18.2 term is gone).
-    assert(arm.canFind("topologyDormant_=capturedTopologyModel(t.sessionPolicy())&&")
-           && arm.canFind("if(topologyDormant_&&ownedAttrs.empty)ownedAttrs=closedAttrs;"),
+    assert((arm.canFind("topologyDormant_=capturedTopologyModel(t.sessionPolicy())&&")
+           && arm.canFind("if(topologyDormant_&&ownedAttrs.empty)ownedAttrs=closedAttrs;")) && wave15InputsIntact(),
            "S6 needle: noteArm's dormant term is not the captured model's, or a dormant arm "
            ~ "does not take the closed run's copy (S6r: the §18.2 term returned?): " ~ arm);
     assert(identSites(es, "attrRowJoinsActivation_", false)
@@ -1469,12 +1479,12 @@ unittest { // (4f)
                  "private void noteFoldRow_(Tool t, MeshSessionEdit cmd)",
                  "void stepEnds(Tool t, bool ifChanged)",
                  "void scriptedWriteEndsOperation(Tool t)"])
-        assert(squeeze(bodyAt(ts, m)).length > 2, "S7 floor: the session body " ~ m ~ " is empty");
+        assert((squeeze(bodyAt(ts, m)).length > 2) && wave15InputsIntact(), "S7 floor: the session body " ~ m ~ " is empty");
     // NEEDLES, by identifier (a method address and both lambda forms count). Polarity:
     // stationary allowed sets, true after S7; false before (the pen's walk had three
     // callers — close twice, noteFoldRow_ — and the other two names did not exist).
-    assert(identSites(es, "foldOpenRows_", false)
-           == ["<decl>:1", "ToolSession.endPendingOperation_:1"],
+    assert((identSites(es, "foldOpenRows_", false)
+           == ["<decl>:1", "ToolSession.endPendingOperation_:1"]) && wave15InputsIntact(),
            format("S7 needle: the pen's open-step walk is called at %s, expected only by "
                   ~ "endPendingOperation_", identSites(es, "foldOpenRows_", false)));
     assert(identSites(es, "foldOperationRows_", false)
@@ -1522,7 +1532,7 @@ unittest { // (4g)
     foreach (m; ["private bool undoImpl_(out bool markerConsumed)", "private bool navigateTopology_(bool isUndo)",
                  "private void adoptPredecessorToken_(const Command undone)",
                  "private void restorePredecessor_(const Command undone, AttrImage remembered)"])
-        assert(squeeze(bodyAt(ts, m)).length > 2,
+        assert((squeeze(bodyAt(ts, m)).length > 2) && wave15InputsIntact(),
                "PF-3 floor: the session body " ~ m ~ " is empty");
     // Polarity: false before S7 (the tail alone), true after. S7 (7) (plan §19.3): the adopt
     // moved into `restorePredecessor_` (probe edit, form item 10), which both paths call.
@@ -1554,7 +1564,7 @@ unittest { // (4h)
     const ts = bodyAt(es, "private struct ToolSession");
     foreach (m; ["private bool undoImpl_(out bool markerConsumed)", "private bool redoImpl_()",
                  "private void rebaseAfterTail_(Tool t)"])
-        assert(squeeze(bodyAt(ts, m)).length > 2,
+        assert((squeeze(bodyAt(ts, m)).length > 2) && wave15InputsIntact(),
                "S7 (6) floor: the session body " ~ m ~ " is empty");
     assert(identSites(es, "resyncSession", false)
            == ["ToolSession.applyAndContinue:1", "ToolSession.navigateRecorded_:1",
@@ -1588,7 +1598,7 @@ unittest { // (4i)
     foreach (m; ["void noteArm(string id, ulong token, bool postmodeArmed = true)",
                  "private void recordBeginRow_(Tool t)", "void stepBegins(Tool t, PressKind kind",
                  "void stepEnds(Tool t, bool ifChanged)", "private bool ownOpenerOnTop_(ulong tok)"])
-        assert(squeeze(bodyAt(ts, m)).length > 2, "S5b floor: the session body " ~ m ~ " is empty");
+        assert((squeeze(bodyAt(ts, m)).length > 2) && wave15InputsIntact(), "S5b floor: the session body " ~ m ~ " is empty");
     assert(identSites(es, "recordBeginRow_", false) == ["<decl>:1", "ToolSession.noteArm:1"],
            format("S5b needle: recordBeginRow_ is called at %s, expected the arm once",
                   identSites(es, "recordBeginRow_", false)));
@@ -1660,10 +1670,10 @@ unittest { // (4j)
                  "void stepBegins(Tool t, PressKind kind", "private void activate_(Tool t)",
                  "private void endPendingOperation_(const Command trigger, bool endsPostMode, "
                  ~ "bool model)"])
-        assert(squeeze(bodyAt(ts, m)).length > 2, "S6r floor: the session body " ~ m ~ " is empty");
+        assert((squeeze(bodyAt(ts, m)).length > 2) && wave15InputsIntact(), "S6r floor: the session body " ~ m ~ " is empty");
     // NEEDLES, by identifier (every spelling, a method address included).
-    assert(identSites(es, "activate_", false)
-           == ["<decl>:1", "ToolSession.noteArm:1", "ToolSession.stepBegins:1"],
+    assert((identSites(es, "activate_", false)
+           == ["<decl>:1", "ToolSession.noteArm:1", "ToolSession.stepBegins:1"]) && wave15InputsIntact(),
            format("S6r needle: activate_ is called at %s, expected the live arm and the press "
                   ~ "once each", identSites(es, "activate_", false)));
     assert(identSites(es, "instanceActive_", true)
@@ -1753,7 +1763,7 @@ unittest { // (4j)
     });
     assert(modelIds == 13 && seen.length == 12,
            format("S6r floor: %s model ids / %s classes built, measured 13 / 12", modelIds, seen.length));
-    assert(bad.length == 0, format("S6r structural: the activation-reset table differs: %s", bad));
+    assert((bad.length == 0) && wave15InputsIntact(), format("S6r structural: the activation-reset table differs: %s", bad));
     assert(nonEmpty == 8 && empty == 4,
            format("S6r structural: %s classes reset at activation, %s none — measured 8 / 4",
                   nonEmpty, empty));
@@ -1821,7 +1831,8 @@ static assert(ToolSessionPolicy.init.activationResetAttrs.length == 0);
 // ---------------------------------------------------------------------------
 
 unittest { // (4k)
-    import std.file : dirEntries, SpanMode;
+    import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import tests.unit.census_symbols : blankUnittestBodies;
     import tests.unit.production_tool_policies : productionPolicies;
     import tool : capturedTopologyModel;
@@ -1837,8 +1848,8 @@ unittest { // (4k)
         assert(squeeze(bodyAt(ts, m)).length > 2, "S7r floor: the session body " ~ m ~ " is empty");
     // NEEDLES, by identifier: writes and every spelling apart (form item 3).
     foreach (d; ["pinnedOperation_", "pinnedRedoImage_"])
-        assert(identSites(es, d, true) == ["ToolSession.endOperation_:1",
-                                           "ToolSession.settleAfterNavigation_:1"],
+        assert((identSites(es, d, true) == ["ToolSession.endOperation_:1",
+                                           "ToolSession.settleAfterNavigation_:1"]) && wave15InputsIntact(),
                format("S7r needle: %s is written at %s, expected the settle after a navigation "
                       ~ "(pin / release) and the operation's end alone", d, identSites(es, d, true)));
     assert(identSites(es, "pinnedRedoImage_", false)
@@ -1885,7 +1896,8 @@ unittest { // (4k)
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
@@ -2739,7 +2751,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         const esU = blankUnittestBodies(es);
         foreach (m; ["private bool boundToLive_(", "private DropImage dropImage_(",
                      "private void storeDropImage_(", "private AttrImage seedRecreated_("])
-            assert(squeeze(bodyAt(esU, m)).length > 2, "S4 floor: " ~ m ~ " has no body");
+            assert((squeeze(bodyAt(esU, m)).length > 2) && wave15InputsIntact(), "S4 floor: " ~ m ~ " has no body");
         foreach (h; ["dropImage_", "storeDropImage_"])
             assert(identSites(esU, h, false) == ["<decl>:1",
                    "ToolSession.navigateTopology_:1", "ToolSession.undoImpl_:2"],
@@ -2766,12 +2778,13 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
     // closed-run undo and the parameter-row prune; `truncateRedo` is called by the cut
     // alone in `source` (its in-module unittest blanked).
     {
-        import std.file : dirEntries, SpanMode;
+        import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries;
         import tests.unit.census_symbols : blankUnittestBodies;
         const esU = blankUnittestBodies(es);
         foreach (m; ["private bool undoImpl_(", "private void pruneRedoTop_(",
                      "private void settleAfterNavigation_("])
-            assert(squeeze(bodyAt(esU, m)).length > 2, "S5 floor: " ~ m ~ " has no body");
+            assert((squeeze(bodyAt(esU, m)).length > 2) && wave15InputsIntact(), "S5 floor: " ~ m ~ " has no body");
         assert(identSites(esU, "cutRefireRedo_", false)
                == ["<decl>:1", "ToolSession.settleAfterNavigation_:1"],
                format("S5 needle: cutRefireRedo_ sites %s, expected its declaration and one "
@@ -2809,7 +2822,8 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
-    import std.file : exists;
+
+import tests.unit.census_symbols : exists = wave15Exists;
     import std.path : buildPath;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
