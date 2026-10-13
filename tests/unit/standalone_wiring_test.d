@@ -50,11 +50,11 @@ unittest {
         "standalone-wiring: suite unittest source grant viewport-gpu");
     assert(library.count("\" --root=packages/subpatch-preview\"") == 1,
         "standalone-wiring: suite unittest source grant subpatch-preview");
-    assert(library.count("foreach (root; [\"\", \" --root=packages/camera-model\", \" --root=packages/document-channels\", \" --root=packages/image-codec\", \" --root=packages/document-io\", \" --root=packages/command-runtime\", \" --root=packages/application-core\", \" --root=packages/document-model\", \" --root=packages/param-schema\", \" --root=packages/pipe-runtime\", \" --root=util/json-number\", \" --root=packages/pipe-contracts\", \" --root=packages/mesh-preview\", \" --root=packages/mesh-ops\", \" --root=packages/tool-state\", \" --root=packages/transform-ops\", \" --root=packages/input-events\", \" --root=packages/display-policy\", \" --root=packages/viewport-gpu\", \" --root=packages/subpatch-preview\"])") == 1
+    assert(library.count("foreach (root; [\"\", \" --root=packages/camera-model\", \" --root=packages/document-channels\", \" --root=packages/image-codec\", \" --root=packages/document-io\", \" --root=packages/command-runtime\", \" --root=packages/application-core\", \" --root=packages/document-model\", \" --root=packages/param-schema\", \" --root=packages/pipe-runtime\", \" --root=util/json-number\", \" --root=packages/pipe-contracts\", \" --root=packages/mesh-preview\", \" --root=packages/mesh-ops\", \" --root=packages/tool-state\", \" --root=packages/transform-ops\", \" --root=packages/input-events\", \" --root=packages/display-policy\", \" --root=packages/viewport-gpu\", \" --root=packages/subpatch-preview\", \" --root=packages/selection-model\", \" --root=packages/scene-query\", \" --root=packages/editor-commands\"])") == 1
         && library.count(" --config=modeling --data=source-files --data-list 2>/dev/null") == 1
         && library.count("dmd -lib -unittest%s %s -of=%s 2>&1") == 1
         && library.count("sourceCompileFlags(), srcs.join(\" \"), lib") == 1,
-        "standalone-wiring: suite compiles exactly twenty source inventories under unittest flags");
+        "standalone-wiring: suite compiles exactly twenty-three source inventories under unittest flags");
 }
 
 unittest {
