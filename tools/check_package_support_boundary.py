@@ -3226,7 +3226,8 @@ def validate_description(description, project, owner, config, tests=False, harne
             config_grants['name'] in ('modeling', 'modeling-noai', 'with-render', 'web') and
             Path(compiler).name in ('ldc', 'ldc2')) else []
         if selected == 'interactive-tools':
-            expected_flags = ['-P-I'+str(Path(active['d_imgui']['path']).resolve()/'extern/cimgui')]
+            # Package descriptions retain the recipe variable; target settings expand it.
+            expected_flags = ['-P-I$D_IMGUI_PACKAGE_DIR/extern/cimgui']
         require(package.get('dflags', []) == expected_flags, 'support resolved include-import flags: '+name)
         require(all(not package.get(k) for k in HOOKS),'support resolved owner hook: '+name)
         versions=raw.get('versions',[])+config_grants.get('versions',[])
@@ -3254,6 +3255,10 @@ def validate_description(description, project, owner, config, tests=False, harne
                 'support target compiler source identity: '+name)
         require(not any(x=='-i' or x.startswith(('-i=','--include-imports')) for x in settings.get('dflags',[])),
                 'support target include-import flags: '+name)
+        if selected == 'interactive-tools':
+            expected_flags = ['-P-I'+str(Path(active['d_imgui']['path']).resolve()/'extern/cimgui')]
+            require(settings.get('dflags', []) == expected_flags,
+                    'support target C include path: '+name)
         if selected == 'mesh-ops' and not name.endswith('-tests'):
             expected_flags = ['--singleobj'] if (config in ('modeling', 'modeling-noai', 'with-render', 'web') and
                 Path(compiler).name in ('ldc', 'ldc2')) else []
@@ -3335,13 +3340,17 @@ def validate_actual_compiler(commands, project, owner, description, home, harnes
             'support actual compiler source identity: '+owner)
     require(not any(x=='-i' or x.startswith(('-i=','--include-imports')) for x in command['argv']),
             'support actual compiler include-import flags: '+owner)
+    active={p['name']:p for p in description['packages'] if p.get('active')}
+    if owner == 'interactive-tools':
+        expected_flags = ['-P-I'+str(Path(active['d_imgui']['path']).resolve()/'extern/cimgui')]
+        require([x for x in command['argv'] if x.startswith('-P-I')] == expected_flags,
+                'support actual compiler C include path: '+owner)
     for c in commands:
         require(not any('libvibe3d-' in Path(p).name for p in c['archiveInputs']),
                 'support actual overlapping internal D archives: '+owner)
     links=[c for c in commands if any(p in c['objectInputs'] for p in command['outputs'])]
     require(len(links)==1,'support actual compiler D archive inputs: '+owner)
     linked=links[0]
-    active={p['name']:p for p in description['packages'] if p.get('active')}
     static={n:ARCHIVES[n] for n,p in active.items() if not n.startswith('vibe3d-') and p['targetType'] in ('staticLibrary','library')}
     archives=linked['archiveInputs']
     require(len(archives)==len(static) and all(sum(Path(a).is_relative_to(home/'cache'/n) and Path(a).name==Path(filename).name for a in archives)==1 for n,filename in static.items()),
