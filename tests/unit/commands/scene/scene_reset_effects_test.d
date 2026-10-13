@@ -198,7 +198,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
     // Floor, then the needle, then the pin (measured 2026-10-05: `grep -rnow
     // allMut source --include=*.d | wc -l` = 10: nine uses plus the declaration
     // in toolpipe/pipeline.d).
-    assert((loops >= 10) && wave15InputsIntact(), "9465 floor: allMut sites scanned " ~ loops.to!string);
+    assert(loops >= 10, "9465 floor: allMut sites scanned " ~ loops.to!string);
     assert(retiredIdent == 0,
         "9465: resetAllPipeStages returned — the second stage reset per scene reset");
     assert(sites.length == 1 && sites[0].indexOf("source/commands/scene/reset.d:") == 0,

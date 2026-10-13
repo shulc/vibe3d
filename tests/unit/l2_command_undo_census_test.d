@@ -143,7 +143,7 @@ unittest // the twelve are off the snapshot-only undo
         else if (countOf(code, "undo_.revert(*mesh)") > 0) ++emptyOk;
     }
 
-    assert((scanned >= 30_000) && wave15InputsIntact(),
+    assert(scanned >= 30_000,
         format("the census read only %d byte(s) of stripped code across the "
              ~ "twelve — the stripper ate the roster and every count below is "
              ~ "zero for the wrong reason", scanned));

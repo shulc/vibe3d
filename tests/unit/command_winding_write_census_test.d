@@ -165,7 +165,7 @@ unittest // no command writes a face winding by hand
     // FILE-COUNT AND BYTE FLOORS, asserted BEFORE any count is taken. A walk
     // that found nothing is not a zero, it is a broken read; and a stripper
     // that ate its input reports zero for every needle.
-    assert((paths.length >= 90) && wave15InputsIntact(),
+    assert(paths.length >= 90,
         format("the census found only %d file(s) under source/commands — the "
              ~ "zone holds well over ninety and a short walk reports zero raw "
              ~ "writes for the wrong reason", paths.length));

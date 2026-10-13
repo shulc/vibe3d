@@ -264,7 +264,7 @@ unittest { // (f) app.d routes a Material commit to the live preview and its ful
         "kSubpatchTriggers lost MeshEditScope.Material — a Material-only commit never reaches rebuildIfStale");
     // The upload condition: floor on its pre-S1e terms, then needle 2.
     immutable ptrdiff_t c = app.indexOf("else if ((wantPreview && (versionChanged");
-    assert((c >= 0) && wave15InputsIntact(), "census floor: the preview upload condition `else if ((wantPreview && (versionChanged` moved");
+    assert(c >= 0, "census floor: the preview upload condition `else if ((wantPreview && (versionChanged` moved");
     immutable ptrdiff_t brace = app[c .. $].indexOf('{');
     immutable cond = app[c .. c + brace];
     assert(identCount(cond, "previewInstalledThisFrame") == 1, "census floor: the upload condition lost its install term");

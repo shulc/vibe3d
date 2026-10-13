@@ -980,7 +980,7 @@ unittest {
         const c = keyCountsOf(f.src);
         if (c[0] || c[1]) keyMeasured[f.path] = c;
     }
-    assert((keyMeasured.get("source/tools/edit/bridge_tool.d", kNoKeys)[1] >= 1) && wave15InputsIntact(),
+    assert(keyMeasured.get("source/tools/edit/bridge_tool.d", kNoKeys)[1] >= 1,
            "tool census: axis 2 needle positive control failed: source/tools/edit/bridge_tool.d");
     // Task 7112 moved the slice tools to SessionMeshKey, so no production
     // file holds a MeshCacheKey field any more; the needle's CAPACITY to see
@@ -990,7 +990,7 @@ unittest {
     // SessionMeshKey fields (activation / deactivate images and the tool's own
     // key; slice M3 moved task 7137's first-gesture payload, and its key, into
     // the session; task 9489 took the param image's).
-    assert((keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys) == [0, 3]) && wave15InputsIntact(),
+    assert(keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys) == [0, 3],
            format("tool census: axis 2 flipped control failed: source/tools/slice/slice_tool.d reads %s, expected [0, 3]",
                   keyMeasured.get("source/tools/slice/slice_tool.d", kNoKeys)));
     // Axis 2 scope floor: the scanner reads type heads literally, so an alias

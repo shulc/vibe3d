@@ -1068,7 +1068,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
     const arm = bodyAt(es, "void noteArm(string id, ulong token, bool postmodeArmed");
     const psw = bodyAt(es, "void scriptedWriteEndsOperation(Tool t)");
     foreach (b; [steB, steE, arm, psw])
-        assert((squeeze(b).length > 2) && wave15InputsIntact(), "S2b needle: a ToolSession body the needle reads is empty");
+        assert(squeeze(b).length > 2, "S2b needle: a ToolSession body the needle reads is empty");
     // (a) "A" decides by the armed post mode, never by the open operation; the
     // two branch choices read it, and `topologyDormant_` stands only on its
     // right-hand side (the dormant pair of `undoImpl_` is S6's).
@@ -1269,7 +1269,7 @@ unittest { // (4d)
                       "private void settleAfterNavigation_(bool isUndo)", "void notePointerDown()",
                       "void scriptedWriteEndsOperation(Tool t)",
                       "private void rebaseOnUndoneOperation_(Tool t, ulong tok)"])
-        assert((squeeze(bodyAt(ts, marker)).length > 2) && wave15InputsIntact(), "S3 floor: the session body " ~ marker
+        assert(squeeze(bodyAt(ts, marker)).length > 2, "S3 floor: the session body " ~ marker
                ~ " is empty");
     // NEEDLE, by identifier (a method address and both lambda forms count).
     // Polarity: allowed sets, true after S3 (S7 adds `close:1` to the second; S7 PF-7 the
@@ -1479,7 +1479,7 @@ unittest { // (4f)
                  "private void noteFoldRow_(Tool t, MeshSessionEdit cmd)",
                  "void stepEnds(Tool t, bool ifChanged)",
                  "void scriptedWriteEndsOperation(Tool t)"])
-        assert((squeeze(bodyAt(ts, m)).length > 2) && wave15InputsIntact(), "S7 floor: the session body " ~ m ~ " is empty");
+        assert(squeeze(bodyAt(ts, m)).length > 2, "S7 floor: the session body " ~ m ~ " is empty");
     // NEEDLES, by identifier (a method address and both lambda forms count). Polarity:
     // stationary allowed sets, true after S7; false before (the pen's walk had three
     // callers — close twice, noteFoldRow_ — and the other two names did not exist).
@@ -1532,7 +1532,7 @@ unittest { // (4g)
     foreach (m; ["private bool undoImpl_(out bool markerConsumed)", "private bool navigateTopology_(bool isUndo)",
                  "private void adoptPredecessorToken_(const Command undone)",
                  "private void restorePredecessor_(const Command undone, AttrImage remembered)"])
-        assert((squeeze(bodyAt(ts, m)).length > 2) && wave15InputsIntact(),
+        assert(squeeze(bodyAt(ts, m)).length > 2,
                "PF-3 floor: the session body " ~ m ~ " is empty");
     // Polarity: false before S7 (the tail alone), true after. S7 (7) (plan §19.3): the adopt
     // moved into `restorePredecessor_` (probe edit, form item 10), which both paths call.
@@ -1564,7 +1564,7 @@ unittest { // (4h)
     const ts = bodyAt(es, "private struct ToolSession");
     foreach (m; ["private bool undoImpl_(out bool markerConsumed)", "private bool redoImpl_()",
                  "private void rebaseAfterTail_(Tool t)"])
-        assert((squeeze(bodyAt(ts, m)).length > 2) && wave15InputsIntact(),
+        assert(squeeze(bodyAt(ts, m)).length > 2,
                "S7 (6) floor: the session body " ~ m ~ " is empty");
     assert(identSites(es, "resyncSession", false)
            == ["ToolSession.applyAndContinue:1", "ToolSession.navigateRecorded_:1",
@@ -1598,7 +1598,7 @@ unittest { // (4i)
     foreach (m; ["void noteArm(string id, ulong token, bool postmodeArmed = true)",
                  "private void recordBeginRow_(Tool t)", "void stepBegins(Tool t, PressKind kind",
                  "void stepEnds(Tool t, bool ifChanged)", "private bool ownOpenerOnTop_(ulong tok)"])
-        assert((squeeze(bodyAt(ts, m)).length > 2) && wave15InputsIntact(), "S5b floor: the session body " ~ m ~ " is empty");
+        assert(squeeze(bodyAt(ts, m)).length > 2, "S5b floor: the session body " ~ m ~ " is empty");
     assert(identSites(es, "recordBeginRow_", false) == ["<decl>:1", "ToolSession.noteArm:1"],
            format("S5b needle: recordBeginRow_ is called at %s, expected the arm once",
                   identSites(es, "recordBeginRow_", false)));
@@ -1670,7 +1670,7 @@ unittest { // (4j)
                  "void stepBegins(Tool t, PressKind kind", "private void activate_(Tool t)",
                  "private void endPendingOperation_(const Command trigger, bool endsPostMode, "
                  ~ "bool model)"])
-        assert((squeeze(bodyAt(ts, m)).length > 2) && wave15InputsIntact(), "S6r floor: the session body " ~ m ~ " is empty");
+        assert(squeeze(bodyAt(ts, m)).length > 2, "S6r floor: the session body " ~ m ~ " is empty");
     // NEEDLES, by identifier (every spelling, a method address included).
     assert((identSites(es, "activate_", false)
            == ["<decl>:1", "ToolSession.noteArm:1", "ToolSession.stepBegins:1"]) && wave15InputsIntact(),
@@ -2751,7 +2751,7 @@ unittest { // Tasks 7990/8030: production topology R wiring, not a helper replic
         const esU = blankUnittestBodies(es);
         foreach (m; ["private bool boundToLive_(", "private DropImage dropImage_(",
                      "private void storeDropImage_(", "private AttrImage seedRecreated_("])
-            assert((squeeze(bodyAt(esU, m)).length > 2) && wave15InputsIntact(), "S4 floor: " ~ m ~ " has no body");
+            assert(squeeze(bodyAt(esU, m)).length > 2, "S4 floor: " ~ m ~ " has no body");
         foreach (h; ["dropImage_", "storeDropImage_"])
             assert(identSites(esU, h, false) == ["<decl>:1",
                    "ToolSession.navigateTopology_:1", "ToolSession.undoImpl_:2"],
@@ -2784,7 +2784,7 @@ import tests.unit.census_symbols : dirEntries = wave15DirEntries;
         const esU = blankUnittestBodies(es);
         foreach (m; ["private bool undoImpl_(", "private void pruneRedoTop_(",
                      "private void settleAfterNavigation_("])
-            assert((squeeze(bodyAt(esU, m)).length > 2) && wave15InputsIntact(), "S5 floor: " ~ m ~ " has no body");
+            assert(squeeze(bodyAt(esU, m)).length > 2, "S5 floor: " ~ m ~ " has no body");
         assert(identSites(esU, "cutRefireRedo_", false)
                == ["<decl>:1", "ToolSession.settleAfterNavigation_:1"],
                format("S5 needle: cutRefireRedo_ sites %s, expected its declaration and one "

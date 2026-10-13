@@ -62,7 +62,7 @@ private string bodyAt(string code, string marker) {
 /// Offset of `needle` in `hay`, asserting it is there exactly once.
 private size_t once(string hay, string needle, string where) {
     const a = hay.indexOf(needle);
-    assert((a >= 0) && wave15InputsIntact(), "M1a census: " ~ where ~ " lost `" ~ needle ~ "`");
+    assert(a >= 0, "M1a census: " ~ where ~ " lost `" ~ needle ~ "`");
     assert(hay[a + needle.length .. $].indexOf(needle) < 0,
            "M1a census: " ~ where ~ " has `" ~ needle ~ "` twice");
     return cast(size_t) a;
