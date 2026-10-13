@@ -33,7 +33,7 @@
 import std.regex : regex, matchFirst, Regex;
 import std.file  : dirEntries, SpanMode, readText, write, mkdirRecurse, rmdirRecurse, exists;
 import std.path  : buildPath, extension;
-import std.algorithm : sort, canFind, startsWith;
+import std.algorithm : sort, canFind, startsWith, count;
 import std.array  : array, replace;
 import std.conv   : to;
 import std.string : strip;
@@ -161,7 +161,7 @@ private immutable size_t[string] ALLOWED_COUNT;
 shared static this() {
     // --- PRODUCTION entries. Each one is NOT a whole-mesh operand fallback;
     //     read the reason before adding a sibling. ---
-    ALLOWED_COUNT["source/commands/mesh/hide.d"] = 1;
+    ALLOWED_COUNT["packages/editor-commands/source/commands/mesh/hide.d"] = 1;
     // ^ mesh.hide's own "empty selection ⇒ hide everything" (measured, C6).
     //   This is the one place the fallback must NOT subtract hidden geometry:
     //   it is the writer OF that geometry.
@@ -246,6 +246,56 @@ unittest {
         "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
         "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
     ]) hits ~= scanFile(sourceCarrier);
+
+    // Task 20262750: retain the old source domain after the Wave14 moves.
+    // Floors and the separate carrier expectation come from the frozen map,
+    // independently of operand-mask hits (doc/library_layout_wave14_custody_2026-10-12.json).
+    size_t[string] sourcePopulation;
+    foreach (root; [
+        "packages/selection-model/source",
+        "packages/scene-query/source",
+        "packages/editor-commands/source",
+    ]) {
+        foreach (e; dirEntries(root, SpanMode.depth))
+            if (e.isFile && e.name.extension == ".d")
+                sourcePopulation[root] = sourcePopulation.get(root, 0) + 1;
+        hits ~= scanTree(root);
+    }
+    foreach (i, root; [
+        "packages/selection-model/source",
+        "packages/scene-query/source",
+        "packages/editor-commands/source",
+    ]) {
+        const size_t[] floors = [2, 2, 100];
+        assert(sourcePopulation.get(root, 0) >= floors[i],
+            "operand source domain lost mapped production inputs: " ~ root);
+    }
+
+    const sourceCarriers = [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+    ];
+    foreach (sourceCarrier; [
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
+        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
+        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+    ])
+        assert(sourceCarriers.count(sourceCarrier) == 1,
+            "operand source domain must admit mapped carrier once: " ~ sourceCarrier);
+    foreach (sourceCarrier; sourceCarriers) hits ~= scanFile(sourceCarrier);
 
     size_t[string] byFile;
     foreach (h; hits) byFile[h.file] = byFile.get(h.file, 0) + 1;
