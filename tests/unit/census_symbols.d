@@ -2522,6 +2522,25 @@ private string wave15FragmentText(string text, const Wave15Fragment fragment,
     import std.string : replace;
     if (fragment.id == "prepared_topology_pen_activation:UT1")
         text = text.replace("import toolpipe.state_paths : getStatePath;", "import popup_state : getStatePath;");
+    string[] declarations;
+    if (fragment.id == "drag:helper2")
+        declarations = ["immutable Cam[] corpusCams =", "Viewport corpusViewport(",
+            "float vlen(", "Vec3 exactPlaneDelta("];
+    else if (fragment.id == "snap_render:helper6")
+        declarations = ["float[16] t0619Matrix(", "Viewport t0619Viewport(",
+            "Mesh t0619Mesh(", "void t0619DrawnPx(", "void t0619IdentityPx(",
+            "double t0619Dist(", "ItemXform t0619Xf(", "void t0619PxUnder(",
+            "Mesh t0619BgMeshA(", "Mesh t0619BgMeshB(", "void t0619InstallPrimary("];
+    bool publicHelpers;
+    foreach (declaration; declarations)
+        if (text.indexOf("\n    public " ~ declaration) >= 0) publicHelpers = true;
+    if (publicHelpers) {
+        foreach (declaration; declarations)
+            if (text.indexOf("\n    public " ~ declaration) < 0
+                    || text.indexOf("\n    private " ~ declaration) >= 0) return "";
+        foreach (declaration; declarations)
+            text = text.replace("\n    public " ~ declaration, "\n    private " ~ declaration);
+    }
     size_t offset;
     while (offset < text.length) {
         const found = text[offset .. $].indexOf(fragment.prefix);
