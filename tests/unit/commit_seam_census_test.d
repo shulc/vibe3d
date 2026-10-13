@@ -411,6 +411,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
     import std.algorithm : sort;
     import std.array     : replace;
     import std.file      : dirEntries, SpanMode;
+    import std.path      : relativePath;
     import std.string    : indexOf;
 
     immutable srcRoot = buildPath(repoRoot, "source");
@@ -558,7 +559,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
     foreach (want; kExpected) {
         bool seen = false;
         foreach (got; callers)
-            if (got.replace("\\", "/").indexOf("source/" ~ want) >= 0) {
+            if (relativePath(got, srcRoot).replace("\\", "/") == want) {
                 seen = true;
                 break;
             }
