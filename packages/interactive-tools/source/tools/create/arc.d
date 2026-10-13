@@ -313,6 +313,20 @@ private:
     }
 }
 
-
+unittest {
+    Mesh owned;
+    auto tool = new ArcTool(() => &owned, null, LitShader.init);
+    tool.state = ArcState.Drawing;
+    auto prepared = tool.prepareIdleState();
+    assert(tool.state == ArcState.Drawing); // producer reads no live-after-write state
+    assert(prepared.intValue == cast(int) ArcState.Idle); // original-state mutation RED
+    ArcPreparedState handle;
+    assert(tool.validatePreparedState(prepared, handle));
+    tool.installLegacyPreparedState(handle);
+    assert(tool.state == ArcState.Idle); // installed state == legacy assignment
+    tool.state = ArcState.Drawing;
+    tool.installLegacyPreparedState(handle);
+    assert(tool.state == ArcState.Drawing); // consumed handle cannot replay
+}
 
 static assert(!__traits(compiles, { ArcPreparedState a; ArcPreparedState b = a; }));

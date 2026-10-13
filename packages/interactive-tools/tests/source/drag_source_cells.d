@@ -1,5 +1,9 @@
 module drag_source_cells;
 
+version (unittest) {
+    import std.math : PI, sin, cos, tan;
+}
+
 import std.math : sqrt, isNaN, abs;
 import math;
 import spatial : Orientation, Viewport, eyeVectorAt, lockedViewAxis, projectToWindowFull, screenPointToRay, viewPixelScale;

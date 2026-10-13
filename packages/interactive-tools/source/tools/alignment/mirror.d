@@ -876,7 +876,24 @@ public:
     }
 }
 
-
+unittest {
+    Mesh owned;
+    auto tool = new MirrorTool(() => &owned, null, LitShader.init);
+    tool.engaged = false; tool.havePreviewCache = true;
+    auto prepared = tool.prepareParamState("axis");
+    assert(!tool.engaged);
+    assert(prepared.boolValue); // using the original false state instead REDs
+    MirrorPreparedState handle;
+    assert(tool.validatePreparedState(prepared, handle));
+    tool.installLegacyPreparedState(handle);
+    // A parameter write before the first press never engages.
+    assert(!tool.engaged && tool.havePreviewCache);
+    tool.engaged = true;
+    assert(tool.validatePreparedState(prepared, handle));
+    tool.installLegacyPreparedState(handle);
+    // After it: still engaged, and the live copy is owed a rebuild.
+    assert(tool.engaged && !tool.havePreviewCache);
+}
 
 static assert(!__traits(compiles, { MirrorPreparedState a; MirrorPreparedState b = a; }));
 

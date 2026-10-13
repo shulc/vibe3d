@@ -15,7 +15,7 @@
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
 source-files 607
-unittest-blocks 353
+unittest-blocks 356
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -33,12 +33,15 @@ block packages/interactive-tools/source/drag.d 2
 block packages/interactive-tools/source/edit_session.d 1
 block packages/interactive-tools/source/handles/gizmo_metrics.d 1
 block packages/interactive-tools/source/handles/gl_util.d 1
+block packages/interactive-tools/source/handles/shapes.d 1
 block packages/interactive-tools/source/prepared_private_state.d 1
 block packages/interactive-tools/source/prepared_record_context.d 1
 block packages/interactive-tools/source/registry.d 7
 block packages/interactive-tools/source/snap_render.d 1
 block packages/interactive-tools/source/tool.d 9
+block packages/interactive-tools/source/tools/alignment/mirror.d 1
 block packages/interactive-tools/source/tools/common/command_wrapper.d 3
+block packages/interactive-tools/source/tools/create/arc.d 1
 block packages/interactive-tools/source/tools/create/box.d 1
 block packages/interactive-tools/source/tools/create/pen.d 1
 block packages/interactive-tools/source/tools/edit/edge_extrude.d 1

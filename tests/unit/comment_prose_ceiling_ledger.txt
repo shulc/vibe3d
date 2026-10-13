@@ -10,7 +10,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 607
-task-citation-lines 5151
+task-citation-lines 5152
 citing-files 468
 long-comment-runs 258
 files-with-long-runs 142
@@ -183,7 +183,7 @@ allow packages/interactive-tools/source/handler.d 1
 allow packages/interactive-tools/source/handles/arbiter.d 9
 allow packages/interactive-tools/source/handles/gizmo_metrics.d 22
 allow packages/interactive-tools/source/handles/gl_util.d 6
-allow packages/interactive-tools/source/handles/shapes.d 36
+allow packages/interactive-tools/source/handles/shapes.d 37
 allow packages/interactive-tools/source/overlay_space.d 3
 allow packages/interactive-tools/source/pipe_gizmo_host.d 4
 allow packages/interactive-tools/source/prepared_inherited_noop.d 1

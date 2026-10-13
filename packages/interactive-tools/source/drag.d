@@ -2,6 +2,10 @@ module drag;
 
 version (unittest) import drag_source_helpers : corpusCams, corpusViewport, vlen, exactPlaneDelta;
 
+version (unittest) {
+    import std.math : PI, sin, cos, tan;
+}
+
 import std.math : sqrt, isNaN, abs;
 import math;
 import spatial : Orientation, Viewport, eyeVectorAt, lockedViewAxis, projectToWindowFull, screenPointToRay, viewPixelScale;

@@ -29,7 +29,7 @@ handles.arbiter_source_cells
 handles.gizmo_metrics
 handles.gl_util
 handles.gl_util_source_cells
-handles.shapes_source_cells
+handles.shapes
 http_providers
 http_server
 image_plane_source_cells
@@ -764,10 +764,10 @@ toolpipe.stages.constrain
 toolpipe.stages.falloff
 toolpipe.stages.snap
 tools.alignment.align_kernels
-tools.alignment.mirror_source_cells
+tools.alignment.mirror
 tools.common.command_wrapper
 tools.common.session_mesh_key
-tools.create.arc_source_cells
+tools.create.arc
 tools.create.box
 tools.create.box_source_cells
 tools.create.create_common_source_cells
