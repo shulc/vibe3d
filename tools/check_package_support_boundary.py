@@ -3828,13 +3828,28 @@ def execute(project,owner,compiler,env,evidence):
     root=archive/SPECS[owner]['root'];
     # DUB owns external native dependencies; all internal source roots are the isolated archive.
     original=describe(project,owner,'modeling-noai',compiler,env,evidence)
-    active={p['name']:p for p in original['packages'] if p.get('active')}
+    config=json.loads((root/'tests/dub.json').read_text())['configurations'][0]['name']
+    selected=describe(project,owner,config,compiler,env,evidence,True)
+    active={}
+    for description in (original,selected):
+        for package in description['packages']:
+            name=package['name']
+            if not package.get('active') or name.startswith('vibe3d-'):continue
+            if name in active:
+                require(Path(package['path']).resolve()==Path(active[name]['path']).resolve(),
+                        'PREPARATION-REFUSED: dependency source path conflict: '+name)
+                require(package['version']==active[name]['version'],
+                        'PREPARATION-REFUSED: dependency version conflict: '+name)
+            active[name]=package
     dependencies=stage_dependencies(active,archive,evidence,env)
+    def require_staged_dependencies(description):
+        for package in description['packages']:
+            if package.get('active') and not package['name'].startswith('vibe3d-'):
+                require(Path(package['path']).resolve()==Path(dependencies[package['name']]['staged']).resolve(),
+                        'PREPARATION-REFUSED: canonical dependency cache selected: '+package['name'])
     production=describe(archive,owner,'modeling-noai',compiler,env,evidence)
-    for package in production['packages']:
-        if package.get('active') and not package['name'].startswith('vibe3d-'):
-            require(Path(package['path']).resolve()==Path(dependencies[package['name']]['staged']).resolve(),
-                    'PREPARATION-REFUSED: canonical dependency cache selected: '+package['name'])
+    require_staged_dependencies(production)
+    require_staged_dependencies(describe(archive,owner,config,compiler,env,evidence,True))
     legacy_validate_staged_fixture(legacy_fixture_receipt(archive,owner,FIXTURES),legacy_fixture_receipt(project,owner,FIXTURES),owner,archive,FIXTURES)
     for fixture in PACKAGE_FIXTURES.get(owner, ()):
         frozen = {owner: fixture}
@@ -3849,8 +3864,8 @@ def execute(project,owner,compiler,env,evidence):
         receipt_source += ' writeln("PKG-W15-FIXTURE path='+path+' sha256=", sha256Of(read('+json.dumps(str(archive/path))+')).toHexString.toLower);'
     harness.write_text(receipt_source+' }\n')
     raw=json.loads((root/'tests/dub.json').read_text());raw['sourceFiles'].append('boundary_roster.d');recipe=root/'tests/dub.boundary.json';recipe.write_text(json.dumps(raw))
-    config=json.loads((root/'tests/dub.json').read_text())['configurations'][0]['name']
     description=describe(archive,owner,config,compiler,env,evidence,True,recipe,harness)
+    require_staged_dependencies(description)
     tested=run(['dub','test','--root='+str(root/'tests'),'--recipe='+str(recipe),'--config='+config,'--compiler='+compiler,'--force','--verbose'],archive,env,evidence,'algorithm-run')
     output=tested.stdout+tested.stderr
     expected_cwd=archive if owner in ('input-events', 'mesh-preview', 'document-model', 'param-schema', 'pipe-runtime', 'pipe-evaluation') else root/'tests'
@@ -3874,6 +3889,11 @@ def execute(project,owner,compiler,env,evidence):
     for library in ('stb_image_c','osdc','osdCPU','osdGPU','dbvh_c'):
         if '-L-l'+library in link['argv']:
             selected=legacy_native_archive_input(search_paths,library);input_hashes[str(selected)]=legacy_digest(selected)
+    if 'd_imgui' in dependencies:
+        selected=(Path(dependencies['d_imgui']['staged'])/'lib/libcimgui_docking.a').resolve()
+        flags=[arg for arg in link['argv'] if arg.startswith('-L') and arg.endswith('/libcimgui_docking.a')]
+        require(flags==['-L'+str(selected)],'support actual native archive input: libcimgui_docking.a')
+        input_hashes[str(selected)]=legacy_digest(selected)
     (evidence/'actual-input-hashes.json').write_text(json.dumps(input_hashes,indent=2))
     (evidence/'actual-compiler-argv.json').write_text(json.dumps(commands,indent=2));(evidence/'witness.json').write_text(json.dumps({'sha':sha,'actualOwnership':actual,'runtime':runtime},indent=2))
     print('PKG-EXECUTE package='+owner+' sha='+sha+' modules='+str(runtime['modules']))
