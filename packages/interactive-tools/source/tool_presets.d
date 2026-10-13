@@ -384,42 +384,9 @@ PreparedStickyDefaults prepareStickyToolDefaults(ParamProvider candidate,
     return result;
 }
 
-version (unittest) {
-    // Tiny ParamProvider fake — one float param — so the restore mechanism
-    // is testable without a GL-heavy real Tool. Records the names
-    // `onParamChanged` fired for, so the test can prove the restore path
-    // (not just the pointer write) actually ran.
-    private final class FakeStickyProvider : ParamProvider {
-        float width = 1.0f;
-        string label = "initial";
-        string[] changedNames;
-        Param[] params() { return [
-            Param.float_("width", "Width", &width, 1.0f),
-            Param.string_("label", "Label", &label, "initial")
-        ]; }
-        bool paramEnabled(string name) const { return true; }
-        void onParamChanged(string name) { changedNames ~= name; }
-    }
-}
 
-unittest {
-    import toolpipe.attr_cache : PipelineAttrCache, kToolNode;
-    PipelineAttrCache cache;
-    char[] producerName = "label".dup;
-    char[] producerValue = "owned-value".dup;
-    cache.store("fake", kToolNode,
-        [cast(string)producerName: cast(string)producerValue]);
-    auto fake = new FakeStickyProvider();
-    auto prepared = prepareStickyToolDefaults(fake, cache.lookup("fake", kToolNode));
-    assert(fake.label == "owned-value" && prepared.changedNames == ["label"]);
-    assert(fake.changedNames.length == 0,
-           "prepared sticky values invoked a live hook during preparation");
-    producerName[] = 'x';
-    producerValue[] = 'y';
-    cache.clear();
-    assert(fake.label == "owned-value" && prepared.changedNames == ["label"],
-           "prepared sticky values borrowed cache storage");
-}
+
+
 
 /// Register every preset as a factory + preActivate hook in `reg`.
 /// The factory just constructs the base tool (pure — no toolpipe

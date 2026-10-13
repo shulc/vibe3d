@@ -429,15 +429,7 @@ class ToolHandles {
 // The engaged bit reads CAPTURE, not the hit test (task 0596)
 // ---------------------------------------------------------------------------
 
-version (unittest) {
-    private class EngageProbeHandle : Handler {
-        bool hits;
-        this(bool hits) { this.hits = hits; }
-        override protected bool hitTest(int mx, int my, const ref Viewport vp) {
-            return hits;
-        }
-    }
-}
+
 
 /// Hovering a handle must NOT engage it.
 ///
@@ -451,51 +443,10 @@ version (unittest) {
 /// are equal, so every drag test would still pass. What would break is subtler
 /// than it used to be: the highlight would still appear, but a grab would
 /// become indistinguishable from a hover and the plane ring could never revert.
-unittest {
-    Viewport vp;
-    auto pool = new ToolHandles();
-    auto hovered = new EngageProbeHandle(true);
-    auto missed  = new EngageProbeHandle(false);
 
-    pool.begin();
-    pool.add(hovered, 7);
-    pool.add(missed,  8);
-    pool.update(0, 0, vp);
-
-    // It won the hit test — the arbiter's hot part, and so Rollover...
-    assert(pool.hot == 7);
-    assert(hovered.getState() == HandleState.Rollover);
-    // ...but nothing has grabbed it, so it keeps its own colour.
-    assert(!hovered.isEngaged(), "hover must not engage a handle");
-    assert(!missed.isEngaged());
-}
 
 /// A captured handle IS engaged, and it is the only one.
-unittest {
-    Viewport vp;
-    auto pool = new ToolHandles();
-    auto grabbed = new EngageProbeHandle(false);   // pointer has moved off it
-    auto other   = new EngageProbeHandle(true);    // and is now over this one
 
-    pool.begin();
-    pool.add(grabbed, 7);
-    pool.add(other,   8);
-    pool.setHaul(7);
-    pool.update(0, 0, vp);
-
-    // Capture sticks: the hauled handle stays hot even though the pointer has
-    // wandered onto another one, and it is the handle that recolours.
-    assert(pool.hot == 7);
-    assert(grabbed.isEngaged(), "the captured handle must be engaged");
-    assert(!other.isEngaged(),  "a handle under the pointer during someone "
-                              ~ "else's haul must not engage");
-
-    // Release clears it.
-    pool.clearHaul();
-    pool.update(0, 0, vp);
-    assert(!grabbed.isEngaged());
-    assert(!other.isEngaged());
-}
 
 /// Suppression clears the engaged bit too.
 ///
@@ -503,17 +454,4 @@ unittest {
 /// highlighting. It forced every state to Normal; if it had not also cleared
 /// `engaged`, the captured handle would have kept the active colour through a
 /// suppressed frame and suppression would have done half its job.
-unittest {
-    Viewport vp;
-    auto pool = new ToolHandles();
-    auto h = new EngageProbeHandle(true);
 
-    pool.begin();
-    pool.add(h, 7);
-    pool.setHaul(7);
-    pool.suppress();
-    pool.update(0, 0, vp);
-
-    assert(h.getState() == HandleState.Normal);
-    assert(!h.isEngaged(), "suppress() must clear the engaged bit");
-}

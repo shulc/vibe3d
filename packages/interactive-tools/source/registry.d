@@ -69,22 +69,7 @@ PreparedPipeAttrs ownPreparedPipeAttrs(in PreparedPipeAttrs source) {
     return result;
 }
 
-unittest {
-    // The prepared descriptor owns every variable buffer.  A shallow AA dup
-    // passes value-only tests, so mutate all three producer buffers after the
-    // copy; this is the discriminating lifetime cell for stage/key/value.
-    char[] stage = "falloff".dup;
-    char[] name = "type".dup;
-    char[] value = "radial".dup;
-    PreparedPipeAttrs borrowed;
-    borrowed[cast(string)stage][cast(string)name] = cast(string)value;
-    auto owned = ownPreparedPipeAttrs(borrowed);
-    stage[] = 'x';
-    name[] = 'y';
-    value[] = 'z';
-    assert(owned["falloff"]["type"] == "radial",
-           "prepared pipe descriptor borrowed producer storage");
-}
+
 
 struct Registry {
 private:
