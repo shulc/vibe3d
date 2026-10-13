@@ -14,8 +14,8 @@
 # Counts are compiler-aware: comments and string/character literals are
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
-source-files 608
-unittest-blocks 453
+source-files 607
+unittest-blocks 353
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -29,6 +29,25 @@ block packages/input-events/source/eventlog.d 13
 block packages/input-events/source/tool_input.d 6
 block packages/interaction-query/source/snap.d 8
 block packages/interaction-query/source/symmetry.d 1
+block packages/interactive-tools/source/drag.d 2
+block packages/interactive-tools/source/edit_session.d 1
+block packages/interactive-tools/source/handles/gizmo_metrics.d 1
+block packages/interactive-tools/source/handles/gl_util.d 1
+block packages/interactive-tools/source/prepared_private_state.d 1
+block packages/interactive-tools/source/prepared_record_context.d 1
+block packages/interactive-tools/source/registry.d 7
+block packages/interactive-tools/source/snap_render.d 1
+block packages/interactive-tools/source/tool.d 9
+block packages/interactive-tools/source/tools/common/command_wrapper.d 3
+block packages/interactive-tools/source/tools/create/box.d 1
+block packages/interactive-tools/source/tools/create/pen.d 1
+block packages/interactive-tools/source/tools/edit/edge_extrude.d 1
+block packages/interactive-tools/source/tools/edit/poly_bevel.d 1
+block packages/interactive-tools/source/tools/edit/poly_extrude.d 2
+block packages/interactive-tools/source/tools/edit/tack.d 1
+block packages/interactive-tools/source/tools/slice/slice_tool.d 1
+block packages/interactive-tools/source/tools/transform/rotate.d 1
+block packages/interactive-tools/source/tools/transform/xfrm_transform.d 6
 block packages/interchange/source/io/lwo_import.d 5
 block packages/interchange/source/io/scene_import.d 2
 block packages/interchange/source/io/scene_ir.d 7
@@ -55,94 +74,24 @@ block packages/spatial/source/trackball.d 4
 block packages/tool-state/source/tools/common/session_mesh_key.d 1
 block packages/viewport-gpu/source/gl_thread_guard.d 1
 block packages/viewport-gpu/source/mesh_gpu.d 4
+block packages/viewport-host/source/bg_gpu_cache.d 2
 block source/ai/exploration.d 6
 block source/ai3d/event_queue.d 4
 block source/ai3d/worker_manager.d 9
-block source/bg_gpu_cache.d 2
 block source/commands/image/commands.d 11
 block source/commands/layer/commands.d 13
-block source/commands/layer/xform_edit.d 3
 block source/commands/mesh/morph.d 2
 block source/commands/workplane.d 3
-block source/drag.d 13
-block source/drag_identity.d 1
-block source/edit_session.d 1
 block source/forms.d 29
 block source/frame_stall.d 3
-block source/handles/arbiter.d 3
-block source/handles/gizmo_metrics.d 1
-block source/handles/gl_util.d 2
-block source/handles/shapes.d 1
 block source/http_providers.d 1
 block source/http_server.d 3
-block source/image_plane.d 11
 block source/input_frame_state.d 1
 block source/io/file_dialog.d 1
-block source/overlay_space.d 7
 block source/prefs.d 16
-block source/prepared_bridge_activation.d 1
-block source/prepared_command_wrapper_activation.d 1
-block source/prepared_edge_bevel_activation.d 1
-block source/prepared_edge_extend_deactivate.d 1
-block source/prepared_edge_extend_tool_activation.d 1
-block source/prepared_edge_extrude_activation.d 1
-block source/prepared_edge_slice_activation.d 1
-block source/prepared_edge_slice_deactivate.d 1
-block source/prepared_inherited_noop.d 1
-block source/prepared_loop_slice_activation.d 1
-block source/prepared_loop_slice_deactivate.d 1
-block source/prepared_mirror_activation.d 1
-block source/prepared_move_update.d 1
-block source/prepared_pipe_activation.d 1
-block source/prepared_poly_bevel_activation.d 1
-block source/prepared_poly_extrude_activation.d 1
-block source/prepared_poly_inset_activation.d 1
-block source/prepared_private_state.d 2
-block source/prepared_radial_array_transition.d 1
-block source/prepared_radial_sweep_transition.d 1
-block source/prepared_record_context.d 2
-block source/prepared_rotate_update.d 1
-block source/prepared_scale_update.d 1
-block source/prepared_selection_profile.d 1
-block source/prepared_slice_activation.d 1
-block source/prepared_slice_deactivate.d 1
-block source/prepared_smooth_shift_activation.d 1
-block source/prepared_stroke_extrude_activation.d 1
-block source/prepared_tack_activation.d 1
-block source/prepared_topology_pen_activation.d 1
-block source/prepared_topology_pen_deactivate.d 1
-block source/prepared_topology_pen_update.d 1
-block source/prepared_transform_activation.d 1
-block source/prepared_transform_product_activation.d 1
-block source/prepared_vertex_bevel_activation.d 1
-block source/prepared_vertex_extrude_activation.d 1
-block source/prepared_vertex_merge_activation.d 1
-block source/prepared_xfrm_activation_session.d 1
-block source/registry.d 8
 block source/remesh/region_stitch.d 3
 block source/remesh/remesh_job.d 10
 block source/render/render_mvp.d 1
-block source/snap_render.d 6
-block source/tool.d 9
-block source/tool_disarm.d 4
-block source/tool_presets.d 1
-block source/tools/alignment/mirror.d 1
-block source/tools/common/command_wrapper.d 3
-block source/tools/create/arc.d 1
-block source/tools/create/box.d 2
-block source/tools/create/create_common.d 3
-block source/tools/create/pen.d 1
-block source/tools/create/sphere.d 1
-block source/tools/edit/bridge_tool.d 4
-block source/tools/edit/edge_extend.d 1
-block source/tools/edit/edge_extrude.d 1
-block source/tools/edit/poly_bevel.d 1
-block source/tools/edit/poly_extrude.d 2
-block source/tools/edit/tack.d 1
-block source/tools/slice/slice_tool.d 1
-block source/tools/transform/rotate.d 1
-block source/tools/transform/transform.d 1
-block source/tools/transform/xfrm_transform.d 6
 block source/ui/availability.d 1
 block source/ui/image_rows.d 1
 block source/ui/item_rows.d 2
@@ -156,13 +105,13 @@ block util/screen-buckets/source/screen_buckets.d 1
 # Files above the per-file version(unittest) ceiling of 10. This list may
 # only shrink, and each number is EXACT: shed a guard and lower the row.
 allow-version packages/interaction-query/source/mesh_visibility.d 13
+allow-version packages/interactive-tools/source/prepared_record_context.d 115
+allow-version packages/interactive-tools/source/tools/alignment/radial_sweep_tool.d 19
+allow-version packages/interactive-tools/source/tools/edit/edge_extend.d 12
+allow-version packages/interactive-tools/source/tools/edit/poly_extrude.d 11
+allow-version packages/interactive-tools/source/tools/slice/edge_slice_tool.d 14
+allow-version packages/interactive-tools/source/tools/slice/loop_slice_tool.d 14
+allow-version packages/interactive-tools/source/tools/slice/slice_tool.d 12
+allow-version packages/interactive-tools/source/tools/transform/xfrm_transform.d 11
 allow-version packages/mesh/source/mesh.d 18
 allow-version packages/viewport-gpu/source/mesh_gpu.d 44
-allow-version source/prepared_record_context.d 115
-allow-version source/tools/alignment/radial_sweep_tool.d 19
-allow-version source/tools/edit/edge_extend.d 13
-allow-version source/tools/edit/poly_extrude.d 11
-allow-version source/tools/slice/edge_slice_tool.d 14
-allow-version source/tools/slice/loop_slice_tool.d 14
-allow-version source/tools/slice/slice_tool.d 12
-allow-version source/tools/transform/xfrm_transform.d 11

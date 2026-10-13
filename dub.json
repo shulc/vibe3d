@@ -197,6 +197,15 @@
     },
     "vibe3d-editor-commands": {
       "path": "packages/editor-commands"
+    },
+    "vibe3d-interactive-tools": {
+      "path": "packages/interactive-tools"
+    },
+    "vibe3d-viewport-host": {
+      "path": "packages/viewport-host"
+    },
+    "vibe3d-interaction-data": {
+      "path": "packages/interaction-data"
     }
   },
   "_comment-onnx-per-config": "d-onnxruntime (AI candidate ranker backend) is NOT a base dependency \u2014 it is added per-configuration alongside the `WithAI` version so the `modeling-noai` build can omit it entirely. onnxruntime.dll statically imports api-ms-win-core-path (Windows 8+), so dropping it is what makes a Windows 7-capable build possible. Only source/ai/onnx_backend.d touches the binding; all of it is gated by version(WithAI).",
@@ -404,7 +413,10 @@
         "vibe3d-document-io": "modeling",
         "vibe3d-selection-model": "modeling",
         "vibe3d-scene-query": "modeling",
-        "vibe3d-editor-commands": "modeling"
+        "vibe3d-editor-commands": "modeling",
+        "vibe3d-interactive-tools": "modeling",
+        "vibe3d-viewport-host": "modeling",
+        "vibe3d-interaction-data": "modeling"
       }
     },
     {
@@ -457,7 +469,10 @@
         "vibe3d-document-io": "modeling-noai",
         "vibe3d-selection-model": "modeling-noai",
         "vibe3d-scene-query": "modeling-noai",
-        "vibe3d-editor-commands": "modeling-noai"
+        "vibe3d-editor-commands": "modeling-noai",
+        "vibe3d-interactive-tools": "modeling-noai",
+        "vibe3d-viewport-host": "modeling-noai",
+        "vibe3d-interaction-data": "modeling-noai"
       }
     },
     {
@@ -526,7 +541,10 @@
         "vibe3d-document-io": "with-render",
         "vibe3d-selection-model": "with-render",
         "vibe3d-scene-query": "with-render",
-        "vibe3d-editor-commands": "with-render"
+        "vibe3d-editor-commands": "with-render",
+        "vibe3d-interactive-tools": "with-render",
+        "vibe3d-viewport-host": "with-render",
+        "vibe3d-interaction-data": "with-render"
       }
     },
     {
@@ -623,7 +641,13 @@
         "packages/scene-query/source",
         "packages/scene-query/tests/source",
         "packages/editor-commands/source",
-        "packages/editor-commands/tests/source"
+        "packages/editor-commands/tests/source",
+        "packages/interactive-tools/source",
+        "packages/interactive-tools/tests/source",
+        "packages/viewport-host/source",
+        "packages/viewport-host/tests/source",
+        "packages/interaction-data/source",
+        "packages/interaction-data/tests/source"
       ],
       "sourceFiles": [
         "tools/harness/hostspace.d",
@@ -814,7 +838,10 @@
         "packages/scene-query/source",
         "packages/scene-query/tests/source",
         "packages/editor-commands/source",
-        "packages/editor-commands/tests/source"
+        "packages/editor-commands/tests/source",
+        "packages/interactive-tools/tests/source",
+        "packages/viewport-host/tests/source",
+        "packages/interaction-data/tests/source"
       ],
       "_comment-perf-portpolicy": "Task 9220. tools/perf/lib/portpolicy.d decides which port the perf harness may clear and launch on (refuses a run_test.d worker window, derived from tools/harness/runslots.d, which rdmd reaches through the tracked symlink tools/perf/tools/harness/runslots.d). lib/lifecycle.d is compiled here only so tests/unit/perf_port_policy_test.d can pin, by type, that its kill and launch seams take an admitted PerfPort. Test-only, like the other tools/perf entries.",
       "_comment-hostspace": "Task 5630. tools/harness/hostspace.d is the one owner of scratch-root and available-space policy for the standalone test runner and sanitizer lane. Both scripts import module tools.harness.hostspace; rdmd gives lane.d only tools/sanitizer as its import root, so the tracked file symlink under that root preserves absolute-script invocation from a foreign cwd. The real file is listed explicitly in sourceFiles, which keeps it test-only: modeling and with-render do not compile harness policy. importPaths still repeats source because declaring this array replaces dub's derived default.",
@@ -866,7 +893,10 @@
         "vibe3d-document-io": "root-tests",
         "vibe3d-selection-model": "root-tests",
         "vibe3d-scene-query": "root-tests",
-        "vibe3d-editor-commands": "root-tests"
+        "vibe3d-editor-commands": "root-tests",
+        "vibe3d-interactive-tools": "root-tests",
+        "vibe3d-viewport-host": "root-tests",
+        "vibe3d-interaction-data": "root-tests"
       }
     },
     {
@@ -917,7 +947,10 @@
         "vibe3d-document-io": "web",
         "vibe3d-selection-model": "web",
         "vibe3d-scene-query": "web",
-        "vibe3d-editor-commands": "web"
+        "vibe3d-editor-commands": "web",
+        "vibe3d-interactive-tools": "web",
+        "vibe3d-viewport-host": "web",
+        "vibe3d-interaction-data": "web"
       },
       "libs-wasm": [
         "dbvh_c",

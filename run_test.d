@@ -1360,6 +1360,10 @@ string sourceDigest() {
             foreach (e; dirEntries(scanSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
         foreach (pattern; ["*.d", "*.c"])
+            foreach (newTestRoot; ["packages/interactive-tools/tests/source", "packages/viewport-host/tests/source", "packages/interaction-data/tests/source"])
+            foreach (e; dirEntries(newTestRoot, pattern, SpanMode.depth))
+                if (e.isFile) files ~= e.name;
+        foreach (pattern; ["*.d", "*.c"])
             foreach (futureSourceRoot; (exists("packages/interactive-tools/source") ? ["packages/interactive-tools/source"] : [])
                 ~ (exists("packages/viewport-host/source") ? ["packages/viewport-host/source"] : [])
                 ~ (exists("packages/interaction-data/source") ? ["packages/interaction-data/source"] : []))
@@ -1441,6 +1445,7 @@ void harvestSourceFlags() {
         // task 5930's project-owned C source includes the linked UI package's
         // header through its expanded -P-I path.
         g_compileFlags ~= gather("dflags",               "");
+        g_compileFlags ~= " -I=packages/interactive-tools/tests/source -I=packages/viewport-host/tests/source -I=packages/interaction-data/tests/source -J=tests -J=packages/creation-ops/tests/fixtures";
         g_linkTail     ~= gather("lflags",              "-L");
         g_linkTail     ~= gather("libs",                "-L-l");
         // linker-files (.a archives) are passed verbatim.
@@ -1518,6 +1523,15 @@ string buildProjectLib(string scratch) {
                 seen[s] = true;
                 srcs ~= s;
             }
+        }
+    }
+    foreach (owner; ["interactive-tools", "viewport-host", "interaction-data"]) {
+        auto rr = executeShell("dub describe --root=packages/" ~ owner
+            ~ "/tests --config=algorithm --data=source-files --data-list 2>/dev/null");
+        if (rr.status != 0) return "";
+        foreach (line; rr.output.splitLines) {
+            auto s = line.strip;
+            if (s.length && s !in seen) { seen[s] = true; srcs ~= s; }
         }
     }
     if (srcs.empty) return "";

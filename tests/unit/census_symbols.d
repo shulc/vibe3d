@@ -1972,7 +1972,7 @@ private immutable Wave15Fragment[] wave15Fragments = [
     Wave15Fragment("handles.arbiter:UT1", "source/handles/arbiter.d", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d", "unittest {\n    Viewport vp;\n    auto pool = new ToolHandles();\n    auto hovered = new EngageProbeHandle(true);\n    auto missed  = new EngageProbeHandle(false);\n\n    pool.begin();\n    pool.add(", 584, "089e41f660eb20579295928d3cad7b20afd85af05bff78c762b0b381a17dcc9d"),
     Wave15Fragment("handles.arbiter:UT2", "source/handles/arbiter.d", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d", "unittest {\n    Viewport vp;\n    auto pool = new ToolHandles();\n    auto grabbed = new EngageProbeHandle(false);   // pointer has moved off it\n    auto other   = new EngageProbeHandle(true);   ", 874, "345f6364967e57c76f53f6f4be629c0493334de9c9ff603c989fcbbf41c5b151"),
     Wave15Fragment("handles.arbiter:UT3", "source/handles/arbiter.d", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d", "unittest {\n    Viewport vp;\n    auto pool = new ToolHandles();\n    auto h = new EngageProbeHandle(true);\n\n    pool.begin();\n    pool.add(h, 7);\n    pool.setHaul(7);\n    pool.suppress();\n    po", 332, "504dceb12c4862d1addefb6e26413d8ae111d73c05c3990b3931736464b21c2c"),
-    Wave15Fragment("handles.gizmo_metrics:UT1", "source/handles/gizmo_metrics.d", "packages/interactive-tools/tests/source/handles/gizmo_metrics_source_cells.d", "unittest {\n    import std.math : abs;\n\n    // Build a simple lookAt view (camera at +Z looking at origin, +Y up).\n    float[16] view = lookAt(Vec3(0, 0, 10), Vec3(0, 0, 0), Vec3(0, 1, 0));\n\n  ", 2488, "f8372bb565f9388e28d381cc626c80b7da281f0d8eaf87482cf378cba729265e"),
+    Wave15Fragment("handles.gizmo_metrics:UT1", "source/handles/gizmo_metrics.d", "packages/interactive-tools/source/handles/gizmo_metrics.d", "unittest {\n    import std.math : abs;\n\n    // Build a simple lookAt view (camera at +Z looking at origin, +Y up).\n    float[16] view = lookAt(Vec3(0, 0, 10), Vec3(0, 0, 0), Vec3(0, 1, 0));\n\n  ", 2488, "f8372bb565f9388e28d381cc626c80b7da281f0d8eaf87482cf378cba729265e"),
     Wave15Fragment("handles.gl_util:UT1", "source/handles/gl_util.d", "packages/interactive-tools/tests/source/handles/gl_util_source_cells.d", "unittest {\n    // The arrowhead is a CLOSED, CAPPED tetrahedron wound uniformly outward,\n    // and its body sits in one quadrant. Every claim below is re-derived from\n    // the emitted float", 4017, "7c6547df1390585caa354aad8c51698d4276a7ad925ebc673d966b46a121eba5"),
     Wave15Fragment("handles.shapes:UT1", "source/handles/shapes.d", "packages/interactive-tools/tests/source/handles/shapes_source_cells.d", "unittest {\n    // Task 0604 — the shaft's batch really carries a SECOND, identical segment,\n    // and `doubledShaft` really selects it.\n    //\n    // This is the pin the pixel tests cannot ", 2181, "e1591b08f6dd5ed19b0ec3d2fc90b3c3af34d04b8e9f9e56ce2c9a18599c5c57"),
     Wave15Fragment("image_plane:UT1", "source/image_plane.d", "packages/viewport-host/tests/source/image_plane_source_cells.d", "unittest {\n    import std.format : format;\n    auto p = planeData();\n    ItemXform x;                       // identity: pos 0, rot 0, scl 1, pivot 0\n    auto r = place(p, 512, 256, x);\n\n    a", 1123, "b6c402bd891c334524ac4c1e28acd2735710426154baf4c87a2363cdbc696dd3"),
@@ -2036,7 +2036,7 @@ private immutable Wave15Fragment[] wave15Fragments = [
     Wave15Fragment("snap_render:UT2", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_cells.d", "unittest { // 0619: the highlighted VERTEX is marked where it is drawn.\n    auto saved = primaryModelSpaceResolver;\n    scope (exit) primaryModelSpaceResolver = saved;\n    t0619InstallPrimary(", 1743, "3f92d667b6d82584487706bc66ea0f551e78ec1175d609807d2e8034641f6ef1"),
     Wave15Fragment("snap_render:UT3", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_cells.d", "unittest { // 0619: the highlighted EDGE is marked where it is drawn.\n    auto saved = primaryModelSpaceResolver;\n    scope (exit) primaryModelSpaceResolver = saved;\n    t0619InstallPrimary();", 1777, "b90d4a1ff0ee5ad43b1bb47b865be7b7a88726dfc35d02e9c0eb073e54a9db29"),
     Wave15Fragment("snap_render:UT4", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_cells.d", "unittest { // 0619: the highlighted FACE outline follows the drawn corners.\n    auto saved = primaryModelSpaceResolver;\n    scope (exit) primaryModelSpaceResolver = saved;\n    t0619InstallPrim", 1213, "9c5eea5b183023d27001cd2f3e08aaf921ca9ff8622a2cb21118faa410a5f1d5"),
-    Wave15Fragment("snap_render:UT5", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_cells.d", "unittest { // 0619: a BACKGROUND source is marked through ITS OWN space.\n    // THE POINT OF THE SLOT MACHINERY. `snapSourceSpace` and the\n    // `targetSource >= 1` arm of `snapHighlightPixel", 4668, "f087c6350817bfaeaf53fc86df569b424257dd0a7861cc5d9e5a52a86b100bd6"),
+    Wave15Fragment("snap_render:UT5", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_helpers.d", "unittest { // 0619: a BACKGROUND source is marked through ITS OWN space.\n    // THE POINT OF THE SLOT MACHINERY. `snapSourceSpace` and the\n    // `targetSource >= 1` arm of `snapHighlightPixel", 4668, "f087c6350817bfaeaf53fc86df569b424257dd0a7861cc5d9e5a52a86b100bd6"),
     Wave15Fragment("tool_disarm:UT1", "source/tool_disarm.d", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d", "unittest {\n    // Uninstalled: a no-op that reports nothing, and CLEARS a stale record.\n    g_lastDisarm = DisarmOutcome(true, 3, true, DisarmMode.cancelAndDrop);\n    g_disarmActiveTool = null", 812, "5cb31fbf40858004e3c84e0e44cf695bb5b21321effbb1fa1b5ddddc2dd8a2cd"),
     Wave15Fragment("tool_disarm:UT2", "source/tool_disarm.d", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d", "unittest {\n    // A gesture that cancels in one step: recorded as one step, not armed.\n    bool armed = true;\n    g_disarmActiveTool = (DisarmMode) {\n        DisarmOutcome o;\n        o.hadTool", 779, "7dcf1ad936086f32777c5dbc659617dc1c5376948ab077a17456074b1503b882"),
     Wave15Fragment("tool_disarm:UT3", "source/tool_disarm.d", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d", "unittest {\n    // THE CAP IS REAL, and this is the cell that shows it: a tool whose cancel\n    // NEVER clears must not spin. Without the `< kMaxDisarmSteps` term this\n    // loop does not ter", 947, "f10b3f264dc40a681a1bdf8bf7ea204ff9833494672696a5a91d41a620023362"),
@@ -2066,6 +2066,7 @@ private immutable Wave15Fragment[] wave15Fragments = [
     Wave15Fragment("snap_render:helper6", "source/snap_render.d", "packages/interactive-tools/tests/source/snap_render_source_helpers.d", "version (unittest) {\n    import math     : lookAt, perspectiveMatrix, transformPoint;\n    import document : ItemXform, primaryModelSpaceResolver;\n    import std.format : format;\n\n    // Delibe", 5384, "1ae5ceb2b775d10ce840c7776c2774539e318ff2678937f7c4979a0d228895d1"),
     Wave15Fragment("tool_presets:helper7", "source/tool_presets.d", "packages/interactive-tools/tests/source/tool_presets_source_cells.d", "version (unittest) {\n    // Tiny ParamProvider fake — one float param — so the restore mechanism\n    // is testable without a GL-heavy real Tool. Records the names\n    // `onParamChanged` ", 752, "9dd00e7b6e793887c9f691191f3a036bded4e12f458187d6c1265a6bf56173c1"),
     Wave15Fragment("commands.layer.xform_edit:helper8", "source/commands/layer/xform_edit.d", "packages/editor-commands/tests/source/tests/unit/commands/layer/xform_edit_source_public_test.d", "version (unittest) {\n    import math : Vec3;\n    private ItemXform xf(float px) {\n        ItemXform x;\n        x.pos = Vec3(px, 0, 0);\n        return x;\n    }\n}", 160, "57a18df95208ea9467aaa950d87334bcda2ef5dabf59f2d93d98aee268f53603"),
+    Wave15Fragment("overlay_space:helper9", "source/overlay_space.d", "packages/interactive-tools/tests/source/overlay_space_source_cells.d", "version (unittest) private ModelSpace tiltedStand() {\n    // Translation + rotation about Z + a DIFFERENT scale on all three axes,\n    // built by hand so the test does not depend on document.", 1117, "9fd022d82e1239ceaf71737372375010ddd0a2161d1b69bac1ea5bbf8c17b8de"),
  ];
 private bool[string] wave15InputValidity;
 private bool[] wave15InputReads;
@@ -2317,7 +2318,7 @@ private immutable Wave15FragmentPin[] wave15FragmentPins = [
     Wave15FragmentPin("source/handles/arbiter.d", "handles.arbiter:UT1", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d"),
     Wave15FragmentPin("source/handles/arbiter.d", "handles.arbiter:UT2", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d"),
     Wave15FragmentPin("source/handles/arbiter.d", "handles.arbiter:UT3", "packages/interactive-tools/tests/source/handles/arbiter_source_cells.d"),
-    Wave15FragmentPin("source/handles/gizmo_metrics.d", "handles.gizmo_metrics:UT1", "packages/interactive-tools/tests/source/handles/gizmo_metrics_source_cells.d"),
+    Wave15FragmentPin("source/handles/gizmo_metrics.d", "handles.gizmo_metrics:UT1", "packages/interactive-tools/source/handles/gizmo_metrics.d"),
     Wave15FragmentPin("source/handles/gl_util.d", "handles.gl_util:UT1", "packages/interactive-tools/tests/source/handles/gl_util_source_cells.d"),
     Wave15FragmentPin("source/handles/shapes.d", "handles.shapes:UT1", "packages/interactive-tools/tests/source/handles/shapes_source_cells.d"),
     Wave15FragmentPin("source/image_plane.d", "image_plane:UT1", "packages/viewport-host/tests/source/image_plane_source_cells.d"),
@@ -2381,7 +2382,7 @@ private immutable Wave15FragmentPin[] wave15FragmentPins = [
     Wave15FragmentPin("source/snap_render.d", "snap_render:UT2", "packages/interactive-tools/tests/source/snap_render_source_cells.d"),
     Wave15FragmentPin("source/snap_render.d", "snap_render:UT3", "packages/interactive-tools/tests/source/snap_render_source_cells.d"),
     Wave15FragmentPin("source/snap_render.d", "snap_render:UT4", "packages/interactive-tools/tests/source/snap_render_source_cells.d"),
-    Wave15FragmentPin("source/snap_render.d", "snap_render:UT5", "packages/interactive-tools/tests/source/snap_render_source_cells.d"),
+    Wave15FragmentPin("source/snap_render.d", "snap_render:UT5", "packages/interactive-tools/tests/source/snap_render_source_helpers.d"),
     Wave15FragmentPin("source/tool_disarm.d", "tool_disarm:UT1", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d"),
     Wave15FragmentPin("source/tool_disarm.d", "tool_disarm:UT2", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d"),
     Wave15FragmentPin("source/tool_disarm.d", "tool_disarm:UT3", "packages/interactive-tools/tests/source/tool_disarm_source_cells.d"),
@@ -2411,6 +2412,7 @@ private immutable Wave15FragmentPin[] wave15FragmentPins = [
     Wave15FragmentPin("source/snap_render.d", "snap_render:helper6", "packages/interactive-tools/tests/source/snap_render_source_helpers.d"),
     Wave15FragmentPin("source/tool_presets.d", "tool_presets:helper7", "packages/interactive-tools/tests/source/tool_presets_source_cells.d"),
     Wave15FragmentPin("source/commands/layer/xform_edit.d", "commands.layer.xform_edit:helper8", "packages/editor-commands/tests/source/tests/unit/commands/layer/xform_edit_source_public_test.d"),
+    Wave15FragmentPin("source/overlay_space.d", "overlay_space:helper9", "packages/interactive-tools/tests/source/overlay_space_source_cells.d"),
 ];
 
 private bool wave15MoveRowIntact(const Wave15Move pin) {
@@ -2595,6 +2597,13 @@ public string wave15ReadText(string path) {
         auto text = readText(oldPresent ? normal : destination);
         if (!oldPresent) {
             text = wave15WithoutCarrierImports(text);
+            if (move.oldPath == "source/snap_render.d") {
+                import std.algorithm : count;
+                import std.string : replace;
+                enum context = "version (unittest) {\n    import math     : lookAt, perspectiveMatrix, transformPoint;\n    import document : ItemXform, primaryModelSpaceResolver;\n    import std.format : format;\n}\n";
+                wave15RecordInput(normal ~ ":retained-import-context", text.count(context) == 1);
+                text = text.replace(context, "");
+            }
             if (move.oldPath == "source/coord_rounding.d") {
                 import std.string : replace;
                 text = text.replace("import toolpipe.state_paths : setStatePath;", "import popup_state : setStatePath;");

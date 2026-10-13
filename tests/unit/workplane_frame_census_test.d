@@ -87,8 +87,8 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     const all = sources(false), prod = sources(true);
     // Historical 2026-10-05: 587 production plus one source test. Wave6 moves
     // that six-block carrier to transform tests; Wave9 adds triangulate/morph_preview; independent tracked union =608.
-    assert(prod.length == 608, format("%s production files scanned "
-        ~ "(materialized Wave9 population 608)", prod.length));
+    assert(prod.length == 607, format("%s production files scanned "
+        ~ "(Wave15 physical production population 607; drag_identity is test-only)", prod.length));
     assert(all.length == prod.length, format("%s source files, %s production; "
         ~ "Wave6 source test carrier belongs to transform tests", all.length, prod.length));
 

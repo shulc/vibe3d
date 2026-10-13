@@ -70,8 +70,8 @@ private JSONValue fixture()
     static JSONValue cached;
     static bool loaded;
     if (!loaded) {
-        immutable path = buildPath(dirName(dirName(__FILE_FULL_PATH__)),
-                                   "fixtures", kFixtureName);
+        immutable path = buildPath(dirName(__FILE_FULL_PATH__),
+                                   "../../../../../../tests/fixtures", kFixtureName);
         cached = parseJSON(readText(path));
         loaded = true;
     }

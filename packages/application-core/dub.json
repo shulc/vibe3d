@@ -75,7 +75,8 @@
     "perf-unit": {
       "buildOptions": [
         "debugMode",
-        "debugInfo"
+        "debugInfo",
+        "unittests"
       ],
       "versions": [
         "PerfProbe"
@@ -98,7 +99,8 @@
     "check-unit": {
       "buildOptions": [
         "debugMode",
-        "debugInfo"
+        "debugInfo",
+        "unittests"
       ],
       "dflags-ldc": [
         "--boundscheck=on",
@@ -141,7 +143,8 @@
     "sanitize-unit": {
       "buildOptions": [
         "debugMode",
-        "debugInfo"
+        "debugInfo",
+        "unittests"
       ],
       "dflags-ldc": [
         "--fsanitize=address",

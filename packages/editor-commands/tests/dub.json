@@ -352,7 +352,9 @@
     "source/tests/unit/commands/select/by_stat_source_public_test.d",
     "source/tests/unit/commands/select/by_tag_source_public_test.d",
     "source/tests/unit/commands/select/type_from_source_public_test.d",
-    "source/tests/unit/editor_commands_population_test.d"
+    "source/tests/unit/editor_commands_population_test.d",
+    "../source/commands/layer/xform_edit.d",
+    "source/tests/unit/commands/layer/xform_edit_source_public_test.d"
   ],
   "versions": [
     "GL_33"

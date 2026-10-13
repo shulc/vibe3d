@@ -223,7 +223,8 @@
     "../source/shader.d",
     "../source/viewport_env.d",
     "source/tests/unit/viewport_env_test.d",
-    "source/tests/unit/viewport_gpu_population_test.d"
+    "source/tests/unit/viewport_gpu_population_test.d",
+    "../source/display_sync.d"
   ],
   "dflags": []
 }
