@@ -1359,10 +1359,10 @@ string sourceDigest() {
             foreach (e; dirEntries(scanSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
         foreach (pattern; ["*.d", "*.c"])
-            foreach (root; (exists("packages/interactive-tools/source") ? ["packages/interactive-tools/source"] : [])
+            foreach (futureSourceRoot; (exists("packages/interactive-tools/source") ? ["packages/interactive-tools/source"] : [])
                 ~ (exists("packages/viewport-host/source") ? ["packages/viewport-host/source"] : [])
                 ~ (exists("packages/interaction-data/source") ? ["packages/interaction-data/source"] : []))
-            foreach (e; dirEntries(root, pattern, SpanMode.depth))
+            foreach (e; dirEntries(futureSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
     } catch (Exception e) {
         stderr.writeln(yellow("source scan interrupted (" ~ e.msg
