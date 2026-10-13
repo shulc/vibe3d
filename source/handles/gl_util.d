@@ -870,7 +870,7 @@ void drawImagePlane(Vec3 center, Vec3 halfU, Vec3 halfV,
         if (hadCull) glDisable(GL_CULL_FACE);
         glDisable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);
-        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+        glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE); // premultiplied texels
 
         glUseProgram(g_imagePlane.prog);
         glUniformMatrix4fv(g_imagePlane.locView, 1, GL_FALSE, vp.view.ptr);

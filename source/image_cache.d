@@ -389,6 +389,11 @@ struct ImagePixelCache {
             // set explicitly anyway, because the value is global GL state
             // some other pass is free to have changed.
             glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            // Stored PREMULTIPLIED: the filter then blends a transparent texel
+            // (often RGB 0) as "nothing" rather than as black, so an alpha
+            // cut-out has no dark fringe. The one sampler, `imagePlaneFragSrc`,
+            // un-premultiplies for its grade and blends with GL_ONE.
+            premultiplyAlpha(img.pixels);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img.width, img.height, 0,
                          GL_RGBA, GL_UNSIGNED_BYTE, img.pixels.ptr);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -397,6 +402,15 @@ struct ImagePixelCache {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glBindTexture(GL_TEXTURE_2D, 0);
             return tex;
+        }
+    }
+
+    private static void premultiplyAlpha(ubyte[] px) {
+        for (size_t i = 0; i + 3 < px.length; i += 4) {
+            immutable uint a = px[i + 3];
+            if (a == 255) continue;
+            foreach (k; 0 .. 3)
+                px[i + k] = cast(ubyte)((px[i + k] * a + 127) / 255);
         }
     }
 

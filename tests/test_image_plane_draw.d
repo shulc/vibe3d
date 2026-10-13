@@ -97,6 +97,39 @@ string bandedBmp(string name, int w, int h) {
     return path;
 }
 
+/// An RGBA PNG: a fully TRANSPARENT left band whose RGB is 0 (how exporters
+/// commonly write a cut-out's background), a 50%-alpha WHITE top band, and an
+/// opaque magenta field. Unfiltered rows, one IDAT.
+string alphaPng(string name, int w, int h) {
+    import std.zlib : compress;
+    import std.digest.crc : crc32Of;
+    mkdirRecurse(scratch);
+    auto path = buildPath(scratch, name);
+    ubyte[] be32(uint v) {
+        return [cast(ubyte)(v >> 24), cast(ubyte)(v >> 16), cast(ubyte)(v >> 8), cast(ubyte) v];
+    }
+    ubyte[] chunk(string type, const(ubyte)[] data) {
+        ubyte[] td = cast(ubyte[]) type.dup ~ data;
+        auto crc = crc32Of(td);                      // little-endian bytes
+        return be32(cast(uint) data.length) ~ td ~ [crc[3], crc[2], crc[1], crc[0]];
+    }
+    ubyte[] raw;
+    foreach (y; 0 .. h) {
+        raw ~= cast(ubyte) 0;                        // filter: None
+        foreach (x; 0 .. w) {
+            if (x < w / 4)       raw ~= cast(ubyte[]) [0, 0, 0, 0];         // transparent
+            else if (y < h / 4)  raw ~= cast(ubyte[]) [255, 255, 255, 128]; // half white
+            else                 raw ~= cast(ubyte[]) [255, 0, 255, 255];   // magenta
+        }
+    }
+    ubyte[] png = cast(ubyte[]) [0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    png ~= chunk("IHDR", be32(w) ~ be32(h) ~ cast(ubyte[]) [8, 6, 0, 0, 0]);
+    png ~= chunk("IDAT", compress(raw));
+    png ~= chunk("IEND", null);
+    write(path, png);
+    return path;
+}
+
 string jsonStr(string s) { return JSONValue(s).toString(); }
 
 struct Px { int r, g, b, a; }
@@ -135,7 +168,7 @@ ulong residentBytes() {
 
 /// Reset, aim cell 0 at an ortho Front view, park the cube far away so it
 /// cannot cover the probe, and stand a 16 x 8 m reference plane at the origin.
-void buildFixture() {
+void buildFixture(string file = null) {
     auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.reset")));
     assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
     cmd(`{"id":"history.clear"}`);
@@ -146,7 +179,7 @@ void buildFixture() {
     // The cube draws AFTER the plane and would simply cover the probe point.
     cmd("layer.attr 0 pos.x 40");
 
-    auto file = bandedBmp("bands.bmp", 64, 32);
+    if (file is null) file = bandedBmp("bands.bmp", 64, 32);
     cmd(`{"id":"image.load","path":` ~ jsonStr(file) ~ `}`);
     auto r = parseJSON(cast(string)post(baseUrl ~ "/api/test/layer",
         `{"kind":"imagePlane","name":"reference"}`));
@@ -242,6 +275,48 @@ unittest {
         format("hiding the plane must return (%d,%d) to the FBO clear colour "
                ~ "(about 92,102,107) — got %s", px, py, describe(gone)));
     cmd(`{"id":"layer.setVisible","index":2,"value":true}`);
+}
+
+// ---------------------------------------------------------------------------
+// The image's own ALPHA reaches the blend. Same probe walk as above over
+// `alphaPng`. Wrong implementations:
+//   * alpha ignored (the shader writes 1 - transparency) -> the left band reads
+//     BLACK (0,0,0) and the top band reads WHITE;
+//   * straight texels under a premultiplied blend (GL_ONE)  -> the top band
+//     saturates to white instead of the half-way mix.
+// ---------------------------------------------------------------------------
+unittest {
+    buildFixture(alphaPng("alpha.png", 64, 32));
+    immutable sz = fboSize();
+    immutable int px = sz[0] / 2 + 30;
+    immutable int py = sz[1] / 2 - 30;
+    string describe(Px p) { return format("(%d, %d, %d, a=%d)", p.r, p.g, p.b, p.a); }
+    bool near(Px p, int r, int g, int b) {
+        import std.math : abs;
+        return abs(p.r - r) <= 12 && abs(p.g - g) <= 12 && abs(p.b - b) <= 12;
+    }
+
+    // Control first: the opaque field is unchanged by the alpha path.
+    auto field = probeAt(px, py);
+    assert(near(field, 255, 0, 255),
+        format("the opaque magenta field must stay magenta — got %s", describe(field)));
+
+    cmd("layer.attr 2 pos.x 6.0");
+    settle();
+    auto clear = probeAt(px, py);
+    assert(near(clear, 92, 102, 107),
+        format("a fully transparent texel must show the FBO clear colour "
+               ~ "(about 92,102,107) — got %s; black means the image's alpha "
+               ~ "is ignored", describe(clear)));
+    cmd("layer.attr 2 pos.x 0.0");
+
+    cmd("layer.attr 2 pos.y -3.0");
+    settle();
+    auto half = probeAt(px, py);
+    assert(near(half, 174, 178, 181),
+        format("a 50%%-alpha white texel must be half-way between the clear "
+               ~ "colour and white (about 174,178,181) — got %s", describe(half)));
+    cmd("layer.attr 2 pos.y 0.0");
 }
 
 // ---------------------------------------------------------------------------

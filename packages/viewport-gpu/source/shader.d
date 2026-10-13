@@ -172,9 +172,11 @@ immutable string imagePlaneVertSrc = withShaderPreamble(q{
 // drawing on white paper"), not a grade.
 //
 // `u_transparency` is the channel's own sense — 0 = opaque — so the alpha
-// written is `1 - u_transparency`. Naming it the other way round in the
-// shader would put a silent negation between the channel and its only
-// consumer.
+// written is the image's own alpha times `1 - u_transparency`. Naming it the
+// other way round in the shader would put a silent negation between the
+// channel and its only consumer. The texture is stored PREMULTIPLIED
+// (`image_cache` upload), so the grade runs on un-premultiplied colour and
+// the output is premultiplied again for `drawImagePlane`'s GL_ONE blend.
 immutable string imagePlaneFragSrc = withShaderPreamble(q{
     in  vec2 vUV;
     out vec4 fragColor;
@@ -184,11 +186,13 @@ immutable string imagePlaneFragSrc = withShaderPreamble(q{
     uniform float u_transparency;  //  0 .. 1,  0 = opaque
     uniform float u_invert;        // 0 or 1
     void main() {
-        vec3 c = texture(u_tex, vUV).rgb;
+        vec4 t = texture(u_tex, vUV);   // premultiplied (image_cache upload)
+        vec3 c = t.a > 0.0 ? t.rgb / t.a : vec3(0.0);
         c = mix(c, vec3(1.0) - c, u_invert);
         c = (c - vec3(0.5)) * (1.0 + u_contrast) + vec3(0.5);
         c = c + vec3(u_brightness);
-        fragColor = vec4(clamp(c, 0.0, 1.0), 1.0 - u_transparency);
+        float a = t.a * (1.0 - u_transparency);
+        fragColor = vec4(clamp(c, 0.0, 1.0) * a, a);
     }
 });
 
