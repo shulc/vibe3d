@@ -1068,7 +1068,6 @@ static assert(kChannelsStripSignalTokens ==
     "6503 strip signal token roster changed — every measured column must remain in the exact scan below");
 
 unittest { // M6a-d and the retired EditorApp path: production source census
-    auto wave15Inputs = wave15InputStart();
     import tests.unit.census_symbols : blankNonCode;
 
     const rawApp = readText(repoRoot.buildPath("source", "app.d"));
@@ -1086,6 +1085,7 @@ unittest { // M6a-d and the retired EditorApp path: production source census
     string[] actualStripPaths;
     string[] rawStripSources;
     size_t stripSourceBytes;
+    auto wave15Inputs = wave15InputStart();
     foreach (row; kChannelsStripSignalLedger) {
         actualStripPaths ~= row.path;
         auto raw = readText(repoRoot.buildPath(row.path));
@@ -1105,7 +1105,7 @@ unittest { // M6a-d and the retired EditorApp path: production source census
                               row.unions, row.memcpys, row.memmoves];
         foreach (column, token; kChannelsStripSignalTokens) {
             const actual = identifierCount(code, token);
-            assert(actual == recorded[column],
+            assert((actual == recorded[column]) && wave15InputsIntact(wave15Inputs),
                 "6503 strip signal: " ~ row.path ~ " " ~ token ~ " = "
                 ~ actual.to!string ~ ", recorded "
                 ~ recorded[column].to!string
@@ -1121,7 +1121,7 @@ unittest { // M6a-d and the retired EditorApp path: production source census
     auto expectedStripPaths = ["source/ui/channel_rows.d",
                                "source/ui/channels_panel.d"];
     expectedStripPaths.sort;
-    assert((sortedStripPaths == expectedStripPaths) && wave15InputsIntact(wave15Inputs),
+    assert(sortedStripPaths == expectedStripPaths,
         "6503 strip signal shape: the ledger does not name exactly the two owned files");
     foreach (path; expectedStripPaths) {
         size_t appearances;

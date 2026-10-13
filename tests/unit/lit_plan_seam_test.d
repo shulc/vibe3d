@@ -126,13 +126,13 @@ unittest { // every lit face draw in the renderer sits inside one applyPlan / re
     // Needles: three face SITES (the primary's two draws share one bracket).
     immutable size_t apps  = positions(code, applyRe).length;
     immutable size_t rests = positions(code, restoreRe).length;
-    assert(apps == 3 && rests == 3,
+    assert((apps == 3 && rests == 3) && wave15InputsIntact(wave15Inputs),
         format("census: expected 3 applyPlan and 3 restorePlanDefaults (one per face site), "
                ~ "found %d / %d", apps, rests));
     // Structural: per draw. True after task 9040; before it there was no
     // applyPlan at all, so every draw was reported.
     const string[] bad = bracketViolations(code);
-    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs),
+    assert(bad.length == 0,
         format("census: lit face draws outside the plan-uniform bracket: %s", bad));
 }
 

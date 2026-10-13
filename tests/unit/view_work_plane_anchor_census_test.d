@@ -82,16 +82,16 @@ import tests.unit.census_symbols : exists = wave15Exists;
 }
 
 unittest {
-    auto wave15Inputs = wave15InputStart();
     // Positive control first: the needle machinery finds the live readers.
     const world = roster("screenToPlacementWorld(");
     // tools/edit/edge_extend.d: the off-handle haul's anchor (task 9450, K-D D2)
-    assert((world == ["falloff_handles.d:2", "tools/alignment/radial_array_tool.d:1",
+    assert(world == ["falloff_handles.d:2", "tools/alignment/radial_array_tool.d:1",
                      "tools/common/command_wrapper.d:1", "tools/create/create_common.d:1",
-                     "tools/edit/edge_extend.d:1", "tools/transform/transform.d:1"]) && wave15InputsIntact(wave15Inputs),
+                     "tools/edit/edge_extend.d:1", "tools/transform/transform.d:1"],
         format("screenToPlacementWorld( roster: %s", world));
     // The deleted reader and its mode enum: zero, every spelling.
-    assert(roster("screenToConstructionPlane") == [] && roster("ConstructionPlaneMode") == [],
+    auto wave15Inputs = wave15InputStart();
+    assert((roster("screenToConstructionPlane") == [] && roster("ConstructionPlaneMode") == []) && wave15InputsIntact(wave15Inputs),
         format("the per-reader construction plane returned: %s %s",
                roster("screenToConstructionPlane"), roster("ConstructionPlaneMode")));
     assert(roster("placementPlaneHit(") == ["tools/create/create_common.d:3"],
@@ -110,20 +110,24 @@ unittest {
         format("niceOrigin( roster: %s", roster("niceOrigin(")));
     assert(roster("relocateQuantum(") == ["../packages/interaction-query/source/viewgrid.d:2", "../packages/transform-ops/tests/source/tools/transform/relocate_plane_test.d:2"],
         format("relocateQuantum( roster: %s", roster("relocateQuantum(")));
-    assert(roster("placementQuantum") == [] && roster("clickAnchor") == [],
+    wave15Inputs = wave15InputStart();
+    assert((roster("placementQuantum") == [] && roster("clickAnchor") == []) && wave15InputsIntact(wave15Inputs),
         format("the pen's own click anchor returned: %s %s", roster("placementQuantum"),
                roster("clickAnchor")));
     assert(roster("screenToPlacementLocal(").count!(r => r == "tools/create/pen.d:1") == 1,
         format("the pen's first point must be the create click: %s", roster("screenToPlacementLocal(")));
+    wave15Inputs = wave15InputStart();
     const rp = blankNonCode(readText(buildPath(repoRoot, "packages/transform-ops/source/tools/transform", "relocate_plane.d")));
-    assert(rp.indexOf("public import") < 0, "relocate_plane re-exports viewgrid names again");
+    assert((rp.indexOf("public import") < 0) && wave15InputsIntact(wave15Inputs), "relocate_plane re-exports viewgrid names again");
     assert(rp.indexOf("bool orthoRelocateThroughPrior(") >= 0, "control: relocate_plane read");
-    assert(rp.indexOf("lockedViewAxis") < 0,
+    assert((rp.indexOf("lockedViewAxis") < 0) && wave15InputsIntact(wave15Inputs),
         "relocate_plane regained a locked-view arm (unreachable from every click)");
     // Task 9476 (K-W3): the perspective relocate is the click law, pinned or
     // not; the unsnapped principal-plane chain is gone, every spelling.
     foreach (n; ["principalPlaneCenter", "posToPrincipalPlane", "workPlanePoint",
-                 "RelocatePlanePrefs", "biasedAxis"])
-        assert(roster(n) == [], format("the unsnapped relocate chain returned: %s %s",
+                 "RelocatePlanePrefs", "biasedAxis"]) {
+        wave15Inputs = wave15InputStart();
+        assert((roster(n) == []) && wave15InputsIntact(wave15Inputs), format("the unsnapped relocate chain returned: %s %s",
                                        n, roster(n)));
+    }
 }

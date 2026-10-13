@@ -348,7 +348,6 @@ PROBE";
 /// a nearby `noteChange` (a DIFFERENT identifier, `publishChange` is not a
 /// substring match of it) is not confused with it.
 unittest {
-    auto wave15Inputs = wave15InputStart();
     enum string withPublisher = q"PROBE
 void applyImpl() {
     mesh.publishChange(MeshEditScope.Position);
@@ -430,7 +429,7 @@ private static immutable LedgerRow[] kToolsExceptions = [
 // ---------------------------------------------------------------------------
 private void assertNoUnaccountedTails(string blockLabel, string rootLabel,
                                        const FunnelSite[] sites,
-                                       const LedgerRow[] recorded)
+                                       const LedgerRow[] recorded, size_t wave15Inputs)
 {
     LedgerHit[] hits;
     foreach (ref s; sites)
@@ -455,10 +454,11 @@ private void assertNoUnaccountedTails(string blockLabel, string rootLabel,
 // ---------------------------------------------------------------------------
 unittest {
     // Block A + (part of) B: source/commands/**.
+    auto wave15Inputs = wave15InputStart();
     const cmdScan = scanRoot("source/commands");
 
     assertNoUnaccountedTails("block A", "source/commands",
-        cmdScan.sites, kCommandsExceptions);
+        cmdScan.sites, kCommandsExceptions, wave15Inputs);
 
     // Block B — positive control. Without it, block A is vacuous on a
     // scanner that lost its place: a desynced blanker finds nothing for
@@ -486,10 +486,11 @@ unittest {
 
     // Block C — source/tools/**, same rule, own root (mandatory per review
     // O1: the mechanism the first two blocks build is needed here anyway).
+    wave15Inputs = wave15InputStart();
     const toolsScan = scanRoot("source/tools");
 
     assertNoUnaccountedTails("block C", "source/tools",
-        toolsScan.sites, kToolsExceptions);
+        toolsScan.sites, kToolsExceptions, wave15Inputs);
 
     assert(toolsScan.filesScanned >= 60, format(
         "the tail-publisher census only walked %d file(s) under "

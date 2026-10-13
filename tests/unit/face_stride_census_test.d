@@ -129,7 +129,6 @@ unittest { // the rule's own controls [E5]: the app.d shape is rejected, a real 
 }
 
 unittest { // the layout census: four files, one stride constant, no other spelling
-    auto wave15Inputs = wave15InputStart();
     string[] files;
     foreach (scanSourceRoot; [buildPath(root, "source"), buildPath(root, "packages/command-runtime/source"), buildPath(root, "packages/application-core/source"), buildPath(root, "packages/camera-model/source"), buildPath(root, "packages/document-channels/source"), buildPath(root, "packages/image-codec/source"), buildPath(root, "packages/document-io/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source"), buildPath(root, "packages/pipe-contracts/source"), buildPath(root, "packages/mesh-preview/source"), buildPath(root, "util/json-number/source"), buildPath(root, "packages/selection-model/source"), buildPath(root, "packages/scene-query/source"), buildPath(root, "packages/editor-commands/source")])
 
@@ -186,6 +185,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
     assert(files.length == 4,
         format("census: the face-VBO layout rule selects %d files, expected 4: %s", files.length, files));
     foreach (f; files) {
+        auto wave15Inputs = wave15InputStart();
         immutable code = codeOf(f);
         assert((hits(code, strideRe) == 0) && wave15InputsIntact(wave15Inputs), format("census: %s still spells FACE_STRIDE", f));
         assert(hits(code, sixSizeRe) == 0, format("census: %s still spells `6 * float.sizeof`", f));

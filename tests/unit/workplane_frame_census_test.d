@@ -235,5 +235,5 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
         const got = roster(logicalCode, name);
         if (got != rows) bad ~= format("\n%s roster:\n  got  %s\n  want %s", name, got, rows);
     }
-    assert((bad.length == 0) && wave15InputsIntact(wave15Inputs), bad);
+    assert(bad.length == 0, bad);
 }
