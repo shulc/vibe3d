@@ -354,6 +354,9 @@
     "source/tests/unit/commands/select/type_from_source_public_test.d",
     "source/tests/unit/editor_commands_population_test.d"
   ],
+  "versions": [
+    "GL_33"
+  ],
   "dflags": [],
   "description": "Independent editor-commands algorithms"
 }

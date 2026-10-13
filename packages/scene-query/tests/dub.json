@@ -205,6 +205,9 @@
     "source/tests/unit/bvh_pick_test.d",
     "source/tests/unit/scene_query_population_test.d"
   ],
+  "versions": [
+    "GL_33"
+  ],
   "dflags": [],
   "description": "Independent scene-query algorithms"
 }

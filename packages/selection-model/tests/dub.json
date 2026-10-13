@@ -178,6 +178,9 @@
     "source/tests/unit/selection_projection_algorithm_cells_test.d",
     "source/tests/unit/selection_model_population_test.d"
   ],
+  "versions": [
+    "GL_33"
+  ],
   "dflags": [],
   "description": "Independent selection-model algorithms"
 }
