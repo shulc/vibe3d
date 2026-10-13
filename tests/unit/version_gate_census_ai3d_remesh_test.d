@@ -106,7 +106,36 @@ private DependencyGraph readDependencyGraph(string path)
                 || importerField.indexOf(" (packages/tool-state/source/") >= 0
                 || importerField.indexOf(" (packages/transform-ops/source/") >= 0
                 || importerField.indexOf(" (packages/creation-ops/source/") >= 0
-                || importerField.indexOf(" (packages/alignment-ops/source/") >= 0)
+                || importerField.indexOf(" (packages/alignment-ops/source/") >= 0
+                || importerField.indexOf(" (packages/camera-model/source/") >= 0
+                || importerField.indexOf(" (packages/document-channels/source/") >= 0
+                || importerField.indexOf(" (packages/image-codec/source/") >= 0
+                || importerField.indexOf(" (packages/document-io/source/") >= 0
+                || importerField.indexOf(" (packages/display-policy/source/") >= 0
+                || importerField.indexOf(" (packages/edit-contracts/source/") >= 0
+                || importerField.indexOf(" (packages/input-events/source/") >= 0
+                || importerField.indexOf(" (packages/mesh-change/source/") >= 0
+                || importerField.indexOf(" (packages/mesh-contracts/source/") >= 0
+                || importerField.indexOf(" (packages/mesh-edit-log/source/") >= 0
+                || importerField.indexOf(" (packages/mesh-edit-replay/source/") >= 0
+                || importerField.indexOf(" (packages/selection-model/source/") >= 0
+                || importerField.indexOf(" (packages/scene-query/source/") >= 0
+                || importerField.indexOf(" (packages/editor-commands/source/") >= 0
+                || importerField.indexOf(" (packages/mesh-snapshot/source/") >= 0
+                || importerField.indexOf(" (packages/mesh-topology/source/") >= 0
+                || importerField.indexOf(" (packages/mesh/source/") >= 0
+                || importerField.indexOf(" (packages/profiling/source/") >= 0
+                || importerField.indexOf(" (packages/spatial/source/") >= 0
+                || importerField.indexOf(" (packages/subpatch-preview/source/") >= 0
+                || importerField.indexOf(" (packages/viewport-gpu/source/") >= 0
+                || importerField.indexOf(" (util/log/source/") >= 0
+                || importerField.indexOf(" (util/math/source/") >= 0
+                || importerField.indexOf(" (util/parallel/source/") >= 0
+                || importerField.indexOf(" (util/plane-bytes/source/") >= 0
+                || importerField.indexOf(" (util/screen-buckets/source/") >= 0
+                || importerField.indexOf(" (packages/pipe-contracts/source/") >= 0
+                || importerField.indexOf(" (packages/mesh-preview/source/") >= 0
+                || importerField.indexOf(" (util/json-number/source/") >= 0)
             result.ours[importer] = true;
         ++result.edgeCount;
     }
@@ -296,7 +325,7 @@ if [ "$config" = web ]; then
     echo "FATAL: --config=web described no -version=web; the gates would be inert" >&2; exit 2 ;;
   esac
 fi
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/command-runtime/source packages/application-core/source packages/document-model/source packages/param-schema/source packages/pipe-runtime/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source packages/edit-contracts/source packages/mesh-change/source packages/mesh-contracts/source packages/mesh-edit-log/source packages/mesh-edit-replay/source packages/mesh-snapshot/source packages/mesh-topology/source packages/mesh/source packages/profiling/source packages/spatial/source util/log/source util/math/source util/parallel/source util/plane-bytes/source util/screen-buckets/source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/command-runtime/source packages/application-core/source packages/document-model/source packages/param-schema/source packages/pipe-runtime/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source packages/edit-contracts/source packages/mesh-change/source packages/mesh-contracts/source packages/mesh-edit-log/source packages/mesh-edit-replay/source packages/mesh-snapshot/source packages/mesh-topology/source packages/mesh/source packages/profiling/source packages/spatial/source util/log/source util/math/source util/parallel/source util/plane-bytes/source util/screen-buckets/source packages/camera-model/source packages/document-channels/source packages/image-codec/source packages/document-io/source packages/selection-model/source packages/scene-query/source packages/editor-commands/source packages/pipe-contracts/source packages/mesh-preview/source util/json-number/source -name '*.d' -print)
 SH";
     enum graphConfigurations = ["web", "modeling"];
     const graphPaths = [webDepsPath, nativeDepsPath];
@@ -565,7 +594,8 @@ for package in util/json-number packages/pipe-contracts packages/mesh-preview \
                packages/edit-contracts packages/mesh-change packages/mesh-contracts \
                packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-snapshot \
                packages/mesh-topology packages/mesh packages/profiling packages/spatial \
-               util/log util/math util/parallel util/plane-bytes util/screen-buckets; do
+               util/log util/math util/parallel util/plane-bytes util/screen-buckets \
+               packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/selection-model packages/scene-query packages/editor-commands; do
   dub build --root="$package" --config=web --compiler=dmd
 done
 for data in import-paths versions linker-files libs lflags source-files dflags \

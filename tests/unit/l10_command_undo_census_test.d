@@ -66,14 +66,14 @@ private string repoRoot()
 /// would silently absorb a fourteenth command written later without anyone
 /// deciding it belongs to L10.
 private enum string[13] kL10Commands = [
-    "source/commands/mesh/bridge.d", "source/commands/mesh/collapse.d", "source/commands/mesh/detriangulate.d", "source/commands/mesh/edge_join.d", "source/commands/mesh/merge.d",
-    "source/commands/mesh/quadruple.d", "source/commands/mesh/reduce.d", "source/commands/mesh/sweep.d", "packages/command-runtime/source/commands/mesh/triple.d", "source/commands/mesh/unify.d",
-    "source/commands/mesh/vert_join.d", "source/commands/mesh/vert_merge.d", "source/commands/mesh/weld_vertex_pair.d",
+    "packages/editor-commands/source/commands/mesh/bridge.d", "packages/editor-commands/source/commands/mesh/collapse.d", "packages/editor-commands/source/commands/mesh/detriangulate.d", "packages/editor-commands/source/commands/mesh/edge_join.d", "packages/editor-commands/source/commands/mesh/merge.d",
+    "packages/editor-commands/source/commands/mesh/quadruple.d", "packages/editor-commands/source/commands/mesh/reduce.d", "packages/editor-commands/source/commands/mesh/sweep.d", "packages/command-runtime/source/commands/mesh/triple.d", "packages/editor-commands/source/commands/mesh/unify.d",
+    "packages/editor-commands/source/commands/mesh/vert_join.d", "packages/editor-commands/source/commands/mesh/vert_merge.d", "packages/editor-commands/source/commands/mesh/weld_vertex_pair.d",
 ];
 
 /// The one member that does NOT hold a `DenseSelectionUndo`, named rather than
 /// counted. See this file's header.
-private enum string kDenseSelectionUndoExempt = "source/commands/mesh/vert_merge.d";
+private enum string kDenseSelectionUndoExempt = "packages/editor-commands/source/commands/mesh/vert_merge.d";
 
 unittest // the thirteen are off the whole-mesh snapshot
 {
