@@ -1518,7 +1518,6 @@ unittest {
         "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
 ];
 
-private alias exists = wave15Exists;
     foreach (relative; [
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
         "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
