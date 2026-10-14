@@ -10,10 +10,10 @@ import tests.unit.census_symbols : readText = wave15ReadText;
     import std.algorithm : sort, canFind;
 
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    enum owners = ["camera-model", "document-channels", "image-codec", "document-io", "document-model", "param-schema", "pipe-runtime", "alignment-ops", "command-runtime", "application-core", "creation-ops", "display-policy", "edit-contracts", "input-events", "interaction-query", "interchange", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-ops", "mesh-snapshot", "mesh-topology", "mesh", "pipe-evaluation", "profiling", "spatial", "subpatch-preview", "tool-state", "transform-ops", "viewport-gpu", "log", "math", "parallel", "plane-bytes", "screen-buckets", "json-number", "pipe-contracts", "mesh-preview", "selection-model", "scene-query", "editor-commands", "interactive-tools", "viewport-host", "interaction-data"];
+    enum owners = ["camera-model", "document-channels", "image-codec", "document-io", "document-model", "param-schema", "pipe-runtime", "alignment-ops", "command-runtime", "application-core", "creation-ops", "display-policy", "edit-contracts", "input-events", "interaction-query", "interchange", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-ops", "mesh-snapshot", "mesh-topology", "mesh", "pipe-evaluation", "profiling", "spatial", "subpatch-preview", "tool-state", "transform-ops", "viewport-gpu", "log", "math", "parallel", "plane-bytes", "screen-buckets", "json-number", "pipe-contracts", "mesh-preview", "selection-model", "scene-query", "editor-commands", "interactive-tools", "viewport-host", "interaction-data", "http-runtime", "ai-advisor", "ai3d-runtime", "remesh-runtime", "platform-file", "document-actions"];
     enum wave15Owners = ["interactive-tools", "viewport-host", "interaction-data"];
     enum utilOwners = ["json-number", "log", "math", "parallel", "plane-bytes", "screen-buckets"];
-    enum noCarriers = ["log", "parallel", "plane-bytes", "profiling", "screen-buckets", "mesh-change", "mesh-topology"];
+    enum noCarriers = ["log", "parallel", "plane-bytes", "profiling", "screen-buckets", "mesh-change", "mesh-topology", "http-runtime", "platform-file"];
     enum fixtureOnlyVersions = ["edit-contracts", "mesh", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-snapshot", "mesh-topology"];
     string[] testHelpers(string owner) {
         if (owner == "interactive-tools")
@@ -41,8 +41,8 @@ import tests.unit.census_symbols : readText = wave15ReadText;
     foreach (owner; owners)
         assert(selected.canFind("vibe3d-" ~ owner),
                "root test ownership named selector " ~ owner);
-    assert(selected.length == 45 && selected == expected,
-           "root test ownership frozen forty-five selectors");
+    assert(selected.length == 51 && selected == expected,
+           "root test ownership frozen fifty-one selectors");
     foreach (owner; owners) {
         const packageName = "vibe3d-" ~ owner;
         const packagePath = (utilOwners.canFind(owner) ? "util/" : "packages/") ~ owner;
@@ -66,7 +66,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
         auto source = config(raw, "root-tests");
         assert(source["targetType"].str == "sourceLibrary",
                "root test ownership sourceLibrary " ~ owner);
-        if (["selection-model", "scene-query", "editor-commands"].canFind(owner)
+        if (["selection-model", "scene-query", "editor-commands", "http-runtime", "ai-advisor", "ai3d-runtime", "remesh-runtime", "platform-file", "document-actions"].canFind(owner)
                 || wave15Owners.canFind(owner)) {
             assert(source["versions"].array.length == 2 &&
                    source["versions"][0].str == "WithAI" &&
