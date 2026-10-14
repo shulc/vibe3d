@@ -94,6 +94,9 @@ private DependencyGraph readDependencyGraph(string path)
         const target = targetField[0 .. targetEnd];
         result.edges[importer] ~= target;
         if (importerField.indexOf(" (source/") >= 0
+                || importerField.indexOf(" (packages/interactive-tools/source/") >= 0
+                || importerField.indexOf(" (packages/viewport-host/source/") >= 0
+                || importerField.indexOf(" (packages/interaction-data/source/") >= 0
                 || importerField.indexOf(" (packages/command-runtime/source/") >= 0
                 || importerField.indexOf(" (packages/application-core/source/") >= 0
                 || importerField.indexOf(" (packages/document-model/source/") >= 0
@@ -325,7 +328,7 @@ if [ "$config" = web ]; then
     echo "FATAL: --config=web described no -version=web; the gates would be inert" >&2; exit 2 ;;
   esac
 fi
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/command-runtime/source packages/application-core/source packages/document-model/source packages/param-schema/source packages/pipe-runtime/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source packages/edit-contracts/source packages/mesh-change/source packages/mesh-contracts/source packages/mesh-edit-log/source packages/mesh-edit-replay/source packages/mesh-snapshot/source packages/mesh-topology/source packages/mesh/source packages/profiling/source packages/spatial/source util/log/source util/math/source util/parallel/source util/plane-bytes/source util/screen-buckets/source packages/camera-model/source packages/document-channels/source packages/image-codec/source packages/document-io/source packages/selection-model/source packages/scene-query/source packages/editor-commands/source packages/pipe-contracts/source packages/mesh-preview/source util/json-number/source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/interactive-tools/source packages/viewport-host/source packages/interaction-data/source packages/command-runtime/source packages/application-core/source packages/document-model/source packages/param-schema/source packages/pipe-runtime/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source packages/edit-contracts/source packages/mesh-change/source packages/mesh-contracts/source packages/mesh-edit-log/source packages/mesh-edit-replay/source packages/mesh-snapshot/source packages/mesh-topology/source packages/mesh/source packages/profiling/source packages/spatial/source util/log/source util/math/source util/parallel/source util/plane-bytes/source util/screen-buckets/source packages/camera-model/source packages/document-channels/source packages/image-codec/source packages/document-io/source packages/selection-model/source packages/scene-query/source packages/editor-commands/source packages/pipe-contracts/source packages/mesh-preview/source util/json-number/source -name '*.d' -print)
 SH";
     enum graphConfigurations = ["web", "modeling"];
     const graphPaths = [webDepsPath, nativeDepsPath];
@@ -586,6 +589,7 @@ trap 'rm -rf "$out"' EXIT
 # Describe lists ordinary STATIC archives but does not build them. Prepare
 # their declared web configurations before linking this host transport probe.
 for package in util/json-number packages/pipe-contracts packages/mesh-preview \
+               packages/interactive-tools packages/viewport-host packages/interaction-data \
                packages/command-runtime packages/application-core packages/document-model packages/param-schema packages/pipe-runtime packages/mesh-ops packages/interchange \
                packages/interaction-query packages/pipe-evaluation \
                packages/tool-state packages/transform-ops packages/creation-ops \

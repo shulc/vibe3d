@@ -27,7 +27,7 @@ STB_REVISION = 'a66f6917718ea128076a2c5660e37f362a785144'
 # Canonical JSON pins include configuration/build-type grants and platform keys.
 DESCRIPTORS = {
     'packages/command-runtime': 'a1264dd8918e95d395cc8c99e77eb0bafa8bac420bf77a6ada76b17f545771eb',
-    'packages/application-core': '281175aed0c0ea8861171c7be11ae1e06b074ae39859854bd1ff26bbdbe04cac',
+    'packages/application-core': '456bd7b1818be6f17a87fbd044c1c5ee923ff81baba10208e732ee77b0bc7915',
     'tests/core': '6b5c47b116117bfffbab856ba4739fff1f2cd21f522e390809d01c194909ba2d',
     'tools/cli': '2b13fbc0b4d8b2d3e463947d86bb667377564319ff67d606b1459abd6ef59545',
 }

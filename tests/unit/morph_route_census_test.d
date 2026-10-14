@@ -30,8 +30,8 @@ version (unittest) {
     /// Every `.d` under `source/` whose text contains `MorphRoute`,
     /// repo-relative with `/` separators — the documented grep, in D.
     private string[] morphRouteHits(string root) {
-        import std.file : read, SpanMode;
-import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, isDir = wave15IsDir;
+        import std.file : SpanMode;
+import tests.unit.census_symbols : dirEntries = wave15DirEntries, exists = wave15Exists, isDir = wave15IsDir, read = wave15ReadText;
         import std.path      : buildPath, relativePath;
         import std.algorithm : canFind, sort;
         import std.array     : array, replace;
