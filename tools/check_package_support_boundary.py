@@ -3251,6 +3251,13 @@ def validate_description(description, project, owner, config, tests=False, harne
                 'support target include-import flags: '+name)
         if selected == 'interactive-tools':
             expected_flags = ['-P-I'+str(Path(active['d_imgui']['path']).resolve()/'extern/cimgui')]
+            # Task 20262872: validated mesh-ops ordinary LDC flags propagate;
+            # keep exact order (doc/library_layout_wave15_ldc_target_flag_source_correction_2026-10-14.md).
+            if (Path(compiler).name in ('ldc', 'ldc2') and
+                'mesh-ops' in closure(selected, name.endswith('-tests')) and
+                active[SPECS['mesh-ops']['name']]['configuration'] in
+                    ('modeling', 'modeling-noai', 'with-render', 'web')):
+                expected_flags.append('--singleobj')
             require(settings.get('dflags', []) == expected_flags,
                     'support target C include path: '+name)
         if selected == 'mesh-ops' and not name.endswith('-tests'):
