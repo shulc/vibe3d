@@ -883,34 +883,22 @@ public:
     }
 }
 
-
+unittest {
+    Mesh owned;
+    auto tool = new BridgeTool(() => &owned, null, LitShader.init, null);
+    tool.engaged = false;
+    auto prepared = tool.prepareParamState("segments");
+    assert(!tool.engaged);
+    assert(prepared.boolValue); // using the original false state instead REDs
+    BridgePreparedState handle;
+    assert(tool.validatePreparedState(prepared, handle));
+    tool.installLegacyPreparedState(handle);
+    assert(tool.engaged); // installed state == legacy assignment
+    tool.engaged = false;
+    tool.installLegacyPreparedState(handle);
+    assert(!tool.engaged);
+}
 
 static assert(!__traits(compiles, { BridgePreparedState a; BridgePreparedState b = a; }));
 
-// ---------------------------------------------------------------------------
-// Module unittests — dubtest-lane parity + regression gate (task 0357).
-// CPU-only (plain Mesh, no GpuMesh/GL): exercises resolveBridgeSelection /
-// applyBridgeOp / rebuildBridgePreview directly, mirroring
-// tools/mirror.d's / tools/tack.d's free-function unittest pattern.
-// ---------------------------------------------------------------------------
 
-private Mesh makeTwoCapMesh() {
-    // Same fixture as tests/test_bridge.d's loadCaps(): two coaxial unit
-    // squares, cap A at z=0 (face 0), cap B at z=1 (face 1).
-    Mesh m;
-    m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
-    m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
-    m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
-    m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
-    m.addFace([0u,1u,2u,3u]);
-    m.addFace([4u,5u,6u,7u]);
-    m.buildLoops();
-    // selectFace/selectEdge index straight into faceMarks/edgeMarks without
-    // auto-growing (addFace/addEdge don't touch them) — size explicitly so
-    // the unittests below can select() before running the tool.
-    m.faceMarks.length = m.faces.length;
-    m.edgeMarks.length = m.edges.length;
-    m.faceSelectionOrder.length = m.faces.length;
-    m.edgeSelectionOrder.length = m.edges.length;
-    return m;
-}

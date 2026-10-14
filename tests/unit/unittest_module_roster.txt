@@ -769,10 +769,10 @@ tools.common.command_wrapper
 tools.common.session_mesh_key
 tools.create.arc
 tools.create.box
-tools.create.box_source_cells
 tools.create.create_common_source_cells
 tools.create.pen
-tools.create.sphere_source_cells
+tools.create.sphere
+tools.edit.bridge_tool
 tools.edit.bridge_tool_source_cells
 tools.edit.edge_extend_source_cells
 tools.edit.edge_extrude
@@ -788,7 +788,7 @@ tools.harness.runslots
 tools.slice.slice_tool
 tools.transform.relocate_plane_test
 tools.transform.rotate
-tools.transform.transform_source_cells
+tools.transform.transform
 tools.transform.xfrm_transform
 trackball
 ui.availability

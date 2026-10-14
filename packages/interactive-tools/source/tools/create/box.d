@@ -83,7 +83,24 @@ struct PreparedBoxDeactivateImage {
     }
 }
 
-
+unittest {
+    import record_observer_hub : RecordObserverHub;
+    import mesh_gpu : GpuMesh;
+    Layer layer = new Layer();
+    GpuMesh sceneGpu;
+    auto box = new BoxTool(() => &layer.meshRef(), &sceneGpu, LitShader.init);
+    box.liveRunActive = true;
+    box.liveUndoDepth = 3;
+    box.paramBeforeValid = true;
+    auto context = new PreparedRecordContext(null, new RecordObserverHub());
+    assert(box.prepareDoorParamChanged("sizeX", context, layer, 7, 11));
+    assert(box.paramBeforeValid,
+           "Box parameter door installed private state during preparation");
+    assert(context.validate()); context.install();
+    assert(box.liveRunActive && box.liveUndoDepth == 3 && !box.paramBeforeValid,
+           "Box parameter door omitted prepared private-state install");
+    assert(context.installTraceForTest() == [72, 8]);
+}
 
 private __gshared View gBoxLiveEditView;
 

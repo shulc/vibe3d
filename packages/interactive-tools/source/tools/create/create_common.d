@@ -564,32 +564,4 @@ SnapResult snapLocalHit(ref Vec3 hitLocal,
 
 
 
-// ---------------------------------------------------------------------------
-// workplaneCursorPlaneHit — the ortho arm, and the equality that makes it the
-// ported law rather than a second opinion (task 0661).
-//
-// Rig: the Front axis preset. Camera at (0,0,dist) looking down -Z, ortho,
-// construction plane = the camera-facing principal plane (normal +Z) through
-// the focus. `frame` is identity-basis-with-normal-Z so local == world here,
-// which keeps the assertions readable in world coordinates.
-// ---------------------------------------------------------------------------
-private Viewport frontOrthoViewport(float dist, Vec3 focus) {
-    import math : orthographicMatrix;
-    import std.math : tan, PI;
-    Viewport vp;
-    vp.width = 640; vp.height = 480;
-    vp.x = 0; vp.y = 0;
-    vp.focus = focus;
-    vp.eye = Vec3(focus.x, focus.y, focus.z + dist);
-    // Front basis: right=+X, up=+Y, back=+Z. View matrix rows are the basis
-    // vectors (column-major m[row + col*4]).
-    vp.view = [
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        -focus.x, -focus.y, -(focus.z + dist), 1,
-    ];
-    float halfH = dist * tan(cast(float)(PI / 8.0));
-    vp.proj = orthographicMatrix(halfH, cast(float)vp.width / vp.height, 0.1f, 100.0f);
-    return vp;
-}
+

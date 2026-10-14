@@ -15,7 +15,7 @@
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
 source-files 607
-unittest-blocks 356
+unittest-blocks 360
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -42,14 +42,17 @@ block packages/interactive-tools/source/tool.d 9
 block packages/interactive-tools/source/tools/alignment/mirror.d 1
 block packages/interactive-tools/source/tools/common/command_wrapper.d 3
 block packages/interactive-tools/source/tools/create/arc.d 1
-block packages/interactive-tools/source/tools/create/box.d 1
+block packages/interactive-tools/source/tools/create/box.d 2
 block packages/interactive-tools/source/tools/create/pen.d 1
+block packages/interactive-tools/source/tools/create/sphere.d 1
+block packages/interactive-tools/source/tools/edit/bridge_tool.d 1
 block packages/interactive-tools/source/tools/edit/edge_extrude.d 1
 block packages/interactive-tools/source/tools/edit/poly_bevel.d 1
 block packages/interactive-tools/source/tools/edit/poly_extrude.d 2
 block packages/interactive-tools/source/tools/edit/tack.d 1
 block packages/interactive-tools/source/tools/slice/slice_tool.d 1
 block packages/interactive-tools/source/tools/transform/rotate.d 1
+block packages/interactive-tools/source/tools/transform/transform.d 1
 block packages/interactive-tools/source/tools/transform/xfrm_transform.d 6
 block packages/interchange/source/io/lwo_import.d 5
 block packages/interchange/source/io/scene_import.d 2
