@@ -2009,7 +2009,7 @@ SPECS = {'alignment-ops': {'external': {},
                                    'source/tools/transform/xfrm_item.d',
                                    'source/tools/transform/xfrm_transform.d',
                                    'source/value_drag.d'],
-                       'testDigest': '0b3ac2909a8e944f9c729da937804015a415a21a6805f354dbf4fa2968895008',
+                       'testDigest': 'c43abb0a04d07a978e1ea99defbc4cb7280766ed1c685f05b1c0c44b77232da2',
                        'testHelpers': ['tests/source/drag_source_helpers.d',
                                        'tests/source/snap_render_source_helpers.d'],
                        'testImports': ['source', '../source'],
@@ -3871,7 +3871,7 @@ def execute(project,owner,compiler,env,evidence):
     require_staged_dependencies(description)
     tested=run(['dub','test','--root='+str(root/'tests'),'--recipe='+str(recipe),'--config='+config,'--compiler='+compiler,'--force','--verbose'],archive,env,evidence,'algorithm-run')
     output=tested.stdout+tested.stderr
-    expected_cwd=archive if owner in ('input-events', 'mesh-preview', 'document-model', 'param-schema', 'pipe-runtime', 'pipe-evaluation') else root/'tests'
+    expected_cwd=archive if owner in ('input-events', 'mesh-preview', 'document-model', 'param-schema', 'pipe-runtime', 'pipe-evaluation', 'interactive-tools') else root/'tests'
     require(re.findall(r'^PKG-CWD path=(.+)$',output,re.M)==[str(expected_cwd)],'support algorithm actual working directory: '+owner)
     if owner in FIXTURES:
         require(re.findall(r'^PKG-FIXTURE sha256=(.+)$',output,re.M)==[FIXTURES[owner][1]],'support algorithm actual fixture hash: '+owner)

@@ -550,5 +550,6 @@
     "stringImportPaths": [
         "../../../tests",
         "../../creation-ops/tests/fixtures"
-    ]
+    ],
+    "workingDirectory": "../../../"
 }
