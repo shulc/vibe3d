@@ -4,6 +4,7 @@ module tests.unit.handle_draw_funnel_census_test;
 import tests.unit.census_symbols : exists = wave15Exists;
 
 import handles.arbiter;
+import handles.arbiter_source_cells;
 import handles.shapes;
 import tools.transform.scale;
 
@@ -22,7 +23,8 @@ import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private alias kGatedHandleModules = AliasSeq!(
-    handles.shapes, handles.arbiter, tools.transform.scale);
+    handles.shapes, handles.arbiter, tools.transform.scale,
+    handles.arbiter_source_cells);
 private immutable string[] kGatedHandlerNames = [
     "Arrow", "BoxHandler", "CenterDiskGizmo", "CircleHandler",
     "ClickPointHandler", "CubicArrow", "EngageProbeHandle",
