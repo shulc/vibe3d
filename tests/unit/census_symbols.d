@@ -2449,6 +2449,12 @@ private immutable Wave15Move[] wave15MovePins = [
     Wave15Move("tests/unit/commands/image/commands_test.d", "packages/document-actions/tests/source/tests/unit/commands/image/commands_test.d"),
     Wave15Move("tests/unit/commands/layer/add_injection_range_test.d", "packages/document-actions/tests/source/tests/unit/commands/layer/add_injection_range_test.d"),
 
+    Wave15Move("source/sdl_error.d", "packages/input-events/source/sdl_error.d"),
+    Wave15Move("tests/unit/sdl_error_test.d", "packages/input-events/tests/source/tests/unit/sdl_error_test.d"),
+
+    Wave15Move("source/sdl_error.d", "packages/input-events/source/sdl_error.d"),
+    Wave15Move("tests/unit/sdl_error_test.d", "packages/input-events/tests/source/tests/unit/sdl_error_test.d"),
+
 ];
 private struct Wave15FragmentPin { string origin, id, destination; }
 private immutable Wave15FragmentPin[] wave15FragmentPins = [

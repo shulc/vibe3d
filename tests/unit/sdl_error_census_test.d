@@ -10,7 +10,7 @@ import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : indexOf, splitLines;
 
-import tests.unit.census_symbols : blankNonCode, isIdentChar;
+import tests.unit.census_symbols : blankNonCode, isIdentChar, wave15InputStart, wave15InputsIntact;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum needle = "SDL_GetError";
@@ -113,6 +113,7 @@ unittest
     assert(probe == [Hit("probe.d", 1)],
         "SDL_GetError census must count code and ignore comments/strings");
 
+    const inputStart = wave15InputStart();
     const hits = scanSource();
 
     // POPULATION FLOOR: without this, "every hit belongs to owner" is
@@ -131,7 +132,7 @@ unittest
         locations ~= format("%s:%d", hit.file, hit.line);
     }
 
-    assert(files == [owner], format(
+    assert(files == [owner] && wave15InputsIntact(inputStart), format(
         "task 5503: SDL_GetError must occur in exactly %s; found files: "
       ~ "%-(%s, %)\nCODE occurrences:%-(\n    %s%)\n"
       ~ "Route every SDL diagnostic through sdlError().",
