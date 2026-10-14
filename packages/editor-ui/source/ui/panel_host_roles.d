@@ -163,6 +163,11 @@ public:
         answerDiscard_ = answerDiscard;
         answerCancel_ = answerCancel;
     }
+    bool isBound() const {
+        return awaitingAnswer_ !is null && promptText_ !is null
+            && answerSave_ !is null && answerDiscard_ !is null
+            && answerCancel_ !is null;
+    }
     @property bool awaitingAnswer() { return awaitingAnswer_(); }
     @property string promptText() { return promptText_(); }
     bool answerSave() { return answerSave_(); }
