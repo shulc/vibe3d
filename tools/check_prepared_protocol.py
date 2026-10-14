@@ -1320,13 +1320,17 @@ for row in converted_rows:
 def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=None):
     with tempfile.TemporaryDirectory(prefix="vibe3d-writer-mut-") as td:
         mutant_root = Path(td)
-        shutil.copytree(ROOT / "source/tools", mutant_root / "source/tools")
+        for path in logical_source_paths(ROOT / "source/tools", "*.d"):
+            destination = mutant_root / path.relative_to(ROOT)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(read_source_text(path))
         shutil.copytree(ROOT / "packages/tool-state/source/tools", mutant_root / "packages/tool-state/source/tools")
         shutil.copytree(ROOT / "packages/transform-ops/source/tools", mutant_root / "packages/transform-ops/source/tools")
         shutil.copytree(ROOT / "packages/creation-ops/source/tools", mutant_root / "packages/creation-ops/source/tools")
         shutil.copytree(ROOT / "packages/alignment-ops/source/tools", mutant_root / "packages/alignment-ops/source/tools")
         for name in ("tool.d", "tool_presets.d"):
-            shutil.copy2(ROOT / "source" / name, mutant_root / "source" / name)
+            (mutant_root / "source" / name).write_text(
+                read_source_text(ROOT / "source" / name))
         for name in writer_registration_source_names:
             shutil.copy2(ROOT / "source" / name,
                          mutant_root / "source" / name)
@@ -1334,11 +1338,11 @@ def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=
             ROOT, "prepared_tool_transition", "prepared.tool_transition")
         transition_relative = transition_path.relative_to(ROOT)
         (mutant_root / transition_relative.parent).mkdir(parents=True, exist_ok=True)
-        shutil.copy2(transition_path, mutant_root / transition_relative)
+        (mutant_root / transition_relative).write_text(read_source_text(transition_path))
         shutil.copy2(ROOT / "source/app.d", mutant_root / "source/app.d")
         (mutant_root / "source/commands/tool").mkdir(parents=True)
-        shutil.copy2(ROOT / "source/commands/tool/set.d",
-                     mutant_root / "source/commands/tool/set.d")
+        (mutant_root / "source/commands/tool/set.d").write_text(
+            read_source_text(ROOT / "source/commands/tool/set.d"))
         (mutant_root / "config").mkdir()
         shutil.copy2(ROOT / "config/tool_presets.yaml", mutant_root / "config/tool_presets.yaml")
         for relative in (
