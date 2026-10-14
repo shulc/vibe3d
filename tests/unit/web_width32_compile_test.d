@@ -178,7 +178,11 @@ flags=$(dub describe --config=web \
     --data=import-paths,string-import-paths,versions,debug-versions,dflags \
     2>"$2") || { cat "$2"; exit 1; }
 mapfile -t files < "$3"
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -v -m32 ${6:+"$6"} -o- -c -od="$5" "${files[@]}" "$4"
+unittestImports=()
+if [[ ${6:-} == "-unittest" ]]; then
+    unittestImports=(-Ipackages/interactive-tools/tests/source -Ipackages/viewport-host/tests/source)
+fi
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -v -m32 ${6:+"$6"} "${unittestImports[@]}" -o- -c -od="$5" "${files[@]}" "$4"
 SH";
 
     size_t[string] rootsExpected;
