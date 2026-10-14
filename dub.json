@@ -28,9 +28,7 @@
   "sourcePaths": [
     "source"
   ],
-  "sourceFiles": [
-    "source/imgui_flag_abi.c"
-  ],
+  "sourceFiles": [],
   "dflags": [
     "-P-I$D_IMGUI_PACKAGE_DIR/extern/cimgui"
   ],
@@ -224,6 +222,18 @@
     },
     "vibe3d-document-actions": {
       "path": "packages/document-actions"
+    },
+    "vibe3d-render-model": {
+      "path": "packages/render-model"
+    },
+    "vibe3d-render-backends": {
+      "path": "packages/render-backends"
+    },
+    "vibe3d-forms-model": {
+      "path": "packages/forms-model"
+    },
+    "vibe3d-editor-ui": {
+      "path": "packages/editor-ui"
     }
   },
   "_comment-onnx-per-config": "d-onnxruntime (AI candidate ranker backend) is NOT a base dependency \u2014 it is added per-configuration alongside the `WithAI` version so the `modeling-noai` build can omit it entirely. onnxruntime.dll statically imports api-ms-win-core-path (Windows 8+), so dropping it is what makes a Windows 7-capable build possible. Only packages/ai-advisor/source/ai/onnx_backend.d touches the binding; all of it is gated by version(WithAI).",
@@ -693,7 +703,15 @@
         "packages/remesh-runtime/tests/source",
         "packages/platform-file/source",
         "packages/document-actions/source",
-        "packages/document-actions/tests/source"
+        "packages/document-actions/tests/source",
+        "packages/render-model/source",
+        "packages/render-model/tests/source",
+        "packages/render-backends/source",
+        "packages/render-backends/tests/source",
+        "packages/forms-model/source",
+        "packages/forms-model/tests/source",
+        "packages/editor-ui/source",
+        "packages/editor-ui/tests/source"
       ],
       "sourceFiles": [
         "tools/harness/hostspace.d",
@@ -897,7 +915,15 @@
         "packages/remesh-runtime/tests/source",
         "packages/platform-file/source",
         "packages/document-actions/source",
-        "packages/document-actions/tests/source"
+        "packages/document-actions/tests/source",
+        "packages/render-model/source",
+        "packages/render-model/tests/source",
+        "packages/render-backends/source",
+        "packages/render-backends/tests/source",
+        "packages/forms-model/source",
+        "packages/forms-model/tests/source",
+        "packages/editor-ui/source",
+        "packages/editor-ui/tests/source"
       ],
       "_comment-perf-portpolicy": "Task 9220. tools/perf/lib/portpolicy.d decides which port the perf harness may clear and launch on (refuses a run_test.d worker window, derived from tools/harness/runslots.d, which rdmd reaches through the tracked symlink tools/perf/tools/harness/runslots.d). lib/lifecycle.d is compiled here only so tests/unit/perf_port_policy_test.d can pin, by type, that its kill and launch seams take an admitted PerfPort. Test-only, like the other tools/perf entries.",
       "_comment-hostspace": "Task 5630. tools/harness/hostspace.d is the one owner of scratch-root and available-space policy for the standalone test runner and sanitizer lane. Both scripts import module tools.harness.hostspace; rdmd gives lane.d only tools/sanitizer as its import root, so the tracked file symlink under that root preserves absolute-script invocation from a foreign cwd. The real file is listed explicitly in sourceFiles, which keeps it test-only: modeling and with-render do not compile harness policy. importPaths still repeats source because declaring this array replaces dub's derived default.",
@@ -958,7 +984,11 @@
         "vibe3d-ai3d-runtime": "root-tests",
         "vibe3d-remesh-runtime": "root-tests",
         "vibe3d-platform-file": "root-tests",
-        "vibe3d-document-actions": "root-tests"
+        "vibe3d-document-actions": "root-tests",
+        "vibe3d-render-model": "root-tests",
+        "vibe3d-render-backends": "root-tests",
+        "vibe3d-forms-model": "root-tests",
+        "vibe3d-editor-ui": "root-tests"
       }
     },
     {

@@ -10,7 +10,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
     import std.algorithm : sort, canFind;
 
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    enum owners = ["camera-model", "document-channels", "image-codec", "document-io", "document-model", "param-schema", "pipe-runtime", "alignment-ops", "command-runtime", "application-core", "creation-ops", "display-policy", "edit-contracts", "input-events", "interaction-query", "interchange", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-ops", "mesh-snapshot", "mesh-topology", "mesh", "pipe-evaluation", "profiling", "spatial", "subpatch-preview", "tool-state", "transform-ops", "viewport-gpu", "log", "math", "parallel", "plane-bytes", "screen-buckets", "json-number", "pipe-contracts", "mesh-preview", "selection-model", "scene-query", "editor-commands", "interactive-tools", "viewport-host", "interaction-data", "http-runtime", "ai-advisor", "ai3d-runtime", "remesh-runtime", "platform-file", "document-actions"];
+    enum owners = ["camera-model", "document-channels", "image-codec", "document-io", "document-model", "param-schema", "pipe-runtime", "alignment-ops", "command-runtime", "application-core", "creation-ops", "display-policy", "edit-contracts", "input-events", "interaction-query", "interchange", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-ops", "mesh-snapshot", "mesh-topology", "mesh", "pipe-evaluation", "profiling", "spatial", "subpatch-preview", "tool-state", "transform-ops", "viewport-gpu", "log", "math", "parallel", "plane-bytes", "screen-buckets", "json-number", "pipe-contracts", "mesh-preview", "selection-model", "scene-query", "editor-commands", "interactive-tools", "viewport-host", "interaction-data", "http-runtime", "ai-advisor", "ai3d-runtime", "remesh-runtime", "platform-file", "document-actions", "render-model", "render-backends", "forms-model", "editor-ui"];
     enum wave15Owners = ["interactive-tools", "viewport-host", "interaction-data"];
     enum utilOwners = ["json-number", "log", "math", "parallel", "plane-bytes", "screen-buckets"];
     enum noCarriers = ["log", "parallel", "plane-bytes", "profiling", "screen-buckets", "mesh-change", "mesh-topology", "http-runtime", "platform-file"];
@@ -41,8 +41,8 @@ import tests.unit.census_symbols : readText = wave15ReadText;
     foreach (owner; owners)
         assert(selected.canFind("vibe3d-" ~ owner),
                "root test ownership named selector " ~ owner);
-    assert(selected.length == 51 && selected == expected,
-           "root test ownership frozen fifty-one selectors");
+    assert(selected.length == 55 && selected == expected,
+           "root test ownership frozen fifty-five selectors");
     foreach (owner; owners) {
         const packageName = "vibe3d-" ~ owner;
         const packagePath = (utilOwners.canFind(owner) ? "util/" : "packages/") ~ owner;
