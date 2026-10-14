@@ -3260,7 +3260,7 @@ FIXTURES = {'input-events': ('config/shortcuts.yaml', '99c14eaa556d365f42ead60e3
 PACKAGE_FIXTURES = {'interactive-tools': [('tests/fixtures/change_publish_on_accepted_noop.json', 'd69fde079c31778954e4014b221e28e3ccf02af2a30c0b821e9f45a5a6fe6813'), ('tests/fixtures/topology_pen_session_rig.v3d', '53afa0fadeeb99ab164e8ee8b5e116b9fd9631f3e139ecd1fb09033847683311'), ('tests/fixtures/bridge_auto_connection/frozen.json', '6394cd619a5ce2e4ed2a3aa7dc84198f8470197608c1676381102e8c4c9e3a68'), ('tests/fixtures/bridge_auto_connection/ours_smooth_expected.json', '84ceb9b56f861a43c94861a1ffeb6b7195ef7ff6da97aeb3f2bfef2cd77a08cd'), ('tests/fixtures/local_component_frame/captured.json', '9c95c8bc9836c575106872cdfc87eb76ab26770bb11b6bb4fc74d5dd312450a9'), ('tests/fixtures/drag_gain_oblique.json', '58a777c21a273dc1f75a4e3e1a8a7efaf2a114934d546b7a1abc78eb42275c43')], 'ai3d-runtime': [('tools/ai3d_worker/install_linux.sh', '6ab2d60a820c2b46f2d0f94199cdecb73004092e3b3a151aa17901975db09713'), ('tools/ai3d_worker/install_windows.ps1', 'a13dc1a3faabf9629bb1db22a50f392722aadbbd8dd4741ba13978d456b7541f'), ('tools/ai3d_worker/vibe3d_ai3d_worker/__init__.py', '16057b6f5a8e952a614a9aa43f9afef13b764c678faed3afec924ff42a2b6ac5'), ('tools/ai3d_worker/vibe3d_ai3d_worker/__main__.py', '2065c1f723883a5304abc8926e22e9c0ef9ccb83a94f29b702f579aa8b46b708'), ('tools/ai3d_worker/vibe3d_ai3d_worker/protocol.py', 'f6086b79d1a532ab82b28b1df18a80e065ec3b5093ab37159a39e0f5fc7bc696'), ('tools/ai3d_worker/vibe3d_ai3d_worker/server.py', '34912bf03ebe97fce0c5f5d1501b7cf673b5f45faf959af3bcdeda29021a06d4')]}
 
 # Existing external predicates retain exact changed native owner inputs.
-NFDE_DESCRIPTOR_DIGEST = 'd58105a265054705c3e6e45524a56e6bee1af4e817480c788f665b6816d226e6'
+NFDE_DESCRIPTOR_DIGEST = 'baefc968f7db59f16b6d78f26104eca31f6b36d4be5a3cf074a4cefeaca9561d'
 ONNX_DESCRIPTOR_DIGEST = 'b14033af05e4a00bb23fdaf69a8f224f5950fba8b9c16e8a3ddb401492ff2ac3'
 REVISIONS = dict(legacy_REVISIONS, **{
     'd-onnxruntime': ('3603828c1f5a6cd36817492252e1efb9c81e7ca4', 'git+https://github.com/shulc/D-OnnxRuntime.git'),
@@ -3300,7 +3300,7 @@ def native_grants(names, roots, web=False):
                       ('lib/libassimp.a', 'lib/libzlibstatic.a'))
     if 'nfde' in names:
         require(not web, 'support web native chooser dependency')
-        libs.add('dbus-1')
+        libs.update(('dbus-1', 'wayland-client', 'm'))
         lflags.add(str(roots['nfde']/'nativefiledialog-extended/out/src/libnfd.a'))
     if 'd-onnxruntime' in names:
         libs.update(('onnxrt', 'onnxruntime', 'stdc++'))

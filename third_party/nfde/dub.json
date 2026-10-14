@@ -44,7 +44,9 @@
 		"UniformTypeIdentifiers"
 	],
 	"libs-linux": [
-		"dbus-1"
+		"dbus-1",
+		"wayland-client",
+		"m"
 	],
 	"libs-windows": [
 		"ole32",
