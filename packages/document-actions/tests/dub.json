@@ -219,6 +219,9 @@
     "configurations": [
         {
             "name": "algorithm",
+            "versions": [
+                "GL_33"
+            ],
             "subConfigurations": {
                 "vibe3d-application-core": "isolated-tests",
                 "vibe3d-camera-model": "isolated-tests",
