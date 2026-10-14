@@ -11,7 +11,7 @@
 // quoting it.
 //
 // WHY IT IS HERE AND NOT IN THE FIXTURE. Measured, not assumed:
-// `grep -rn runOpen source/http_providers.d source/http_server.d` is EMPTY —
+// `grep -rn runOpen source/http_providers.d packages/http-runtime/source/http_server.d` is EMPTY —
 // `runOpen()` has no HTTP surface, so no fixture driven over the wire can read
 // it.
 //

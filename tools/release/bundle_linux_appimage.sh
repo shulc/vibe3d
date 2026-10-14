@@ -289,7 +289,7 @@ cp -r "$REPO_ROOT/config" "$APPDIR/config"
 [[ -f "$REPO_ROOT/THIRD_PARTY_LICENSES.md" ]] && cp "$REPO_ROOT/THIRD_PARTY_LICENSES.md" "$APPDIR/THIRD_PARTY_LICENSES.md"
 
 # Opt-in AI-generation provisioning, shipped NEXT TO THE BINARY. The editor's
-# in-app "Install AI generation" button (source/ai3d/worker_manager.d) resolves
+# in-app "Install AI generation" button (packages/ai3d-runtime/source/ai3d/worker_manager.d) resolves
 # the installer at dirName(thisExePath())/tools/ai3d_worker/install_linux.sh;
 # the AppRun exec's $APPDIR/usr/bin/vibe3d, so thisExePath() is there and the
 # worker must sit under usr/bin/tools/. Ship only what install_linux.sh needs

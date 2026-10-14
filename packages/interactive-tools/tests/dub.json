@@ -5,6 +5,7 @@
     "sourceFiles": [
         "../../../tests/unit/fixtures.d",
         "../../../tests/unit/mesh_by_value_gate.d",
+        "../source/commands/falloff.d",
         "../source/commands/mesh/smooth.d",
         "../source/commands/tool/attr.d",
         "../source/commands/tool/begin_session.d",

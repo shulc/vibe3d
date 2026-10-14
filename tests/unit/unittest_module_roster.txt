@@ -1,5 +1,3 @@
-ai.exploration
-ai3d.event_queue
 ai3d.worker_manager
 application_command_binding_ownership_test
 argstring
@@ -123,6 +121,7 @@ tests.unit.ai.advisor_test
 tests.unit.ai.analysis_test
 tests.unit.ai.debug_trace_test
 tests.unit.ai.element_candidates_test
+tests.unit.ai.exploration_source_public_test
 tests.unit.ai.exploration_test
 tests.unit.ai.interaction_log_test
 tests.unit.ai.interaction_log_writer_test
@@ -132,10 +131,12 @@ tests.unit.ai.model_adapter_test
 tests.unit.ai.ranker_schema_test
 tests.unit.ai.support_loop_candidates_test
 tests.unit.ai.training_dataset_test
+tests.unit.ai3d.event_queue_source_public_test
 tests.unit.ai3d.event_queue_test
 tests.unit.ai3d.job_controller_test
 tests.unit.ai3d.scene_validator_test
 tests.unit.ai3d.stage_artifact_test
+tests.unit.ai3d.worker_manager_source_public_test
 tests.unit.ai3d.worker_manager_test
 tests.unit.alignment_ops_population_test
 tests.unit.answered_bridge_census_test
@@ -188,6 +189,7 @@ tests.unit.command_wrapper_result_test
 tests.unit.commands.file.save_test
 tests.unit.commands.image.commands_test
 tests.unit.commands.layer.add_injection_range_test
+tests.unit.commands.layer.commands_source_public_test
 tests.unit.commands.layer.item_command_document_liveness_test
 tests.unit.commands.layer.item_command_registration_census_test
 tests.unit.commands.layer.item_command_registration_test
@@ -494,6 +496,7 @@ tests.unit.quad_overlay_eligibility_test
 tests.unit.quit_window_close_guard_test
 tests.unit.record_observer_hub_source_public_test
 tests.unit.registry_construction_authority_test
+tests.unit.remesh.remesh_job_source_public_test
 tests.unit.removeverts_pointmap_test
 tests.unit.render_camera_intrinsics_wiring_test
 tests.unit.render_ipr_bus_witness_test

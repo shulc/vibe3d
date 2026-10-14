@@ -14,7 +14,7 @@
 // nothing but a live `CommandHistory` can establish that. This block does.
 //
 // WHY NO WIRE SURFACE SHOWS IT. Measured, not assumed:
-// `grep -rn runOpen source/http_providers.d source/http_server.d` is EMPTY —
+// `grep -rn runOpen source/http_providers.d packages/http-runtime/source/http_server.d` is EMPTY —
 // `runOpen()` has no HTTP surface, so no fixture driven over the wire can read
 // it. And the consequences that DO reach the wire do not separate the two
 // branches: `record` and `recordInSession` both call `pushEntry` exactly once

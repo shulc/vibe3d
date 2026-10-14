@@ -10,12 +10,23 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 607
-task-citation-lines 5150
+task-citation-lines 5141
 citing-files 468
 long-comment-runs 258
 files-with-long-runs 142
 
 # Exact per-file task-citation allowances, sorted by path.
+allow packages/ai-advisor/source/ai/analysis.d 2
+allow packages/ai-advisor/source/ai/copilot_gate.d 5
+allow packages/ai-advisor/source/ai/exploration.d 1
+allow packages/ai-advisor/source/ai/interaction_log_writer.d 1
+allow packages/ai-advisor/source/ai/onnx_backend.d 1
+allow packages/ai-advisor/source/ai/support_loop_candidates.d 1
+allow packages/ai3d-runtime/source/ai3d/event_queue.d 1
+allow packages/ai3d-runtime/source/ai3d/job_controller.d 1
+allow packages/ai3d-runtime/source/ai3d/job_events.d 1
+allow packages/ai3d-runtime/source/ai3d/stage_artifact.d 2
+allow packages/ai3d-runtime/source/ai3d/worker_manager.d 1
 allow packages/alignment-ops/source/tools/alignment/align_kernels.d 6
 allow packages/application-core/source/app_version.d 1
 allow packages/application-core/source/http_json.d 8
@@ -48,6 +59,12 @@ allow packages/display-policy/source/vertex_normals.d 1
 allow packages/display-policy/source/viewport_overlay_mode.d 6
 allow packages/display-policy/source/viewport_scheme.d 8
 allow packages/display-policy/source/weightmap_view.d 1
+allow packages/document-actions/source/commands/file/quit.d 3
+allow packages/document-actions/source/commands/image/commands.d 7
+allow packages/document-actions/source/commands/image_plane/commands.d 14
+allow packages/document-actions/source/commands/layer/commands.d 82
+allow packages/document-actions/source/commands/scene/load_mesh.d 8
+allow packages/document-actions/source/commands/scene/reset.d 18
 allow packages/document-channels/source/layer_params.d 19
 allow packages/document-io/source/io/file_model.d 1
 allow packages/document-io/source/io/image_path.d 5
@@ -150,6 +167,9 @@ allow packages/editor-commands/source/commands/select/ring.d 1
 allow packages/editor-commands/source/commands/select/sets.d 10
 allow packages/editor-commands/source/commands/select/type_from.d 2
 allow packages/editor-commands/source/step_trace.d 1
+allow packages/http-runtime/source/http_server.d 114
+allow packages/http-runtime/source/http_transport.d 6
+allow packages/http-runtime/source/playback_controller.d 1
 allow packages/image-codec/source/io/image_decode.d 3
 allow packages/input-events/source/eventlog.d 1
 allow packages/input-events/source/input_context.d 3
@@ -164,6 +184,7 @@ allow packages/interaction-query/source/surface_pick.d 6
 allow packages/interaction-query/source/symmetry.d 10
 allow packages/interaction-query/source/toolpipe/guide.d 1
 allow packages/interaction-query/source/workplane_fit.d 1
+allow packages/interactive-tools/source/commands/falloff.d 5
 allow packages/interactive-tools/source/commands/mesh/smooth.d 10
 allow packages/interactive-tools/source/commands/tool/attr.d 4
 allow packages/interactive-tools/source/commands/tool/do_apply.d 3
@@ -316,7 +337,13 @@ allow packages/pipe-runtime/source/falloff.d 7
 allow packages/pipe-runtime/source/toolpipe/pipeline.d 6
 allow packages/pipe-runtime/source/toolpipe/stage.d 11
 allow packages/pipe-runtime/source/toolpipe/subject.d 3
+allow packages/platform-file/source/io/browser_pick_resume.d 2
+allow packages/platform-file/source/io/file_dialog.d 4
+allow packages/platform-file/source/io/file_dialog_browser.d 2
+allow packages/platform-file/source/ui/discard_guard.d 4
 allow packages/profiling/source/perf_probe.d 54
+allow packages/remesh-runtime/source/remesh/region_stitch.d 2
+allow packages/remesh-runtime/source/remesh/remesh_job.d 9
 allow packages/scene-query/source/bvh_pick.d 11
 allow packages/scene-query/source/symmetry_pick.d 4
 allow packages/selection-model/source/selection_product.d 3
@@ -346,17 +373,6 @@ allow packages/viewport-host/source/image_cache.d 3
 allow packages/viewport-host/source/image_plane.d 3
 allow packages/viewport-host/source/viewport.d 41
 allow packages/viewport-host/source/viewport_composite.d 1
-allow source/ai/analysis.d 2
-allow source/ai/copilot_gate.d 5
-allow source/ai/exploration.d 1
-allow source/ai/interaction_log_writer.d 1
-allow source/ai/onnx_backend.d 1
-allow source/ai/support_loop_candidates.d 1
-allow source/ai3d/event_queue.d 2
-allow source/ai3d/job_controller.d 1
-allow source/ai3d/job_events.d 1
-allow source/ai3d/stage_artifact.d 2
-allow source/ai3d/worker_manager.d 2
 allow source/ai3d_command_registration.d 1
 allow source/ai_command_registration.d 1
 allow source/app.d 297
@@ -370,20 +386,13 @@ allow source/commands/ai3d/import_result.d 9
 allow source/commands/copilot/analyze.d 1
 allow source/commands/copilot/cycle_finding.d 2
 allow source/commands/copilot/select_finding.d 2
-allow source/commands/falloff.d 5
 allow source/commands/file/load.d 18
-allow source/commands/file/quit.d 3
 allow source/commands/file/save.d 7
-allow source/commands/image/commands.d 7
-allow source/commands/image_plane/commands.d 14
-allow source/commands/layer/commands.d 83
 allow source/commands/mesh/magnet.d 13
 allow source/commands/mesh/morph.d 23
 allow source/commands/mesh/remesh.d 5
 allow source/commands/path/define.d 2
 allow source/commands/prefs/trackball.d 1
-allow source/commands/scene/load_mesh.d 8
-allow source/commands/scene/reset.d 18
 allow source/commands/snap/toggle_type.d 1
 allow source/commands/test_undo_flags.d 1
 allow source/commands/ui/about.d 2
@@ -419,15 +428,10 @@ allow source/guarded_action_controller.d 2
 allow source/history_macro_registration.d 1
 allow source/http_command_adapter.d 3
 allow source/http_providers.d 69
-allow source/http_server.d 114
-allow source/http_transport.d 6
 allow source/imgui_event_gate.d 3
 allow source/imgui_flag_boundary.d 1
 allow source/input_frame_state.d 36
 allow source/input_router.d 65
-allow source/io/browser_pick_resume.d 2
-allow source/io/file_dialog.d 4
-allow source/io/file_dialog_browser.d 2
 allow source/item_command_registration.d 2
 allow source/item_pick.d 3
 allow source/layout_reset_action.d 1
@@ -436,11 +440,8 @@ allow source/pie_geometry.d 1
 allow source/pie_menus.d 1
 allow source/pie_state.d 1
 allow source/pipe_command_registration.d 1
-allow source/playback_controller.d 1
 allow source/prefs.d 32
 allow source/registration.d 8
-allow source/remesh/region_stitch.d 2
-allow source/remesh/remesh_job.d 15
 allow source/render/render_mvp.d 4
 allow source/scene_file_lifecycle_registration.d 1
 allow source/scene_reset_effects.d 2
@@ -456,7 +457,6 @@ allow source/ui/button_face.d 1
 allow source/ui/channel_rows.d 5
 allow source/ui/channels_panel.d 3
 allow source/ui/command_notice.d 1
-allow source/ui/discard_guard.d 4
 allow source/ui/image_list_panel.d 2
 allow source/ui/image_rows.d 17
 allow source/ui/item_glyphs.d 3
@@ -486,6 +486,7 @@ allow util/plane-bytes/source/plane_bytes.d 1
 allow util/screen-buckets/source/screen_buckets.d 1
 
 # Exact per-file counts of comment runs >= 40 lines, sorted by path.
+allow-runs packages/ai-advisor/source/ai/support_loop_candidates.d 1
 allow-runs packages/alignment-ops/source/tools/alignment/align_kernels.d 1
 allow-runs packages/application-core/source/http_json.d 1
 allow-runs packages/command-runtime/source/command.d 2
@@ -498,6 +499,7 @@ allow-runs packages/command-runtime/source/commands/mesh/session_edit.d 1
 allow-runs packages/display-policy/source/camera_stamp.d 1
 allow-runs packages/display-policy/source/display_state.d 1
 allow-runs packages/display-policy/source/weightmap_view.d 1
+allow-runs packages/document-actions/source/commands/image/commands.d 1
 allow-runs packages/document-channels/source/layer_params.d 2
 allow-runs packages/document-io/source/io/image_path.d 1
 allow-runs packages/document-io/source/io/native.d 1
@@ -537,6 +539,7 @@ allow-runs packages/editor-commands/source/commands/select/by_stat.d 1
 allow-runs packages/editor-commands/source/commands/select/by_tag.d 1
 allow-runs packages/editor-commands/source/commands/select/fill.d 1
 allow-runs packages/editor-commands/source/commands/select/sets.d 2
+allow-runs packages/http-runtime/source/http_server.d 3
 allow-runs packages/interaction-query/source/constraint.d 1
 allow-runs packages/interaction-query/source/mesh_visibility.d 1
 allow-runs packages/interaction-query/source/snap.d 5
@@ -594,6 +597,7 @@ allow-runs packages/pipe-evaluation/source/toolpipe/stages/axis.d 1
 allow-runs packages/pipe-evaluation/source/toolpipe/stages/falloff.d 1
 allow-runs packages/pipe-runtime/source/falloff.d 1
 allow-runs packages/profiling/source/perf_probe.d 2
+allow-runs packages/remesh-runtime/source/remesh/region_stitch.d 1
 allow-runs packages/selection-model/source/selection_product.d 1
 allow-runs packages/spatial/source/spatial.d 1
 allow-runs packages/subpatch-preview/source/subpatch_osd.d 3
@@ -607,16 +611,12 @@ allow-runs packages/viewport-gpu/source/mesh_gpu.d 2
 allow-runs packages/viewport-gpu/source/shader.d 1
 allow-runs packages/viewport-host/source/image_cache.d 1
 allow-runs packages/viewport-host/source/image_plane.d 1
-allow-runs source/ai/support_loop_candidates.d 1
 allow-runs source/app.d 7
-allow-runs source/commands/image/commands.d 1
 allow-runs source/commands/mesh/morph.d 1
 allow-runs source/forms.d 1
 allow-runs source/forms_render.d 1
-allow-runs source/http_server.d 3
 allow-runs source/input_frame_state.d 3
 allow-runs source/input_router.d 2
-allow-runs source/remesh/region_stitch.d 1
 allow-runs source/render/render_mvp.d 1
 allow-runs source/selftest_fault.d 1
 allow-runs source/tsan_preinit.d 1

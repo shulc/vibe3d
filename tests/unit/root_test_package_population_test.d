@@ -37,7 +37,7 @@ unittest {
     string[] expected;
     foreach (line; readText(buildPath(root, "tests/unit/root_test_package_module_roster.txt")).splitLines)
         if (line.strip.length && line.strip[0] != '#') expected ~= line.strip;
-    assert(expected.length == 443, "root package ModuleInfo frozen population 443");
+    assert(expected.length == 480, "root package ModuleInfo frozen population 480");
     auto ordered = expected.dup;
     ordered.sort();
     assert(ordered == expected, "root package ModuleInfo manifest sorted");
@@ -58,7 +58,7 @@ unittest {
     foreach (name; ["subpatch_preview", "subpatch_osd", "subpatch_worker", "subpatch_worker_web", "subpatch_factories"])
         assert(occurrences.get(name, 0) == 1,
                "ROOT-PACKAGE-MODULE-subpatch-preview must occur exactly once: " ~ name);
-    assert(occurrences.length == 443, "root package ModuleInfo selected population 443");
+    assert(occurrences.length == 480, "root package ModuleInfo selected population 480");
     foreach (name; expected)
         assert(occurrences.get(name, 0) == 1,
                "root package ModuleInfo must occur exactly once: " ~ name);

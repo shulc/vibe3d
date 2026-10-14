@@ -3030,6 +3030,219 @@ SPECS = {'alignment-ops': {'external': {},
                                    'source/tests/unit/image_plane_test.d',
                                    'source/tests/unit/viewport_plane_turn_test.d',
                                    'source/tests/unit/viewport_test.d']}}
+
+# Task 20262890: independent approved owner inputs, separate from legacy controls.
+SPECS.update({'ai-advisor': {'external': {},
+                'lower': ['interaction-data', 'math', 'mesh', 'mesh-ops', 'pipe-evaluation'],
+                'name': 'vibe3d-ai-advisor',
+                'ordinaryDigest': '3d8f9c0487ec2c01d1536e94e21e3d5f58f9ae430c0d7ead7e5a7e404f0da926',
+                'root': 'packages/ai-advisor',
+                'sources': ['source/ai/analysis.d',
+                            'source/ai/copilot_gate.d',
+                            'source/ai/element_candidates.d',
+                            'source/ai/exploration.d',
+                            'source/ai/interaction_log.d',
+                            'source/ai/interaction_log_writer.d',
+                            'source/ai/mode_candidates.d',
+                            'source/ai/model_adapter.d',
+                            'source/ai/offline_evaluator.d',
+                            'source/ai/onnx_backend.d',
+                            'source/ai/ranker_schema.d',
+                            'source/ai/state.d',
+                            'source/ai/support_loop_candidates.d',
+                            'source/ai/synthetic_dataset.d',
+                            'source/ai/training_dataset.d'],
+                'testDigest': '67e24efe156faeabfe3fdc0fc9b5d7d3ef7dc5191307e87f9b25c5b26bbb1c03',
+                'testImports': ['source', '../source'],
+                'testLower': ['interaction-data', 'math', 'mesh', 'mesh-ops', 'pipe-evaluation'],
+                'testSources': ['../source/ai/analysis.d',
+                                '../source/ai/copilot_gate.d',
+                                '../source/ai/element_candidates.d',
+                                '../source/ai/exploration.d',
+                                '../source/ai/interaction_log.d',
+                                '../source/ai/interaction_log_writer.d',
+                                '../source/ai/mode_candidates.d',
+                                '../source/ai/model_adapter.d',
+                                '../source/ai/offline_evaluator.d',
+                                '../source/ai/onnx_backend.d',
+                                '../source/ai/ranker_schema.d',
+                                '../source/ai/state.d',
+                                '../source/ai/support_loop_candidates.d',
+                                '../source/ai/synthetic_dataset.d',
+                                '../source/ai/training_dataset.d',
+                                'source/tests/unit/ai/analysis_test.d',
+                                'source/tests/unit/ai/element_candidates_test.d',
+                                'source/tests/unit/ai/exploration_source_public_test.d',
+                                'source/tests/unit/ai/exploration_test.d',
+                                'source/tests/unit/ai/interaction_log_test.d',
+                                'source/tests/unit/ai/interaction_log_writer_test.d',
+                                'source/tests/unit/ai/mode_candidates_test.d',
+                                'source/tests/unit/ai/model_adapter_test.d',
+                                'source/tests/unit/ai/ranker_schema_test.d',
+                                'source/tests/unit/ai/support_loop_candidates_test.d',
+                                'source/tests/unit/ai/training_dataset_test.d']},
+ 'ai3d-runtime': {'external': {},
+                  'lower': ['interchange', 'log'],
+                  'name': 'vibe3d-ai3d-runtime',
+                  'ordinaryDigest': '2d397ff369d4ceccf3917fd5efa5b2229f575e790cf82d770c26e9dd299a0507',
+                  'root': 'packages/ai3d-runtime',
+                  'sources': ['source/ai3d/event_queue.d',
+                              'source/ai3d/job_controller.d',
+                              'source/ai3d/job_events.d',
+                              'source/ai3d/scene_validator.d',
+                              'source/ai3d/stage_artifact.d',
+                              'source/ai3d/worker_manager.d'],
+                  'testDigest': '864367663de755f5ed0c6a349a01602e53a2ed1310379abd3f98a0e380b15636',
+                  'testImports': ['source', '../source'],
+                  'testLower': ['interchange', 'log'],
+                  'testSources': ['../source/ai3d/event_queue.d',
+                                  '../source/ai3d/job_controller.d',
+                                  '../source/ai3d/job_events.d',
+                                  '../source/ai3d/scene_validator.d',
+                                  '../source/ai3d/stage_artifact.d',
+                                  '../source/ai3d/worker_manager.d',
+                                  'source/tests/unit/ai3d/event_queue_source_public_test.d',
+                                  'source/tests/unit/ai3d/event_queue_test.d',
+                                  'source/tests/unit/ai3d/job_controller_test.d',
+                                  'source/tests/unit/ai3d/scene_validator_test.d',
+                                  'source/tests/unit/ai3d/stage_artifact_test.d',
+                                  'source/tests/unit/ai3d/worker_manager_source_public_test.d',
+                                  'source/tests/unit/ai3d/worker_manager_test.d']},
+ 'document-actions': {'external': {},
+                      'lower': ['application-core',
+                                'camera-model',
+                                'command-runtime',
+                                'document-channels',
+                                'document-io',
+                                'document-model',
+                                'edit-contracts',
+                                'interactive-tools',
+                                'interchange',
+                                'log',
+                                'math',
+                                'mesh',
+                                'mesh-change',
+                                'mesh-ops',
+                                'mesh-snapshot',
+                                'param-schema',
+                                'pipe-runtime',
+                                'platform-file',
+                                'subpatch-preview',
+                                'viewport-host'],
+                      'name': 'vibe3d-document-actions',
+                      'ordinaryDigest': 'a739fe2efec05f802800881b1667b9c114c395f954ebd820e21a3585f18a1447',
+                      'root': 'packages/document-actions',
+                      'sources': ['source/commands/file/quit.d',
+                                  'source/commands/image/commands.d',
+                                  'source/commands/image_plane/commands.d',
+                                  'source/commands/layer/commands.d',
+                                  'source/commands/scene/load_mesh.d',
+                                  'source/commands/scene/reset.d'],
+                      'testDigest': '72f4d13781087fbad0d79dbd479b9ed63c1ad136f6302315731bb01df3b57a8d',
+                      'testImports': ['source', '../source'],
+                      'testLower': ['application-core',
+                                    'camera-model',
+                                    'command-runtime',
+                                    'document-channels',
+                                    'document-io',
+                                    'document-model',
+                                    'edit-contracts',
+                                    'interactive-tools',
+                                    'interchange',
+                                    'log',
+                                    'math',
+                                    'mesh',
+                                    'mesh-change',
+                                    'mesh-ops',
+                                    'mesh-snapshot',
+                                    'param-schema',
+                                    'pipe-runtime',
+                                    'platform-file',
+                                    'subpatch-preview',
+                                    'viewport-host'],
+                      'testSources': ['../source/commands/file/quit.d',
+                                      '../source/commands/image/commands.d',
+                                      '../source/commands/image_plane/commands.d',
+                                      '../source/commands/layer/commands.d',
+                                      '../source/commands/scene/load_mesh.d',
+                                      '../source/commands/scene/reset.d',
+                                      'source/tests/unit/commands/image/commands_test.d',
+                                      'source/tests/unit/commands/layer/add_injection_range_test.d',
+                                      'source/tests/unit/commands/layer/commands_source_public_test.d']},
+ 'http-runtime': {'external': {},
+                  'lower': ['application-core',
+                            'edit-contracts',
+                            'input-events',
+                            'interaction-query',
+                            'log',
+                            'mesh',
+                            'mesh-change',
+                            'param-schema',
+                            'pipe-evaluation',
+                            'profiling'],
+                  'name': 'vibe3d-http-runtime',
+                  'ordinaryDigest': '38507be86ddc53deae95a78d5dfefa0cd6af76a2f165375a7c823b2b009236aa',
+                  'root': 'packages/http-runtime',
+                  'sources': ['source/http_server.d',
+                              'source/http_transport.d',
+                              'source/playback_controller.d'],
+                  'testDigest': '61c7abbd42a1d61c26464de1a769085adff886836730d74b83d9ae3f6d76b483',
+                  'testImports': ['source', '../source'],
+                  'testLower': ['application-core',
+                                'edit-contracts',
+                                'input-events',
+                                'interaction-query',
+                                'log',
+                                'mesh',
+                                'mesh-change',
+                                'param-schema',
+                                'pipe-evaluation',
+                                'profiling'],
+                  'testSources': ['../source/http_server.d',
+                                  '../source/http_transport.d',
+                                  '../source/playback_controller.d']},
+ 'platform-file': {'external': {},
+                   'lower': ['application-core',
+                             'command-runtime',
+                             'document-io',
+                             'edit-contracts',
+                             'interchange',
+                             'mesh'],
+                   'name': 'vibe3d-platform-file',
+                   'ordinaryDigest': '55180e2c72b3bd5f546ac40fc60e42521ab16fde8d890abb1276c8e728456af7',
+                   'root': 'packages/platform-file',
+                   'sources': ['source/io/browser_pick_resume.d',
+                               'source/io/file_dialog.d',
+                               'source/io/file_dialog_browser.d',
+                               'source/ui/discard_guard.d'],
+                   'testDigest': '4ee32bf45e2e5a4601bdfbb22c47c3348b7f924ec1dda2e7a5f8b7eb9dd09cda',
+                   'testImports': ['source', '../source'],
+                   'testLower': ['application-core',
+                                 'command-runtime',
+                                 'document-io',
+                                 'edit-contracts',
+                                 'interchange',
+                                 'mesh'],
+                   'testSources': ['../source/io/browser_pick_resume.d',
+                                   '../source/io/file_dialog.d',
+                                   '../source/io/file_dialog_browser.d',
+                                   '../source/ui/discard_guard.d']},
+ 'remesh-runtime': {'external': {},
+                    'lower': ['math', 'mesh', 'mesh-change'],
+                    'name': 'vibe3d-remesh-runtime',
+                    'ordinaryDigest': 'cc16147cffd10fccf5bccb6ccd899dca0d740fd349e0da76c553d5a0036ab34e',
+                    'root': 'packages/remesh-runtime',
+                    'sources': ['source/remesh/region_stitch.d', 'source/remesh/remesh_job.d'],
+                    'testDigest': 'bb83587306d26c048bbb16aaacbc5ede36257c19c3530c6f53ebff7391e4ba83',
+                    'testImports': ['source', '../source'],
+                    'testLower': ['math', 'mesh', 'mesh-change'],
+                    'testSources': ['../source/remesh/region_stitch.d',
+                                    '../source/remesh/remesh_job.d',
+                                    'source/tests/unit/remesh/remesh_job_source_public_test.d',
+                                    'source/tests/unit/remesh/remesh_job_test.d']}})
+SPECS['interactive-tools']['sources'] = sorted(SPECS['interactive-tools']['sources'] + ['source/commands/falloff.d'])
+SPECS['interactive-tools']['testSources'] = sorted(SPECS['interactive-tools']['testSources'] + ['../source/commands/falloff.d'])
+SPECS['interactive-tools']['testDigest'] = '5395da6450d4b43f84e09fdd6b8dcbdc0b0852e7d8872a69ac35a169c7ff8ba1'
 CONFIGS = ('modeling', 'modeling-noai', 'with-render', 'web', 'root-tests', 'isolated-tests')
 FORBIDDEN_IMPORTS = {'interactive-tools': ('editor_app', 'viewport'),
                      'viewport-host': ('tool', 'editor_app'),
@@ -3044,18 +3257,21 @@ FIXTURES = {'input-events': ('config/shortcuts.yaml', '99c14eaa556d365f42ead60e3
             'pipe-runtime': ('tests/fixtures/falloff_selection_bake.json', '336f6524a11ecd585a525522467c3db1d2dca251da69ffb73cbeaad592d63404')}
 
 # Wave15: six immutable algorithm fixture inputs, staged individually.
-PACKAGE_FIXTURES = {'interactive-tools': [('tests/fixtures/change_publish_on_accepted_noop.json', 'd69fde079c31778954e4014b221e28e3ccf02af2a30c0b821e9f45a5a6fe6813'), ('tests/fixtures/topology_pen_session_rig.v3d', '53afa0fadeeb99ab164e8ee8b5e116b9fd9631f3e139ecd1fb09033847683311'), ('tests/fixtures/bridge_auto_connection/frozen.json', '6394cd619a5ce2e4ed2a3aa7dc84198f8470197608c1676381102e8c4c9e3a68'), ('tests/fixtures/bridge_auto_connection/ours_smooth_expected.json', '84ceb9b56f861a43c94861a1ffeb6b7195ef7ff6da97aeb3f2bfef2cd77a08cd'), ('tests/fixtures/local_component_frame/captured.json', '9c95c8bc9836c575106872cdfc87eb76ab26770bb11b6bb4fc74d5dd312450a9'), ('tests/fixtures/drag_gain_oblique.json', '58a777c21a273dc1f75a4e3e1a8a7efaf2a114934d546b7a1abc78eb42275c43')]}
+PACKAGE_FIXTURES = {'interactive-tools': [('tests/fixtures/change_publish_on_accepted_noop.json', 'd69fde079c31778954e4014b221e28e3ccf02af2a30c0b821e9f45a5a6fe6813'), ('tests/fixtures/topology_pen_session_rig.v3d', '53afa0fadeeb99ab164e8ee8b5e116b9fd9631f3e139ecd1fb09033847683311'), ('tests/fixtures/bridge_auto_connection/frozen.json', '6394cd619a5ce2e4ed2a3aa7dc84198f8470197608c1676381102e8c4c9e3a68'), ('tests/fixtures/bridge_auto_connection/ours_smooth_expected.json', '84ceb9b56f861a43c94861a1ffeb6b7195ef7ff6da97aeb3f2bfef2cd77a08cd'), ('tests/fixtures/local_component_frame/captured.json', '9c95c8bc9836c575106872cdfc87eb76ab26770bb11b6bb4fc74d5dd312450a9'), ('tests/fixtures/drag_gain_oblique.json', '58a777c21a273dc1f75a4e3e1a8a7efaf2a114934d546b7a1abc78eb42275c43')], 'ai3d-runtime': [('tools/ai3d_worker/install_linux.sh', '6ab2d60a820c2b46f2d0f94199cdecb73004092e3b3a151aa17901975db09713'), ('tools/ai3d_worker/install_windows.ps1', 'a13dc1a3faabf9629bb1db22a50f392722aadbbd8dd4741ba13978d456b7541f'), ('tools/ai3d_worker/vibe3d_ai3d_worker/__init__.py', '16057b6f5a8e952a614a9aa43f9afef13b764c678faed3afec924ff42a2b6ac5'), ('tools/ai3d_worker/vibe3d_ai3d_worker/__main__.py', '2065c1f723883a5304abc8926e22e9c0ef9ccb83a94f29b702f579aa8b46b708'), ('tools/ai3d_worker/vibe3d_ai3d_worker/protocol.py', 'f6086b79d1a532ab82b28b1df18a80e065ec3b5093ab37159a39e0f5fc7bc696'), ('tools/ai3d_worker/vibe3d_ai3d_worker/server.py', '34912bf03ebe97fce0c5f5d1501b7cf673b5f45faf959af3bcdeda29021a06d4')]}
 
-# Existing external predicates extend only to declared query/interchange owners.
+# Existing external predicates retain exact changed native owner inputs.
+NFDE_DESCRIPTOR_DIGEST = 'd58105a265054705c3e6e45524a56e6bee1af4e817480c788f665b6816d226e6'
+ONNX_DESCRIPTOR_DIGEST = 'b14033af05e4a00bb23fdaf69a8f224f5950fba8b9c16e8a3ddb401492ff2ac3'
 REVISIONS = dict(legacy_REVISIONS, **{
+    'd-onnxruntime': ('3603828c1f5a6cd36817492252e1efb9c81e7ca4', 'git+https://github.com/shulc/D-OnnxRuntime.git'),
     'd_imgui': ('d535ba78c7d01aca3c9d45ca94ea8e55455ffb7f', 'git+https://github.com/shulc/D-ImGui.git'),
     'd-bvh': ('e1a8f41501f94a28dbac99efbea850ed098fa728', 'git+https://github.com/shulc/D-BVH.git'),
     'lwo2-writer': ('6d35b70a2a23c16c5b6cc19ea3e2d05a99eb0061', 'git+https://github.com/shulc/D-Lwo2Writer.git'),
     'bindbc-assimp6': ('3b7c87431b12418a32e70cb065fc63fd6cc98b13', 'git+https://github.com/shulc/D-BindBC-Assimp.git'),
 })
-EXTERNAL_DEPS = dict(legacy_EXTERNAL_DEPS, **{'d_imgui': ('bindbc-sdl',), 'd-bvh': (), 'lwo2-writer': (),
+EXTERNAL_DEPS = dict(legacy_EXTERNAL_DEPS, **{'nfde': (), 'd-onnxruntime': (), 'd_imgui': ('bindbc-sdl',), 'd-bvh': (), 'lwo2-writer': (),
     'bindbc-assimp6': ('bindbc-common', 'bindbc-loader')})
-ARCHIVES = dict(legacy_ARCHIVES, **{'d_imgui': 'libd_imgui_stub.a', 'd-bvh': 'libd-bvh.a',
+ARCHIVES = dict(legacy_ARCHIVES, **{'nfde': 'bin/libnfde.a', 'd-onnxruntime': 'libd-onnxruntime.a', 'd_imgui': 'libd_imgui_stub.a', 'd-bvh': 'libd-bvh.a',
     'lwo2-writer': 'lib/liblwo2-writer.a', 'bindbc-assimp6': 'lib/libbindbc-assimp6.a'})
 
 def raw_config(path, configuration):
@@ -3082,10 +3298,36 @@ def native_grants(names, roots, web=False):
         libs.update(('stdc++', 'm'))
         lflags.update(str(roots['bindbc-assimp6']/p) for p in
                       ('lib/libassimp.a', 'lib/libzlibstatic.a'))
+    if 'nfde' in names:
+        require(not web, 'support web native chooser dependency')
+        libs.add('dbus-1')
+        lflags.add(str(roots['nfde']/'nativefiledialog-extended/out/src/libnfd.a'))
+    if 'd-onnxruntime' in names:
+        libs.update(('onnxrt', 'onnxruntime', 'stdc++'))
+        lflags.update(('-L'+str(roots['d-onnxruntime']/'build'),
+            '-L'+str(roots['d-onnxruntime']/'build/onnxruntime/sdk/lib'),
+            '-rpath=$ORIGIN', '-rpath=$ORIGIN/lib',
+            '-rpath='+str(roots['d-onnxruntime']/'build/onnxruntime/sdk/lib')))
     return libs, lflags
 
 def validate_external(package, web=False):
     name=package['name'];path=Path(package['path']).resolve()
+    if name in ('nfde', 'd-onnxruntime'):
+        raw=json.loads((path/'dub.json').read_text())
+        require(canonical_digest(raw)==(NFDE_DESCRIPTOR_DIGEST if name=='nfde' else ONNX_DESCRIPTOR_DIGEST),
+                'support native descriptor identity: '+name)
+        require(package['targetType']=='staticLibrary' and not package.get('dependencies', []),
+                'support native archive/dependency identity: '+name)
+        require(sorted((path/p).resolve() for p in package.get('importPaths', []))==[path/'source'],
+                'support native importPaths: '+name)
+        expected_hooks=raw['preBuildCommands-linux'] if name=='nfde' else raw['preBuildCommands-posix']
+        for field in HOOKS:
+            require(package.get(field, [])==(expected_hooks if field=='preBuildCommands' else []),
+                    'support native hook: '+name+':'+field)
+        require(not package.get('stringImportPaths', []), 'support native stringImportPaths: '+name)
+        if name=='nfde':require(not web, 'support web native chooser dependency')
+        else:require(legacy_native_revision(path)==REVISIONS[name][0], 'support native repository revision: '+name)
+        return
     require(package['targetType']==('library' if name in ('dyaml','lwo2-writer','bindbc-assimp6') else 'staticLibrary'),
             'support resolved native archive target: '+name)
     expected_hooks=[]
@@ -3195,7 +3437,10 @@ def validate_description(description, project, owner, config, tests=False, harne
         raw, cfg=raw_config(path,active[name]['configuration'])
         external.update(k for k in set(raw.get('dependencies',{}))|set(cfg.get('dependencies',{})) if not k.startswith('vibe3d-'))
     require(set(active)-internal==external_closure(external,config=='web'), 'support resolved external package population: '+owner)
-    for name in set(active)-internal:validate_external(active[name],config=='web')
+    for name in set(active)-internal:
+        if name=='nfde':require(Path(active[name]['path']).resolve()==(project/'third_party/nfde').resolve(),
+                'support committed native chooser path')
+        validate_external(active[name],config=='web')
     for name in internal:
         is_test=name.endswith('-tests'); selected=name.removeprefix('vibe3d-').removesuffix('-tests')
         spec=SPECS[selected];path=(project/spec['root']/('tests' if is_test else '')).resolve()
@@ -3212,6 +3457,9 @@ def validate_description(description, project, owner, config, tests=False, harne
                 'support resolved compiler owner: '+name)
         files=sorted((path/f['path']).resolve() for f in package['files'] if f['role']=='source')
         own_files=sorted((path/p).resolve() for p in spec['testSources']) if is_test else production_files(project,selected)
+        if selected=='ai3d-runtime' and not is_test and config=='web':
+            excluded=set(config_grants['excludedSourceFiles'])
+            own_files=[p for p in own_files if str(p.relative_to(path)) not in excluded]
         if not is_test and package['configuration'] in ('root-tests', 'isolated-tests'):
             own_files += test_helper_files(project, selected);own_files.sort()
         if is_test and harness is not None: own_files.append(harness.resolve());own_files.sort()
@@ -3241,6 +3489,9 @@ def validate_description(description, project, owner, config, tests=False, harne
         settings=target['buildSettings']
         selected=name.removeprefix('vibe3d-').removesuffix('-tests')
         expected_sources=test_files(project,selected) if name.endswith('-tests') else production_files(project,selected)
+        if selected=='ai3d-runtime' and not name.endswith('-tests') and config=='web':
+            excluded={'source/ai3d/job_controller.d','source/ai3d/stage_artifact.d','source/ai3d/worker_manager.d'}
+            expected_sources=[p for p in expected_sources if str(p.relative_to(project/SPECS[selected]['root'])) not in excluded]
         if not name.endswith('-tests') and config in ('root-tests', 'isolated-tests'):
             expected_sources += test_helper_files(project, selected)
         if name.endswith('-tests') and harness is not None:expected_sources.append(harness.resolve())
@@ -3354,7 +3605,9 @@ def validate_actual_compiler(commands, project, owner, description, home, harnes
     linked=links[0]
     static={n:ARCHIVES[n] for n,p in active.items() if not n.startswith('vibe3d-') and p['targetType'] in ('staticLibrary','library')}
     archives=linked['archiveInputs']
-    require(len(archives)==len(static) and all(sum(Path(a).is_relative_to(home/'cache'/n) and Path(a).name==Path(filename).name for a in archives)==1 for n,filename in static.items()),
+    require(len(archives)==len(static) and all(sum((Path(a).is_relative_to(home/'cache'/n)
+            or (n=='nfde' and Path(a)==Path(active[n]['path']).resolve()/filename))
+            and Path(a).name==Path(filename).name for a in archives)==1 for n,filename in static.items()),
             'support actual compiler D archive inputs: '+owner)
     return {'compile':command,'link':linked,'generatedMain':generated[0],'staticOwners':sorted(static)}
 
@@ -3470,7 +3723,10 @@ ENABLED_MODULES = frozenset(['argstring',
  'symmetry',
  'tests.unit.ai.advisor_test',
  'tests.unit.ai.debug_trace_test',
+ 'tests.unit.ai.exploration_source_public_test',
  'tests.unit.ai.interaction_test',
+ 'tests.unit.ai3d.event_queue_source_public_test',
+ 'tests.unit.ai3d.worker_manager_source_public_test',
  'tests.unit.alignment_ops_population_test',
  'tests.unit.application_core_population_test',
  'tests.unit.argstring_test',
@@ -3491,6 +3747,7 @@ ENABLED_MODULES = frozenset(['argstring',
  'tests.unit.command_runtime_population_test',
  'tests.unit.command_source_public_test',
  'tests.unit.command_wrapper_result_test',
+ 'tests.unit.commands.layer.commands_source_public_test',
  'tests.unit.commands.layer.xform_edit_source_public_test',
  'tests.unit.commands.mesh.edge_crease_source_public_test',
  'tests.unit.commands.mesh.edge_slide_result_builder_test',
@@ -3586,6 +3843,7 @@ ENABLED_MODULES = frozenset(['argstring',
  'tests.unit.path_test',
  'tests.unit.quad_overlay_eligibility_test',
  'tests.unit.record_observer_hub_source_public_test',
+ 'tests.unit.remesh.remesh_job_source_public_test',
  'tests.unit.retopology_display_model_test',
  'tests.unit.retopology_dot_cull_test',
  'tests.unit.retopology_line_shade_algorithm_cells_test',
@@ -3746,10 +4004,13 @@ def stage_dependencies(active, archive, evidence, env):
         if name.startswith('vibe3d-'):
             continue
         original = Path(package['path']).resolve()
-        staged = (home / 'packages' / name / REVISIONS[name][0] / name
+        staged = (archive/'third_party/nfde' if name=='nfde' else
+                  home / 'packages' / name / REVISIONS[name][0] / name
                   if name in REVISIONS else archive / 'dependencies' / name)
-        # Fresh D archives and native outputs must be built in this copy.
-        shutil.copytree(original, staged, ignore=shutil.ignore_patterns('.git', '.dub', 'build', 'out', '*.a', '*.o', '*.obj', '*.lib'))
+        # The local chooser source is already in the exact committed archive.
+        # Fresh native outputs are built only in that owned copy.
+        if name=='nfde':require(staged.is_dir(), 'PREPARATION-REFUSED: committed native chooser source missing')
+        else:shutil.copytree(original, staged, ignore=shutil.ignore_patterns('.git', '.dub', 'build', 'out', '*.a', '*.o', '*.obj', '*.lib'))
         files = {str(p.relative_to(staged)): legacy_digest(p) for p in sorted(staged.rglob('*')) if p.is_file()}
         legacy_require(files and 'dub.json' in files, 'PREPARATION-REFUSED: dependency source missing: ' + name)
         for relative, sha in files.items():
@@ -3828,6 +4089,7 @@ def execute(project,owner,compiler,env,evidence):
     if 'mesh-ops' in closure(owner)|closure(owner,True)|{owner}:
         members += ['tests/unit/mesh_by_value_gate.d', 'tests/unit/fixtures.d']
     if owner in FIXTURES:members.append(FIXTURES[owner][0])
+    if 'platform-file' in closure(owner)|closure(owner,True)|{owner}:members.append('third_party/nfde')
     members += [path for path, _ in PACKAGE_FIXTURES.get(owner, ())]
     import tarfile
     tar=evidence/'committed.tar'
@@ -3878,7 +4140,7 @@ def execute(project,owner,compiler,env,evidence):
     require_staged_dependencies(description)
     tested=run(['dub','test','--root='+str(root/'tests'),'--recipe='+str(recipe),'--config='+config,'--compiler='+compiler,'--force','--verbose'],archive,env,evidence,'algorithm-run')
     output=tested.stdout+tested.stderr
-    expected_cwd=archive if owner in ('input-events', 'mesh-preview', 'document-model', 'param-schema', 'pipe-runtime', 'pipe-evaluation', 'interactive-tools') else root/'tests'
+    expected_cwd=archive if owner in ('input-events', 'mesh-preview', 'document-model', 'param-schema', 'pipe-runtime', 'pipe-evaluation', 'interactive-tools', 'ai3d-runtime') else root/'tests'
     require(re.findall(r'^PKG-CWD path=(.+)$',output,re.M)==[str(expected_cwd)],'support algorithm actual working directory: '+owner)
     if owner in FIXTURES:
         require(re.findall(r'^PKG-FIXTURE sha256=(.+)$',output,re.M)==[FIXTURES[owner][1]],'support algorithm actual fixture hash: '+owner)
@@ -3899,6 +4161,11 @@ def execute(project,owner,compiler,env,evidence):
     for library in ('stb_image_c','osdc','osdCPU','osdGPU','dbvh_c'):
         if '-L-l'+library in link['argv']:
             selected=legacy_native_archive_input(search_paths,library);input_hashes[str(selected)]=legacy_digest(selected)
+    if 'nfde' in dependencies:
+        selected=(Path(dependencies['nfde']['staged'])/'nativefiledialog-extended/out/src/libnfd.a').resolve()
+        require([arg for arg in link['argv'] if arg.startswith('-L') and arg.endswith('/libnfd.a')]==['-L'+str(selected)],
+                'support actual native archive input: libnfd.a')
+        input_hashes[str(selected)]=legacy_digest(selected)
     if 'd_imgui' in dependencies:
         selected=(Path(dependencies['d_imgui']['staged'])/'lib/libcimgui_docking.a').resolve()
         flags=[arg for arg in link['argv'] if arg.startswith('-L') and arg.endswith('/libcimgui_docking.a')]

@@ -24,7 +24,7 @@
 //       file is not.
 //
 // WHY IT IS HERE AND NOT IN THE FIXTURE. Measured, not assumed:
-// `grep -rn runOpen source/http_providers.d source/http_server.d` is EMPTY —
+// `grep -rn runOpen source/http_providers.d packages/http-runtime/source/http_server.d` is EMPTY —
 // `runOpen()` has no HTTP surface. And the consequences that DO reach the wire
 // do not separate the two record primitives: both call `pushEntry` exactly once
 // behind identical gates, so on a freshly-cleared stack the depth delta is +1

@@ -1347,6 +1347,27 @@ string sourceDigest() {
     string[] files = [
         "tests/unit/unittest_source_ceiling_ledger.txt",
         "tests/unit/comment_prose_ceiling_ledger.txt",
+        "dub.json",
+        "packages/http-runtime/dub.json",
+        "packages/http-runtime/tests/dub.json",
+        "packages/ai-advisor/dub.json",
+        "packages/ai-advisor/tests/dub.json",
+        "packages/ai3d-runtime/dub.json",
+        "packages/ai3d-runtime/tests/dub.json",
+        "packages/remesh-runtime/dub.json",
+        "packages/remesh-runtime/tests/dub.json",
+        "packages/platform-file/dub.json",
+        "packages/platform-file/tests/dub.json",
+        "packages/document-actions/dub.json",
+        "packages/document-actions/tests/dub.json",
+        "packages/interactive-tools/dub.json",
+        "packages/interactive-tools/tests/dub.json",
+        "tools/ai3d_worker/install_linux.sh",
+        "tools/ai3d_worker/install_windows.ps1",
+        "tools/ai3d_worker/vibe3d_ai3d_worker/__init__.py",
+        "tools/ai3d_worker/vibe3d_ai3d_worker/__main__.py",
+        "tools/ai3d_worker/vibe3d_ai3d_worker/protocol.py",
+        "tools/ai3d_worker/vibe3d_ai3d_worker/server.py",
     ];
     // `dirEntries` is lazy and stats each entry as it goes, so an editor's
     // temp file (or a `.d` deleted by a concurrent branch switch) mid-walk
@@ -1360,13 +1381,19 @@ string sourceDigest() {
             foreach (e; dirEntries(scanSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
         foreach (pattern; ["*.d", "*.c"])
-            foreach (newTestRoot; ["packages/interactive-tools/tests/source", "packages/viewport-host/tests/source", "packages/interaction-data/tests/source"])
+            foreach (newTestRoot; ["packages/interactive-tools/tests/source", "packages/viewport-host/tests/source", "packages/interaction-data/tests/source", "packages/ai-advisor/tests/source", "packages/ai3d-runtime/tests/source", "packages/remesh-runtime/tests/source", "packages/document-actions/tests/source"])
             foreach (e; dirEntries(newTestRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
         foreach (pattern; ["*.d", "*.c"])
             foreach (futureSourceRoot; (exists("packages/interactive-tools/source") ? ["packages/interactive-tools/source"] : [])
                 ~ (exists("packages/viewport-host/source") ? ["packages/viewport-host/source"] : [])
-                ~ (exists("packages/interaction-data/source") ? ["packages/interaction-data/source"] : []))
+                ~ (exists("packages/interaction-data/source") ? ["packages/interaction-data/source"] : [])
+                ~ (exists("packages/http-runtime/source") ? ["packages/http-runtime/source"] : [])
+                ~ (exists("packages/ai-advisor/source") ? ["packages/ai-advisor/source"] : [])
+                ~ (exists("packages/ai3d-runtime/source") ? ["packages/ai3d-runtime/source"] : [])
+                ~ (exists("packages/remesh-runtime/source") ? ["packages/remesh-runtime/source"] : [])
+                ~ (exists("packages/platform-file/source") ? ["packages/platform-file/source"] : [])
+                ~ (exists("packages/document-actions/source") ? ["packages/document-actions/source"] : []))
             foreach (e; dirEntries(futureSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
     } catch (Exception e) {
@@ -1445,7 +1472,7 @@ void harvestSourceFlags() {
         // task 5930's project-owned C source includes the linked UI package's
         // header through its expanded -P-I path.
         g_compileFlags ~= gather("dflags",               "");
-        g_compileFlags ~= " -I=packages/interactive-tools/tests/source -I=packages/viewport-host/tests/source -I=packages/interaction-data/tests/source -J=tests -J=packages/creation-ops/tests/fixtures";
+        g_compileFlags ~= " -I=packages/interactive-tools/tests/source -I=packages/viewport-host/tests/source -I=packages/interaction-data/tests/source -I=packages/ai-advisor/tests/source -I=packages/ai3d-runtime/tests/source -I=packages/remesh-runtime/tests/source -I=packages/document-actions/tests/source -J=tests -J=packages/creation-ops/tests/fixtures";
         g_linkTail     ~= gather("lflags",              "-L");
         g_linkTail     ~= gather("libs",                "-L-l");
         // linker-files (.a archives) are passed verbatim.
@@ -1525,7 +1552,7 @@ string buildProjectLib(string scratch) {
             }
         }
     }
-    foreach (owner; ["interactive-tools", "viewport-host", "interaction-data"]) {
+    foreach (owner; ["interactive-tools", "viewport-host", "interaction-data", "http-runtime", "ai-advisor", "ai3d-runtime", "remesh-runtime", "platform-file", "document-actions"]) {
         auto rr = executeShell("dub describe --root=packages/" ~ owner
             ~ "/tests --config=algorithm --data=source-files --data-list 2>/dev/null");
         if (rr.status != 0) return "";

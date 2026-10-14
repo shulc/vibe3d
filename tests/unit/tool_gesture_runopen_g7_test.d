@@ -13,7 +13,7 @@
 // through the surfaces `tests/test_tool_gesture_g7.d` reads.
 //
 // WHY THAT IS HERE AND NOT IN THE FIXTURE. Measured, not assumed:
-// `grep -rn runOpen source/http_providers.d source/http_server.d` is EMPTY —
+// `grep -rn runOpen source/http_providers.d packages/http-runtime/source/http_server.d` is EMPTY —
 // `runOpen()` has no HTTP surface, so no fixture driven over the wire can read
 // it. And the consequences that DO reach the wire do not separate the two
 // branches: `record` and `recordInSession` both call `pushEntry` exactly once

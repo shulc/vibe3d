@@ -1,0 +1,261 @@
+{
+    "name": "vibe3d-ai-advisor",
+    "targetType": "staticLibrary",
+    "sourcePaths": [
+        "source"
+    ],
+    "importPaths": [
+        "source"
+    ],
+    "toolchainRequirements": {
+        "dmd": ">=2.111.0",
+        "ldc": ">=1.41.0"
+    },
+    "buildTypes": {
+        "profile-fp": {
+            "buildOptions": [
+                "debugMode",
+                "debugInfo",
+                "optimize"
+            ],
+            "dflags-dmd": [
+                "-gs"
+            ],
+            "dflags-ldc": [
+                "--frame-pointer=all"
+            ]
+        },
+        "perf": {
+            "buildOptions": [
+                "releaseMode",
+                "optimize",
+                "inline"
+            ],
+            "versions": [
+                "PerfProbe"
+            ]
+        },
+        "perf-count": {
+            "buildOptions": [
+                "debugMode",
+                "debugInfo"
+            ],
+            "versions": [
+                "PerfProbe"
+            ]
+        },
+        "perf-unit": {
+            "buildOptions": [
+                "unittests",
+                "debugMode",
+                "debugInfo"
+            ],
+            "versions": [
+                "PerfProbe"
+            ]
+        },
+        "check": {
+            "buildOptions": [
+                "debugMode",
+                "debugInfo"
+            ],
+            "dflags-ldc": [
+                "--boundscheck=on",
+                "--checkaction=C",
+                "--frame-pointer=all"
+            ],
+            "versions": [
+                "SanitizerSelfTest"
+            ]
+        },
+        "check-unit": {
+            "buildOptions": [
+                "unittests",
+                "debugMode",
+                "debugInfo"
+            ],
+            "dflags-ldc": [
+                "--boundscheck=on",
+                "--frame-pointer=all"
+            ],
+            "versions": [
+                "SanitizerSelfTest"
+            ]
+        },
+        "check-release": {
+            "buildOptions": [
+                "releaseMode",
+                "optimize",
+                "inline",
+                "debugInfo"
+            ],
+            "dflags-ldc": [
+                "--boundscheck=on",
+                "--frame-pointer=all"
+            ],
+            "versions": [
+                "SanitizerSelfTest"
+            ]
+        },
+        "sanitize": {
+            "buildOptions": [
+                "debugMode",
+                "debugInfo"
+            ],
+            "dflags-ldc": [
+                "--fsanitize=address",
+                "--fsanitize-address-use-after-return=never",
+                "--checkaction=C",
+                "--frame-pointer=all"
+            ],
+            "versions": [
+                "SanitizerSelfTest"
+            ]
+        },
+        "sanitize-unit": {
+            "buildOptions": [
+                "unittests",
+                "debugMode",
+                "debugInfo"
+            ],
+            "dflags-ldc": [
+                "--fsanitize=address",
+                "--fsanitize-address-use-after-return=never",
+                "--frame-pointer=all"
+            ],
+            "versions": [
+                "SanitizerSelfTest"
+            ]
+        },
+        "tsan": {
+            "buildOptions": [
+                "debugMode",
+                "debugInfo"
+            ],
+            "dflags-ldc": [
+                "--fsanitize=thread",
+                "--enable-asserts=false",
+                "--frame-pointer=all"
+            ],
+            "versions": [
+                "SanitizerSelfTest",
+                "SanitizerThreadPreinit"
+            ]
+        }
+    },
+    "dependencies": {
+        "vibe3d-interaction-data": {
+            "path": "../interaction-data"
+        },
+        "vibe3d-math": {
+            "path": "../../util/math"
+        },
+        "vibe3d-mesh": {
+            "path": "../mesh"
+        },
+        "vibe3d-mesh-ops": {
+            "path": "../mesh-ops"
+        },
+        "vibe3d-pipe-evaluation": {
+            "path": "../pipe-evaluation"
+        }
+    },
+    "configurations": [
+        {
+            "name": "modeling",
+            "versions": [
+                "WithAI"
+            ],
+            "subConfigurations": {
+                "vibe3d-interaction-data": "modeling",
+                "vibe3d-math": "modeling",
+                "vibe3d-mesh": "modeling",
+                "vibe3d-mesh-ops": "modeling",
+                "vibe3d-pipe-evaluation": "modeling"
+            },
+            "dependencies": {
+                "d-onnxruntime": {
+                    "version": "3603828c1f5a6cd36817492252e1efb9c81e7ca4",
+                    "repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
+                }
+            }
+        },
+        {
+            "name": "modeling-noai",
+            "versions": [],
+            "subConfigurations": {
+                "vibe3d-interaction-data": "modeling-noai",
+                "vibe3d-math": "modeling-noai",
+                "vibe3d-mesh": "modeling-noai",
+                "vibe3d-mesh-ops": "modeling-noai",
+                "vibe3d-pipe-evaluation": "modeling-noai"
+            }
+        },
+        {
+            "name": "with-render",
+            "versions": [
+                "WithRender",
+                "WithAI"
+            ],
+            "subConfigurations": {
+                "vibe3d-interaction-data": "with-render",
+                "vibe3d-math": "with-render",
+                "vibe3d-mesh": "with-render",
+                "vibe3d-mesh-ops": "with-render",
+                "vibe3d-pipe-evaluation": "with-render"
+            },
+            "dependencies": {
+                "d-onnxruntime": {
+                    "version": "3603828c1f5a6cd36817492252e1efb9c81e7ca4",
+                    "repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
+                }
+            }
+        },
+        {
+            "name": "web",
+            "versions": [
+                "web"
+            ],
+            "subConfigurations": {
+                "vibe3d-interaction-data": "web",
+                "vibe3d-math": "web",
+                "vibe3d-mesh": "web",
+                "vibe3d-mesh-ops": "web",
+                "vibe3d-pipe-evaluation": "web"
+            }
+        },
+        {
+            "name": "root-tests",
+            "versions": [
+                "WithAI",
+                "MeshSnapshotFixtures"
+            ],
+            "subConfigurations": {
+                "vibe3d-interaction-data": "root-tests",
+                "vibe3d-math": "root-tests",
+                "vibe3d-mesh": "root-tests",
+                "vibe3d-mesh-ops": "root-tests",
+                "vibe3d-pipe-evaluation": "root-tests"
+            },
+            "targetType": "sourceLibrary",
+            "dependencies": {
+                "d-onnxruntime": {
+                    "version": "3603828c1f5a6cd36817492252e1efb9c81e7ca4",
+                    "repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
+                }
+            }
+        },
+        {
+            "name": "isolated-tests",
+            "versions": [],
+            "subConfigurations": {
+                "vibe3d-interaction-data": "isolated-tests",
+                "vibe3d-math": "isolated-tests",
+                "vibe3d-mesh": "isolated-tests",
+                "vibe3d-mesh-ops": "isolated-tests",
+                "vibe3d-pipe-evaluation": "isolated-tests"
+            },
+            "targetType": "sourceLibrary"
+        }
+    ]
+}

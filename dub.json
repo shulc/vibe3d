@@ -206,9 +206,27 @@
     },
     "vibe3d-interaction-data": {
       "path": "packages/interaction-data"
+    },
+    "vibe3d-http-runtime": {
+      "path": "packages/http-runtime"
+    },
+    "vibe3d-ai-advisor": {
+      "path": "packages/ai-advisor"
+    },
+    "vibe3d-ai3d-runtime": {
+      "path": "packages/ai3d-runtime"
+    },
+    "vibe3d-remesh-runtime": {
+      "path": "packages/remesh-runtime"
+    },
+    "vibe3d-platform-file": {
+      "path": "packages/platform-file"
+    },
+    "vibe3d-document-actions": {
+      "path": "packages/document-actions"
     }
   },
-  "_comment-onnx-per-config": "d-onnxruntime (AI candidate ranker backend) is NOT a base dependency \u2014 it is added per-configuration alongside the `WithAI` version so the `modeling-noai` build can omit it entirely. onnxruntime.dll statically imports api-ms-win-core-path (Windows 8+), so dropping it is what makes a Windows 7-capable build possible. Only source/ai/onnx_backend.d touches the binding; all of it is gated by version(WithAI).",
+  "_comment-onnx-per-config": "d-onnxruntime (AI candidate ranker backend) is NOT a base dependency \u2014 it is added per-configuration alongside the `WithAI` version so the `modeling-noai` build can omit it entirely. onnxruntime.dll statically imports api-ms-win-core-path (Windows 8+), so dropping it is what makes a Windows 7-capable build possible. Only packages/ai-advisor/source/ai/onnx_backend.d touches the binding; all of it is gated by version(WithAI).",
   "_comment-instrumented-buildtypes": "TASK 1410 -- the four instrumented buildTypes (check, check-unit, check-release, sanitize) exist so crashes are found by the nightly lane instead of by a user. THE SHIPPED RELEASE DOES NOT READ ANY OF THEM: release is `--build=release`, dub's own built-in buildType, and none of these names appear in it. That is a checkable property, not a promise -- .github/workflows/sanitizer.yaml's preflight runs `dub describe --build=release --compiler=$LDC --config=modeling` and fails if `--fsanitize` or SanitizerSelfTest shows up in targets[].buildSettings.dflags/versions, plus a `strings` check on the release binary for `selftest.fault`. Passing --compiler is not optional there: `dub describe --build=release` with no --compiler defaults to DMD and DROPS every dflags-ldc entry, so the release-untouched mutation would pass vacuously. All four are LDC-ONLY (dmd implements neither --fsanitize nor --checkaction). Use the ABSOLUTE ldc2 path ($HOME/.local/dlang/ldc2-1.42.0-linux-x86_64/bin/ldc2, the same one tools/perf/run.d hardcodes): `--compiler=ldc2` resolves to /usr/bin/ldc2 = LDC 1.40 on this host, which CANNOT build vibe3d at all (it rejects `ref` locals in six pre-existing files), so a lane using the short name would fail on an unrelated compile error and read as `the instrumented build is broken`.",
   "_comment-instrumented-targetname": "THE BINARY NAME IS A REAL HAZARD AND `targetName` DOES NOT SOLVE IT -- measured, do not re-attempt. dub.json declares no root targetName, so EVERY buildType writes ./vibe3d, and the nightly perf lane (perf.yaml) runs `run.d frames --no-build` against exactly that path in a workspace deliberately kept unclean (`clean: false`); an instrumented binary left there is read, silently, by the next 03:30 gating run. tools/perf/run.d already carries this trap in its own words (its `NOTE: ./vibe3d is now the perf buildType binary` warnings). The obvious fix -- a per-buildType `targetName` -- was tried here and is INERT: on dub 1.41, `dub describe --build=check` reports `targetName: vibe3d` with the field set, and `dub build --build=check` writes ./vibe3d anyway. The fields were therefore removed rather than left in place looking effective. The working mechanism is explicit and lives in tools/sanitizer/lane.d: `lane.d build <buildType>` builds, immediately renames ./vibe3d to ./vibe3d-<buildType>, and FAILS if ./vibe3d still exists afterwards; `lane.d stage <buildType>` copies it back to ./vibe3d (which run_test.d hardcodes, run_test.d:792) and writes the build stamp; `lane.d teardown` deletes ./vibe3d and fails if it cannot. The workflow's teardown step is `if: always()`.",
   "_comment-instrumented-no-ubsan": "THERE IS NO UBSan HERE, AND THAT IS NOT AN OVERSIGHT. Measured on the shipped LDC 1.42.0 tarball: --fsanitize= accepts address, thread, memory, leak, fuzzer and REJECTS undefined, integer, bounds, float-cast-overflow (`Error: Unrecognized -fsanitize value 'undefined'`). The shipped ldc2 carries no UBSan runtime, so the cheapest phase of the original plan has no mechanism at all. The only route to it is rebuilding the runtime with `ldc-build-runtime` (shipped in the same tarball) -- a separate task, deliberately not attempted here. The one UB finding that motivated UBSan (params.d's float->int cast) is covered instead by a BEHAVIOURAL test that needs no sanitizer at all: tests/test_param_cast_overflow.d.",
@@ -416,7 +434,13 @@
         "vibe3d-editor-commands": "modeling",
         "vibe3d-interactive-tools": "modeling",
         "vibe3d-viewport-host": "modeling",
-        "vibe3d-interaction-data": "modeling"
+        "vibe3d-interaction-data": "modeling",
+        "vibe3d-http-runtime": "modeling",
+        "vibe3d-ai-advisor": "modeling",
+        "vibe3d-ai3d-runtime": "modeling",
+        "vibe3d-remesh-runtime": "modeling",
+        "vibe3d-platform-file": "modeling",
+        "vibe3d-document-actions": "modeling"
       }
     },
     {
@@ -472,7 +496,13 @@
         "vibe3d-editor-commands": "modeling-noai",
         "vibe3d-interactive-tools": "modeling-noai",
         "vibe3d-viewport-host": "modeling-noai",
-        "vibe3d-interaction-data": "modeling-noai"
+        "vibe3d-interaction-data": "modeling-noai",
+        "vibe3d-http-runtime": "modeling-noai",
+        "vibe3d-ai-advisor": "modeling-noai",
+        "vibe3d-ai3d-runtime": "modeling-noai",
+        "vibe3d-remesh-runtime": "modeling-noai",
+        "vibe3d-platform-file": "modeling-noai",
+        "vibe3d-document-actions": "modeling-noai"
       }
     },
     {
@@ -544,7 +574,13 @@
         "vibe3d-editor-commands": "with-render",
         "vibe3d-interactive-tools": "with-render",
         "vibe3d-viewport-host": "with-render",
-        "vibe3d-interaction-data": "with-render"
+        "vibe3d-interaction-data": "with-render",
+        "vibe3d-http-runtime": "with-render",
+        "vibe3d-ai-advisor": "with-render",
+        "vibe3d-ai3d-runtime": "with-render",
+        "vibe3d-remesh-runtime": "with-render",
+        "vibe3d-platform-file": "with-render",
+        "vibe3d-document-actions": "with-render"
       }
     },
     {
@@ -647,7 +683,17 @@
         "packages/viewport-host/source",
         "packages/viewport-host/tests/source",
         "packages/interaction-data/source",
-        "packages/interaction-data/tests/source"
+        "packages/interaction-data/tests/source",
+        "packages/http-runtime/source",
+        "packages/ai-advisor/source",
+        "packages/ai-advisor/tests/source",
+        "packages/ai3d-runtime/source",
+        "packages/ai3d-runtime/tests/source",
+        "packages/remesh-runtime/source",
+        "packages/remesh-runtime/tests/source",
+        "packages/platform-file/source",
+        "packages/document-actions/source",
+        "packages/document-actions/tests/source"
       ],
       "sourceFiles": [
         "tools/harness/hostspace.d",
@@ -841,7 +887,17 @@
         "packages/editor-commands/tests/source",
         "packages/interactive-tools/tests/source",
         "packages/viewport-host/tests/source",
-        "packages/interaction-data/tests/source"
+        "packages/interaction-data/tests/source",
+        "packages/http-runtime/source",
+        "packages/ai-advisor/source",
+        "packages/ai-advisor/tests/source",
+        "packages/ai3d-runtime/source",
+        "packages/ai3d-runtime/tests/source",
+        "packages/remesh-runtime/source",
+        "packages/remesh-runtime/tests/source",
+        "packages/platform-file/source",
+        "packages/document-actions/source",
+        "packages/document-actions/tests/source"
       ],
       "_comment-perf-portpolicy": "Task 9220. tools/perf/lib/portpolicy.d decides which port the perf harness may clear and launch on (refuses a run_test.d worker window, derived from tools/harness/runslots.d, which rdmd reaches through the tracked symlink tools/perf/tools/harness/runslots.d). lib/lifecycle.d is compiled here only so tests/unit/perf_port_policy_test.d can pin, by type, that its kill and launch seams take an admitted PerfPort. Test-only, like the other tools/perf entries.",
       "_comment-hostspace": "Task 5630. tools/harness/hostspace.d is the one owner of scratch-root and available-space policy for the standalone test runner and sanitizer lane. Both scripts import module tools.harness.hostspace; rdmd gives lane.d only tools/sanitizer as its import root, so the tracked file symlink under that root preserves absolute-script invocation from a foreign cwd. The real file is listed explicitly in sourceFiles, which keeps it test-only: modeling and with-render do not compile harness policy. importPaths still repeats source because declaring this array replaces dub's derived default.",
@@ -896,7 +952,13 @@
         "vibe3d-editor-commands": "root-tests",
         "vibe3d-interactive-tools": "root-tests",
         "vibe3d-viewport-host": "root-tests",
-        "vibe3d-interaction-data": "root-tests"
+        "vibe3d-interaction-data": "root-tests",
+        "vibe3d-http-runtime": "root-tests",
+        "vibe3d-ai-advisor": "root-tests",
+        "vibe3d-ai3d-runtime": "root-tests",
+        "vibe3d-remesh-runtime": "root-tests",
+        "vibe3d-platform-file": "root-tests",
+        "vibe3d-document-actions": "root-tests"
       }
     },
     {
@@ -950,7 +1012,13 @@
         "vibe3d-editor-commands": "web",
         "vibe3d-interactive-tools": "web",
         "vibe3d-viewport-host": "web",
-        "vibe3d-interaction-data": "web"
+        "vibe3d-interaction-data": "web",
+        "vibe3d-http-runtime": "web",
+        "vibe3d-ai-advisor": "web",
+        "vibe3d-ai3d-runtime": "web",
+        "vibe3d-remesh-runtime": "web",
+        "vibe3d-platform-file": "web",
+        "vibe3d-document-actions": "web"
       },
       "libs-wasm": [
         "dbvh_c",
@@ -986,9 +1054,9 @@
         "$PACKAGE_DIR/.build/web-runtime/lib/libdruntime-ldc.a"
       ],
       "excludedSourceFiles": [
-        "source/ai3d/job_controller.d",
-        "source/ai3d/stage_artifact.d",
-        "source/ai3d/worker_manager.d",
+        "packages/ai3d-runtime/source/ai3d/job_controller.d",
+        "packages/ai3d-runtime/source/ai3d/stage_artifact.d",
+        "packages/ai3d-runtime/source/ai3d/worker_manager.d",
         "source/ai3d_command_registration.d",
         "source/commands/ai3d/generate.d",
         "source/commands/ai3d/generate_test_hooks.d"

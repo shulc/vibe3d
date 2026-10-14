@@ -789,7 +789,7 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
 //
 // `CmdCase` has no `meshN` and should not grow one on a hunch. The lane's
 // hard ceiling is the command bridge's leash (`kCommandBridgeMaxIters =
-// 60_000`, about 2 minutes — source/http_server.d:73-79), and the measured
+// 60_000`, about 2 minutes — packages/http-runtime/source/http_server.d:73-79), and the measured
 // cost of a case at n=316 is ~5 s, so there is two orders of magnitude of
 // room: `mesh.subdivide` already builds 400k faces inside that budget.
 //
