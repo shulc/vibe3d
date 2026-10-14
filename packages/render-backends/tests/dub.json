@@ -1,0 +1,194 @@
+{
+  "targetType": "executable",
+  "sourcePaths": [],
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "name": "vibe3d-render-backends-tests",
+  "dependencies": {
+    "vibe3d-input-events": {
+      "path": "../../../packages/input-events"
+    },
+    "vibe3d-log": {
+      "path": "../../../util/log"
+    },
+    "vibe3d-math": {
+      "path": "../../../util/math"
+    },
+    "vibe3d-render-model": {
+      "path": "../../../packages/render-model"
+    },
+    "bindbc-sdl": "~>1.5.2",
+    "bindbc-opengl": "~>1.1.1",
+    "d-cycles": {
+      "version": "a69f99794fab25b4902e0523052e5c4b6bef0941",
+      "repository": "git+https://github.com/shulc/D-Cycles.git"
+    },
+    "bindbc-rpr": {
+      "version": "d1a0a786c307207df3d50db809490c7030bd5927",
+      "repository": "git+https://github.com/shulc/D-RadeonProRender.git"
+    }
+  },
+  "versions": [
+    "SDL_2020",
+    "GL_33",
+    "WithRender"
+  ],
+  "importPaths": [
+    "source",
+    "../source"
+  ],
+  "configurations": [
+    {
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d-input-events": "isolated-tests",
+        "vibe3d-log": "isolated-tests",
+        "vibe3d-math": "isolated-tests",
+        "vibe3d-render-model": "isolated-tests"
+      }
+    }
+  ],
+  "sourceFiles": [
+    "../source/render/backend_bridge.d",
+    "../source/render/cycles_backend.d",
+    "../source/render/render_diff.d",
+    "../source/render/rpr_backend.d",
+    "source/render_backends_population_test.d"
+  ],
+  "workingDirectory": ".",
+  "dflags": []
+}
