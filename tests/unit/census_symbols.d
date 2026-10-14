@@ -2007,6 +2007,9 @@ private immutable Wave15Move[] wave15Moves = [
     Wave15Move("tests/unit/commands/image/commands_test.d", "packages/document-actions/tests/source/tests/unit/commands/image/commands_test.d"),
     Wave15Move("tests/unit/commands/layer/add_injection_range_test.d", "packages/document-actions/tests/source/tests/unit/commands/layer/add_injection_range_test.d"),
 
+    Wave15Move("source/sdl_error.d", "packages/input-events/source/sdl_error.d"),
+    Wave15Move("tests/unit/sdl_error_test.d", "packages/input-events/tests/source/tests/unit/sdl_error_test.d"),
+
  ];
 private struct Wave15Fragment {
     string id, origin, destination, prefix;
@@ -2448,9 +2451,6 @@ private immutable Wave15Move[] wave15MovePins = [
     Wave15Move("tests/unit/remesh/remesh_job_test.d", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_test.d"),
     Wave15Move("tests/unit/commands/image/commands_test.d", "packages/document-actions/tests/source/tests/unit/commands/image/commands_test.d"),
     Wave15Move("tests/unit/commands/layer/add_injection_range_test.d", "packages/document-actions/tests/source/tests/unit/commands/layer/add_injection_range_test.d"),
-
-    Wave15Move("source/sdl_error.d", "packages/input-events/source/sdl_error.d"),
-    Wave15Move("tests/unit/sdl_error_test.d", "packages/input-events/tests/source/tests/unit/sdl_error_test.d"),
 
     Wave15Move("source/sdl_error.d", "packages/input-events/source/sdl_error.d"),
     Wave15Move("tests/unit/sdl_error_test.d", "packages/input-events/tests/source/tests/unit/sdl_error_test.d"),
