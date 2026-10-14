@@ -4,6 +4,7 @@ module render_model_population_test;
 version (WithRender) unittest {
     import object : ModuleInfo;
     immutable string[] expected = ["render.backend", "render.scene"];
+    assert(expected.length == 2, "PKG-POP-render-model whole owner roster floor 2");
     foreach (name; expected) {
         size_t occurrences;
         foreach (info; ModuleInfo)

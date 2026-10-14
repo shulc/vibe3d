@@ -4,6 +4,7 @@ module render_backends_population_test;
 version (WithRender) unittest {
     import object : ModuleInfo;
     immutable string[] expected = ["render.backend_bridge", "render.cycles_backend", "render.render_diff", "render.rpr_backend"];
+    assert(expected.length == 4, "PKG-POP-render-backends whole owner roster floor 4");
     foreach (name; expected) {
         size_t occurrences;
         foreach (info; ModuleInfo)
