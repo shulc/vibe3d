@@ -6105,7 +6105,8 @@ b5d1_sources = {
     "sphere": read_source_text((ROOT / "source/tools/create/sphere.d")),
 }
 primitive_products = sorted(
-    str(p.relative_to(ROOT)) for p in (ROOT / "source/tools/create").glob("*.d")
+    str(p.relative_to(ROOT)) for p in logical_source_paths(
+        ROOT / "source/tools/create", "*.d")
     if re.search(r"final class \w+\s*:\s*(?:PrimitiveCreateTool|HandledCreateTool|SizedRadialCreateTool)",
                  read_source_text(p)))
 expected_primitive_products = [
