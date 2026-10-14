@@ -1,6 +1,6 @@
 module ai.state;
 
-import popup_state : setStatePath;
+import toolpipe.state_paths : setStatePath;
 
 /// Editor-level AI master switch. Default is off; publishing mirrors the
 /// status-line checked-state registry.
