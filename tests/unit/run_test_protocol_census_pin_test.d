@@ -104,33 +104,37 @@ failures = census_contracts.production_lexer_census(root)
 if failures:
     raise SystemExit("prepared-protocol production lexer census: " + "; ".join(failures))
 owners = {'packages/camera-model/source': 1, 'packages/document-channels/source': 1, 'packages/image-codec/source': 1, 'packages/document-io/source': 3, 'source': 318, 'packages/alignment-ops/source': 1, 'packages/command-runtime/source': 22, 'packages/application-core/source': 7, 'packages/document-model/source': 5, 'packages/param-schema/source': 2, 'packages/pipe-runtime/source': 4, 'packages/creation-ops/source': 1, 'packages/display-policy/source': 12, 'packages/edit-contracts/source': 4, 'packages/input-events/source': 6, 'packages/interaction-query/source': 12, 'packages/interchange/source': 8, 'packages/mesh-change/source': 2, 'packages/mesh-contracts/source': 4, 'packages/mesh-edit-log/source': 1, 'packages/mesh-edit-replay/source': 1, 'packages/mesh-ops/source': 30, 'packages/mesh-snapshot/source': 1, 'packages/mesh-topology/source': 1, 'packages/mesh/source': 4, 'packages/pipe-evaluation/source': 12, 'packages/profiling/source': 1, 'packages/spatial/source': 5, 'packages/subpatch-preview/source': 5, 'packages/tool-state/source': 2, 'packages/transform-ops/source': 7, 'packages/viewport-gpu/source': 6, 'util/log/source': 1, 'util/math/source': 5, 'util/parallel/source': 1, 'util/plane-bytes/source': 1, 'util/screen-buckets/source': 1, 'packages/pipe-contracts/source': 2, 'packages/mesh-preview/source': 2, 'util/json-number/source': 1, 'packages/selection-model/source': 2, 'packages/scene-query/source': 2, 'packages/editor-commands/source': 100}
-# Independently frozen owner floors, separate from the physical populations.
+# Independently frozen owner floors, separate from the logical populations.
 floors = {'packages/command-runtime/source': 22, 'packages/application-core/source': 7, 'packages/camera-model/source': 1, 'packages/document-channels/source': 1, 'packages/image-codec/source': 1, 'packages/document-io/source': 3, 'source': 318, 'packages/alignment-ops/source': 1, 'packages/document-model/source': 5, 'packages/param-schema/source': 2, 'packages/pipe-runtime/source': 4, 'packages/creation-ops/source': 1, 'packages/display-policy/source': 12, 'packages/edit-contracts/source': 4, 'packages/input-events/source': 6, 'packages/interaction-query/source': 12, 'packages/interchange/source': 8, 'packages/mesh-change/source': 2, 'packages/mesh-contracts/source': 4, 'packages/mesh-edit-log/source': 1, 'packages/mesh-edit-replay/source': 1, 'packages/mesh-ops/source': 21, 'packages/mesh-snapshot/source': 1, 'packages/mesh-topology/source': 1, 'packages/mesh/source': 4, 'packages/pipe-evaluation/source': 12, 'packages/profiling/source': 1, 'packages/spatial/source': 5, 'packages/subpatch-preview/source': 5, 'packages/tool-state/source': 2, 'packages/transform-ops/source': 7, 'packages/viewport-gpu/source': 6, 'util/log/source': 1, 'util/math/source': 5, 'util/parallel/source': 1, 'util/plane-bytes/source': 1, 'util/screen-buckets/source': 1, 'packages/pipe-contracts/source': 2, 'packages/mesh-preview/source': 2, 'util/json-number/source': 1, 'packages/selection-model/source': 2, 'packages/scene-query/source': 2, 'packages/editor-commands/source': 100}
+owner_inputs = {owner: sorted(census_contracts.logical_source_paths(
+    root / owner, "*.d", root=root)) for owner in owners}
+# Materialize original logical inputs at their existing backing paths, plus
+# fragment carriers. Every directory is owned by this temporary fixture;
+# removing a file link cannot traverse a directory link into the real tree.
+backing_paths = {census_contracts.physical_source_path(path, root=root)
+                 for inputs in owner_inputs.values() for path in inputs}
+backing_paths.update(root / fragment["destination"]
+                     for fragment in census_contracts.SOURCE_FRAGMENTS)
 for owner, floor in floors.items():
     population = owners[owner]
+    inputs = owner_inputs[owner]
+    # The omission population is independently frozen, not derived
+    # from the reader or the fixture it will judge.
+    if len(inputs) != population:
+        raise SystemExit(f"prepared-protocol omission input changed: {owner}")
     with tempfile.TemporaryDirectory(prefix="protocol-owner-") as scratch:
         partial = Path(scratch)
-        for other in owners:
-            target = partial / other
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if other != owner:
-                target.symlink_to(root / other, target_is_directory=True)
-                continue
-            inputs = sorted((root / owner).rglob("*.d"))
-            # The omission population is independently frozen, not derived
-            # from the reader or the fixture it will judge.
-            if len(inputs) != population:
-                raise SystemExit(f"prepared-protocol omission input changed: {owner}")
-            for path in inputs:
-                link = target / path.relative_to(root / owner)
-                link.parent.mkdir(parents=True, exist_ok=True)
-                link.symlink_to(path)
+        for path in sorted(backing_paths):
+            link = partial / path.relative_to(root)
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(path)
         got = census_contracts.production_lexer_census(partial)
         if got:
             raise SystemExit(f"prepared-protocol synthetic owner baseline {owner}: {got!r}")
         omitted = population - floor + 1
         for path in inputs[:omitted]:
-            (partial / owner / path.relative_to(root / owner)).unlink()
+            backing = census_contracts.physical_source_path(path, root=root)
+            (partial / backing.relative_to(root)).unlink()
         got = census_contracts.production_lexer_census(partial)
         complement = f"dspans production complement read {608 - omitted} files; floor 608"
         owner_refusal = f"dspans lexer census owner {owner} read {floor - 1} files; floor {floor} (materialized 2026-10-10)"
