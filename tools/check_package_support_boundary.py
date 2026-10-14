@@ -4034,7 +4034,13 @@ def stage_dependencies(active, archive, evidence, env):
         # The local chooser source is already in the exact committed archive.
         # Fresh native outputs are built only in that owned copy.
         if name=='nfde':require(staged.is_dir(), 'PREPARATION-REFUSED: committed native chooser source missing')
-        else:shutil.copytree(original, staged, ignore=shutil.ignore_patterns('.git', '.dub', 'build', 'out', '*.a', '*.o', '*.obj', '*.lib'))
+        else:
+            # Task20262890: the pinned Assimp hook declares root build-min as
+            # generated native output; keep its CMake cache out of Source custody
+            # (doc/library_layout_wave16_composition_source_custody_2026-10-14.md).
+            shutil.copytree(original, staged, ignore=lambda directory, names: shutil.ignore_patterns(
+                '.git', '.dub', 'build', 'out', '*.a', '*.o', '*.obj', '*.lib',
+                *(('build-min',) if name=='bindbc-assimp6' and Path(directory)==original else ()))(directory, names))
         files = {str(p.relative_to(staged)): legacy_digest(p) for p in sorted(staged.rglob('*')) if p.is_file()}
         legacy_require(files and 'dub.json' in files, 'PREPARATION-REFUSED: dependency source missing: ' + name)
         for relative, sha in files.items():
