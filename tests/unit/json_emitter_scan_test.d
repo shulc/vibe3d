@@ -395,6 +395,7 @@ private static immutable LedgerRow[] kExemptionLedger = [
 ];
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
     string[] filesRead;
     size_t   totalSpecsSeen;
     string[] violations;
@@ -460,9 +461,9 @@ unittest {
       ~ "enum is this gate's proof that it reads REAL FILES rather than its "
       ~ "own test strings; without it, every assertion below could be passing "
       ~ "over an empty scan.");
-    assert(violations.length == 1
+    assert((violations.length == 1
            && violations[0].canFind("util/json-number/source/json_num.d:"
-                                    ~ canaryLine.to!string),
+                                    ~ canaryLine.to!string)) && wave15InputsIntact(wave15Inputs),
         format("the ONLY unguarded emitter in the scanned files must be the "
              ~ "canary at util/json-number/source/json_num.d:%d.\n"
              ~ "A float specifier in a format literal in one of these files "

@@ -931,6 +931,7 @@ private string guardOf(string code, size_t pos) {
 }
 
 unittest { // (4c)
+    auto wave15Inputs = wave15InputStart();
     import std.file : SpanMode;
 import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import tests.unit.production_tool_policies : productionPolicies;
@@ -1060,7 +1061,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
         "topologyPendingAttrOnly_=<decl>:1",
         "topologyPendingAttrOnly_=ToolSession.stepBegins:1",
     ];
-    assert(needle == kNeedle,
+    assert((needle == kNeedle) && wave15InputsIntact(wave15Inputs),
            format("S2b needle: the operation-state writes / raw bypass keys moved — extra %s, missing %s",
                   needle.filter!(n => !kNeedle.canFind(n)).array,
                   kNeedle.filter!(n => !needle.canFind(n)).array));
@@ -1189,8 +1190,8 @@ import tests.unit.census_symbols : exists = wave15Exists;
 
     }
     sort(mps);
-    assert(mps == ["source/edit_session.d:<decl>:1",
-                   "source/edit_session.d:EditSession.orchestrateParameterChange:1"],
+    assert((mps == ["source/edit_session.d:<decl>:1",
+                   "source/edit_session.d:EditSession.orchestrateParameterChange:1"]) && wave15InputsIntact(wave15Inputs),
            format("S2b needle: scriptedWriteEndsOperation sites %s", mps));
     const scripted = bodyAt(bodyAt(es, "void orchestrateParameterChange(ParamProvider provider"),
                             "case ParameterChangeSource.ScriptedValue:");
@@ -1214,19 +1215,19 @@ import tests.unit.census_symbols : exists = wave15Exists;
     // A gate line struck narrows the list to the other eleven; its tool's
     // `<tool>-dormant/held` suite cell reddens too (VertexMerge, RadialArray: this list
     // alone — no rig of theirs moves the mesh mid-haul, S6 drill).
-    assert(gates == ["ArrayTool.rebuildPreview:1", "CloneTool.rebuildPreview:1",
+    assert((gates == ["ArrayTool.rebuildPreview:1", "CloneTool.rebuildPreview:1",
                      "EdgeBevelTool.rebuildPreview:1", "EdgeExtrudeTool.rebuildPreview:1",
                      "MirrorTool.evaluate:1", "PolyExtrudeTool.rebuildPreview:1",
                      "PolyInsetTool.rebuildPreview:1", "RadialArrayTool.rebuildPreview:1",
                      "SmoothShiftTool.rebuildPreview:1", "VertexBevelTool.rebuildPreview:1",
-                     "VertexExtrudeTool.rebuildPreview:1", "VertexMergeTool.rebuildPreview:1"],
+                     "VertexExtrudeTool.rebuildPreview:1", "VertexMergeTool.rebuildPreview:1"]) && wave15InputsIntact(wave15Inputs),
            format("S6 needle: previewGated is read in source/tools at %s, expected the eleven "
                   ~ "rebuildPreview bodies and MirrorTool.evaluate once each", gates));
 
     // STRUCTURAL: the origin is published only for a classified row.
     auto hp = blankUnittestBodies(blankNonCode(readText("source/http_providers.d")));
     const enc = squeeze(bodyAt(hp, "private JSONValue encodeHistoryRow("));
-    assert(enc.canFind("if(step.stepOrigin()!=StepOrigin.unclassified){"),
+    assert((enc.canFind("if(step.stepOrigin()!=StepOrigin.unclassified){")) && wave15InputsIntact(wave15Inputs),
            "S2b structural: encodeHistoryRow publishes stepOrigin for an unclassified row");
 }
 

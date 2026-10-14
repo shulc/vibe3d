@@ -1950,6 +1950,63 @@ private immutable Wave15Move[] wave15Moves = [
     Wave15Move("tests/unit/viewport_plane_turn_test.d", "packages/viewport-host/tests/source/tests/unit/viewport_plane_turn_test.d"),
     Wave15Move("tests/unit/viewport_test.d", "packages/viewport-host/tests/source/tests/unit/viewport_test.d"),
     Wave15Move("tests/unit/wrapper_shift_apply_inheritance_test.d", "packages/interactive-tools/tests/source/tests/unit/wrapper_shift_apply_inheritance_test.d"),
+    // Task 20262890: approved original logical inputs; independent frozen rows.
+    Wave15Move("source/ai/analysis.d", "packages/ai-advisor/source/ai/analysis.d"),
+    Wave15Move("source/ai/copilot_gate.d", "packages/ai-advisor/source/ai/copilot_gate.d"),
+    Wave15Move("source/ai/element_candidates.d", "packages/ai-advisor/source/ai/element_candidates.d"),
+    Wave15Move("source/ai/exploration.d", "packages/ai-advisor/source/ai/exploration.d"),
+    Wave15Move("source/ai/interaction_log.d", "packages/ai-advisor/source/ai/interaction_log.d"),
+    Wave15Move("source/ai/interaction_log_writer.d", "packages/ai-advisor/source/ai/interaction_log_writer.d"),
+    Wave15Move("source/ai/mode_candidates.d", "packages/ai-advisor/source/ai/mode_candidates.d"),
+    Wave15Move("source/ai/model_adapter.d", "packages/ai-advisor/source/ai/model_adapter.d"),
+    Wave15Move("source/ai/offline_evaluator.d", "packages/ai-advisor/source/ai/offline_evaluator.d"),
+    Wave15Move("source/ai/onnx_backend.d", "packages/ai-advisor/source/ai/onnx_backend.d"),
+    Wave15Move("source/ai/ranker_schema.d", "packages/ai-advisor/source/ai/ranker_schema.d"),
+    Wave15Move("source/ai/state.d", "packages/ai-advisor/source/ai/state.d"),
+    Wave15Move("source/ai/support_loop_candidates.d", "packages/ai-advisor/source/ai/support_loop_candidates.d"),
+    Wave15Move("source/ai/synthetic_dataset.d", "packages/ai-advisor/source/ai/synthetic_dataset.d"),
+    Wave15Move("source/ai/training_dataset.d", "packages/ai-advisor/source/ai/training_dataset.d"),
+    Wave15Move("source/ai3d/event_queue.d", "packages/ai3d-runtime/source/ai3d/event_queue.d"),
+    Wave15Move("source/ai3d/job_controller.d", "packages/ai3d-runtime/source/ai3d/job_controller.d"),
+    Wave15Move("source/ai3d/job_events.d", "packages/ai3d-runtime/source/ai3d/job_events.d"),
+    Wave15Move("source/ai3d/scene_validator.d", "packages/ai3d-runtime/source/ai3d/scene_validator.d"),
+    Wave15Move("source/ai3d/stage_artifact.d", "packages/ai3d-runtime/source/ai3d/stage_artifact.d"),
+    Wave15Move("source/ai3d/worker_manager.d", "packages/ai3d-runtime/source/ai3d/worker_manager.d"),
+    Wave15Move("source/commands/file/quit.d", "packages/document-actions/source/commands/file/quit.d"),
+    Wave15Move("source/commands/image/commands.d", "packages/document-actions/source/commands/image/commands.d"),
+    Wave15Move("source/commands/image_plane/commands.d", "packages/document-actions/source/commands/image_plane/commands.d"),
+    Wave15Move("source/commands/layer/commands.d", "packages/document-actions/source/commands/layer/commands.d"),
+    Wave15Move("source/commands/scene/load_mesh.d", "packages/document-actions/source/commands/scene/load_mesh.d"),
+    Wave15Move("source/commands/scene/reset.d", "packages/document-actions/source/commands/scene/reset.d"),
+    Wave15Move("source/http_server.d", "packages/http-runtime/source/http_server.d"),
+    Wave15Move("source/http_transport.d", "packages/http-runtime/source/http_transport.d"),
+    Wave15Move("source/io/browser_pick_resume.d", "packages/platform-file/source/io/browser_pick_resume.d"),
+    Wave15Move("source/io/file_dialog.d", "packages/platform-file/source/io/file_dialog.d"),
+    Wave15Move("source/io/file_dialog_browser.d", "packages/platform-file/source/io/file_dialog_browser.d"),
+    Wave15Move("source/playback_controller.d", "packages/http-runtime/source/playback_controller.d"),
+    Wave15Move("source/remesh/region_stitch.d", "packages/remesh-runtime/source/remesh/region_stitch.d"),
+    Wave15Move("source/remesh/remesh_job.d", "packages/remesh-runtime/source/remesh/remesh_job.d"),
+    Wave15Move("source/ui/discard_guard.d", "packages/platform-file/source/ui/discard_guard.d"),
+    Wave15Move("source/commands/falloff.d", "packages/interactive-tools/source/commands/falloff.d"),
+    Wave15Move("tests/unit/ai/analysis_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/analysis_test.d"),
+    Wave15Move("tests/unit/ai/element_candidates_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/element_candidates_test.d"),
+    Wave15Move("tests/unit/ai/exploration_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_test.d"),
+    Wave15Move("tests/unit/ai/interaction_log_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/interaction_log_test.d"),
+    Wave15Move("tests/unit/ai/interaction_log_writer_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/interaction_log_writer_test.d"),
+    Wave15Move("tests/unit/ai/mode_candidates_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/mode_candidates_test.d"),
+    Wave15Move("tests/unit/ai/model_adapter_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/model_adapter_test.d"),
+    Wave15Move("tests/unit/ai/ranker_schema_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/ranker_schema_test.d"),
+    Wave15Move("tests/unit/ai/support_loop_candidates_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/support_loop_candidates_test.d"),
+    Wave15Move("tests/unit/ai/training_dataset_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/training_dataset_test.d"),
+    Wave15Move("tests/unit/ai3d/event_queue_test.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_test.d"),
+    Wave15Move("tests/unit/ai3d/job_controller_test.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/job_controller_test.d"),
+    Wave15Move("tests/unit/ai3d/scene_validator_test.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/scene_validator_test.d"),
+    Wave15Move("tests/unit/ai3d/stage_artifact_test.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/stage_artifact_test.d"),
+    Wave15Move("tests/unit/ai3d/worker_manager_test.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_test.d"),
+    Wave15Move("tests/unit/remesh/remesh_job_test.d", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_test.d"),
+    Wave15Move("tests/unit/commands/image/commands_test.d", "packages/document-actions/tests/source/tests/unit/commands/image/commands_test.d"),
+    Wave15Move("tests/unit/commands/layer/add_injection_range_test.d", "packages/document-actions/tests/source/tests/unit/commands/layer/add_injection_range_test.d"),
+
  ];
 private struct Wave15Fragment {
     string id, origin, destination, prefix;
@@ -2069,6 +2126,39 @@ private immutable Wave15Fragment[] wave15Fragments = [
     Wave15Fragment("overlay_space:helper9", "source/overlay_space.d", "packages/interactive-tools/tests/source/overlay_space_source_cells.d", "version (unittest) private ModelSpace tiltedStand() {\n    // Translation + rotation about Z + a DIFFERENT scale on all three axes,\n    // built by hand so the test does not depend on document.", 1117, "9fd022d82e1239ceaf71737372375010ddd0a2161d1b69bac1ea5bbf8c17b8de"),
     Wave15Fragment("tools.create.create_common:helper10", "source/tools/create/create_common.d", "packages/interactive-tools/tests/source/tools/create/create_common_source_cells.d", "// ---------------------------------------------------------------------------\n// workplaneCursorPlaneHit — the ortho arm, and the equality that makes it the\n// ported law rather than a seco", 1288, "1977aa3f34bda186f7286a99dd33c3999a0e84350aa5d6c9e43defc4b2fa24dc"),
     Wave15Fragment("tools.edit.bridge_tool:helper11", "source/tools/edit/bridge_tool.d", "packages/interactive-tools/tests/source/tools/edit/bridge_tool_source_cells.d", "// ---------------------------------------------------------------------------\n// Module unittests — dubtest-lane parity + regression gate (task 0357).\n// CPU-only (plain Mesh, no GpuMesh/GL", 1340, "3ad0b39f64447da293ed70307ffef371eaed312f3c0f5afd85a39484c72292c2"),
+    // Task 20262890: approved original logical inputs; independent frozen rows.
+    Wave15Fragment("ai.exploration:UT1", "source/ai/exploration.d", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d", "unittest { // state machine: retry-different → Emit with re-grabbed label\n    auto ctrl = new AiExplorationController(1.0f, 1u);\n\n    // Build a record with 2 candidates; grabbed i", 1182, "a36bd221f2611551bcb2ff80c95bb424d44b22c8133f144172671685fb3f21bd"),
+    Wave15Fragment("ai.exploration:UT2", "source/ai/exploration.d", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d", "unittest { // state machine: same-handle retry → discard\n    auto ctrl = new AiExplorationController(1.0f, 2u);\n\n    auto rec  = _makeTestRecord([\"handle:0\", \"handle:10\"], 1);\n    ", 651, "66b92114ba80807bb838b6d67387e8abe21cab78c92f58d9414726c9ccbd7144"),
+    Wave15Fragment("ai.exploration:UT3", "source/ai/exploration.d", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d", "unittest { // state machine: camera-move → discard\n    auto ctrl = new AiExplorationController(1.0f, 3u);\n\n    auto rec  = _makeTestRecord([\"handle:0\", \"handle:10\"], 1);\n    string", 631, "da2c7b9c243170fe3931fa13b9fc7482dfb6e820e962805d6ef64ed79e20a283"),
+    Wave15Fragment("ai.exploration:UT4", "source/ai/exploration.d", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d", "unittest { // state machine: abandon (no regrab, discard explicitly)\n    auto ctrl = new AiExplorationController(1.0f, 4u);\n\n    auto rec  = _makeTestRecord([\"handle:0\", \"handle:10", 442, "a13d4f3b46463b69c6785d5e24f9dbb210c2651219148012c6021982287d7336"),
+    Wave15Fragment("ai.exploration:UT5", "source/ai/exploration.d", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d", "unittest { // state machine: camera move BEFORE undo → discard\n    auto ctrl = new AiExplorationController(1.0f, 5u);\n\n    auto rec  = _makeTestRecord([\"handle:0\", \"handle:10\"], 1)", 543, "291c3a923c4f98dbf36c253a460c438d030554532dcc96f89f716c3aff6c1b03"),
+    Wave15Fragment("ai.exploration:UT6", "source/ai/exploration.d", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d", "unittest { // Emit record passes exportAiTrainingDatasetJsonl with labeled==1\n    import ai.training_dataset : exportAiTrainingDatasetJsonl;\n\n    auto ctrl = new AiExplorationContr", 1206, "f775369107cf5b7c2e7449e6086fa5580576ed913a3ef5965e85aff32da30f95"),
+    Wave15Fragment("ai3d.event_queue:UT1", "source/ai3d/event_queue.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_source_public_test.d", "unittest {\n    // Coalescing: two status events for the same {jobId,generation} collapse\n    // to the latest one.\n    auto q = new Ai3dEventQueue();\n    q.push(statusEv(\"job1\", 1,", 456, "ec4254bb1319ae519caa06e8924f1109d6e1703a9cfdce38dcb785d4ecdc1080"),
+    Wave15Fragment("ai3d.event_queue:UT2", "source/ai3d/event_queue.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_source_public_test.d", "unittest {\n    // Distinct jobs/generations do not coalesce with each other.\n    auto q = new Ai3dEventQueue();\n    q.push(statusEv(\"jobA\", 1, 0.1));\n    q.push(statusEv(\"jobB\", 1,", 369, "fed6def8da8fa3d9d147c079dc0919a36c6aa794b9b2babacc79808c6695b1c4"),
+    Wave15Fragment("ai3d.event_queue:UT3", "source/ai3d/event_queue.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_source_public_test.d", "unittest {\n    // Retention: a terminal/error event is never coalesced away by a status\n    // event that shares its jobId but NOT its generation (a late update from\n    // a stale", 808, "b488e0ef2a461cebf40a645269a05294c13a4b6be8cda6565a6895b0ff3725e0"),
+    Wave15Fragment("ai3d.event_queue:UT4", "source/ai3d/event_queue.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_source_public_test.d", "unittest {\n    // LOAD-BEARING, genuine two-thread proof: drain() must invoke the\n    // delegate LOCK-FREE (copy the pending events under the mutex, release\n    // it, THEN invoke", 2960, "a57363bd2044d2919fcd02b9bba3c4554441442380cb6e26f29e10d353dd2bb2"),
+    Wave15Fragment("ai3d.worker_manager:UT1", "source/ai3d/worker_manager.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d", "unittest {\n    auto dir = makeScratchDir(\"roundtrip\");\n    scope(exit) cleanScratchDir(dir);\n    const path = buildPath(dir, \"ai3d.json\");\n\n    Ai3dInstallConfig c;\n    c.installed", 802, "74b56ecd5eefe933bba16d5eaf631b4d321eb57eb9f7f6c631c071acca36cf7e"),
+    Wave15Fragment("ai3d.worker_manager:UT2", "source/ai3d/worker_manager.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d", "unittest {\n    auto dir = makeScratchDir(\"missing\");\n    scope(exit) cleanScratchDir(dir);\n    auto c = loadAi3dConfig(buildPath(dir, \"does_not_exist.json\"));\n    assert(c.installe", 234, "a1cb46975a9bf0ca8e7e09bae09924f0cfcf8c62fb8be9ca7a7b51c5992322e0"),
+    Wave15Fragment("ai3d.worker_manager:UT3", "source/ai3d/worker_manager.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d", "unittest {\n    auto dir = makeScratchDir(\"malformed\");\n    scope(exit) cleanScratchDir(dir);\n    const path = buildPath(dir, \"ai3d.json\");\n    write(path, \"{ not json ]]\");\n    aut", 243, "b0a363f246f6785bc9aeaa537090b05eb9ff7dce5409645325d7c6b9e26bd73b"),
+    Wave15Fragment("ai3d.worker_manager:UT4", "source/ai3d/worker_manager.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d", "unittest {\n    auto dir = makeScratchDir(\"badport\");\n    scope(exit) cleanScratchDir(dir);\n    const path = buildPath(dir, \"ai3d.json\");\n    write(path, `{\"version\":1,\"installed\":t", 357, "137b859a8f4a2f56e214e93c7a9042279bee7a493c403d618cae5944f8815366"),
+    Wave15Fragment("ai3d.worker_manager:UT5", "source/ai3d/worker_manager.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d", "unittest {\n    auto dir = makeScratchDir(\"nullcache\");\n    scope(exit) cleanScratchDir(dir);\n    const path = buildPath(dir, \"ai3d.json\");\n\n    Ai3dInstallConfig c;\n    c.installed", 466, "2fe91013416e8a53713307ee112531c474c410c296f5f041a647bfce71c0ec38"),
+    Wave15Fragment("ai3d.worker_manager:UT7", "source/ai3d/worker_manager.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d", "unittest {\n    auto dir = makeScratchDir(\"state\");\n    scope(exit) cleanScratchDir(dir);\n    const path = buildPath(dir, \"ai3d.json\");\n\n    auto mgr = new Ai3dWorkerManager(path);\n", 1052, "cca5866f75b47e7ed3b91f9ac309c97846b66234ba25394af25b55d96fc95e7c"),
+    Wave15Fragment("ai3d.worker_manager:UT8", "source/ai3d/worker_manager.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d", "unittest {\n    auto dir = makeScratchDir(\"modelcache\");\n    scope(exit) cleanScratchDir(dir);\n\n    assert(resolveModelCacheDir(dir) == dir, \"explicit override wins\");\n\n    assert(!", 860, "34c54cd84fe826b6098fc347c82181e718e7963641c37db4e7bbfc1b66ab087c"),
+    Wave15Fragment("ai3d.worker_manager:UT9", "source/ai3d/worker_manager.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d", "unittest {\n    // Editor worker lifecycle (task 0403): spawn -> health -> kill, driven\n    // through the worker's `fake` backend (no torch/GPU/model -- a\n    // deterministic cann", 3459, "0fd243852c17160fbfe7f5db015d0106d0a49dcd4e05cda685ba8cf0f86ee1a9"),
+    Wave15Fragment("commands.layer.commands:UT6", "source/commands/layer/commands.d", "packages/document-actions/tests/source/tests/unit/commands/layer/commands_source_public_test.d", "unittest {\n    import mesh : makeCube;\n\n    auto doc = Document.bootstrap(makeCube());\n    auto meshA = doc.layers[0];\n\n    auto added = new Layer;\n    added.name    = \"Empty\";\n   ", 1738, "afb8a2f3143d34761af37ccf3f04fe8edeb0eb538e7a1454331047e40c447e4c"),
+    Wave15Fragment("commands.layer.commands:UT9", "source/commands/layer/commands.d", "packages/document-actions/tests/source/tests/unit/commands/layer/commands_source_public_test.d", "unittest {\n    import mesh : makeCube;\n\n    auto doc = Document.bootstrap(makeCube());\n    auto meshA = doc.layers[0];\n    auto meshB = new Layer; meshB.name = \"MeshB\"; meshB.meshR", 1107, "f3433f245dd37a634c16ba1317d661c8776f6205d661756bc36e846e10a6334a"),
+    Wave15Fragment("remesh.remesh_job:UT5", "source/remesh/remesh_job.d", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d", "unittest {\n    // Full RemeshJob lifecycle (success / failure / cancel), driven through\n    // VIBE3D_AUTOREMESHER_BIN pointed at tiny throwaway shell scripts —\n    // never the re", 4313, "4cf9918647c3d99f2a35512713fe3569dfc64dca776e86d315708b3cbd2c4607"),
+    Wave15Fragment("remesh.remesh_job:UT6", "source/remesh/remesh_job.d", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d", "unittest {\n    // Region mode (task 0385): start()'s selection-mask path, driven end to\n    // end through a FAKE `autoremesher_cli` (never the real, heavy,\n    // environment-spec", 7172, "a15542e40e4500c81cb1cef0f4a1e26f49eb5cfcacf8490cf6acacfd5a3c08ab"),
+    Wave15Fragment("remesh.remesh_job:UT7", "source/remesh/remesh_job.d", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d", "unittest {\n    // Region mode: a selection covering EVERY face is equivalent to no\n    // selection at all (nothing left to \"keep\") -- must take the ORIGINAL\n    // whole-mesh path", 2457, "4a0f40f511bde46ad51aa9fd368ffa98c37e6804d0af98d78c9f392b6f5941ea"),
+    Wave15Fragment("remesh.remesh_job:UT8", "source/remesh/remesh_job.d", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d", "unittest {\n    // Task 0386, case (a): a CONNECTED 4x4 block selection missing ONE\n    // interior face -- Mesh.fillSelectionHoles must fold the missed face\n    // back in so the r", 2522, "a543b5a86ab8e33203268819b42bab7485fddbf637124b4617dd4c243543e399"),
+    Wave15Fragment("remesh.remesh_job:UT9", "source/remesh/remesh_job.d", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d", "unittest {\n    // Task 0386, case (b): TWO DISJOINT selected blocks (a wide unselected\n    // gap between them, itself touching the mesh's own open boundary and\n    // far larger t", 2746, "c16a60c88fa13221068f35dada3648eb5fdc420f25fe6564e9cc5ab7d406cd6b"),
+    Wave15Fragment("remesh.remesh_job:UT10", "source/remesh/remesh_job.d", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d", "unittest {\n    // Task 0386, case (c): of TWO disjoint selected blocks, one gets a\n    // patch the stitch can never accept (positioned nowhere near its\n    // region boundary -- f", 3025, "67bf7ba03d1f46e287d8d8241e9d69e4c3f1b1232e47d320e31b05993e6277e5"),
+    Wave15Fragment("ai.exploration:helper1", "source/ai/exploration.d", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d", "version (unittest) {\n    import ai.interaction : AiInteractionContext;\n    import ai.interaction_log : makeAiInteractionLogRecord,\n        AiInteractionLogRecord;\n    import ai.int", 906, "8c77ac9480f8fc706040f053a85faf7324309fdb100c8c88a58b2fb53db1f835"),
+    Wave15Fragment("ai3d.event_queue:helper1", "source/ai3d/event_queue.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_source_public_test.d", "version (unittest) {\n    private Ai3dEvent statusEv(string jobId, long gen, double progress) {\n        Ai3dEvent e;\n        e.kind = Ai3dEventKind.status;\n        e.jobId = jobId;\n", 264, "ad6860eedc492b7f73182f94402b4eaa06941dbaf53489d177e06553082f283f"),
+    Wave15Fragment("ai3d.worker_manager:helper1", "source/ai3d/worker_manager.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d", "version (unittest) {\n    import std.file : tempDir, rmdirRecurse;\n    import std.random : uniform;\n\n    private string makeScratchDir(string tag) {\n        auto d = buildPath(tempD", 437, "a229bc792f16b950ca940abf42be2243aa190dfec13f4dea71f747739134f0c0"),
+    Wave15Fragment("remesh.remesh_job:helper4", "source/remesh/remesh_job.d", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d", "version (unittest) {\n    private Mesh hfGridMesh(int nx, int ny, float cell) {\n        Mesh m = Mesh.init;\n        m.vertices = new Vec3[]((nx + 1) * (ny + 1));\n        foreach (j;", 5525, "cd5794b85e98025e74ae9c645614b71b08cb765c201db39bf0742f7c27ea72b1"),
+    Wave15Fragment("remesh.remesh_job:helper2", "source/remesh/remesh_job.d", "packages/remesh-runtime/source/remesh/remesh_job.d", "version (unittest) private void tryRemove(string path) nothrow {\n    import std.file : remove;\n    try remove(path); catch (Exception) {}\n}", 139, "e48b0b96b49dae92bf78f87b7a0d854823a0bc64dcf2d53df94122ef6bdb2e42"),
+
  ];
 private bool[string] wave15InputValidity;
 private bool[] wave15InputReads;
@@ -2302,6 +2392,63 @@ private immutable Wave15Move[] wave15MovePins = [
     Wave15Move("tests/unit/viewport_plane_turn_test.d", "packages/viewport-host/tests/source/tests/unit/viewport_plane_turn_test.d"),
     Wave15Move("tests/unit/viewport_test.d", "packages/viewport-host/tests/source/tests/unit/viewport_test.d"),
     Wave15Move("tests/unit/wrapper_shift_apply_inheritance_test.d", "packages/interactive-tools/tests/source/tests/unit/wrapper_shift_apply_inheritance_test.d"),
+    // Task 20262890: approved original logical inputs; independent frozen rows.
+    Wave15Move("source/ai/analysis.d", "packages/ai-advisor/source/ai/analysis.d"),
+    Wave15Move("source/ai/copilot_gate.d", "packages/ai-advisor/source/ai/copilot_gate.d"),
+    Wave15Move("source/ai/element_candidates.d", "packages/ai-advisor/source/ai/element_candidates.d"),
+    Wave15Move("source/ai/exploration.d", "packages/ai-advisor/source/ai/exploration.d"),
+    Wave15Move("source/ai/interaction_log.d", "packages/ai-advisor/source/ai/interaction_log.d"),
+    Wave15Move("source/ai/interaction_log_writer.d", "packages/ai-advisor/source/ai/interaction_log_writer.d"),
+    Wave15Move("source/ai/mode_candidates.d", "packages/ai-advisor/source/ai/mode_candidates.d"),
+    Wave15Move("source/ai/model_adapter.d", "packages/ai-advisor/source/ai/model_adapter.d"),
+    Wave15Move("source/ai/offline_evaluator.d", "packages/ai-advisor/source/ai/offline_evaluator.d"),
+    Wave15Move("source/ai/onnx_backend.d", "packages/ai-advisor/source/ai/onnx_backend.d"),
+    Wave15Move("source/ai/ranker_schema.d", "packages/ai-advisor/source/ai/ranker_schema.d"),
+    Wave15Move("source/ai/state.d", "packages/ai-advisor/source/ai/state.d"),
+    Wave15Move("source/ai/support_loop_candidates.d", "packages/ai-advisor/source/ai/support_loop_candidates.d"),
+    Wave15Move("source/ai/synthetic_dataset.d", "packages/ai-advisor/source/ai/synthetic_dataset.d"),
+    Wave15Move("source/ai/training_dataset.d", "packages/ai-advisor/source/ai/training_dataset.d"),
+    Wave15Move("source/ai3d/event_queue.d", "packages/ai3d-runtime/source/ai3d/event_queue.d"),
+    Wave15Move("source/ai3d/job_controller.d", "packages/ai3d-runtime/source/ai3d/job_controller.d"),
+    Wave15Move("source/ai3d/job_events.d", "packages/ai3d-runtime/source/ai3d/job_events.d"),
+    Wave15Move("source/ai3d/scene_validator.d", "packages/ai3d-runtime/source/ai3d/scene_validator.d"),
+    Wave15Move("source/ai3d/stage_artifact.d", "packages/ai3d-runtime/source/ai3d/stage_artifact.d"),
+    Wave15Move("source/ai3d/worker_manager.d", "packages/ai3d-runtime/source/ai3d/worker_manager.d"),
+    Wave15Move("source/commands/file/quit.d", "packages/document-actions/source/commands/file/quit.d"),
+    Wave15Move("source/commands/image/commands.d", "packages/document-actions/source/commands/image/commands.d"),
+    Wave15Move("source/commands/image_plane/commands.d", "packages/document-actions/source/commands/image_plane/commands.d"),
+    Wave15Move("source/commands/layer/commands.d", "packages/document-actions/source/commands/layer/commands.d"),
+    Wave15Move("source/commands/scene/load_mesh.d", "packages/document-actions/source/commands/scene/load_mesh.d"),
+    Wave15Move("source/commands/scene/reset.d", "packages/document-actions/source/commands/scene/reset.d"),
+    Wave15Move("source/http_server.d", "packages/http-runtime/source/http_server.d"),
+    Wave15Move("source/http_transport.d", "packages/http-runtime/source/http_transport.d"),
+    Wave15Move("source/io/browser_pick_resume.d", "packages/platform-file/source/io/browser_pick_resume.d"),
+    Wave15Move("source/io/file_dialog.d", "packages/platform-file/source/io/file_dialog.d"),
+    Wave15Move("source/io/file_dialog_browser.d", "packages/platform-file/source/io/file_dialog_browser.d"),
+    Wave15Move("source/playback_controller.d", "packages/http-runtime/source/playback_controller.d"),
+    Wave15Move("source/remesh/region_stitch.d", "packages/remesh-runtime/source/remesh/region_stitch.d"),
+    Wave15Move("source/remesh/remesh_job.d", "packages/remesh-runtime/source/remesh/remesh_job.d"),
+    Wave15Move("source/ui/discard_guard.d", "packages/platform-file/source/ui/discard_guard.d"),
+    Wave15Move("source/commands/falloff.d", "packages/interactive-tools/source/commands/falloff.d"),
+    Wave15Move("tests/unit/ai/analysis_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/analysis_test.d"),
+    Wave15Move("tests/unit/ai/element_candidates_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/element_candidates_test.d"),
+    Wave15Move("tests/unit/ai/exploration_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_test.d"),
+    Wave15Move("tests/unit/ai/interaction_log_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/interaction_log_test.d"),
+    Wave15Move("tests/unit/ai/interaction_log_writer_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/interaction_log_writer_test.d"),
+    Wave15Move("tests/unit/ai/mode_candidates_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/mode_candidates_test.d"),
+    Wave15Move("tests/unit/ai/model_adapter_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/model_adapter_test.d"),
+    Wave15Move("tests/unit/ai/ranker_schema_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/ranker_schema_test.d"),
+    Wave15Move("tests/unit/ai/support_loop_candidates_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/support_loop_candidates_test.d"),
+    Wave15Move("tests/unit/ai/training_dataset_test.d", "packages/ai-advisor/tests/source/tests/unit/ai/training_dataset_test.d"),
+    Wave15Move("tests/unit/ai3d/event_queue_test.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_test.d"),
+    Wave15Move("tests/unit/ai3d/job_controller_test.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/job_controller_test.d"),
+    Wave15Move("tests/unit/ai3d/scene_validator_test.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/scene_validator_test.d"),
+    Wave15Move("tests/unit/ai3d/stage_artifact_test.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/stage_artifact_test.d"),
+    Wave15Move("tests/unit/ai3d/worker_manager_test.d", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_test.d"),
+    Wave15Move("tests/unit/remesh/remesh_job_test.d", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_test.d"),
+    Wave15Move("tests/unit/commands/image/commands_test.d", "packages/document-actions/tests/source/tests/unit/commands/image/commands_test.d"),
+    Wave15Move("tests/unit/commands/layer/add_injection_range_test.d", "packages/document-actions/tests/source/tests/unit/commands/layer/add_injection_range_test.d"),
+
 ];
 private struct Wave15FragmentPin { string origin, id, destination; }
 private immutable Wave15FragmentPin[] wave15FragmentPins = [
@@ -2417,6 +2564,39 @@ private immutable Wave15FragmentPin[] wave15FragmentPins = [
     Wave15FragmentPin("source/overlay_space.d", "overlay_space:helper9", "packages/interactive-tools/tests/source/overlay_space_source_cells.d"),
     Wave15FragmentPin("source/tools/create/create_common.d", "tools.create.create_common:helper10", "packages/interactive-tools/tests/source/tools/create/create_common_source_cells.d"),
     Wave15FragmentPin("source/tools/edit/bridge_tool.d", "tools.edit.bridge_tool:helper11", "packages/interactive-tools/tests/source/tools/edit/bridge_tool_source_cells.d"),
+    // Task 20262890: approved original logical inputs; independent frozen rows.
+    Wave15FragmentPin("source/ai/exploration.d", "ai.exploration:UT1", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d"),
+    Wave15FragmentPin("source/ai/exploration.d", "ai.exploration:UT2", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d"),
+    Wave15FragmentPin("source/ai/exploration.d", "ai.exploration:UT3", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d"),
+    Wave15FragmentPin("source/ai/exploration.d", "ai.exploration:UT4", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d"),
+    Wave15FragmentPin("source/ai/exploration.d", "ai.exploration:UT5", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d"),
+    Wave15FragmentPin("source/ai/exploration.d", "ai.exploration:UT6", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/event_queue.d", "ai3d.event_queue:UT1", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/event_queue.d", "ai3d.event_queue:UT2", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/event_queue.d", "ai3d.event_queue:UT3", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/event_queue.d", "ai3d.event_queue:UT4", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/worker_manager.d", "ai3d.worker_manager:UT1", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/worker_manager.d", "ai3d.worker_manager:UT2", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/worker_manager.d", "ai3d.worker_manager:UT3", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/worker_manager.d", "ai3d.worker_manager:UT4", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/worker_manager.d", "ai3d.worker_manager:UT5", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/worker_manager.d", "ai3d.worker_manager:UT7", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/worker_manager.d", "ai3d.worker_manager:UT8", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/worker_manager.d", "ai3d.worker_manager:UT9", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d"),
+    Wave15FragmentPin("source/commands/layer/commands.d", "commands.layer.commands:UT6", "packages/document-actions/tests/source/tests/unit/commands/layer/commands_source_public_test.d"),
+    Wave15FragmentPin("source/commands/layer/commands.d", "commands.layer.commands:UT9", "packages/document-actions/tests/source/tests/unit/commands/layer/commands_source_public_test.d"),
+    Wave15FragmentPin("source/remesh/remesh_job.d", "remesh.remesh_job:UT5", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d"),
+    Wave15FragmentPin("source/remesh/remesh_job.d", "remesh.remesh_job:UT6", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d"),
+    Wave15FragmentPin("source/remesh/remesh_job.d", "remesh.remesh_job:UT7", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d"),
+    Wave15FragmentPin("source/remesh/remesh_job.d", "remesh.remesh_job:UT8", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d"),
+    Wave15FragmentPin("source/remesh/remesh_job.d", "remesh.remesh_job:UT9", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d"),
+    Wave15FragmentPin("source/remesh/remesh_job.d", "remesh.remesh_job:UT10", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d"),
+    Wave15FragmentPin("source/ai/exploration.d", "ai.exploration:helper1", "packages/ai-advisor/tests/source/tests/unit/ai/exploration_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/event_queue.d", "ai3d.event_queue:helper1", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_source_public_test.d"),
+    Wave15FragmentPin("source/ai3d/worker_manager.d", "ai3d.worker_manager:helper1", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d"),
+    Wave15FragmentPin("source/remesh/remesh_job.d", "remesh.remesh_job:helper4", "packages/remesh-runtime/tests/source/tests/unit/remesh/remesh_job_source_public_test.d"),
+    Wave15FragmentPin("source/remesh/remesh_job.d", "remesh.remesh_job:helper2", "packages/remesh-runtime/source/remesh/remesh_job.d"),
+
 ];
 
 private bool wave15MoveRowIntact(const Wave15Move pin) {
@@ -2528,6 +2708,12 @@ private string wave15FragmentText(string text, const Wave15Fragment fragment,
     import std.string : replace;
     if (fragment.id == "prepared_topology_pen_activation:UT1")
         text = text.replace("import toolpipe.state_paths : getStatePath;", "import popup_state : getStatePath;");
+    if (fragment.id == "ai3d.worker_manager:UT9")
+        text = text.replace("enum repoRoot  = dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))));",
+            "enum repoRoot  = dirName(dirName(dirName(__FILE_FULL_PATH__)));");
+    if (fragment.id == "remesh.remesh_job:helper2")
+        text = text.replace("version (unittest) public void tryRemove(string path)",
+            "version (unittest) private void tryRemove(string path)");
     string[] declarations;
     if (fragment.id == "drag:helper2")
         declarations = ["immutable Cam[] corpusCams =", "Viewport corpusViewport(",
@@ -2571,7 +2757,7 @@ private string wave15WithoutCarrierImports(string source) {
     const code = blankNonCode(source);
     foreach (site; matchAll(code, regex(`\bimport\s+([A-Za-z_][A-Za-z_0-9.]*)`))) {
         bool carrier;
-        foreach (name; ["drag_identity", "drag_source_cells", "drag_source_helpers", "handles.arbiter_source_cells", "handles.gizmo_metrics_source_cells", "handles.gl_util_source_cells", "handles.shapes_source_cells", "image_plane_source_cells", "overlay_space_source_cells", "prepared_bridge_activation_source_cells", "prepared_command_wrapper_activation_source_cells", "prepared_edge_bevel_activation_source_cells", "prepared_edge_extend_deactivate_source_cells", "prepared_edge_extend_tool_activation_source_cells", "prepared_edge_extrude_activation_source_cells", "prepared_edge_slice_activation_source_cells", "prepared_edge_slice_deactivate_source_cells", "prepared_inherited_noop_source_cells", "prepared_loop_slice_activation_source_cells", "prepared_loop_slice_deactivate_source_cells", "prepared_mirror_activation_source_cells", "prepared_move_update_source_cells", "prepared_pipe_activation_source_cells", "prepared_poly_bevel_activation_source_cells", "prepared_poly_extrude_activation_source_cells", "prepared_poly_inset_activation_source_cells", "prepared_private_state_source_cells", "prepared_radial_array_transition_source_cells", "prepared_radial_sweep_transition_source_cells", "prepared_record_context_source_cells", "prepared_rotate_update_source_cells", "prepared_scale_update_source_cells", "prepared_selection_profile_source_cells", "prepared_slice_activation_source_cells", "prepared_slice_deactivate_source_cells", "prepared_smooth_shift_activation_source_cells", "prepared_stroke_extrude_activation_source_cells", "prepared_tack_activation_source_cells", "prepared_topology_pen_activation_source_cells", "prepared_topology_pen_deactivate_source_cells", "prepared_topology_pen_update_source_cells", "prepared_transform_activation_source_cells", "prepared_transform_product_activation_source_cells", "prepared_vertex_bevel_activation_source_cells", "prepared_vertex_extrude_activation_source_cells", "prepared_vertex_merge_activation_source_cells", "prepared_xfrm_activation_session_source_cells", "registry_source_cells", "snap_render_source_cells", "snap_render_source_helpers", "tests.unit.commands.layer.xform_edit_source_public_test", "tool_disarm_source_cells", "tool_presets_source_cells", "tools.alignment.mirror_source_cells", "tools.create.arc_source_cells", "tools.create.box_source_cells", "tools.create.create_common_source_cells", "tools.create.sphere_source_cells", "tools.edit.bridge_tool_source_cells", "tools.edit.edge_extend_source_cells", "tools.transform.transform_source_cells"])
+        foreach (name; ["drag_identity", "drag_source_cells", "drag_source_helpers", "handles.arbiter_source_cells", "handles.gizmo_metrics_source_cells", "handles.gl_util_source_cells", "handles.shapes_source_cells", "image_plane_source_cells", "overlay_space_source_cells", "prepared_bridge_activation_source_cells", "prepared_command_wrapper_activation_source_cells", "prepared_edge_bevel_activation_source_cells", "prepared_edge_extend_deactivate_source_cells", "prepared_edge_extend_tool_activation_source_cells", "prepared_edge_extrude_activation_source_cells", "prepared_edge_slice_activation_source_cells", "prepared_edge_slice_deactivate_source_cells", "prepared_inherited_noop_source_cells", "prepared_loop_slice_activation_source_cells", "prepared_loop_slice_deactivate_source_cells", "prepared_mirror_activation_source_cells", "prepared_move_update_source_cells", "prepared_pipe_activation_source_cells", "prepared_poly_bevel_activation_source_cells", "prepared_poly_extrude_activation_source_cells", "prepared_poly_inset_activation_source_cells", "prepared_private_state_source_cells", "prepared_radial_array_transition_source_cells", "prepared_radial_sweep_transition_source_cells", "prepared_record_context_source_cells", "prepared_rotate_update_source_cells", "prepared_scale_update_source_cells", "prepared_selection_profile_source_cells", "prepared_slice_activation_source_cells", "prepared_slice_deactivate_source_cells", "prepared_smooth_shift_activation_source_cells", "prepared_stroke_extrude_activation_source_cells", "prepared_tack_activation_source_cells", "prepared_topology_pen_activation_source_cells", "prepared_topology_pen_deactivate_source_cells", "prepared_topology_pen_update_source_cells", "prepared_transform_activation_source_cells", "prepared_transform_product_activation_source_cells", "prepared_vertex_bevel_activation_source_cells", "prepared_vertex_extrude_activation_source_cells", "prepared_vertex_merge_activation_source_cells", "prepared_xfrm_activation_session_source_cells", "registry_source_cells", "snap_render_source_cells", "snap_render_source_helpers", "tests.unit.commands.layer.xform_edit_source_public_test", "tool_disarm_source_cells", "tool_presets_source_cells", "tools.alignment.mirror_source_cells", "tools.create.arc_source_cells", "tools.create.box_source_cells", "tools.create.create_common_source_cells", "tools.create.sphere_source_cells", "tools.edit.bridge_tool_source_cells", "tools.edit.edge_extend_source_cells", "tools.transform.transform_source_cells", "tests.unit.ai.exploration_source_public_test", "tests.unit.ai3d.event_queue_source_public_test", "tests.unit.ai3d.worker_manager_source_public_test", "tests.unit.commands.layer.commands_source_public_test", "tests.unit.remesh.remesh_job_source_public_test"])
             if (site[1] == name) { carrier = true; break; }
         if (!carrier) continue;
         const begin = site.pre.length;
@@ -2614,6 +2800,24 @@ public string wave15ReadText(string path) {
                 enum context = "version (unittest) {\n    import math     : lookAt, perspectiveMatrix, transformPoint;\n    import document : ItemXform, primaryModelSpaceResolver;\n    import std.format : format;\n}\n";
                 wave15RecordInput(normal ~ ":retained-import-context", text.count(context) == 1);
                 text = text.replace(context, "");
+            }
+            if (move.oldPath == "source/ai/state.d") {
+                import std.algorithm : count;
+                enum context = "import toolpipe.state_paths : setStatePath;";
+                wave15RecordInput(normal ~ ":state-import-context", text.count(context) == 1);
+                text = text.replace(context, "import popup_state : setStatePath;");
+            }
+            if (move.oldPath == "source/ai3d/worker_manager.d") {
+                import std.algorithm : count;
+                enum context = "        enum repoRoot = dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))));";
+                wave15RecordInput(normal ~ ":worker-root-context", text.count(context) == 1);
+                text = text.replace(context, "        enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));");
+            }
+            if (move.oldPath == "source/remesh/remesh_job.d") {
+                import std.algorithm : count;
+                enum context = "version (unittest) public void tryRemove(string path)";
+                wave15RecordInput(normal ~ ":retained-cleanup-context", text.count(context) == 1);
+                text = text.replace(context, "version (unittest) private void tryRemove(string path)");
             }
             if (move.oldPath == "source/coord_rounding.d") {
                 import std.string : replace;

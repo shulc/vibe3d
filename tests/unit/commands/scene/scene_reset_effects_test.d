@@ -3,7 +3,7 @@
 // scene_file_lifecycle_registration_test (task 6480).
 module tests.unit.commands.scene.scene_reset_effects_test;
 
-import tests.unit.census_symbols : wave15InputsIntact;
+import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact;
 
 
 
@@ -112,6 +112,7 @@ private string[] fullPipeResetSites(string code, string file, ref size_t loops) 
 }
 
 unittest { // 9465: ONE full pipe-stage reset per scene reset, and it is SceneReset's
+    auto wave15Inputs = wave15InputStart();
     import std.algorithm : endsWith;
     import std.file : SpanMode;
 import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
@@ -199,7 +200,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
     // allMut source --include=*.d | wc -l` = 10: nine uses plus the declaration
     // in toolpipe/pipeline.d).
     assert(loops >= 10, "9465 floor: allMut sites scanned " ~ loops.to!string);
-    assert(retiredIdent == 0,
+    assert((retiredIdent == 0) && wave15InputsIntact(wave15Inputs),
         "9465: resetAllPipeStages returned — the second stage reset per scene reset");
     assert(sites.length == 1 && sites[0].indexOf("source/commands/scene/reset.d:") == 0,
         "9465: a full pipe-stage reset loop outside SceneReset.apply: " ~ sites.to!string);

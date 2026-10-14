@@ -3,6 +3,8 @@ module tests.unit.ui.image_list_panel_roles_test;
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
+import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact;
+
 import std.algorithm : canFind, count;
 import std.file : SpanMode;
 import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
@@ -860,6 +862,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
 }
 
 unittest { // 6530: read-role fence and strip-token signal
+    auto wave15Inputs = wave15InputStart();
     import std.conv : to;
 
     const rawImages = readText(repoRoot.buildPath("source", "ui",
@@ -900,7 +903,7 @@ unittest { // 6530: read-role fence and strip-token signal
     foreach (path; expectedPaths) {
         size_t appearances;
         foreach (row; kStripSignalLedger) if (row.path == path) ++appearances;
-        assert(appearances == 1,
+        assert((appearances == 1) && wave15InputsIntact(wave15Inputs),
             "6530 strip signal ledger: the rows do not name the seven files "
             ~ "exactly once (" ~ path ~ " appears " ~ appearances.to!string
             ~ " times)");

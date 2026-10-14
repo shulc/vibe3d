@@ -1,6 +1,8 @@
 module tests.unit.thread_seam_census_http_test;
 
-import std.file : readText;
+import tests.unit.census_symbols : readText = wave15ReadText;
+import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact;
+
 import std.format : format;
 import std.path : buildPath, dirName;
 
@@ -42,6 +44,7 @@ private size_t coreThreadHits(string code) pure nothrow @safe
 
 unittest
 {
+    auto wave15Inputs = wave15InputStart();
     enum subjects = ["source/http_server.d"];
     enum transportPath = "source/http_transport.d";
     enum foreignCarrierPath = "packages/subpatch-preview/source/subpatch_worker.d";
@@ -65,7 +68,7 @@ unittest
     immutable foreignRawHits = coreThreadHits(blankNonCode(foreignRaw));
     immutable transportRawHits = coreThreadHits(blankNonCode(transportRaw));
     immutable routerRawHits = coreThreadHits(blankNonCode(routerRaw));
-    assert(foreignRawHits > 0 && transportRawHits > 0 && routerRawHits > 0,
+    assert((foreignRawHits > 0 && transportRawHits > 0 && routerRawHits > 0) && wave15InputsIntact(wave15Inputs),
         format("W15-E core.thread needle lost a legal carrier: worker=%d, "
              ~ "transport=%d, router-unittest=%d",
                foreignRawHits, transportRawHits, routerRawHits));
@@ -100,7 +103,7 @@ unittest
         const code = blankUnittestBodies(blankNonCode(raw));
         if (coreThreadHits(code) != 0) forbidden ~= "http_server";
     }
-    assert(forbidden.length == 0,
+    assert((forbidden.length == 0) && wave15InputsIntact(wave15Inputs),
         format("W15-E HTTP router still names core.thread outside its legal "
              ~ "in-module unittest: forbidden=%s subjects=%s. MUTATION that "
              ~ "must report [\"http_server\"] here: restore `import "

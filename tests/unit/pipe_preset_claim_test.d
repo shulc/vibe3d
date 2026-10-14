@@ -20,6 +20,8 @@ import toolpipe.stages.axis : AxisStage;
 import toolpipe.stages.constrain : ConstrainStage;
 import toolpipe.stages.falloff : FalloffStage;
 
+import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact;
+
 import std.algorithm : sort;
 import std.array : appender, array;
 import std.exception : enforce;
@@ -502,6 +504,7 @@ unittest { // Empty claimable-stage maps are refused without live mutation.
 }
 
 unittest { // W-1: user-choice bookkeeping is ordered around each writer.
+    auto wave15Inputs = wave15InputStart();
     const actrSource = commentsBlanked(readText(
         buildPath(repoRoot, "source", "commands", "actr.d")));
     const actr = bodyAt(bodyAt(actrSource, "class ActrPresetCommand"),
@@ -519,9 +522,9 @@ unittest { // W-1: user-choice bookkeeping is ordered around each writer.
     const falloffWrite = occurrences(falloff, `fo.setAttr("type"`);
     const falloffNotes = occurrences(falloff, "noteUserStageChoice(");
     const falloffLocks = occurrences(falloff, "fo.userLocked =");
-    assert(falloffWrite.length == 1 && falloffNotes.length == 1 &&
+    assert((falloffWrite.length == 1 && falloffNotes.length == 1 &&
            falloffLocks.length == 1 && falloffWrite[0] < falloffNotes[0] &&
-           falloffNotes[0] < falloffLocks[0],
+           falloffNotes[0] < falloffLocks[0]) && wave15InputsIntact(wave15Inputs),
         "W-1 FalloffPresetCommand choice bookkeeping moved outside the successful write/lock interval");
 
     const pipeSource = commentsBlanked(readText(
@@ -532,13 +535,14 @@ unittest { // W-1: user-choice bookkeeping is ordered around each writer.
         "matched.setAttr(attrName_, attrValue_)");
     const pipeNotes = occurrences(pipe, "noteUserStageChoice(");
     const pipeLocks = occurrences(pipe, "userLocked =");
-    assert(pipeWrite.length == 1 && pipeNotes.length == 2 &&
+    assert((pipeWrite.length == 1 && pipeNotes.length == 2 &&
            pipeLocks.length >= 1 && pipeWrite[0] < pipeNotes[0] &&
-           pipeNotes[$ - 1] < pipeLocks[0],
+           pipeNotes[$ - 1] < pipeLocks[0]) && wave15InputsIntact(wave15Inputs),
         "W-1 ToolPipeAttrCommand choice bookkeeping moved outside the successful write/lock interval");
 }
 
 unittest { // W-2a/W-2b: the mutable writer surface is an exact ledger.
+    auto wave15Inputs = wave15InputStart();
     const lockAndLiteralWriters = writerLedger(
         `userLocked\s*=(?!=)|\.setUserMode\(|setAttr\("(type|mode)"`);
     const expectedLockAndLiteralWriters =
@@ -554,7 +558,7 @@ unittest { // W-2a/W-2b: the mutable writer surface is an exact ledger.
         "toolpipe/stages/axis.d 7\n" ~
         "toolpipe/stages/constrain.d 3\n" ~
         "toolpipe/stages/falloff.d 5\n";
-    assert(lockAndLiteralWriters == expectedLockAndLiteralWriters,
+    assert((lockAndLiteralWriters == expectedLockAndLiteralWriters) && wave15InputsIntact(wave15Inputs),
         "W-2a a lock/mode/literal attribute writer changed; route a claimable "
         ~ "writer through noteUserStageChoice or record its disposition:\n"
         ~ lockAndLiteralWriters);
@@ -577,7 +581,7 @@ unittest { // W-2a/W-2b: the mutable writer surface is an exact ledger.
         "tool_presets.d 1\n" ~
         "toolpipe/stage.d 1\n" ~
         "toolpipe/stages/snap.d 3\n";
-    assert(variableAttributeWriters == expectedVariableAttributeWriters,
+    assert((variableAttributeWriters == expectedVariableAttributeWriters) && wave15InputsIntact(wave15Inputs),
         "W-2b a variable-key attribute writer changed; route a claimable "
         ~ "writer through noteUserStageChoice or record its disposition:\n"
         ~ variableAttributeWriters);

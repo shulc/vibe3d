@@ -2,6 +2,8 @@ module tests.unit.version_gate_census_ai3d_remesh_test;
 
 import tests.unit.census_symbols : isIdentChar;
 
+import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact, wave15ReadText;
+
 import std.algorithm : count, sort, startsWith;
 import std.array : join;
 import std.file : exists, readText, remove, tempDir, write;
@@ -147,7 +149,7 @@ private DependencyGraph readDependencyGraph(string path)
 
 private string declaredModule(string path)
 {
-    foreach (line; readText(path).splitLines)
+    foreach (line; wave15ReadText(path).splitLines)
     {
         const trimmed = line.strip;
         if (!trimmed.startsWith("module ")) continue;
@@ -395,10 +397,11 @@ SH";
         assert(moduleName in appClosure,
             "web quad-remesh module absent from production app closure: " ~ moduleName);
 
+    auto wave15Inputs = wave15InputStart();
     foreach (path; excluded)
     {
         const moduleName = declaredModule(buildPath(repoRoot, path));
-        assert(moduleName !in appClosure,
+        assert((moduleName !in appClosure) && wave15InputsIntact(wave15Inputs),
             format("W16-A excluded class-B module remains in the web app closure: %s (%s)",
                    moduleName, path));
     }

@@ -6,6 +6,8 @@
 // doc/web_file_io_plan_2026-09-23.md, section "S1a".
 module tests.unit.browser_pick_resume_test;
 
+import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact;
+
 import std.algorithm : canFind;
 import std.conv : to;
 import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
@@ -900,6 +902,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 // R19 — the MEMFS root literal lives in exactly one place in source/.
 // ---------------------------------------------------------------------------
 unittest {
+    auto wave15Inputs = wave15InputStart();
     import std.file : SpanMode;
 import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
     string[] where;
@@ -955,7 +958,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
 
     }
     assert(files > 500, "R19 floor: the scan reached source/, files " ~ files.to!string);
-    assert(where == ["source/io/browser_pick_resume.d"],
+    assert((where == ["source/io/browser_pick_resume.d"]) && wave15InputsIntact(wave15Inputs),
         "R19: the \"/work\" root literal must appear exactly once, in "
         ~ "source/io/browser_pick_resume.d; found " ~ where.to!string);
 }

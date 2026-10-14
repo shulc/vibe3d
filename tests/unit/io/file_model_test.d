@@ -5,6 +5,8 @@ import tests.unit.census_symbols : exists = wave15Exists;
 
 import io.file_model : browserFileModel, selectBrowserBackendForTest;
 static import io.file_dialog;
+import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact, wave15UseInputs;
+
 import std.algorithm : canFind, startsWith;
 import std.array : join;
 import std.file : SpanMode;
@@ -48,13 +50,15 @@ private string sourceBody(string code, string type, string name, string paramete
 }
 
 private void requireChooser(string code, string call) {
+    auto wave15Inputs = wave15InputStart();
+    wave15UseInputs(buildPath(root, "source/io/file_dialog.d"));
     const arguments = call == "Open" ? "fs,startDir" : "fs,defaultName,startDir";
     const parameters = call == "Open" ? "FilterSpec[]fs,stringstartDir=null" :
         "FilterSpec[]fs,stringdefaultName,stringstartDir=null";
     const body = sourceBody(code, "PickResult", "pick" ~ call ~ "Path", parameters);
-    assert(body.startsWith("{version(web){returnclassifyBrowser(browserPick" ~ call ~ "Path(" ~ arguments
+    assert((body.startsWith("{version(web){returnclassifyBrowser(browserPick" ~ call ~ "Path(" ~ arguments
         ~ "));}else{version(unittest){if(browserFileModel())returnclassifyBrowser(browserPick"
-        ~ call ~ "Path(" ~ arguments ~ "));}importcommand:g_testMode;"),
+        ~ call ~ "Path(" ~ arguments ~ "));}importcommand:g_testMode;")) && wave15InputsIntact(wave15Inputs),
         "file model chooser getter and branch order: " ~ call);
 }
 
@@ -74,6 +78,7 @@ unittest {
 }
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
     const lower = compactCode("packages/document-io/source/io/file_model.d");
     assert(lower.canFind("version(unittest){privateboolg_browserBackendForTest;"
         ~ "voidselectBrowserBackendForTest(boolenabled){g_browserBackendForTest=enabled;}"),
@@ -104,7 +109,7 @@ unittest {
         ++sourceFiles;
         if (file.name == buildPath(root, "packages/document-io/source/io/file_model.d")) continue;
         const code = blankNonCode(readText(file.name));
-        assert(countIdent(code, "g_browserBackendForTest") == 0,
+        assert((countIdent(code, "g_browserBackendForTest") == 0) && wave15InputsIntact(wave15Inputs),
             "file model switch has only its lower production owner: " ~ file.name);
         assert(!code.split.join("").canFind("voidselectBrowserBackendForTest("),
             "file model setter has only its lower production owner: " ~ file.name);
@@ -153,7 +158,7 @@ unittest {
     }
     foreach (relative; sourceCarriers) {
         const code = blankNonCode(readText(buildPath(root, relative)));
-        assert(countIdent(code, "g_browserBackendForTest") == 0,
+        assert((countIdent(code, "g_browserBackendForTest") == 0) && wave15InputsIntact(wave15Inputs),
             "file model switch has only its lower production owner: " ~ relative);
         assert(!code.split.join("").canFind("voidselectBrowserBackendForTest("),
             "file model setter has only its lower production owner: " ~ relative);

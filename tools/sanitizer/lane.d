@@ -76,6 +76,8 @@
  *   rss-sample <tag>        sample an instance's VmRSS to CSV (the memory
  *                           measurement the lane's budget rests on)
  */
+import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact, wave15ReadText;
+
 import std.stdio;
 import std.process;
 import std.file;
@@ -2626,7 +2628,7 @@ enum SweepRoute[] kSweepRoutes = [
 /// SET and as a COUNT — by count too, because a new row that merely REPLACES
 /// a removed one would keep the set sizes matching by accident.
 string[] parseDeclaredRoutes(string src = "source/http_server.d") {
-    auto text = readText(src);
+    auto text = wave15ReadText(src);
     const anchor = "private enum RouteSpec[] kRoutes = [";
     const a = text.indexOf(anchor);
     if (a < 0) fail("could not find kRoutes in " ~ src);
@@ -2644,13 +2646,15 @@ string[] parseDeclaredRoutes(string src = "source/http_server.d") {
 }
 
 void checkSweepCompleteness() {
+    auto wave15Inputs = wave15InputStart();
     auto declared = parseDeclaredRoutes();
     auto swept = kSweepRoutes.map!(r => r.method ~ " " ~ r.path).array;
     auto dset = declared.dup; dset.sort();
     auto sset = swept.dup;    sset.sort();
     auto missing = dset.filter!(k => !sset.canFind(k)).array;
     auto extra   = sset.filter!(k => !dset.canFind(k)).array;
-    if (declared.length != swept.length || missing.length || extra.length)
+    if (declared.length != swept.length || missing.length || extra.length
+            || !wave15InputsIntact(wave15Inputs))
         fail(format("the sweep does not cover kRoutes.\n"
                   ~ "  declared %d, swept %d\n"
                   ~ "  in kRoutes but not swept: %s\n"
