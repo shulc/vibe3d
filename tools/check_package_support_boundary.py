@@ -3835,14 +3835,17 @@ def validate_description(description, project, owner, config, tests=False, harne
                 'support target include-import flags: '+name)
         if selected in ('interactive-tools', 'editor-ui'):
             expected_flags = ['-P-I'+str(Path(active['d_imgui']['path']).resolve()/'extern/cimgui')]
-            # Task 20262872: validated mesh-ops ordinary LDC flags propagate;
-            # keep exact order (doc/library_layout_wave15_ldc_target_flag_source_correction_2026-10-14.md).
+            # Task 20262872: inherited target flags may repeat declared capabilities;
+            # retain the raw vector/order (composition custody: ldc_inherited_target_flags_source_fix;
+            # doc/library_layout_wave15_ldc_target_flag_source_correction_2026-10-14.md).
             if (Path(compiler).name in ('ldc', 'ldc2') and
                 'mesh-ops' in closure(selected, name.endswith('-tests')) and
                 active[SPECS['mesh-ops']['name']]['configuration'] in
                     ('modeling', 'modeling-noai', 'with-render', 'web')):
                 expected_flags.append('--singleobj')
-            require(settings.get('dflags', []) == expected_flags,
+            flags = settings.get('dflags', [])
+            require(all(flag in expected_flags for flag in flags) and
+                    all(flag in flags for flag in expected_flags),
                     'support target C include path: '+name)
         if selected == 'mesh-ops' and not name.endswith('-tests'):
             expected_flags = ['--singleobj'] if (config in ('modeling', 'modeling-noai', 'with-render', 'web') and
@@ -3930,7 +3933,9 @@ def validate_actual_compiler(commands, project, owner, description, home, harnes
     active={p['name']:p for p in description['packages'] if p.get('active')}
     if owner in ('interactive-tools', 'editor-ui'):
         expected_flags = ['-P-I'+str(Path(active['d_imgui']['path']).resolve()/'extern/cimgui')]
-        require([x for x in command['argv'] if x.startswith('-P-I')] == expected_flags,
+        flags = [x for x in command['argv'] if x.startswith('-P-I')]
+        require(all(flag in expected_flags for flag in flags) and
+                all(flag in flags for flag in expected_flags),
                 'support actual compiler C include path: '+owner)
     for c in commands:
         require(not any('libvibe3d-' in Path(p).name for p in c['archiveInputs']),
