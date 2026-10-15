@@ -4780,7 +4780,10 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
     own_description=json.loads(run(command,root,env,evidence,label+'-selected-target',renderer_kind='describe').stdout)
     own_target=next(t for t in own_description['targets'] if t['rootPackage']==target['rootPackage'])
     for field in ('sourceFiles','dflags','versions','debugVersions','importPaths','stringImportPaths'):
-        require(own_target['buildSettings'].get(field,[])==settings.get(field,[]),
+        actual=own_target['buildSettings'].get(field,[]);expected=settings.get(field,[])
+        if field in ('importPaths','stringImportPaths'):
+            actual=[(root/p).resolve() for p in actual];expected=[(root/p).resolve() for p in expected]
+        require(actual==expected,
                 'PREPARATION-REFUSED: renderer per-target configuration changed: '+label+':'+field)
     flags=shlex.split(run(command+['--data=options,dflags,versions,debug-versions,import-paths,string-import-paths'],root,env,evidence,label+'-compile-flags',renderer_kind='describe').stdout)
     links=shlex.split(run(command+['--data=lflags,libs'],root,env,evidence,label+'-link-flags',renderer_kind='describe').stdout)
@@ -4797,7 +4800,10 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
                          ('versions',('-version=','-d-version=','--d-version=')),
                          ('debugVersions',('-debug=','-d-debug=','--d-debug='))]:
         values=[a[len(prefix):] for a in flags for prefix in prefixes if a.startswith(prefix)]
-        require(values==list(settings.get(key,[])), 'support renderer formatted '+key+': '+label)
+        expected=list(settings.get(key,[]))
+        if key in ('importPaths','stringImportPaths'):
+            values=[(root/p).resolve() for p in values];expected=[(root/p).resolve() for p in expected]
+        require(values==expected, 'support renderer formatted '+key+': '+label)
     expected_links=list(settings.get('lflags',[]))+['-l'+lib for lib in settings.get('libs',[])]
     require([value[2:].removeprefix('=') for value in links if value.startswith('-L')]==expected_links,
             'support renderer formatted ordered native link flags: '+label)
