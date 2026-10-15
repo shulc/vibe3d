@@ -91,10 +91,14 @@ class BoundaryControls(unittest.TestCase):
                 try:
                     affected=[t['rootPackage'] for t in original['targets'] if t['buildSettings'].get('lflags')]
                     self.assertEqual(set(affected), {'vibe3d-cli','vibe3d-document-io','vibe3d-image-codec','d-stb-image'})
+                    canonical=copy.deepcopy(original)
+                    for target in canonical['targets']:
+                        if target['rootPackage'] in affected:
+                            target['buildSettings']['lflags']=['-L'+str((Path(image['path'])/'build').resolve())]
                     for name in affected:
                         with self.subTest(target=name):
                             for path in (alias/'build', (Path(image['path'])/'build').resolve()):
-                                changed=copy.deepcopy(original)
+                                changed=copy.deepcopy(canonical)
                                 next(t for t in changed['targets'] if t['rootPackage']==name)['buildSettings']['lflags']=['-L'+str(path)]
                                 boundary.validate_package_settings(changed, root)
                             for flags in ([], ['-L'], ['-I'+str(alias/'build')], ['-L/outside'],
