@@ -4812,7 +4812,7 @@ def renderer_expected_links(settings, root, env, evidence, label):
     expected=[]
     for value in settings.get('lflags',[]):
         if value and (not expected or expected[-1]!=value):expected.append(value)
-    expected+=native
+    expected+=[value for value in native if value]
     (evidence/(label+'-native-format-expectation.json')).write_text(json.dumps({
         'rawLflags':settings.get('lflags',[]),'rawLibs':settings.get('libs',[]),
         'cwd':str(root),'environment':env,

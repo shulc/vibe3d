@@ -103,6 +103,47 @@ class BoundaryControls(unittest.TestCase):
                             verify(changed)
                 verify(actual)
 
+    def test_renderer_native_formatter_empty_comma(self):
+        # Real pkg-config data exercises both DUB comma conversions independently.
+        with tempfile.TemporaryDirectory(prefix='boundary-native-empty-') as directory:
+            root=Path(directory);pc=root/'pkgconfig';pc.mkdir()
+            (root/'entry.d').write_text('module entry; void main() {}\n')
+            env=os.environ.copy();env.pop('DFLAGS',None)
+            env.update(PKG_CONFIG_LIBDIR=str(pc),PKG_CONFIG_PATH=str(pc))
+            source=ast.parse(Path(support.__file__).read_text())
+            function=next(n for n in source.body if isinstance(n,ast.FunctionDef)
+                          and n.name=='renderer_compile_target')
+            expected=next(n for n in function.body if isinstance(n,ast.Assign)
+                          and any(isinstance(t,ast.Name) and t.id=='expected_links' for t in n.targets))
+            guard=next(n for n in function.body if isinstance(n,ast.Expr)
+                       and isinstance(n.value,ast.Call) and n.value.args
+                       and any(isinstance(a,ast.Constant) and isinstance(a.value,str)
+                               and 'formatted ordered native link flags' in a.value
+                               for a in ast.walk(n)))
+            check=compile(ast.Module(body=[expected,guard],type_ignores=[]),support.__file__,'exec')
+            for label,operand,nonempty in (
+                    ('empty-wl','-Wl,--as-needed,,--as-needed,',
+                     ['-L--as-needed','-L--as-needed']),
+                    ('empty-L-l','-L-lboundary_first,,--as-needed,-lboundary_first,',
+                     ['-L-lboundary_first','-L--as-needed','-L-lboundary_first'])):
+                with self.subTest(comma_branch=label):
+                    (pc/'boundary_empty.pc').write_text('Name: boundary_empty\n'
+                        'Description: comma fixture\nVersion: 1\nLibs: '+operand+'\n')
+                    raw={'name':'boundary-native-empty','targetType':'executable','sourcePaths':[],
+                         'importPaths':[],'sourceFiles':['entry.d'],'libs':['boundary_empty']}
+                    (root/'dub.json').write_text(json.dumps(raw))
+                    command=['dub','describe','--root='+str(root),'--compiler=dmd',
+                             '--build=debug','--nodeps','--skip-registry=all','--quiet']
+                    described=subprocess.run(command,cwd=root,env=env,text=True,capture_output=True,check=True)
+                    settings=json.loads(described.stdout)['targets'][0]['buildSettings']
+                    formatted=subprocess.run(command+['--data=lflags,libs'],cwd=root,env=env,
+                                             text=True,capture_output=True,check=True)
+                    actual=shlex.split(formatted.stdout)
+                    self.assertEqual(actual,nonempty,'real DUB retains ordered nonempty comma operands')
+                    namespace=dict(support.__dict__,settings=settings,root=root,env=env,
+                                   evidence=root,label='fixture-'+label,links=actual)
+                    exec(check,namespace)
+
     def test_raw_descriptor_grants(self):
         for relative, description in self.descriptions.items():
             root = self.project / relative
