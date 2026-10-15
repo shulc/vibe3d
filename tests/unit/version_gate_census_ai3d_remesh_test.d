@@ -105,6 +105,8 @@ private DependencyGraph readDependencyGraph(string path)
                 || importerField.indexOf(" (packages/remesh-runtime/source/") >= 0
                 || importerField.indexOf(" (packages/platform-file/source/") >= 0
                 || importerField.indexOf(" (packages/document-actions/source/") >= 0
+                || importerField.indexOf(" (packages/forms-model/source/") >= 0
+                || importerField.indexOf(" (packages/editor-ui/source/") >= 0
                 || importerField.indexOf(" (packages/command-runtime/source/") >= 0
                 || importerField.indexOf(" (packages/application-core/source/") >= 0
                 || importerField.indexOf(" (packages/document-model/source/") >= 0

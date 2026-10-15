@@ -112,7 +112,6 @@ snap_render_source_helpers
 spatial
 stat_panel_widget_test
 stat_rows_invariant_test
-stat_rows_test
 symmetry
 tests.unit.accept_recorded_edit_test
 tests.unit.action_center_menu_composition_test
@@ -688,6 +687,7 @@ tests.unit.ui.panels_test
 tests.unit.ui.remesh_modal_state_test
 tests.unit.ui.retained_item_ops_test
 tests.unit.ui.stage_mode_popup_regression_test
+tests.unit.ui.stat_rows_test
 tests.unit.ui.tool_attr_bounds_panels_test
 tests.unit.ui.tool_properties_panel_roles_test
 tests.unit.ui.topology_pen_attr_availability_test

@@ -103,7 +103,9 @@ SH";
         buildPath(repoRoot, "packages/document-actions/source") ~ "/",
         buildPath(repoRoot, "packages/http-runtime/source") ~ "/",
         buildPath(repoRoot, "packages/platform-file/source") ~ "/",
-        buildPath(repoRoot, "packages/remesh-runtime/source") ~ "/"];
+        buildPath(repoRoot, "packages/remesh-runtime/source") ~ "/",
+        buildPath(repoRoot, "packages/forms-model/source") ~ "/",
+        buildPath(repoRoot, "packages/editor-ui/source") ~ "/"];
 
     foreach (line; readText(depsPath).splitLines)
     {

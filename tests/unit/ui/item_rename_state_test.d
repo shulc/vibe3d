@@ -228,7 +228,7 @@ private string collapseWhitespace(string text) {
 unittest { // production passes one owner and both panel writers consume it
     import std.algorithm : count;
     import std.algorithm.searching : canFind;
-    import std.file : readText;
+    import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath;
     import tests.unit.census_symbols : blankNonCode;
 

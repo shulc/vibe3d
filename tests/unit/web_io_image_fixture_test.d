@@ -11,7 +11,8 @@
 module tests.unit.web_io_image_fixture_test;
 
 import std.algorithm.searching : count, countUntil;
-import std.file : copy, exists, mkdirRecurse, read, readText, rmdirRecurse, tempDir;
+import std.file : copy, exists, mkdirRecurse, read, rmdirRecurse, tempDir;
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.path : baseName, buildPath, dirName;

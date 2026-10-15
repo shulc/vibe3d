@@ -7,7 +7,7 @@ module tests.unit.ui.retained_item_ops_test;
 // observation port, so "no dispatch" is witnessed, not inferred from history.
 
 import std.algorithm : canFind, count;
-import std.file : readText;
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.string : indexOf;
 

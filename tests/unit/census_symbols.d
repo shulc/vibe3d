@@ -2862,6 +2862,7 @@ private string wave15FragmentText(string text, const Wave15Fragment fragment,
 
 private struct Wave15Inverse { string origin; size_t offset; string physical, original; }
 private immutable Wave15Inverse[] wave15Inverses = [
+    Wave15Inverse("tests/unit/ui/stat_rows_test.d", 407, "module tests.unit.ui.stat_rows_test;\n\n", ""),
     Wave15Inverse("source/ui/availability.d", 11040, "", "unittest {\n    import command  : Command, kNoEditTargetReason;\n    import tool     : Tool;\n    import mesh     : Mesh;\n    import view     : View;\n    import editmode : EditMode;\n"),
     Wave15Inverse("source/ui/availability.d", 11041, "", "    static final class NeedsCmd : Command {\n        private Mesh  _m;\n        private View  _v = new View(0, 0, 1, 1);\n        this() { super(&_m, _v, EditMode.Vertices); }\n        override string name() const { return \"test.needs\"; }\n        override bool needsEditTarget() const { return true; }\n    }\n    static final class FreeCmd : Command {\n        private Mesh  _m;\n        private View  _v = new View(0, 0, 1, 1);\n        this() { super(&_m, _v, EditMode.Vertices); }\n        override string name() const { return \"test.free\"; }\n        override bool needsEditTarget() const { return false; }\n    }\n    static final class NeedsTool : Tool {\n        override bool needsEditTarget() const { return true; }\n    }\n\n    Registry reg;\n    reg.commandNeedsTarget[\"test.needs\"] = true;\n    reg.commandNeedsTarget[\"test.free\"]  = false;\n    reg.toolNeedsTarget[\"test.tool\"]     = true;\n\n    // WITH a target nothing is refused — the both-sides half. An\n    // implementation that greys everything always fails right here.\n    {\n        auto a = Action(ActionKind.command, \"test.needs\");\n        assert(actionRefusal(reg, a, true, \"\") == \"\");\n        auto t = Action(ActionKind.tool, \"test.tool\");\n        assert(actionRefusal(reg, t, true, \"\") == \"\");\n    }\n    // WITHOUT one, only what declared the requirement is refused.\n    {\n        auto need = Action(ActionKind.command, \"test.needs\");\n        assert(actionRefusal(reg, need, false, \"\") == kNoEditTargetReason);\n        auto free = Action(ActionKind.command, \"test.free\");\n        assert(actionRefusal(reg, free, false, \"\") == \"\");\n        auto unknown = Action(ActionKind.command, \"test.never.registered\");\n        assert(actionRefusal(reg, unknown, false, \"\") == \"\");\n    }\n    // The armed tool's own button stays live: pressing it DROPS the tool, and\n    // dropping never needed a target.\n    {\n        auto t = Action(ActionKind.tool, \"test.tool\");\n        assert(actionRefusal(reg, t, false, \"\")          == kNoEditTargetReason);\n        assert(actionRefusal(reg, t, false, \"test.tool\") == \"\");\n        assert(actionRefusal(reg, t, false, \"other\")     == kNoEditTargetReason);\n    }\n    // A script is refused by any one of its lines. This is the ctrl-variant\n    // path (\"Unit Box\" et al. in config/buttons.yaml) — a `kind: script`\n    // button whose one line dispatches a command id — and it has no HTTP\n    // counterpart, because the frame record only carries the variant the\n    // unmodified button shows.\n    {\n        Action s;\n        s.kind = ActionKind.script;\n        s.scriptLines = [\"test.free a:1\", \"test.needs b:2\"];\n        assert(actionRefusal(reg, s, false, \"\") == kNoEditTargetReason,\n            \"a script whose SECOND line would refuse was reported available. \"\n            ~ \"A script is dispatched line by line with no rollback, so a run \"\n            ~ \"that stops partway is not 'mostly available'. Got: '\"\n            ~ actionRefusal(reg, s, false, \"\") ~ \"'\");\n        s.scriptLines = [\"test.free a:1\"];\n        assert(actionRefusal(reg, s, false, \"\") == \"\",\n            \"a script none of whose lines needs a target was refused\");\n    }\n    // A popup always opens.\n    {\n        Action p;\n        p.kind = ActionKind.popup;\n        assert(actionRefusal(reg, p, false, \"\") == \"\");\n    }\n    // The defaults the two base classes declare, off real instances: a\n    // non-Operator command needs nothing, every tool needs a target.\n    assert(!(new FreeCmd()).needsEditTarget());\n    assert((new NeedsCmd()).needsEditTarget());\n    assert((new NeedsTool()).needsEditTarget());\n    assert((new class Tool {}).needsEditTarget(),\n        \"Tool.needsEditTarget() must default to true — a tool binds Mesh* when \"\n        ~ \"it arms\");\n}\n"),
     Wave15Inverse("source/ui/channels_panel.d", 75, "", "import application_command_binding : ApplicationCommandBinding;\n"),
@@ -2982,7 +2983,7 @@ private immutable Wave15WholePin[] wave15WholePins = [
     Wave15WholePin("source/ui/viewport_props_role.d", 1833, "799c9a5e0514f465c3060e5ba453615f9446beeff25f2b7ecea7ae16f8f94853", 1833, "799c9a5e0514f465c3060e5ba453615f9446beeff25f2b7ecea7ae16f8f94853"),
     Wave15WholePin("tests/unit/ui/channel_rows_test.d", 18917, "e1509698233e3381522a28067478f4556622944e1dc70152fafc462fd016cfd7", 18917, "e1509698233e3381522a28067478f4556622944e1dc70152fafc462fd016cfd7"),
     Wave15WholePin("tests/unit/ui/command_notice_test.d", 3118, "fb1c7413c076e2eec1f654bde45799c81dc00a2a4d455ad4f52a78569a3ddc8b", 3118, "fb1c7413c076e2eec1f654bde45799c81dc00a2a4d455ad4f52a78569a3ddc8b"),
-    Wave15WholePin("tests/unit/ui/stat_rows_test.d", 42555, "25e0025e79f39974afceb111205f5710a32a7d82cfa95916e8249e68302997ee", 42555, "25e0025e79f39974afceb111205f5710a32a7d82cfa95916e8249e68302997ee"),
+    Wave15WholePin("tests/unit/ui/stat_rows_test.d", 42593, "5892f4f35c889711b7a4599bdda174acf4e0f85a7f061382137b52772c806ccf", 42555, "25e0025e79f39974afceb111205f5710a32a7d82cfa95916e8249e68302997ee"),
     Wave15WholePin("source/forms.d", 64802, "f1072600396c4ab44b47656046a96f64592271456e8cdfe43c340c3c4cdab985", 78908, "75fece8e7fa8512268c02196c3c43b3b3b38f0e487f10895fccdc092a3ffbb90"),
     Wave15WholePin("source/app.d", 473488, "e77cffb3d2c0060af0de5fd24fd5859d7a691dc3a22c4af0b89276263e54f103", 472668, "bd6a2c936d2b23ac4b028a108e5a34d99fc57f2b1e410c5ff404491ef7e3a7c0"),
     Wave15WholePin("source/editor_app.d", 52269, "b95eea377eb75fe785385a28a47b1049d4e83f85233124a0ba7aeec2256d1de1", 48220, "59febb4cbc81bfbaf20d8065e9d28618c411c10f475a10a8857998a7f5ebe63c"),
@@ -3064,6 +3065,21 @@ private string wave15WithoutCarrierImports(string source) {
 public string wave15ReadText(string path) {
     import std.file : exists, readText;
     const normal = wave15Normalize(wave15LogicalPath(path));
+    // ImportC is an exact whole-file native input, outside the D move roster.
+    string nativeRoot;
+    if (wave15Match(normal, "source/imgui_flag_abi.c", nativeRoot)) {
+        import std.digest.sha : sha256Of;
+        import std.digest : toHexString;
+        import std.string : toLower;
+        const destination = buildPath(nativeRoot, "packages/editor-ui/source/imgui_flag_abi.c");
+        const oldPresent = exists(normal), newPresent = exists(destination);
+        const text = readText(oldPresent ? normal : destination);
+        const valid = text.length == 691 && sha256Of(text).toHexString.toLower ==
+            "ad9728c0a90de1fb0e7837441af84b479d30520d97f180c4de008a96e4811819";
+        wave15RecordInput(normal ~ ":native-whole", valid);
+        wave15RecordInput(normal ~ ":native-owner", oldPresent != newPresent);
+        return valid ? text : "";
+    }
     foreach (pin; wave15MovePins) {
         string root;
         if (wave15Match(normal, pin.oldPath, root)) {

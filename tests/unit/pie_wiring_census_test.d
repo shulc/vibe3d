@@ -1,6 +1,6 @@
 module tests.unit.pie_wiring_census_test;
 
-import std.file : readText;
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.string : count, indexOf;
 import std.algorithm.searching : canFind;
 import tests.unit.census_symbols : blankNonCode;
