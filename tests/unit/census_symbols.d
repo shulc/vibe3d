@@ -3263,7 +3263,8 @@ unittest { // approved stat header: whole physical input and whole original body
     const wrongBody = physical[0 .. $ - 1] ~ (physical[$ - 1] == ' ' ? "\n" : " ");
     foreach (invalid; [original, physical[0 .. 407] ~ header ~ physical[407 .. $], wrongBody]) {
         first = wave15InputStart();
-        assert(wave15RestoreSource(origin, invalid, root).length == 0 && !wave15InputsIntact(first),
+        assert(wave15RestoreSource(origin, invalid, root).length == 0
+                && !wave15InputReads[first] && !wave15InputsIntact(first),
             "stat header missing/duplicate/wrong-body input must be refused");
     }
     first = wave15InputStart();
@@ -3293,7 +3294,8 @@ unittest { // approved stat header: whole physical input and whole original body
     remove(logicalNative);
     write(physicalNative, native[0 .. $ - 1] ~ (native[$ - 1] == ' ' ? "\n" : " "));
     first = wave15InputStart();
-    assert(wave15ReadText(logicalNative).length == 0 && !wave15InputsIntact(first),
+    assert(wave15ReadText(logicalNative).length == 0
+            && !wave15InputReads[first] && !wave15InputsIntact(first),
         "ImportC wrong whole-file bytes must be refused");
     write(physicalNative, native);
     first = wave15InputStart();

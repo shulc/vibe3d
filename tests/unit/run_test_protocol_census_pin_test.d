@@ -122,7 +122,8 @@ stat_inverse_control(stat_physical, stat_original, True)
 for invalid in (stat_original, stat_physical[:407] + stat_header + stat_physical[407:],
                 stat_physical[:-1] + (b" " if stat_physical[-1:] != b" " else b"\n")):
     first = census_contracts.source_input_start()
-    if census_contracts._restore_source_text(stat_origin, invalid.decode(), root) or census_contracts.source_inputs_intact(first):
+    if (census_contracts._restore_source_text(stat_origin, invalid.decode(), root)
+            or census_contracts._source_validity[first] or census_contracts.source_inputs_intact(first)):
         raise SystemExit("prepared-protocol stat missing/duplicate/wrong-body input must be refused")
 stat_inverse_control(stat_physical, stat_original, True)
 editor_physical = (root / "source/editor_app.d").read_bytes()
