@@ -848,7 +848,7 @@ private void fetchBlobs(string root, const(TreeEntry[])[] revs,
                         ref Census[string] blobCensus,
                         ref LedgerRead[string] ledgerDrops)
 {
-    bool[string] wantLedger;
+    bool[string] wantLedger, wantSource;
     auto order = appender!(string[]);
     foreach (entries; revs)
         foreach (ref e; entries)
@@ -861,8 +861,8 @@ private void fetchBlobs(string root, const(TreeEntry[])[] revs,
             }
             else
             {
-                if (e.oid in blobCensus) continue;
-                blobCensus[e.oid] = Census.init;   // claim the slot, keep order unique
+                if (e.oid in blobCensus || e.oid in wantSource) continue;
+                wantSource[e.oid] = true;  // claim requests, not unavailable bodies
                 order.put(e.oid);
             }
         }
@@ -942,7 +942,53 @@ FileCensus[] scanRevision(string root, string rev)
     Census[string] blobCensus;
     LedgerRead[string] ledgerDrops;
     fetchBlobs(root, [entries], blobCensus, ledgerDrops);
-    return filesOf(entries, blobCensus);
+    bool intact;
+    auto files = revisionFiles(root, rev, entries, blobCensus, intact);
+    if (!intact) throw new Exception("historical logical-body admission refused: " ~ rev);
+    return files;
+}
+
+// Only this preparatory commit contains the three approved whole-file twins.
+// Retain every origin once; all other revisions and working inputs stay physical.
+private enum historicalCustodyRevision = "412e816d9e757417bc6ab07eb152ed8071ed12b3";
+private struct HistoricalBodyAlias { string origin, destination, oid; }
+private immutable HistoricalBodyAlias[] historicalBodyAliases = [
+    HistoricalBodyAlias("tests/unit/ui/channel_rows_test.d", "packages/editor-ui/tests/source/tests/unit/ui/channel_rows_test.d", "1ccb0a2621557c7ed1e10acfc15baf3f6ae35f77"),
+    HistoricalBodyAlias("tests/unit/ui/command_notice_test.d", "packages/editor-ui/tests/source/tests/unit/ui/command_notice_test.d", "9b1d09453dfeec7a3ea4882e7b8b32aebcd90a49"),
+    HistoricalBodyAlias("tests/unit/ui/stat_rows_test.d", "packages/editor-ui/tests/source/tests/unit/ui/stat_rows_test.d", "4f5e3afc42fb597fedd8ca3dfaf5d16dd030af6b"),
+];
+
+private FileCensus[] historicalFiles(string resolvedRevision, const(TreeEntry)[] entries,
+        const Census[string] blobCensus, out bool intact)
+{
+    intact = true;
+    if (resolvedRevision != historicalCustodyRevision) return filesOf(entries, blobCensus);
+    intact = historicalBodyAliases.length == 3;
+    foreach (row; historicalBodyAliases) {
+        size_t origins, destinations;
+        bool identities = true;
+        foreach (ref e; entries) {
+            if (e.path == row.origin) { ++origins; identities = identities && e.oid == row.oid; }
+            if (e.path == row.destination) { ++destinations; identities = identities && e.oid == row.oid; }
+        }
+        intact = intact && row.origin != row.destination && origins == 1 && destinations == 1
+            && identities && (row.oid in blobCensus) !is null;
+    }
+    if (!intact) return filesOf(entries, blobCensus);
+    TreeEntry[] admitted;
+    foreach (ref e; entries) {
+        bool twin;
+        foreach (row; historicalBodyAliases) if (e.path == row.destination) { twin = true; break; }
+        if (!twin) admitted ~= e;
+    }
+    return filesOf(admitted, blobCensus);
+}
+
+private FileCensus[] revisionFiles(string root, string rev, const(TreeEntry)[] entries,
+        const Census[string] blobCensus, out bool intact)
+{
+    const resolved = git(root, ["rev-parse", "--verify", rev ~ "^{commit}"]);
+    return historicalFiles(resolved.status == 0 ? resolved.text.strip : "", entries, blobCensus, intact);
 }
 
 /// Rebuild the per-file census of a revision from its entries and the cache.
@@ -1014,6 +1060,7 @@ struct Verdict
     Census        work, base;  /// live counts
     Census        workDrops, baseDrops;
     FileCensus[]  workFiles, baseFiles;
+    bool historicalInputsIntact = true;
 
     /// Slack in the invariant, per quantity. Negative means the gate fails.
     long blocksSlack()  const @safe pure nothrow @nogc
@@ -1026,7 +1073,7 @@ struct Verdict
     }
     bool ok() const @safe pure nothrow @nogc
     {
-        return !ran || (blocksSlack >= 0 && assertsSlack >= 0);
+        return !ran || (historicalInputsIntact && blocksSlack >= 0 && assertsSlack >= 0);
     }
 }
 
@@ -1061,7 +1108,9 @@ Verdict judge(string root)
     LedgerRead bestLedger;
     foreach (i; 0 .. revs.length)
     {
-        const live = total(filesOf(entries[i], blobCensus));
+        bool intact;
+        const live = total(revisionFiles(root, revs[i], entries[i], blobCensus, intact));
+        v.historicalInputsIntact = v.historicalInputsIntact && intact;
         const led  = dropsOf(entries[i], ledgerDrops);
         if (led.found) ++v.revsWithLedger;
         // One scalar picks the binding revision, so the failure message names a
@@ -1072,7 +1121,9 @@ Verdict judge(string root)
 
     v.baseRev    = revs[bestIx];
     v.revsWalked = revs.length;
-    v.baseFiles  = filesOf(entries[bestIx], blobCensus);
+    bool baseIntact;
+    v.baseFiles  = revisionFiles(root, revs[bestIx], entries[bestIx], blobCensus, baseIntact);
+    v.historicalInputsIntact = v.historicalInputsIntact && baseIntact;
     v.base           = bestLive;
     v.baseDrops      = bestLedger.drops;
     v.baseLedgerRows = bestLedger.rows;
@@ -1097,6 +1148,7 @@ string report(const ref Verdict v)
 {
     auto s = appender!string;
     s.put("TEST CENSUS DROPPED (task 0835)\n");
+    if (!v.historicalInputsIntact) s.put("  historical logical-body admission invalid; physical records retained\n");
     s.put(format("  high-water rev : %s   (of %d lane revision(s), %d with a ledger)\n",
                  v.baseRev, v.revsWalked, v.revsWithLedger));
     s.put(format("  ledger rows    : %d there -> %d now\n",
@@ -1696,6 +1748,126 @@ unittest
     threw = false;
     try parseLedger("drop 1 9\n", "t"); catch (Exception) threw = true;
     assert(threw, "a declaration without a task and a reason is not a declaration");
+}
+
+unittest { // the three exact preparatory whole-body aliases, never generic deduplication
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+    import std.algorithm : canFind;
+    const string[] origins = ["tests/unit/ui/channel_rows_test.d", "tests/unit/ui/command_notice_test.d", "tests/unit/ui/stat_rows_test.d"];
+    const string[] destinations = ["packages/editor-ui/tests/source/tests/unit/ui/channel_rows_test.d", "packages/editor-ui/tests/source/tests/unit/ui/command_notice_test.d", "packages/editor-ui/tests/source/tests/unit/ui/stat_rows_test.d"];
+    const string[] oids = ["1ccb0a2621557c7ed1e10acfc15baf3f6ae35f77", "9b1d09453dfeec7a3ea4882e7b8b32aebcd90a49", "4f5e3afc42fb597fedd8ca3dfaf5d16dd030af6b"];
+    const long[] blocks = [8, 2, 17], asserts = [45, 10, 123];
+    auto actual = revEntries(censusRepoRoot, "412e816d9e757417bc6ab07eb152ed8071ed12b3");
+    TreeEntry[] pairs;
+    foreach (e; actual) if (origins.canFind(e.path) || destinations.canFind(e.path)) pairs ~= e;
+    assert(pairs.length == 6, "historical fixed six whole-body entries");
+    Census[string] cache;
+    LedgerRead[string] ledgers;
+    fetchBlobs(censusRepoRoot, [pairs], cache, ledgers);
+    foreach (i; 0 .. 3) {
+        assert(oids[i] in cache, "historical actual whole-body cache: " ~ origins[i]);
+        assert(cache[oids[i]].blocks == blocks[i] && cache[oids[i]].asserts == asserts[i],
+            "historical independently fixed body contribution: " ~ origins[i]);
+    }
+    void checkView(const FileCensus[] files, bool once) {
+        foreach (i; 0 .. 3) {
+            size_t oldCount, newCount;
+            foreach (ref f; files) {
+                if (f.path == origins[i]) {
+                    ++oldCount;
+                    assert(f.census == cache[oids[i]], "historical complete original census fields");
+                }
+                if (f.path == destinations[i]) ++newCount;
+            }
+            assert(oldCount == 1 && newCount == (once ? 0 : 1),
+                "historical fixed once-only origin/destination: " ~ origins[i]);
+        }
+    }
+    bool intact;
+    const proper = historicalFiles(historicalCustodyRevision, pairs, cache, intact);
+    assert(intact, "historical whole-table positive");
+    checkView(proper, true);
+    assert(total(proper).blocks == 27 && total(proper).asserts == 178,
+        "historical three-body contribution only, not net loss slack");
+    foreach (i; 0 .. 3) foreach (surface; 0 .. 5) {
+        auto changed = pairs.dup;
+        auto available = cache.dup;
+        if (surface == 0 || surface == 3) {
+            const missing = surface == 0 ? origins[i] : destinations[i];
+            changed = changed.filter!(e => e.path != missing).array;
+        } else if (surface == 1) {
+            foreach (e; pairs) if (e.path == origins[i]) { changed ~= e; break; }
+        } else if (surface == 2) {
+            foreach (ref e; changed) if (e.path == destinations[i]) e.oid = "0000000000000000000000000000000000000001";
+        } else available.remove(oids[i]);
+        historicalFiles(historicalCustodyRevision, changed, available, intact);
+        Verdict refused;
+        refused.ran = true;
+        refused.work = Census(1, 1);
+        refused.historicalInputsIntact = intact;
+        assert(!intact && !refused.ok,
+            format("historical malformed whole-body row %s surface %s must reach final needle", origins[i], surface));
+        historicalFiles(historicalCustodyRevision, pairs, cache, intact);
+        assert(intact, "historical restored adjacent whole-table positive");
+    }
+    checkView(historicalFiles("0000000000000000000000000000000000000001", pairs, cache, intact), false);
+    assert(intact, "historical other full provenance remains physical");
+    auto third = pairs ~ TreeEntry(oids[0], "tests/unit/unexpected_historical_copy.d");
+    const withThird = historicalFiles(historicalCustodyRevision, third, cache, intact);
+    assert(intact && withThird.length == 4, "historical unexpected third copy is retained");
+    checkView(withThird, true);
+    size_t thirdCount;
+    foreach (ref f; withThird) if (f.path == "tests/unit/unexpected_historical_copy.d") {
+        ++thirdCount;
+        assert(f.census == cache[oids[0]], "historical third copy keeps its whole contribution");
+    }
+    assert(thirdCount == 1, "historical third copy population");
+
+    // Exercise both unchanged production callers over the actual immutable Git input.
+    checkView(scanRevision(censusRepoRoot, historicalCustodyRevision), true);
+    const sandbox = buildPath(tempDir(), format("vibe3d-historical-custody-%d", thisProcessID));
+    mkdirRecurse(sandbox);
+    scope(exit) rmdirRecurse(sandbox);
+    assert(git(sandbox, ["init", "-q"]).status == 0, "historical caller sandbox init");
+    assert(git(sandbox, ["fetch", "-q", "--no-tags", censusRepoRoot, historicalCustodyRevision]).status == 0,
+        "historical caller sandbox exact object fetch");
+    assert(git(sandbox, ["checkout", "-q", "-b", "probe", "FETCH_HEAD"]).status == 0,
+        "historical caller sandbox exact checkout");
+    const savedBase = environment.get("VIBE3D_CENSUS_BASE", "");
+    const savedPoint = environment.get(branchPointEnv, "");
+    if (savedBase.length) environment.remove("VIBE3D_CENSUS_BASE");
+    if (savedPoint.length) environment.remove(branchPointEnv);
+    scope(exit) {
+        if (savedBase.length) environment["VIBE3D_CENSUS_BASE"] = savedBase;
+        if (savedPoint.length) environment[branchPointEnv] = savedPoint;
+    }
+    const admitted = judge(sandbox);
+    assert(admitted.ran && admitted.historicalInputsIntact && admitted.baseRev == historicalCustodyRevision,
+        "historical judge uses actual resolved preparatory commit");
+    checkView(admitted.baseFiles, true);
+    assert(admitted.base == total(admitted.baseFiles), "historical judge total and once-only view share actual bodies");
+    void commit(string message) {
+        assert(git(sandbox, ["add", "-A"]).status == 0, "historical physical high-water add");
+        assert(git(sandbox, ["-c", "user.email=census@invalid", "-c", "user.name=census", "commit", "-q", "--allow-empty", "-m", message]).status == 0,
+            "historical physical high-water commit");
+    }
+    commit("different full commit with the same preparatory tree");
+    const physical = judge(sandbox);
+    assert(physical.baseRev != historicalCustodyRevision && physical.historicalInputsIntact,
+        "historical same-tree different commit is not admitted");
+    checkView(physical.baseFiles, false);
+    remove(buildPath(sandbox, destinations[0]));
+    const lost = judge(sandbox);
+    assert(!lost.ok && lost.blocksSlack == -8 && lost.assertsSlack == -45,
+        "historical nonadmitted twin removal remains a real loss");
+    write(buildPath(sandbox, destinations[0]), read(buildPath(sandbox, origins[0])));
+    const thirdPath = buildPath(sandbox, "tests/unit/unexpected_historical_copy.d");
+    write(thirdPath, read(buildPath(sandbox, origins[0])));
+    commit("third path has its own physical high-water");
+    remove(thirdPath);
+    const thirdLost = judge(sandbox);
+    assert(!thirdLost.ok && thirdLost.blocksSlack == -8 && thirdLost.assertsSlack == -45,
+        "historical unexpected third copy cannot buy a free later removal");
 }
 
 // ---------------------------------------------------------------------------
