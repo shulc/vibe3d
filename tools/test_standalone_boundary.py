@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Controls for the retained DUB grants and exact CORE runtime witness."""
+import ast
 import copy
+import os
+import shlex
 import json
 from pathlib import Path
 import shutil
@@ -42,6 +45,63 @@ class BoundaryControls(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.temporary.cleanup()
+
+    def test_renderer_native_formatter(self):
+        # Real DUB is the independent formatter; only recipe/pkg-config data
+        # belong to this fixture. Execute the production expectation and guard.
+        with tempfile.TemporaryDirectory(prefix='boundary-native-format-') as directory:
+            root=Path(directory);pc=root/'pkgconfig';pc.mkdir()
+            (root/'entry.d').write_text('module entry; void main() {}\n')
+            env=os.environ.copy();env.pop('DFLAGS',None)
+            env.update(PKG_CONFIG_LIBDIR=str(pc),PKG_CONFIG_PATH=str(pc))
+            for name in ('boundary_pkg_b','libboundary_prefix_d'):
+                (pc/(name+'.pc')).write_text('prefix='+str(root)+'\nlibdir=${prefix}/lib\n'
+                    'Name: '+name+'\nDescription: boundary fixture\nVersion: 1\n'
+                    'Libs: -L${libdir} -l'+name+' -lm\n')
+            raw={'name':'boundary-native-format','targetType':'executable','sourcePaths':[],
+                 'importPaths':[],'sourceFiles':['entry.d'],'lflags':['-rpath=first','-Lsearch','-Lsearch',
+                     '--start-group',str(root/'native.a'),'--end-group','-Lsearch','',
+                     '-L'+str(root/'lib')],
+                 'libs':['boundary_absent_a','boundary_pkg_b','boundary_absent_c','boundary_prefix_d']}
+            source=ast.parse(Path(support.__file__).read_text())
+            function=next(n for n in source.body if isinstance(n,ast.FunctionDef)
+                          and n.name=='renderer_compile_target')
+            expected=next(n for n in function.body if isinstance(n,ast.Assign)
+                          and any(isinstance(t,ast.Name) and t.id=='expected_links' for t in n.targets))
+            guard=next(n for n in function.body if isinstance(n,ast.Expr)
+                       and isinstance(n.value,ast.Call) and n.value.args
+                       and any(isinstance(a,ast.Constant) and isinstance(a.value,str)
+                               and 'formatted ordered native link flags' in a.value
+                               for a in ast.walk(n)))
+            check=compile(ast.Module(body=[expected,guard],type_ignores=[]),support.__file__,'exec')
+            for target_type in ('executable','staticLibrary'):
+                raw['targetType']=target_type;(root/'dub.json').write_text(json.dumps(raw))
+                command=['dub','describe','--root='+str(root),'--compiler=dmd',
+                         '--build=debug','--nodeps','--skip-registry=all','--quiet']
+                described=subprocess.run(command,cwd=root,env=env,text=True,capture_output=True,check=True)
+                settings=json.loads(described.stdout)['targets'][0]['buildSettings']
+                formatted=subprocess.run(command+['--data=lflags,libs'],cwd=root,env=env,
+                                         text=True,capture_output=True,check=True)
+                actual=shlex.split(formatted.stdout)
+                def verify(links):
+                    namespace=dict(support.__dict__,settings=settings,package={'targetType':target_type},
+                                   root=root,env=env,evidence=root,label='fixture',links=links)
+                    exec(check,namespace)
+                verify(actual)
+                self.assertEqual(actual.count('-L-Lsearch'),2,
+                                 'formatter must retain nonadjacent repeated native flags')
+                self.assertEqual(actual.count('-L-L'+str(root/'lib')),
+                                 2,
+                                 'formatter must retain duplicates across lflags/libs boundary')
+                changes=[actual[1:],actual+['-L-lunexpected'],actual+['-L-o=/tmp/unexpected'],
+                         [actual[1],actual[0]]+actual[2:]]
+                duplicate=list(actual);duplicate.remove('-L-Lsearch');changes.append(duplicate)
+                for changed in changes:
+                    with self.subTest(target_type=target_type,changed=changed):
+                        with self.assertRaisesRegex(support.BoundaryError,
+                                                    'formatted ordered native link flags: fixture'):
+                            verify(changed)
+                verify(actual)
 
     def test_raw_descriptor_grants(self):
         for relative, description in self.descriptions.items():

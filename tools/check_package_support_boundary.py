@@ -4769,6 +4769,57 @@ def renderer_describe(project,owner,config,compiler,env,evidence,tests=False,rec
     return description
 
 
+def renderer_expected_links(settings, root, env, evidence, label):
+    # Task20262930: match DUB1.41 resolveLibs/BuildSettings.addDFlags, retaining
+    # raw operands separately (doc/library_layout_wave17_plan_2026-10-14.md).
+    libraries=list(settings.get('libs',[]))
+    native=[];queries=[]
+    def query(arguments):
+        command=['pkg-config']+arguments
+        result=subprocess.run(command,cwd=root,env=env,text=True,capture_output=True)
+        queries.append({'argv':command,'exit':result.returncode,
+                        'stdout':result.stdout,'stderr':result.stderr})
+        return result
+    def partition(values, prefix):
+        # std.algorithm.partition's default dynamic-array Hoare partition.
+        values=list(values);lo=0;hi=len(values)-1
+        while lo<=hi:
+            while lo<=hi and query(['--exists',prefix+values[lo]]).returncode!=0:lo+=1
+            if lo>hi:break
+            while lo<hi and query(['--exists',prefix+values[hi]]).returncode==0:hi-=1
+            if lo==hi:break
+            values[lo],values[hi]=values[hi],values[lo];lo+=1;hi-=1
+        return values[:lo],values[lo:]
+    # describe's libs formatter forces TargetType.none even for static targets.
+    if libraries:
+        libraries,modules=partition(libraries,'')
+        libraries,prefixed=partition(libraries,'lib')
+        modules+=['lib'+name for name in prefixed]
+        if modules:
+            result=query(['--libs']+modules)
+            require(result.returncode==0, 'PREPARATION-REFUSED: renderer pkg-config native flags: '+label)
+            for value in result.stdout.split():
+                if value.startswith('-L-L'):native.append(value[2:])
+                elif value.startswith(('-defaultlib','-L-defaultlib')):
+                    continue # resolveLibs adds these to dflags, not native operands.
+                elif value.startswith('-pthread'):native.append('-lpthread')
+                elif value.startswith('-L-l'):native+=value[2:].split(',')
+                elif value.startswith('-Wl,'):native+=value[4:].split(',')
+                else:native.append(value)
+        native+=['-l'+library for library in libraries]
+    # describe formats lflags and libs separately: addDFlags uniquifies only
+    # adjacent raw lflags. The libs result and the field boundary retain repeats.
+    expected=[]
+    for value in settings.get('lflags',[]):
+        if value and (not expected or expected[-1]!=value):expected.append(value)
+    expected+=native
+    (evidence/(label+'-native-format-expectation.json')).write_text(json.dumps({
+        'rawLflags':settings.get('lflags',[]),'rawLibs':settings.get('libs',[]),
+        'cwd':str(root),'environment':env,
+        'pkgConfigQueries':queries,'expectedNativeOperands':expected},indent=2))
+    return expected
+
+
 def renderer_compile_target(description, target, compiler, env, evidence, label, tests=False):
     settings=target['buildSettings'];sources=[str(Path(p).resolve()) for p in settings['sourceFiles']]
     require(sources and len(sources)==len(set(sources)), 'support renderer nonempty unique source vector: '+label)
@@ -4821,7 +4872,7 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
         if key in ('importPaths','stringImportPaths'):
             values=[(root/p).resolve() for p in values];expected=[(root/p).resolve() for p in expected]
         require(values==expected, 'support renderer formatted '+key+': '+label)
-    expected_links=list(settings.get('lflags',[]))+['-l'+lib for lib in settings.get('libs',[])]
+    expected_links=renderer_expected_links(settings,root,env,evidence,label)
     require([value[2:].removeprefix('=') for value in links if value.startswith('-L')]==expected_links,
             'support renderer formatted ordered native link flags: '+label)
     receipt=json.loads((evidence/'native-input-receipt.json').read_text()) if (evidence/'native-input-receipt.json').is_file() else {}
