@@ -4840,6 +4840,35 @@ def execute(project,owner,compiler,env,evidence):
     sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=project,text=True).strip()
     archive=evidence/'archive';require(not archive.exists(),'PREPARATION-REFUSED: archive exists');archive.mkdir()
     members=[SPECS[n]['root'] for n in closure(owner)|closure(owner,True)|{owner}]
+    # DUB loads declared recipes before selecting configurations. Preserve their
+    # exact metadata closure without adding the unselected package source trees.
+    metadata=set()
+    def recipe(path):
+        path=path.resolve();relative=str(path.relative_to(project))
+        if relative in metadata:return
+        metadata.add(relative)
+        def fields(value):
+            if isinstance(value,dict):
+                for key,items in value.items():
+                    field=key.split('-',1)[0]
+                    if field=='dependencies':
+                        for dependency in items.values():
+                            if isinstance(dependency,dict) and 'path' in dependency:
+                                recipe(path.parent/dependency['path']/'dub.json')
+                    elif field=='subPackages':
+                        for package in items:
+                            if isinstance(package,str):recipe(path.parent/package/'dub.json')
+                            else:fields(package)
+                    elif field=='sourceFiles':
+                        metadata.update(str((path.parent/source).resolve().relative_to(project)) for source in items)
+                    else:fields(items)
+            elif isinstance(value,list):
+                for item in value:fields(item)
+        fields(json.loads(path.read_text()))
+    for member in tuple(members):
+        recipe(project/member/'dub.json')
+        recipe(project/member/'tests/dub.json')
+    members+=sorted(metadata)
     # Exact read-only support carrier accepted in C; no desktop production root.
     if 'mesh-ops' in closure(owner)|closure(owner,True)|{owner}:
         members += ['tests/unit/mesh_by_value_gate.d', 'tests/unit/fixtures.d']
