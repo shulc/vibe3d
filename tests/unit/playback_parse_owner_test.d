@@ -11,7 +11,7 @@ import std.array : join;
 import std.file : readText;
 import std.path : buildPath, dirName;
 import std.string : indexOf;
-import tests.unit.census_symbols : blankNonCode, blankUnittestBodies;
+import tests.unit.census_symbols : wave15ReadText, blankNonCode, blankUnittestBodies;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -81,8 +81,8 @@ unittest // identifier needle controls every callable spelling used by this gate
 
 unittest // source ownership: floor -> identifier needle -> structure -> pin
 {
-    const serverRaw = readText(buildPath(repoRoot, "source", "http_server.d"));
-    const ownerRaw = readText(
+    const serverRaw = wave15ReadText(buildPath(repoRoot, "source", "http_server.d"));
+    const ownerRaw = wave15ReadText(
         buildPath(repoRoot, "source", "playback_controller.d"));
     const eventlogRaw = readText(buildPath(repoRoot, "packages/input-events/source", "eventlog.d"));
     const server = blankUnittestBodies(blankNonCode(serverRaw));

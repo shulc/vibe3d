@@ -10,7 +10,7 @@ import std.file      : readText;
 import std.path      : buildPath, dirName;
 import std.string    : indexOf;
 
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : wave15ReadText, blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -44,9 +44,9 @@ unittest // ownership and both explicit producer handoffs
 {
     const eventlog = blankNonCode(readText(
         buildPath(repoRoot, "packages/input-events/source", "eventlog.d")));
-    const http = blankNonCode(readText(
+    const http = blankNonCode(wave15ReadText(
         buildPath(repoRoot, "source", "http_server.d")));
-    const playback = blankNonCode(readText(
+    const playback = blankNonCode(wave15ReadText(
         buildPath(repoRoot, "source", "playback_controller.d")));
     const app = blankNonCode(readText(
         buildPath(repoRoot, "source", "app.d")));

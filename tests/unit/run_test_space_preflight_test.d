@@ -77,7 +77,7 @@ private Run rdmd(string script, string[] rest, string[string] extraEnv = null, s
     // tests/unit/harness_log_isolation_census_test.d refuses a spawn that has
     // no such neutralisation at all.
     env["VIBE3D_HARNESS_LOG"] = "off";
-    auto r = execute(["rdmd", script] ~ rest, env, Config.none, size_t.max,
+    auto r = execute(["rdmd", "-I" ~ repoRoot, script] ~ rest, env, Config.none, size_t.max,
                       cwd is null ? repoRoot : cwd);
     return Run(r.status, r.output);
 }

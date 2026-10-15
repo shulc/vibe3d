@@ -15,7 +15,7 @@ import std.format : format;
 import std.path : buildPath, dirName;
 import std.string : count, indexOf;
 
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : wave15ReadText, blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum serverPath = buildPath(repoRoot, "source", "http_server.d");
@@ -165,7 +165,7 @@ private string setterCall(string wiring, ref const Surface surface) {
 }
 
 unittest { // floor: the nine-row population and both scanned regions exist
-    const server = readText(serverPath);
+    const server = wave15ReadText(serverPath);
     const providers = readText(providersPath);
     assert(server.length > 100_000 && providers.length > 100_000,
         "6780 source floor: server/provider source region is unexpectedly small");
@@ -181,7 +181,7 @@ unittest { // floor: the nine-row population and both scanned regions exist
 }
 
 unittest { // needles: each old dependency is absent from its former handler
-    const server = readText(serverPath);
+    const server = wave15ReadText(serverPath);
     const providerCode = blankNonCode(readText(providersPath));
     foreach (ref const surface; surfaces) {
         const body = functionBody(server, "private void " ~ surface.handler ~ "(");
@@ -199,7 +199,7 @@ unittest { // needles: each old dependency is absent from its former handler
 }
 
 unittest { // structure: route -> own bridge -> own port -> production dependency
-    const server = readText(serverPath);
+    const server = wave15ReadText(serverPath);
     const providers = readText(providersPath);
     const ctor = functionBody(server, "public this(ushort port = 8080)");
     const wiring = functionBody(providers, "void wireHttpProviders(");
@@ -256,7 +256,7 @@ private size_t threadIdentity() nothrow {
 }
 
 unittest { // pin: each absent application port yields its own 500 diagnosis
-    const serverSource = readText(serverPath);
+    const serverSource = wave15ReadText(serverPath);
     const regionBegin = serverSource.indexOf(
         "private PortlessJsonResp awaitPortlessJson(");
     assert(regionBegin >= 0,

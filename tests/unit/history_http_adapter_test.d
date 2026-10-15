@@ -17,6 +17,7 @@ import step_trace : StepTrace;
 import std.algorithm : canFind, count;
 import std.conv : to;
 import std.file : readText;
+import tests.unit.census_symbols : wave15ReadText;
 import std.json : JSONValue, parseJSON;
 import std.path : buildPath, dirName;
 import std.socket : InternetAddress, Socket, SocketOption,
@@ -530,7 +531,7 @@ unittest { // shutdown uses the route-specific caller-owned error envelope
 
 unittest { // production handler and RouteSpec agree on the owned main-thread door
     immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    immutable source = readText(buildPath(root, "source", "http_server.d"));
+    immutable source = wave15ReadText(buildPath(root, "source", "http_server.d"));
     assert(!source.canFind("historyBridge.submitAndWait"),
         "5800 surface coexistence: historyBridge must not use submitAndWait");
     immutable submitCount = source.count("historyBridge.submitOwned(");

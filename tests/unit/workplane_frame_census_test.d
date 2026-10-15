@@ -58,7 +58,13 @@ private Src[] sources(bool production, bool logical = false) {
         ~ (exists(buildPath(repoRoot, "packages/editor-commands/source")) ? [buildPath(repoRoot, "packages/editor-commands/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/interactive-tools/source")) ? [buildPath(repoRoot, "packages/interactive-tools/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/viewport-host/source")) ? [buildPath(repoRoot, "packages/viewport-host/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/interaction-data/source")) ? [buildPath(repoRoot, "packages/interaction-data/source")] : []))
+        ~ (!logical && exists(buildPath(repoRoot, "packages/interaction-data/source")) ? [buildPath(repoRoot, "packages/interaction-data/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/ai-advisor/source")) ? [buildPath(repoRoot, "packages/ai-advisor/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/ai3d-runtime/source")) ? [buildPath(repoRoot, "packages/ai3d-runtime/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/document-actions/source")) ? [buildPath(repoRoot, "packages/document-actions/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/http-runtime/source")) ? [buildPath(repoRoot, "packages/http-runtime/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/platform-file/source")) ? [buildPath(repoRoot, "packages/platform-file/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/remesh-runtime/source")) ? [buildPath(repoRoot, "packages/remesh-runtime/source")] : []))
 
     foreach (e; logical ? wave15DirEntries(scanSourceRoot, "*.d", SpanMode.depth)
                        : physicalEntries(scanSourceRoot)) {

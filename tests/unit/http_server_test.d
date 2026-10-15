@@ -305,11 +305,12 @@ unittest {
 // command override, and both call sites that opt into the override.
 unittest {
     import std.file : readText;
+    import tests.unit.census_symbols : wave15ReadText;
     import std.path : buildPath, dirName;
     import std.string : count;
 
     immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    immutable source = readText(buildPath(root, "source", "http_server.d"));
+    immutable source = wave15ReadText(buildPath(root, "source", "http_server.d"));
     assert(source.count("bool submitAndWait(int maxIters = 2500) {") == 1,
         "6750 native spin pin: submitAndWait must retain its 2500-iteration default");
     assert(source.count("enum int kCommandBridgeMaxIters = 60_000;") == 1,

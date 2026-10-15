@@ -97,7 +97,13 @@ SH";
         buildPath(repoRoot, "packages/editor-commands/source"),
         buildPath(repoRoot, "packages/interactive-tools/source"),
         buildPath(repoRoot, "packages/viewport-host/source"),
-        buildPath(repoRoot, "packages/interaction-data/source")];
+        buildPath(repoRoot, "packages/interaction-data/source"),
+        buildPath(repoRoot, "packages/ai-advisor/source") ~ "/",
+        buildPath(repoRoot, "packages/ai3d-runtime/source") ~ "/",
+        buildPath(repoRoot, "packages/document-actions/source") ~ "/",
+        buildPath(repoRoot, "packages/http-runtime/source") ~ "/",
+        buildPath(repoRoot, "packages/platform-file/source") ~ "/",
+        buildPath(repoRoot, "packages/remesh-runtime/source") ~ "/"];
 
     foreach (line; readText(depsPath).splitLines)
     {

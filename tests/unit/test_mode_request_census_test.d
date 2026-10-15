@@ -10,7 +10,7 @@ import std.file : readText;
 import std.format : format;
 import std.path : buildPath, dirName;
 import std.string : indexOf, join;
-import tests.unit.census_symbols : balancedSpan, blankNonCode,
+import tests.unit.census_symbols : wave15ReadText, balancedSpan, blankNonCode,
     blankUnittestBodies, isIdentChar;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -121,7 +121,7 @@ unittest // lexer and whole-token controls precede the production floor
 unittest // production floor -> request needle -> structural path
 {
     immutable path = buildPath(repoRoot, "source", "http_server.d");
-    immutable raw = readText(path);
+    immutable raw = wave15ReadText(path);
     immutable code = blankUnittestBodies(blankNonCode(raw));
     auto scan = scanTestModeIfs(raw);
 
@@ -167,7 +167,7 @@ unittest // production floor -> request needle -> structural path
 
 unittest // the route and service null gates are independent surfaces
 {
-    immutable raw = readText(buildPath(repoRoot, "source", "http_server.d"));
+    immutable raw = wave15ReadText(buildPath(repoRoot, "source", "http_server.d"));
     immutable code = blankUnittestBodies(blankNonCode(raw));
     immutable providers = blankUnittestBodies(blankNonCode(readText(
         buildPath(repoRoot, "source", "http_providers.d"))));

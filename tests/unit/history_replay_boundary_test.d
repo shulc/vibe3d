@@ -27,6 +27,7 @@ import step_trace : StepTrace;
 import std.algorithm : canFind, count;
 import std.conv : to;
 import std.file : exists, readText;
+import tests.unit.census_symbols : wave15ReadText;
 import std.functional : toDelegate;
 import std.json : JSONValue, parseJSON;
 import std.path : buildPath, dirName;
@@ -461,7 +462,7 @@ private void resetGlobalProbes() {
 
 unittest { // source wiring closes both production entries over one port
     immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    auto source = readText(buildPath(root, "source", "http_server.d"));
+    auto source = wave15ReadText(buildPath(root, "source", "http_server.d"));
     auto adapter = readText(buildPath(root, "source", "http_command_adapter.d"));
     assert(source.length > 100_000,
         "5820 source census population floor: http_server.d is implausibly small");

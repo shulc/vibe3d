@@ -13,7 +13,7 @@ import std.path : buildPath, dirName;
 import std.socket : InternetAddress, Socket, SocketOption,
     SocketOptionLevel, TcpSocket;
 import std.string : indexOf;
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : wave15ReadText, blankNonCode;
 
 private final class AsyncHttpReply {
     shared bool done = false;
@@ -283,7 +283,7 @@ private TimeoutCadenceSample runTimeoutCadence(Duration cadence) {
 
 unittest {
     immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    immutable source = readText(buildPath(root, "source", "http_server.d"));
+    immutable source = wave15ReadText(buildPath(root, "source", "http_server.d"));
     assert(occurrences(source, "selectionBridge.submitAndWait") == 0,
         "5730 surface coexistence: selectionBridge must not use submitAndWait");
     assert(occurrences(source, "selectionBridge.submitOwned(") == 1,
@@ -942,7 +942,7 @@ unittest {
 
 unittest {
     immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    immutable rawTransport = readText(
+    immutable rawTransport = wave15ReadText(
         buildPath(root, "source", "http_transport.d"));
     immutable transport = blankNonCode(rawTransport);
     immutable handle = bodyAt(transport,

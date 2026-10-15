@@ -21,7 +21,7 @@ import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : count, indexOf, strip;
 
-import tests.unit.census_symbols : blankNonCode, declaratorName;
+import tests.unit.census_symbols : wave15ReadText, blankNonCode, declaratorName;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum string kServerPath = buildPath(repoRoot, "source", "http_server.d");
@@ -369,7 +369,7 @@ private string frameBodyBytes(const RouteRow[] routes)
 
 private void assertFrameBodyBytes()
 {
-    const raw = readText(kServerPath);
+    const raw = wave15ReadText(kServerPath);
     const routes = scanRoutes(raw);
     const bytes = frameBodyBytes(routes);
     const digest = sha256Of(cast(const(ubyte)[]) bytes).toHexString;
@@ -455,7 +455,7 @@ FIXTURE";
 
 unittest
 {
-    const raw = readText(kServerPath);
+    const raw = wave15ReadText(kServerPath);
     const routes = scanRoutes(raw);
 
     // Population first: without this, every biconditional below is vacuous.

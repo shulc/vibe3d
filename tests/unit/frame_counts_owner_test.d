@@ -13,7 +13,7 @@ import std.path : buildPath, dirName;
 import std.socket : InternetAddress, Socket, SocketOption, SocketOptionLevel,
                     TcpSocket;
 import std.string : indexOf;
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : wave15ReadText, blankNonCode;
 
 private final class Reply {
     shared bool done;
@@ -559,7 +559,7 @@ private string bodyAt(string code, string marker) {
 // U10: production wiring owns both operations and no generic drain can see them.
 unittest {
     immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    immutable raw = readText(buildPath(root, "source", "http_server.d"));
+    immutable raw = wave15ReadText(buildPath(root, "source", "http_server.d"));
     immutable source = blankNonCode(raw);
     assert(!source.canFind("g_fc"), "6357 HTTP source still names the live probe");
     immutable readRoute = bodyAt(source,

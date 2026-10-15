@@ -45,7 +45,7 @@ import std.format    : format;
 import std.path      : baseName, buildPath, dirName;
 import std.string    : indexOf, split, splitLines, startsWith, stripLeft;
 
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : wave15ReadText, blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -538,7 +538,7 @@ FIXTURE";
 unittest
 {
     const serverPath = buildPath(repoRoot, "source", "http_server.d");
-    const raw = readText(serverPath);
+    const raw = wave15ReadText(serverPath);
     const projection = projectSource(raw);
     const code = projection.code;
     const commentsBlanked = projection.literals;
