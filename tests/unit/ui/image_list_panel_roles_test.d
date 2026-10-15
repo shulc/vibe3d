@@ -298,11 +298,11 @@ private final class ImagePanelHarness {
         registry.registerCommand("image.remove", () => cast(Command)
             new ImageRemove(owner.document.activeMesh(), view, owner.editMode,
                             owner.documentPtr(), null));
-        imageRoles = bindImageListPanel(owner, binding);
+        imageRoles = bindImageListPanel(owner, &binding.dispatchUi);
         assert(imageRoles.state !is null,
             "6359 state floor: bindImageListPanel returned no ImageListPanelState");
         forms = new FormsPanel;
-        layerRoles = bindLayerListPanel(owner, binding, forms, () => activeTool);
+        layerRoles = bindLayerListPanel(owner, &binding.dispatchUi, &binding.dispatchInteractiveUi, forms, () => activeTool);
     }
 
     void clearRecords() {
@@ -364,6 +364,37 @@ private string lastArgs(ImagePanelHarness app) {
 private void doubleClick(ref HeadlessPanel ui, ImVec2 p) {
     ui.pressAt(p); ui.release();
     ui.pressAt(p); ui.release();
+}
+
+unittest { // the real binder refuses each missing callback before construction
+    import core.exception : AssertError;
+    import std.algorithm : endsWith;
+    auto app = new ImagePanelHarness;
+    assert(app.imageRoles.state !is null, "W18 image_list all-valid binder positive");
+    {
+        bool refused;
+        try { bindImageListPanel(app.owner, null); }
+        catch (AssertError error) {
+            refused = true;
+            assert(error.file.endsWith("ui/image_list_panel.d") && error.line == 108,
+                "W18 image_list dispatch refusal must originate at the binder guard");
+        }
+        assert(refused, "W18 image_list binder accepts null dispatch");
+    }
+}
+
+unittest { // physical binder doors retain each independently guarded delegate
+    import std.file : readText;
+    import std.regex : matchAll, regex;
+    import tests.unit.census_symbols : blankNonCode, countIdent, balancedSpan;
+    auto source = blankNonCode(readText(buildPath(repoRoot, "packages/editor-ui/source/ui/image_list_panel.d")));
+    assert(countIdent(source, "bindImageListPanel") == 1, "W18 image_list binder declaration floor");
+    const site = source.indexOf("bindImageListPanel");
+    const open = source.indexOf("{", cast(size_t)site);
+    const body = balancedSpan(source, cast(size_t)open, '{', '}');
+    assert(body.length > 80, "W18 image_list binder body floor");
+    assert(!matchAll(body, regex(r"\bdispatch\b\s*!is\s+null")).empty,
+        "W18 image_list binder dispatch guard term");
 }
 
 unittest { // B1: the once-bound read role follows a document replaced in place

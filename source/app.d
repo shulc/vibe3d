@@ -4836,18 +4836,18 @@ void main(string[] args) {
             return app.navHistory(u);
         });
     import ui.layer_list_panel : bindLayerListPanel;
-    auto layerListRoles = bindLayerListPanel(sessionOwner, commandBinding,
+    auto layerListRoles = bindLayerListPanel(sessionOwner, &commandBinding.dispatchUi, &commandBinding.dispatchInteractiveUi,
                                              formsPanel, toolHost.getActiveTool);
     import ui.channels_panel : bindChannelsPanel;
-    auto channelsPanelRoles = bindChannelsPanel(sessionOwner, commandBinding,
+    auto channelsPanelRoles = bindChannelsPanel(sessionOwner, &commandBinding.dispatchInteractiveUi,
                                                 formsPanel,
                                                 toolHost.getActiveTool);
     import ui.tool_properties_panel : bindToolPropertiesPanel;
-    auto toolPropertiesRoles = bindToolPropertiesPanel(commandBinding,
+    auto toolPropertiesRoles = bindToolPropertiesPanel(&commandBinding.dispatchUi, &commandBinding.dispatchInteractiveUi,
         formsPanel, session,
         toolHost.getActiveTool, toolHost.getActiveToolId);
     import ui.image_list_panel : bindImageListPanel;
-    auto imageListRoles = bindImageListPanel(sessionOwner, commandBinding);
+    auto imageListRoles = bindImageListPanel(sessionOwner, &commandBinding.dispatchUi);
 
     app.runCommand           = cast(void delegate(Command))&runCommand;
     app.runUiCommand = (Command c, RecordMode m, string id) =>
@@ -5170,6 +5170,8 @@ void main(string[] args) {
     // drawLayerListPanel/drawViewportPropsPanel keep their own separate
     // local imports at their call sites, below.
     import ui.panel_chrome : pushPanelChromeStyle, popPanelChromeStyle;
+    import ui.panel_host_roles : TabPanelRole, SidePanelRole, StatusPanelRole;
+    version (web) {} else import ui.panel_host_roles : Ai3dPanelRole;
     import ui.panels : drawSidePanel, drawStatusBar, drawTabPanel,
         pushPopupStyle, popPopupStyle,
         drawQuitGuardModal,
@@ -5845,8 +5847,8 @@ void main(string[] args) {
             }
         }
         frameRunner.tickParameterEvaluation(session);
-        drawSidePanel(app, actionMenuRoles);
-        drawTabPanel(app);
+        drawSidePanel(editor_app.bindPanelHostRoles!(SidePanelRole)(app), actionMenuRoles);
+        drawTabPanel(editor_app.bindPanelHostRoles!(TabPanelRole)(app));
         version (web) if (webFirstFrameProbe && webPanelReadyReported) {
             const panelProbe = webPanelProbeSnapshot();
             const ImVec2 mouse = igGetMousePos();
@@ -5877,7 +5879,7 @@ void main(string[] args) {
         // ---- AI3D Generate modal (task 0381 Phase 3) -----------------------
         // Moved VERBATIM to ui/panels.d's drawAi3dModal (app.d decomp,
         // phase B; same `with (app)` seam as the 0419 panels).
-        drawAi3dModal(app);
+        drawAi3dModal(editor_app.bindPanelHostRoles!(Ai3dPanelRole)(app));
         }
 
         // ---- Quad Remesh modal (source/remesh/remesh_job.d) -----------------
@@ -5888,9 +5890,9 @@ void main(string[] args) {
         // ---- Unsaved-changes quit guard + confirmation modal (task 0434) ----
         // The panel receives only its stable handshake state, the window gate
         // and the existing application policy owner.
-        drawQuitGuardModal(guardModalState, testMode, guardController);
+        drawQuitGuardModal(guardModalState, testMode, editor_app.makeGuardModalRole(guardController));
 
-        drawStatusBar(app, actionMenuRoles);
+        drawStatusBar(editor_app.bindPanelHostRoles!(StatusPanelRole)(app), actionMenuRoles);
 
         // ---- Pie menu (task 1800) ------------------------------------------
         // Inside the availability bracket, so a wedge shows up in
@@ -5973,8 +5975,12 @@ void main(string[] args) {
         if (!command.g_testMode || g_viewportPropsShown) {
             import ui.panels : drawViewportPropsPanel;
             import ui.viewport_props_role : ViewportPropertiesReadRole;
+            import commands.viewport.display : kCavityGainMax, kCavityDistanceMin,
+                kCavityDistanceMax, kCavityAttenuationMax;
             drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
-                                   uiCommandDelegate, layoutResetAction);
+                                   uiCommandDelegate, &layoutResetAction.authorReset,
+                                   kCavityGainMax, kCavityDistanceMin,
+                                   kCavityDistanceMax, kCavityAttenuationMax);
         }
 
         // ---- About (floating; task 0641) ----
@@ -5985,7 +5991,7 @@ void main(string[] args) {
         // three panels above concede to is satisfied for free here.
         if (g_aboutShown) {
             import ui.panels : drawAboutPanel;
-            drawAboutPanel(app);
+            drawAboutPanel(&g_aboutShown);
         }
 
         // ---- AI Findings (floating; task 0402 Phase 2) ----

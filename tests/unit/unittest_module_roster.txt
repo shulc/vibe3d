@@ -20,7 +20,7 @@ edge_bevel_offset_ring_test
 edit_session
 eventlog
 falloff_rmb_discipline_test
-forms
+forms_source_test
 frame_stall
 gl_thread_guard
 handles.arbiter_source_cells
@@ -794,9 +794,10 @@ tools.transform.rotate
 tools.transform.transform
 tools.transform.xfrm_transform
 trackball
-ui.availability
+ui.availability_source_test
 ui.grid_plane_test
 ui.image_rows
+ui.item_click_source_test
 ui.item_rows
 ui.viewport_render
 ui.viewport_render_plan_test

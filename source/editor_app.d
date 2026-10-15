@@ -944,3 +944,83 @@ struct EditorApp {
 
     bool delegate(bool) navHistory;
 }
+
+import ai.copilot_gate : kCopilotEnabled;
+import guarded_action_controller : GuardedActionController;
+import ui.panel_host_roles : GuardModalRole;
+
+GuardModalRole makeGuardModalRole(GuardedActionController guardController) {
+    if (guardController is null) return GuardModalRole.init;
+    return GuardModalRole(
+        &guardController.awaitingAnswer,
+        &guardController.promptText,
+        &guardController.answerSave,
+        &guardController.answerDiscard,
+        &guardController.answerCancel);
+}
+
+import ui.panel_host_roles : TabLayoutBorrow, SideLayoutBorrow, StatusLayoutBorrow,
+    TabPanelRole, SidePanelRole, StatusPanelRole;
+version (web) {} else import ui.panel_host_roles : Ai3dModalBorrow, Ai3dPanelRole;
+
+// The presentation roles borrow these same live slots at each original draw
+// point (task 20262940; evidence: approved Wave18 role custody).
+Role bindPanelHostRoles(Role)(EditorApp app) {
+    Role role;
+    static if (is(Role == TabPanelRole)) {
+        role.layout = TabLayoutBorrow(&app.layout.tabPos, &app.layout.tabSize);
+        role.panelsPtr = app.panelsPtr;
+        role.activePanelIdxPtr = app.activePanelIdxPtr;
+    } else static if (is(Role == SidePanelRole)) {
+        role.layout = SideLayoutBorrow(&app.layout.sidePos, &app.layout.sideSize);
+        role.panelsPtr = app.panelsPtr;
+        role.activePanelIdxPtr = app.activePanelIdxPtr;
+        role.activeToolIdPtr = app.activeToolIdPtr;
+        role.shortcutsPtr = app.shortcutsPtr;
+        role.regPtr = app.regPtr;
+        role.sessionOwner = app.sessionOwner;
+        role.meshDg = app.meshDg;
+        role.kGenerateAiAvailable = kGenerateAiAvailable;
+    } else static if (is(Role == StatusPanelRole)) {
+        role.layout = StatusLayoutBorrow(&app.layout.statusPos, &app.layout.statusSize);
+        role.statusLineGroupsPtr = app.statusLineGroupsPtr;
+        role.activeToolIdPtr = app.activeToolIdPtr;
+        role.shortcutsPtr = app.shortcutsPtr;
+        role.regPtr = app.regPtr;
+        role.sessionOwner = app.sessionOwner;
+        role.meshDg = app.meshDg;
+        role.kAiToggleAvailable = kAiToggleAvailable;
+        role.kCopilotEnabled = kCopilotEnabled;
+    } else {
+        version (web) {
+            static assert(0, "no AI3D presentation role in web");
+        } else {
+            static assert(is(Role == Ai3dPanelRole));
+            role.ai3dModal.healthCheckedPtr = &app.ai3dModal.healthChecked;
+            role.ai3dModal.healthOkPtr = &app.ai3dModal.healthOk;
+            role.ai3dModal.healthProtocolPtr = &app.ai3dModal.healthProtocol;
+            role.ai3dModal.healthBackendPtr = &app.ai3dModal.healthBackend;
+            role.ai3dModal.healthObjCapablePtr = &app.ai3dModal.healthObjCapable;
+            role.ai3dModal.healthMessagePtr = &app.ai3dModal.healthMessage;
+            role.ai3dModal.jobIdPtr = &app.ai3dModal.jobId;
+            role.ai3dModal.statePtr = &app.ai3dModal.state;
+            role.ai3dModal.stagePtr = &app.ai3dModal.stage;
+            role.ai3dModal.progressPtr = &app.ai3dModal.progress;
+            role.ai3dModal.errorCodePtr = &app.ai3dModal.errorCode;
+            role.ai3dModal.errorMessagePtr = &app.ai3dModal.errorMessage;
+            role.ai3dModalOpenPtr = &app.ai3dModalOpen;
+            role.ai3dModalPendingOpenPtr = &app.ai3dModalPendingOpen;
+            role.ai3dPickedImagePathPtr = &app.ai3dPickedImagePath;
+            role.ai3dWorkerUrlBufPtr = &app.ai3dWorkerUrlBuf;
+            role.ai3dWorkerStartingPtr = app.ai3dWorkerStartingPtr;
+            role.ai3dWorkerStartDeadlinePtr = app.ai3dWorkerStartDeadlinePtr;
+            role.ai3dWorkerNextHealthProbePtr = app.ai3dWorkerNextHealthProbePtr;
+            role.ai3dInstallConfirmOpenPtr = app.ai3dInstallConfirmOpenPtr;
+            role.ai3dInstallConfirmPendingOpenPtr = app.ai3dInstallConfirmPendingOpenPtr;
+            role.ai3dMaxFacesPtr = app.ai3dMaxFacesPtr;
+            role.ai3dController = app.ai3dController;
+            role.ai3dWorkerManager = app.ai3dWorkerManager;
+        }
+    }
+    return role;
+}

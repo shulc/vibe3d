@@ -195,7 +195,11 @@ private FileCount[] scanSourceTree(string root)
         ~ (exists(buildPath(root, "packages/ai3d-runtime/source")) ? [buildPath(root, "packages/ai3d-runtime/source")] : [])
         ~ (exists(buildPath(root, "packages/remesh-runtime/source")) ? [buildPath(root, "packages/remesh-runtime/source")] : [])
         ~ (exists(buildPath(root, "packages/platform-file/source")) ? [buildPath(root, "packages/platform-file/source")] : [])
-        ~ (exists(buildPath(root, "packages/document-actions/source")) ? [buildPath(root, "packages/document-actions/source")] : []))
+        ~ (exists(buildPath(root, "packages/document-actions/source")) ? [buildPath(root, "packages/document-actions/source")] : [])
+        ~ (exists(buildPath(root, "packages/render-model/source")) ? [buildPath(root, "packages/render-model/source")] : [])
+        ~ (exists(buildPath(root, "packages/render-backends/source")) ? [buildPath(root, "packages/render-backends/source")] : [])
+        ~ (exists(buildPath(root, "packages/forms-model/source")) ? [buildPath(root, "packages/forms-model/source")] : [])
+        ~ (exists(buildPath(root, "packages/editor-ui/source")) ? [buildPath(root, "packages/editor-ui/source")] : []))
 
     foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth))
     {

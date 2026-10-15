@@ -9,8 +9,8 @@
 # Then READ THE DIFF. Regeneration is mechanical and will absorb an
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
-source-files 607
-task-citation-lines 5141
+source-files 608
+task-citation-lines 5139
 citing-files 468
 long-comment-runs 258
 files-with-long-runs 142
@@ -167,6 +167,39 @@ allow packages/editor-commands/source/commands/select/ring.d 1
 allow packages/editor-commands/source/commands/select/sets.d 10
 allow packages/editor-commands/source/commands/select/type_from.d 2
 allow packages/editor-commands/source/step_trace.d 1
+allow packages/editor-ui/source/args_dialog.d 1
+allow packages/editor-ui/source/buttonset.d 1
+allow packages/editor-ui/source/copilot_overlay.d 2
+allow packages/editor-ui/source/copilot_panel.d 2
+allow packages/editor-ui/source/forms_render.d 4
+allow packages/editor-ui/source/imgui_event_gate.d 3
+allow packages/editor-ui/source/imgui_flag_boundary.d 1
+allow packages/editor-ui/source/pie_geometry.d 1
+allow packages/editor-ui/source/pie_menus.d 1
+allow packages/editor-ui/source/pie_state.d 1
+allow packages/editor-ui/source/ui/action_menu.d 2
+allow packages/editor-ui/source/ui/availability.d 1
+allow packages/editor-ui/source/ui/button_face.d 1
+allow packages/editor-ui/source/ui/channel_rows.d 5
+allow packages/editor-ui/source/ui/channels_panel.d 3
+allow packages/editor-ui/source/ui/command_notice.d 1
+allow packages/editor-ui/source/ui/image_list_panel.d 2
+allow packages/editor-ui/source/ui/image_rows.d 17
+allow packages/editor-ui/source/ui/item_glyphs.d 3
+allow packages/editor-ui/source/ui/item_rename.d 1
+allow packages/editor-ui/source/ui/item_rows.d 11
+allow packages/editor-ui/source/ui/layer_list_panel.d 14
+allow packages/editor-ui/source/ui/panel_chrome.d 1
+allow packages/editor-ui/source/ui/panels.d 33
+allow packages/editor-ui/source/ui/pie_record.d 1
+allow packages/editor-ui/source/ui/pie_render.d 1
+allow packages/editor-ui/source/ui/remesh_modal_state.d 2
+allow packages/editor-ui/source/ui/retained_item.d 2
+allow packages/editor-ui/source/ui/stat_record.d 1
+allow packages/editor-ui/source/ui/stat_rows.d 1
+allow packages/editor-ui/source/ui/tool_properties_panel.d 13
+allow packages/editor-ui/source/ui/viewport_props_role.d 1
+allow packages/forms-model/source/forms.d 2
 allow packages/http-runtime/source/http_server.d 114
 allow packages/http-runtime/source/http_transport.d 6
 allow packages/http-runtime/source/playback_controller.d 1
@@ -174,6 +207,7 @@ allow packages/image-codec/source/io/image_decode.d 3
 allow packages/input-events/source/eventlog.d 1
 allow packages/input-events/source/input_context.d 3
 allow packages/input-events/source/input_zones.d 1
+allow packages/input-events/source/sdl_error.d 1
 allow packages/input-events/source/shortcuts.d 3
 allow packages/interaction-query/source/constraint.d 9
 allow packages/interaction-query/source/hover_state.d 5
@@ -377,8 +411,6 @@ allow source/ai3d_command_registration.d 1
 allow source/ai_command_registration.d 1
 allow source/app.d 297
 allow source/application_command_binding.d 1
-allow source/args_dialog.d 1
-allow source/buttonset.d 1
 allow source/commands/ai3d/generate.d 1
 allow source/commands/ai3d/generate_open.d 3
 allow source/commands/ai3d/generate_test_hooks.d 1
@@ -414,65 +446,33 @@ allow source/commands/viewport/master.d 1
 allow source/commands/viewport/view_preset.d 6
 allow source/commands/workplane.d 5
 allow source/copilot_command_registration.d 1
-allow source/copilot_overlay.d 2
-allow source/copilot_panel.d 2
 allow source/create_tool_registration.d 6
 allow source/edit_tool_registration.d 12
 allow source/editor_app.d 32
 allow source/file_io_registration.d 1
-allow source/forms.d 4
-allow source/forms_render.d 4
 allow source/frame_runner.d 2
 allow source/frame_stall.d 3
 allow source/guarded_action_controller.d 2
 allow source/history_macro_registration.d 1
 allow source/http_command_adapter.d 3
 allow source/http_providers.d 69
-allow source/imgui_event_gate.d 3
-allow source/imgui_flag_boundary.d 1
 allow source/input_frame_state.d 36
 allow source/input_router.d 65
 allow source/item_command_registration.d 2
 allow source/item_pick.d 3
 allow source/layout_reset_action.d 1
 allow source/mesh_command_registration.d 3
-allow source/pie_geometry.d 1
-allow source/pie_menus.d 1
-allow source/pie_state.d 1
 allow source/pipe_command_registration.d 1
 allow source/prefs.d 32
 allow source/registration.d 8
 allow source/render/render_mvp.d 4
 allow source/scene_file_lifecycle_registration.d 1
 allow source/scene_reset_effects.d 2
-allow source/sdl_error.d 1
 allow source/selection_command_registration.d 1
 allow source/selftest_fault.d 3
 allow source/tool_lifecycle_registration.d 1
 allow source/transform_tool_registration.d 2
 allow source/tsan_preinit.d 1
-allow source/ui/action_menu.d 2
-allow source/ui/availability.d 1
-allow source/ui/button_face.d 1
-allow source/ui/channel_rows.d 5
-allow source/ui/channels_panel.d 3
-allow source/ui/command_notice.d 1
-allow source/ui/image_list_panel.d 2
-allow source/ui/image_rows.d 17
-allow source/ui/item_glyphs.d 3
-allow source/ui/item_rename.d 1
-allow source/ui/item_rows.d 11
-allow source/ui/layer_list_panel.d 14
-allow source/ui/panel_chrome.d 1
-allow source/ui/panels.d 33
-allow source/ui/pie_record.d 1
-allow source/ui/pie_render.d 1
-allow source/ui/remesh_modal_state.d 2
-allow source/ui/retained_item.d 2
-allow source/ui/stat_record.d 1
-allow source/ui/stat_rows.d 1
-allow source/ui/tool_properties_panel.d 13
-allow source/ui/viewport_props_role.d 1
 allow source/ui/viewport_render.d 39
 allow source/view_settings_registration.d 2
 allow source/viewport_command_registration.d 1
@@ -539,6 +539,13 @@ allow-runs packages/editor-commands/source/commands/select/by_stat.d 1
 allow-runs packages/editor-commands/source/commands/select/by_tag.d 1
 allow-runs packages/editor-commands/source/commands/select/fill.d 1
 allow-runs packages/editor-commands/source/commands/select/sets.d 2
+allow-runs packages/editor-ui/source/forms_render.d 1
+allow-runs packages/editor-ui/source/ui/channel_rows.d 1
+allow-runs packages/editor-ui/source/ui/image_rows.d 3
+allow-runs packages/editor-ui/source/ui/item_rows.d 2
+allow-runs packages/editor-ui/source/ui/panels.d 1
+allow-runs packages/editor-ui/source/ui/stat_rows.d 1
+allow-runs packages/forms-model/source/forms.d 1
 allow-runs packages/http-runtime/source/http_server.d 3
 allow-runs packages/interaction-query/source/constraint.d 1
 allow-runs packages/interaction-query/source/mesh_visibility.d 1
@@ -613,18 +620,11 @@ allow-runs packages/viewport-host/source/image_cache.d 1
 allow-runs packages/viewport-host/source/image_plane.d 1
 allow-runs source/app.d 7
 allow-runs source/commands/mesh/morph.d 1
-allow-runs source/forms.d 1
-allow-runs source/forms_render.d 1
 allow-runs source/input_frame_state.d 3
 allow-runs source/input_router.d 2
 allow-runs source/render/render_mvp.d 1
 allow-runs source/selftest_fault.d 1
 allow-runs source/tsan_preinit.d 1
-allow-runs source/ui/channel_rows.d 1
-allow-runs source/ui/image_rows.d 3
-allow-runs source/ui/item_rows.d 2
-allow-runs source/ui/panels.d 1
-allow-runs source/ui/stat_rows.d 1
 allow-runs source/ui/viewport_render.d 1
 allow-runs util/math/source/math_geometry.d 3
 allow-runs util/plane-bytes/source/plane_bytes.d 1

@@ -319,7 +319,7 @@ private final class LayerPanelHarness {
         // Production binds once after its document and command binding exist.
         // Keep Alpha/Beta/Gamma alive before this line so M1 reaches its named
         // stale-document witness rather than failing a fixture population floor.
-        roles = bindLayerListPanel(owner, binding, forms, () => activeTool);
+        roles = bindLayerListPanel(owner, &binding.dispatchUi, &binding.dispatchInteractiveUi, forms, () => activeTool);
     }
 
     HeadlessPanel open() {
@@ -366,9 +366,52 @@ private void assertHistoryHeadroom(LayerPanelHarness app) {
         "6030 history floor must start from an empty stack and record list");
 }
 
+unittest { // the real binder refuses each missing callback before construction
+    import core.exception : AssertError;
+    import std.algorithm : endsWith;
+    auto app = new LayerPanelHarness;
+    assert(app.roles.state !is null, "W18 layer_list all-valid binder positive");
+    {
+        bool refused;
+        try { bindLayerListPanel(app.owner, null, &app.binding.dispatchInteractiveUi, app.forms, () => app.activeTool); }
+        catch (AssertError error) {
+            refused = true;
+            assert(error.file.endsWith("ui/layer_list_panel.d") && error.line == 142,
+                "W18 layer_list dispatch refusal must originate at the binder guard");
+        }
+        assert(refused, "W18 layer_list binder accepts null dispatch");
+    }
+    {
+        bool refused;
+        try { bindLayerListPanel(app.owner, &app.binding.dispatchUi, null, app.forms, () => app.activeTool); }
+        catch (AssertError error) {
+            refused = true;
+            assert(error.file.endsWith("ui/layer_list_panel.d") && error.line == 142,
+                "W18 layer_list interactive refusal must originate at the binder guard");
+        }
+        assert(refused, "W18 layer_list binder accepts null interactive");
+    }
+}
+
+unittest { // physical binder doors retain each independently guarded delegate
+    import std.file : readText;
+    import std.regex : matchAll, regex;
+    import tests.unit.census_symbols : blankNonCode, countIdent, balancedSpan;
+    auto source = blankNonCode(readText(buildPath(repoRoot, "packages/editor-ui/source/ui/layer_list_panel.d")));
+    assert(countIdent(source, "bindLayerListPanel") == 1, "W18 layer_list binder declaration floor");
+    const site = source.indexOf("bindLayerListPanel");
+    const open = source.indexOf("{", cast(size_t)site);
+    const body = balancedSpan(source, cast(size_t)open, '{', '}');
+    assert(body.length > 80, "W18 layer_list binder body floor");
+    assert(!matchAll(body, regex(r"\bdispatch\b\s*!is\s+null")).empty,
+        "W18 layer_list binder dispatch guard term");
+    assert(!matchAll(body, regex(r"\binteractive\b\s*!is\s+null")).empty,
+        "W18 layer_list binder interactive guard term");
+}
+
 unittest { // the all-valid action roster binds and every missing member fails
     auto app = new LayerPanelHarness;
-    auto ok = bindLayerListPanel(app.owner, app.binding, app.forms,
+    auto ok = bindLayerListPanel(app.owner, &app.binding.dispatchUi, &app.binding.dispatchInteractiveUi, app.forms,
                                  () => app.activeTool);
     assert(ok.state !is null && ok.actions.tupleof[4] is ok.state
         && ok.actions.commandDispatch() !is null
@@ -716,7 +759,7 @@ unittest { // 6590: collapsing one binding must not collapse its peer
     scope (exit) { g_forms = priorForms; SDL_SetModState(KMOD_NONE); }
 
     auto app = new LayerPanelHarness;
-    auto second = bindLayerListPanel(app.owner, app.binding, app.forms,
+    auto second = bindLayerListPanel(app.owner, &app.binding.dispatchUi, &app.binding.dispatchInteractiveUi, app.forms,
                                      () => app.activeTool);
     ItemRenameState secondRenameState;
     assert(app.roles.state !is second.state,

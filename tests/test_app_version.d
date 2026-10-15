@@ -43,7 +43,7 @@ import http_client : testBaseUrl, getJson;
 import std.net.curl;
 import std.json;
 import std.process : execute, environment, Config;
-import std.file    : readText;
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.string  : splitLines, strip, startsWith, indexOf;
 import std.algorithm : canFind, filter, map;
 import std.array   : array, join;

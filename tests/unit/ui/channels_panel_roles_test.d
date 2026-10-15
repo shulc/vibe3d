@@ -362,7 +362,7 @@ private final class ChannelsHarness {
     }
 
     ChannelsPanelRoles bind() {
-        return bindChannelsPanel(owner, binding, forms, () => activeTool);
+        return bindChannelsPanel(owner, &binding.dispatchInteractiveUi, forms, () => activeTool);
     }
 }
 
@@ -387,9 +387,41 @@ private ChannelsDrawSnapshot settle(ref HeadlessPanel ui) {
     return fresh(ui);
 }
 
+unittest { // the real binder refuses each missing callback before construction
+    import core.exception : AssertError;
+    import std.algorithm : endsWith;
+    auto app = new ChannelsHarness;
+    auto positive = bindChannelsPanel(app.owner, &app.binding.dispatchInteractiveUi, app.forms, () => app.activeTool);
+    assert(positive.state !is null, "W18 channels all-valid binder positive");
+    {
+        bool refused;
+        try { bindChannelsPanel(app.owner, null, app.forms, () => app.activeTool); }
+        catch (AssertError error) {
+            refused = true;
+            assert(error.file.endsWith("ui/channels_panel.d") && error.line == 174,
+                "W18 channels interactive refusal must originate at the binder guard");
+        }
+        assert(refused, "W18 channels binder accepts null interactive");
+    }
+}
+
+unittest { // physical binder doors retain each independently guarded delegate
+    import std.file : readText;
+    import std.regex : matchAll, regex;
+    import tests.unit.census_symbols : blankNonCode, countIdent, balancedSpan;
+    auto source = blankNonCode(readText(buildPath(repoRoot, "packages/editor-ui/source/ui/channels_panel.d")));
+    assert(countIdent(source, "bindChannelsPanel") == 1, "W18 channels binder declaration floor");
+    const site = source.indexOf("bindChannelsPanel");
+    const open = source.indexOf("{", cast(size_t)site);
+    const body = balancedSpan(source, cast(size_t)open, '{', '}');
+    assert(body.length > 80, "W18 channels binder body floor");
+    assert(!matchAll(body, regex(r"\binteractive\b\s*!is\s+null")).empty,
+        "W18 channels binder interactive guard term");
+}
+
 unittest { // the all-valid role roster binds and every missing member fails
     auto h = new ChannelsHarness;
-    auto ok = bindChannelsPanel(h.owner, h.binding, h.forms,
+    auto ok = bindChannelsPanel(h.owner, &h.binding.dispatchInteractiveUi, h.forms,
                                 () => h.activeTool);
     assert(ok.state !is null && ok.read.document() !is null
         && channelsFormProvider(ok.state) is null,

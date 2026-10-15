@@ -134,10 +134,22 @@ mapfile -t SOURCES < <(
   dub describe --config="$CFG" --compiler="$DC" 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-root = next(p for p in d["packages"] if p["name"] == d["rootPackage"])
-for f in root["files"]:
-    if f.get("role", "source") == "source":
-        print(f["path"])
+from pathlib import Path
+owners = {"vibe3d-render-model": ["source/render/backend.d", "source/render/scene.d"],
+          "vibe3d-render-backends": ["source/render/backend_bridge.d", "source/render/cycles_backend.d", "source/render/render_diff.d", "source/render/rpr_backend.d"]}
+selected = [p for p in d["packages"] if p.get("active") and (p["name"] == d["rootPackage"] or p["name"] in owners)]
+assert set(owners) <= {p["name"] for p in selected}, "render_compile_check: active internal render owners missing"
+sources = []
+for package in selected:
+    paths = [str((Path(package["path"])/f["path"]).resolve()) for f in package["files"] if f.get("role", "source") == "source"]
+    if package["name"] in owners:
+        expected = [str((Path(package["path"])/p).resolve()) for p in owners[package["name"]]]
+        assert sorted(paths) == sorted(expected), "render_compile_check: exact render owner source membership"
+        for path in expected:
+            assert paths.count(path) == 1, "render_compile_check: render owner member must occur exactly once: " + path
+    sources += paths
+assert len(sources) == len(set(sources)), "render_compile_check: duplicate physical source"
+print("\n".join(sources))
 '
 )
 

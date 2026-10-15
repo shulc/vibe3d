@@ -3277,6 +3277,312 @@ EXTERNAL_DEPS = dict(legacy_EXTERNAL_DEPS, **{'nfde': (), 'd-onnxruntime': (), '
 ARCHIVES = dict(legacy_ARCHIVES, **{'nfde': 'bin/libnfde.a', 'd-onnxruntime': 'libd-onnxruntime.a', 'd_imgui': 'libd_imgui_stub.a', 'd-bvh': 'libd-bvh.a',
     'lwo2-writer': 'lib/liblwo2-writer.a', 'bindbc-assimp6': 'lib/libbindbc-assimp6.a'})
 
+SPECS.update({'render-model': {'name': 'vibe3d-render-model',
+                  'root': 'packages/render-model',
+                  'ordinaryDigest': 'af6b4d165c799e5d3308c23a786a46e9a0b06b6031ab0757968d0d4321f4a65b',
+                  'testDigest': 'efe3ac1e1959a0136634e1ebef32365eba40604fa7ceac31239876e24fcec96c',
+                  'sources': ['source/render/backend.d', 'source/render/scene.d'],
+                  'testSources': ['../source/render/backend.d',
+                                  '../source/render/scene.d',
+                                  'source/render_model_population_test.d'],
+                  'testImports': ['source', '../source'],
+                  'lower': ['math'],
+                  'testLower': ['math'],
+                  'external': {},
+                  'ordinaryConfig': 'with-render'},
+ 'render-backends': {'name': 'vibe3d-render-backends',
+                     'root': 'packages/render-backends',
+                     'ordinaryDigest': '5f0dbe7d24ed334dbdfcb3876a5cc716607a76a20e8c3f48a0e87aed4a0d8547',
+                     'testDigest': 'bc8d62ce2b594f36f33d844e7a16c2942ae0db8ba1033ef8158603f37677a767',
+                     'sources': ['source/render/backend_bridge.d',
+                                 'source/render/cycles_backend.d',
+                                 'source/render/render_diff.d',
+                                 'source/render/rpr_backend.d'],
+                     'testSources': ['../source/render/backend_bridge.d',
+                                     '../source/render/cycles_backend.d',
+                                     '../source/render/render_diff.d',
+                                     '../source/render/rpr_backend.d',
+                                     'source/render_backends_population_test.d'],
+                     'testImports': ['source', '../source'],
+                     'lower': ['input-events', 'log', 'math', 'render-model'],
+                     'testLower': ['input-events', 'log', 'math', 'render-model'],
+                     'external': {'bindbc-sdl': '~>1.5.2',
+                                  'bindbc-opengl': '~>1.1.1',
+                                  'd-cycles': {'version': 'a69f99794fab25b4902e0523052e5c4b6bef0941',
+                                               'repository': 'git+https://github.com/shulc/D-Cycles.git'},
+                                  'bindbc-rpr': {'version': 'd1a0a786c307207df3d50db809490c7030bd5927',
+                                                 'repository': 'git+https://github.com/shulc/D-RadeonProRender.git'}},
+                     'ordinaryConfig': 'with-render'},
+ 'forms-model': {'name': 'vibe3d-forms-model',
+                 'root': 'packages/forms-model',
+                 'ordinaryDigest': 'f478a1e28fa098433e54e4af8a9a4385708dfa753e5570be4cc7627f3ee1f222',
+                 'testDigest': '75011b4e0deb810cd4810c43ebf5358f3a56169fb47594256e3261ddcf0c45c7',
+                 'sources': ['source/forms.d'],
+                 'testSources': ['../source/forms.d', 'source/forms_source_test.d'],
+                 'testImports': ['source', '../source'],
+                 'lower': ['command-runtime', 'param-schema'],
+                 'testLower': ['command-runtime', 'param-schema'],
+                 'external': {'dyaml': {'version': '22e4724474795eefb64ee9742f980b49bb34f6ef',
+                                        'repository': 'git+https://github.com/shulc/D-YAML.git'}},
+                 'ordinaryConfig': 'modeling-noai'},
+ 'editor-ui': {'name': 'vibe3d-editor-ui',
+               'root': 'packages/editor-ui',
+               'ordinaryDigest': 'cd58975443664f1f7ae22907aa30533e957cc4fae7acd1bb9b6aae83b9a39bc6',
+               'testDigest': 'bbc2ab6a7c9991ec8db1f0cb0a3415840846dee757775c66a92425cd4d631a3f',
+               'sources': ['source/args_dialog.d',
+                           'source/buttonset.d',
+                           'source/copilot_overlay.d',
+                           'source/copilot_panel.d',
+                           'source/forms_render.d',
+                           'source/imgui_event_gate.d',
+                           'source/imgui_flag_abi.c',
+                           'source/imgui_flag_boundary.d',
+                           'source/imgui_style.d',
+                           'source/pie_geometry.d',
+                           'source/pie_menus.d',
+                           'source/pie_state.d',
+                           'source/popup_state.d',
+                           'source/ui/action_menu.d',
+                           'source/ui/availability.d',
+                           'source/ui/button_face.d',
+                           'source/ui/channel_rows.d',
+                           'source/ui/channels_panel.d',
+                           'source/ui/command_notice.d',
+                           'source/ui/dock_drag.d',
+                           'source/ui/guard_modal_state.d',
+                           'source/ui/history_panel.d',
+                           'source/ui/image_list_panel.d',
+                           'source/ui/image_rows.d',
+                           'source/ui/imgui_window_class.d',
+                           'source/ui/item_glyphs.d',
+                           'source/ui/item_rename.d',
+                           'source/ui/item_rows.d',
+                           'source/ui/layer_list_panel.d',
+                           'source/ui/mode_popup.d',
+                           'source/ui/panel_chrome.d',
+                           'source/ui/panel_host_roles.d',
+                           'source/ui/panels.d',
+                           'source/ui/pie_record.d',
+                           'source/ui/pie_render.d',
+                           'source/ui/remesh_modal_state.d',
+                           'source/ui/retained_item.d',
+                           'source/ui/stat_record.d',
+                           'source/ui/stat_rows.d',
+                           'source/ui/tool_properties_panel.d',
+                           'source/ui/viewport_props_role.d'],
+               'testSources': ['../source/args_dialog.d',
+                               '../source/buttonset.d',
+                               '../source/copilot_overlay.d',
+                               '../source/copilot_panel.d',
+                               '../source/forms_render.d',
+                               '../source/imgui_event_gate.d',
+                               '../source/imgui_flag_abi.c',
+                               '../source/imgui_flag_boundary.d',
+                               '../source/imgui_style.d',
+                               '../source/pie_geometry.d',
+                               '../source/pie_menus.d',
+                               '../source/pie_state.d',
+                               '../source/popup_state.d',
+                               '../source/ui/action_menu.d',
+                               '../source/ui/availability.d',
+                               '../source/ui/button_face.d',
+                               '../source/ui/channel_rows.d',
+                               '../source/ui/channels_panel.d',
+                               '../source/ui/command_notice.d',
+                               '../source/ui/dock_drag.d',
+                               '../source/ui/guard_modal_state.d',
+                               '../source/ui/history_panel.d',
+                               '../source/ui/image_list_panel.d',
+                               '../source/ui/image_rows.d',
+                               '../source/ui/imgui_window_class.d',
+                               '../source/ui/item_glyphs.d',
+                               '../source/ui/item_rename.d',
+                               '../source/ui/item_rows.d',
+                               '../source/ui/layer_list_panel.d',
+                               '../source/ui/mode_popup.d',
+                               '../source/ui/panel_chrome.d',
+                               '../source/ui/panel_host_roles.d',
+                               '../source/ui/panels.d',
+                               '../source/ui/pie_record.d',
+                               '../source/ui/pie_render.d',
+                               '../source/ui/remesh_modal_state.d',
+                               '../source/ui/retained_item.d',
+                               '../source/ui/stat_record.d',
+                               '../source/ui/stat_rows.d',
+                               '../source/ui/tool_properties_panel.d',
+                               '../source/ui/viewport_props_role.d',
+                               'source/tests/unit/ui/channel_rows_test.d',
+                               'source/tests/unit/ui/command_notice_test.d',
+                               'source/tests/unit/ui/stat_rows_test.d',
+                               'source/ui/availability_source_test.d',
+                               'source/ui/item_click_source_test.d'],
+               'testImports': ['source', '../source'],
+               'lower': ['forms-model',
+                         'ai3d-runtime',
+                         'application-core',
+                         'camera-model',
+                         'command-runtime',
+                         'display-policy',
+                         'document-actions',
+                         'document-channels',
+                         'document-io',
+                         'document-model',
+                         'edit-contracts',
+                         'editor-commands',
+                         'input-events',
+                         'interactive-tools',
+                         'interchange',
+                         'mesh',
+                         'mesh-ops',
+                         'param-schema',
+                         'pipe-evaluation',
+                         'pipe-runtime',
+                         'profiling',
+                         'remesh-runtime',
+                         'viewport-gpu',
+                         'viewport-host',
+                         'log',
+                         'math',
+                         'spatial',
+                         'interaction-data',
+                         'interaction-query',
+                         'mesh-snapshot',
+                         'pipe-contracts',
+                         'scene-query'],
+               'testLower': ['forms-model',
+                             'ai3d-runtime',
+                             'application-core',
+                             'camera-model',
+                             'command-runtime',
+                             'display-policy',
+                             'document-actions',
+                             'document-channels',
+                             'document-io',
+                             'document-model',
+                             'edit-contracts',
+                             'editor-commands',
+                             'input-events',
+                             'interactive-tools',
+                             'interchange',
+                             'mesh',
+                             'mesh-ops',
+                             'param-schema',
+                             'pipe-evaluation',
+                             'pipe-runtime',
+                             'profiling',
+                             'remesh-runtime',
+                             'viewport-gpu',
+                             'viewport-host',
+                             'log',
+                             'math',
+                             'spatial',
+                             'interaction-data',
+                             'interaction-query',
+                             'mesh-snapshot',
+                             'pipe-contracts',
+                             'scene-query'],
+               'external': {'d_imgui': {'version': 'd535ba78c7d01aca3c9d45ca94ea8e55455ffb7f',
+                                        'repository': 'git+https://github.com/shulc/D-ImGui.git'},
+                            'dyaml': {'version': '22e4724474795eefb64ee9742f980b49bb34f6ef',
+                                      'repository': 'git+https://github.com/shulc/D-YAML.git'},
+                            'bindbc-sdl': '~>1.5.2',
+                            'bindbc-opengl': '~>1.1.1'},
+               'ordinaryConfig': 'modeling-noai'}})
+
+RENDER_NATIVE = {'d-cycles': {'sha256': '603531d3a3e5b251dad84fba77657046c2e14aeaa84eac7c27e34d4109e77513'},
+ 'bindbc-rpr': {'sha256': 'a3f0d0bf6d97b72353ae560b0837bddae6c8970afe52f079d6469bc3477a2d8f'}}
+RENDER_SOURCE_PINS = {'d-cycles': {'dub.json': '603531d3a3e5b251dad84fba77657046c2e14aeaa84eac7c27e34d4109e77513',
+              'CMakeLists.txt': '3dc8d34b2f9cf1c88a45e0f6bba1d3fa3ea93b414eaa0d49badb526d4320fe37',
+              'tools/build_cycles_libs.sh': '632b8e90a81cd056d9dc80dd9dbfa75244104ea31f28a7f70b5c1c94e3894000',
+              'source/cycles/c.d': 'f35a4fd4a236384393ac5fb699d6246e95149ce29169669439e5e133f3bcb51c',
+              'csrc/cyclesc.h': '76d9e04bbd0bc143ae6451082aae5a7a5ced935480006cba93a8f95eb50fa0f3',
+              'csrc/cyclesc_internal.h': 'c41bed903dbe70ca40a46231355bf243af8f905da27438d2a7435b1d983209ee'},
+ 'bindbc-rpr': {'dub.json': 'a3f0d0bf6d97b72353ae560b0837bddae6c8970afe52f079d6469bc3477a2d8f',
+                'source/bindbc/rpr/config.d': '7cff18bfa0e5fcbd71b50a2d9141397f56256d758ec33b0508f7f4f20d2d65a0'}}
+
+APP_SOURCES = ['source/ai3d_command_registration.d',
+ 'source/ai_command_registration.d',
+ 'source/app.d',
+ 'source/application_command_binding.d',
+ 'source/commands/actr.d',
+ 'source/commands/ai/toggle.d',
+ 'source/commands/ai3d/generate.d',
+ 'source/commands/ai3d/generate_open.d',
+ 'source/commands/ai3d/generate_test_hooks.d',
+ 'source/commands/ai3d/import_result.d',
+ 'source/commands/constrain/toggle.d',
+ 'source/commands/copilot/analyze.d',
+ 'source/commands/copilot/cycle_finding.d',
+ 'source/commands/copilot/select_finding.d',
+ 'source/commands/file/load.d',
+ 'source/commands/file/save.d',
+ 'source/commands/mesh/magnet.d',
+ 'source/commands/mesh/morph.d',
+ 'source/commands/mesh/remesh.d',
+ 'source/commands/path/define.d',
+ 'source/commands/prefs/coord_rounding.d',
+ 'source/commands/prefs/trackball.d',
+ 'source/commands/snap/mode.d',
+ 'source/commands/snap/toggle.d',
+ 'source/commands/snap/toggle_type.d',
+ 'source/commands/symmetry/toggle.d',
+ 'source/commands/test_undo_flags.d',
+ 'source/commands/ui/about.d',
+ 'source/commands/ui/channels.d',
+ 'source/commands/ui/copilot_panel.d',
+ 'source/commands/ui/image_list.d',
+ 'source/commands/ui/layer_list.d',
+ 'source/commands/ui/layout_reset.d',
+ 'source/commands/ui/pie.d',
+ 'source/commands/ui/statistics.d',
+ 'source/commands/ui/tool_properties.d',
+ 'source/commands/ui/viewport_props.d',
+ 'source/commands/viewport/command_base.d',
+ 'source/commands/viewport/display.d',
+ 'source/commands/viewport/fit.d',
+ 'source/commands/viewport/fit_selected.d',
+ 'source/commands/viewport/grid_steps.d',
+ 'source/commands/viewport/independence.d',
+ 'source/commands/viewport/layout_preset.d',
+ 'source/commands/viewport/master.d',
+ 'source/commands/viewport/view_preset.d',
+ 'source/commands/workplane.d',
+ 'source/copilot_command_registration.d',
+ 'source/create_tool_registration.d',
+ 'source/edit_tool_registration.d',
+ 'source/editor_app.d',
+ 'source/file_io_registration.d',
+ 'source/frame_runner.d',
+ 'source/frame_stall.d',
+ 'source/guarded_action_controller.d',
+ 'source/history_macro_registration.d',
+ 'source/http_command_adapter.d',
+ 'source/http_providers.d',
+ 'source/input_frame_state.d',
+ 'source/input_router.d',
+ 'source/item_command_registration.d',
+ 'source/item_pick.d',
+ 'source/layout_reset_action.d',
+ 'source/mesh_command_registration.d',
+ 'source/pipe_command_registration.d',
+ 'source/prefs.d',
+ 'source/registration.d',
+ 'source/render/render_mvp.d',
+ 'source/scene_file_lifecycle_registration.d',
+ 'source/scene_reset_effects.d',
+ 'source/selection_command_registration.d',
+ 'source/selftest_fault.d',
+ 'source/tool_lifecycle_registration.d',
+ 'source/transform_tool_registration.d',
+ 'source/tsan_preinit.d',
+ 'source/ui/viewport_render.d',
+ 'source/view_settings_registration.d',
+ 'source/viewport_command_registration.d',
+ 'source/web_gl_loader.d']
+REVISIONS.update({'d-cycles': ('a69f99794fab25b4902e0523052e5c4b6bef0941', 'git+https://github.com/shulc/D-Cycles.git'), 'bindbc-rpr': ('d1a0a786c307207df3d50db809490c7030bd5927', 'git+https://github.com/shulc/D-RadeonProRender.git')})
+EXTERNAL_DEPS.update({'d-cycles': (), 'bindbc-rpr': ('bindbc-common', 'bindbc-loader')})
+ARCHIVES.update({'d-cycles': 'libd-cycles.a', 'bindbc-rpr': 'lib/libbindbc-rpr.a'})
+
 def raw_config(path, configuration):
     raw = json.loads((path/'dub.json').read_text())
     config = next(c for c in raw['configurations'] if c['name'] == configuration)
@@ -3311,10 +3617,32 @@ def native_grants(names, roots, web=False):
             '-L'+str(roots['d-onnxruntime']/'build/onnxruntime/sdk/lib'),
             '-rpath=$ORIGIN', '-rpath=$ORIGIN/lib',
             '-rpath='+str(roots['d-onnxruntime']/'build/onnxruntime/sdk/lib')))
+    for name in set(names) & set(RENDER_NATIVE):
+        raw = json.loads((roots[name]/'dub.json').read_text())
+        libs.update(raw.get('libs-linux', raw.get('libs', [])))
+        lflags.update(value.replace('$$ORIGIN', '$ORIGIN').replace('$PACKAGE_DIR', str(roots[name]))
+                      for value in raw.get('lflags-linux', raw.get('lflags', [])))
     return libs, lflags
 
 def validate_external(package, web=False):
     name=package['name'];path=Path(package['path']).resolve()
+    if name in RENDER_NATIVE:
+        raw = json.loads((path/'dub.json').read_text())
+        require(legacy_digest(path/'dub.json') == RENDER_NATIVE[name]['sha256'],
+                'PREPARATION-REFUSED: renderer native recipe identity: '+name)
+        require(legacy_native_revision(path) == REVISIONS[name][0],
+                'PREPARATION-REFUSED: renderer native source revision: '+name)
+        require(package['targetType'] == raw['targetType'], 'support renderer native target: '+name)
+        require(package.get('dependencies', []) == list(raw.get('dependencies', {})),
+                'support renderer native dependency DAG: '+name)
+        require(package.get('versions', []) == [] and
+                (name != 'bindbc-rpr' or package['configuration'] == 'dynamic'),
+                'PREPARATION-REFUSED: renderer requires dynamic RPR')
+        for field in HOOKS:
+            require(package.get(field, []) == raw.get(field+'-linux', raw.get(field, [])),
+                    'support renderer retained native hook array: '+name+':'+field)
+        require(package.get('importPaths', []) == ['source'], 'support renderer native imports: '+name)
+        return
     if name in ('nfde', 'd-onnxruntime'):
         raw=json.loads((path/'dub.json').read_text())
         require(canonical_digest(raw)==(NFDE_DESCRIPTOR_DIGEST if name=='nfde' else ONNX_DESCRIPTOR_DIGEST),
@@ -3407,7 +3735,7 @@ def check_raw_tree(project, owner):
             require(canonical_digest(raw)==spec['testDigest' if tests else 'ordinaryDigest'],
                     'support descriptor contract: '+selected+(' tests' if tests else ' production'))
         found=sorted(p.resolve() for p in (root/'source').rglob('*.d'))
-        require(found==production_files(project,selected),'support production source identity: '+selected)
+        require(found==[p for p in production_files(project,selected) if p.suffix=='.d'],'support production source identity: '+selected)
         test_root=root/'tests'
         expected_carriers=sorted((test_root/p).resolve() for p in spec['testSources'] if p.startswith('source/'))
         # C custody: cross-common cut is present for root only, never ops algorithm.
@@ -3470,7 +3798,7 @@ def validate_description(description, project, owner, config, tests=False, harne
         expected_flags = ['--singleobj'] if (selected == 'mesh-ops' and not is_test and
             config_grants['name'] in ('modeling', 'modeling-noai', 'with-render', 'web') and
             Path(compiler).name in ('ldc', 'ldc2')) else []
-        if selected == 'interactive-tools':
+        if selected in ('interactive-tools', 'editor-ui'):
             # Package descriptions retain the recipe variable; target settings expand it.
             expected_flags = ['-P-I$D_IMGUI_PACKAGE_DIR/extern/cimgui']
         require(package.get('dflags', []) == expected_flags, 'support resolved include-import flags: '+name)
@@ -3503,7 +3831,7 @@ def validate_description(description, project, owner, config, tests=False, harne
                 'support target compiler source identity: '+name)
         require(not any(x=='-i' or x.startswith(('-i=','--include-imports')) for x in settings.get('dflags',[])),
                 'support target include-import flags: '+name)
-        if selected == 'interactive-tools':
+        if selected in ('interactive-tools', 'editor-ui'):
             expected_flags = ['-P-I'+str(Path(active['d_imgui']['path']).resolve()/'extern/cimgui')]
             # Task 20262872: validated mesh-ops ordinary LDC flags propagate;
             # keep exact order (doc/library_layout_wave15_ldc_target_flag_source_correction_2026-10-14.md).
@@ -3545,7 +3873,7 @@ def validate_description(description, project, owner, config, tests=False, harne
 
     return active
 
-def compiler_commands(output, compiler_cwd=None):
+def compiler_commands(output, compiler_cwd=None, response_inputs=None):
     """Read DUB's verbose compiler argv, including its actual working directory."""
     commands = []
     for line in output.splitlines():
@@ -3568,7 +3896,9 @@ def compiler_commands(output, compiler_cwd=None):
             expanded = []
             for arg in arguments:
                 if arg.startswith('@'):
-                    expanded += expand(shlex.split((cwd / arg[1:]).read_text()), depth + 1)
+                    path=(cwd/arg[1:]).resolve()
+                    if response_inputs is not None:response_inputs[str(path)]=legacy_digest(path)
+                    expanded += expand(shlex.split(path.read_text()), depth + 1)
                 else:
                     expanded.append(arg)
             return expanded
@@ -3577,7 +3907,7 @@ def compiler_commands(output, compiler_cwd=None):
         outputs = [str((cwd / arg.removeprefix('-of').lstrip('=')).resolve())
                    for arg in argv[1:] if arg.startswith('-of')]
         commands.append({'cwd': str(cwd), 'cwdEvidence': cwd_evidence, 'argv': argv,
-                         'sourceInputs': [p for p in inputs if p.endswith('.d')],
+                         'sourceInputs': [p for p in inputs if p.endswith(('.d', '.c'))],
                          'archiveInputs': [p for p in inputs if p.endswith('.a')],
                          'objectInputs': [p for p in inputs if p.endswith(('.o', '.obj'))],
                          'outputs': outputs})
@@ -3585,7 +3915,7 @@ def compiler_commands(output, compiler_cwd=None):
     return commands
 
 
-def validate_actual_compiler(commands, project, owner, description, home, harness):
+def validate_actual_compiler(commands, project, owner, description, home, harness, renderer=False):
     own=str(production_files(project,owner)[0]);compiles=[c for c in commands if own in c['sourceInputs']]
     require(len(compiles)==1,'support actual compiler source identity: '+owner)
     command=compiles[0];sources=command['sourceInputs']
@@ -3596,7 +3926,7 @@ def validate_actual_compiler(commands, project, owner, description, home, harnes
     require(not any(x=='-i' or x.startswith(('-i=','--include-imports')) for x in command['argv']),
             'support actual compiler include-import flags: '+owner)
     active={p['name']:p for p in description['packages'] if p.get('active')}
-    if owner == 'interactive-tools':
+    if owner in ('interactive-tools', 'editor-ui'):
         expected_flags = ['-P-I'+str(Path(active['d_imgui']['path']).resolve()/'extern/cimgui')]
         require([x for x in command['argv'] if x.startswith('-P-I')] == expected_flags,
                 'support actual compiler C include path: '+owner)
@@ -3608,10 +3938,15 @@ def validate_actual_compiler(commands, project, owner, description, home, harnes
     linked=links[0]
     static={n:ARCHIVES[n] for n,p in active.items() if not n.startswith('vibe3d-') and p['targetType'] in ('staticLibrary','library')}
     archives=linked['archiveInputs']
-    require(len(archives)==len(static) and all(sum((Path(a).is_relative_to(home/'cache'/n)
-            or (n=='nfde' and Path(a)==Path(active[n]['path']).resolve()/filename))
-            and Path(a).name==Path(filename).name for a in archives)==1 for n,filename in static.items()),
-            'support actual compiler D archive inputs: '+owner)
+    if renderer:
+        target=next(t for t in description['targets'] if t['rootPackage']==description['rootPackage'])
+        require(archives==[str(Path(p).resolve()) for p in target['buildSettings'].get('linkerFiles',[])],
+                'support renderer actual ordered D archive inputs: '+owner)
+    else:
+        require(len(archives)==len(static) and all(sum((Path(a).is_relative_to(home/'cache'/n)
+                or (n=='nfde' and Path(a)==Path(active[n]['path']).resolve()/filename))
+                and Path(a).name==Path(filename).name for a in archives)==1 for n,filename in static.items()),
+                'support actual compiler D archive inputs: '+owner)
     return {'compile':command,'link':linked,'generatedMain':generated[0],'staticOwners':sorted(static)}
 
 def compiler_module(relative):
@@ -3624,6 +3959,7 @@ def compiler_module(relative):
      '../source/commands/mesh/paste_.d': 'commands.mesh.paste_',
      '../source/commands/mesh/radial_array_.d': 'commands.mesh.radial_array_',
      '../source/commands/mesh/remove_.d': 'commands.mesh.remove_'}
+    nominal['source/tests/unit/ui/stat_rows_test.d'] = 'stat_rows_test'
     nominal.update({'../../../tests/unit/fixtures.d': 'tests.unit.fixtures', '../../../tests/unit/mesh_by_value_gate.d': 'tests.unit.mesh_by_value_gate', 'source/tests/unit/bevel_cold_arm_param_image_test.d': 'unit.bevel_cold_arm_param_image_test', 'source/tests/unit/falloff_rmb_discipline_test.d': 'falloff_rmb_discipline_test', 'source/tests/unit/prepared_param_update_test.d': 'unit.prepared_param_update_test', 'source/tests/unit/prepared_tool_transition_test.d': 'unit.prepared_tool_transition_test', 'source/tests/unit/tools/edit/topology_pen/move_protocol_test.d': 'tools.edit.topology_pen.move_protocol_test', 'source/tests/unit/tools/edit/topology_pen/press_compatibility_test.d': 'tools.edit.topology_pen.press_compatibility_test'})
     if relative in nominal: return nominal[relative]
     if relative=='../../../tests/unit/mesh_by_value_gate.d':return 'tests.unit.mesh_by_value_gate'
@@ -4000,6 +4336,8 @@ ENABLED_MODULES = frozenset(['tests.unit.sdl_error_test',
  'unit.prepared_param_update_test',
  'unit.prepared_tool_transition_test'])
 
+ENABLED_MODULES = ENABLED_MODULES | frozenset(['forms_source_test', 'render_backends_population_test', 'render_model_population_test', 'tests.unit.ui.channel_rows_test', 'tests.unit.ui.command_notice_test', 'stat_rows_test', 'ui.availability_source_test', 'ui.image_rows', 'ui.item_click_source_test', 'ui.item_rows'])
+
 def validate_runtime(output, owner):
     totals=re.findall(r'^(\d+) modules passed unittests$',output,re.M)
     require(len(totals)==1 and int(totals[0])>0,'NO-VERDICT: support nonzero druntime total')
@@ -4007,9 +4345,9 @@ def validate_runtime(output, owner):
     require(roster and len(roster)==len(set(n for n,_ in roster)),'NO-VERDICT: support runtime roster identity')
     # Every explicit own/lower production input and every public carrier occurs
     # once; private/public enabled identities keep their original guards.
-    own={compiler_module(p) for p in SPECS[owner]['testSources']}
+    own={compiler_module(p) for p in SPECS[owner]['testSources'] if p.endswith('.d')}
     for selected in closure(owner,True)|{owner}:
-        modules={compiler_module(p) for p in SPECS[selected]['sources'] + SPECS[selected].get('testHelpers', [])}
+        modules={compiler_module(p) for p in SPECS[selected]['sources'] + SPECS[selected].get('testHelpers', []) if p.endswith('.d')}
         if selected==owner:modules |= own
         for module in modules:
             require(sum(name==module for name,_ in roster)==1,
@@ -4023,7 +4361,7 @@ def validate_runtime(output, owner):
     return {'modules':int(totals[0]),'roster':roster}
 
 
-def stage_dependencies(active, archive, evidence, env):
+def stage_dependencies(active, archive, evidence, env, renderer=False):
     home = evidence / 'dub-home'
     home.mkdir()
     env['DUB_HOME'] = str(home)
@@ -4044,7 +4382,31 @@ def stage_dependencies(active, archive, evidence, env):
             # (doc/library_layout_wave16_composition_source_custody_2026-10-14.md).
             shutil.copytree(original, staged, ignore=lambda directory, names: shutil.ignore_patterns(
                 '.git', '.dub', 'build', 'out', '*.a', '*.o', '*.obj', '*.lib',
+                *(('*.so*', '*.dylib*', '*.dll', 'build_cycles') if renderer else ()),
                 *(('build-min',) if name=='bindbc-assimp6' and Path(directory)==original else ()))(directory, names))
+        native_files = {}
+        if renderer:
+            receipt=json.loads((evidence/'native-input-receipt.json').read_text())
+            items=receipt['packages'][name]['artifacts']
+            relatives={item['relative'] for item in items}
+            for item in items:
+                relative=Path(item['relative']);source=original/relative;target=staged/relative
+                require(not relative.is_absolute() and '..' not in relative.parts
+                        and source.is_file() and legacy_digest(source)==item['sha256'],
+                        'PREPARATION-REFUSED: renderer native artifact staging identity: '+name)
+                target.parent.mkdir(parents=True,exist_ok=True)
+                if target.is_symlink() or target.exists():target.unlink()
+                if source.is_symlink():
+                    link=os.readlink(source)
+                    require(item.get('symlink')==link and not Path(link).is_absolute()
+                            and os.path.normpath(str(relative.parent/link)) in relatives,
+                            'PREPARATION-REFUSED: renderer native symlink closure: '+name)
+                    target.symlink_to(link)
+                else:
+                    require(item.get('symlink') is None, 'PREPARATION-REFUSED: renderer native symlink identity: '+name)
+                    shutil.copy2(source,target)
+                native_files[str(relative)]={'original':str(source),'sha256':item['sha256'],
+                    'symlink':os.readlink(source) if source.is_symlink() else None}
         files = {str(p.relative_to(staged)): legacy_digest(p) for p in sorted(staged.rglob('*')) if p.is_file()}
         legacy_require(files and 'dub.json' in files, 'PREPARATION-REFUSED: dependency source missing: ' + name)
         for relative, sha in files.items():
@@ -4053,7 +4415,7 @@ def stage_dependencies(active, archive, evidence, env):
             revision = legacy_native_revision(original)
             legacy_require(revision == REVISIONS[name][0], 'PREPARATION-REFUSED: native source revision: ' + name)
             (staged / '.boundary-revision').write_text(revision + '\n')
-        if name in ('bindbc-assimp6', 'd_imgui'):
+        if name in ('bindbc-assimp6', 'd_imgui') and not renderer:
             # The unchanged native hook names its existing submodule explicitly.
             # Preserve independent local metadata so it observes the frozen gitlink.
             metadata = original / '.git'
@@ -4090,16 +4452,38 @@ def stage_dependencies(active, archive, evidence, env):
                 git_provenance['gitlinks'] = gitlinks
             (evidence / ('assimp-git-provenance.json' if name == 'bindbc-assimp6' else 'imgui-git-provenance.json')).write_text(json.dumps(git_provenance, indent=2))
         else:
-            legacy_run(['git', 'init', '-q', str(staged)], archive, env, evidence, 'initialize-' + name)
-        legacy_run(['dub', 'add-local', str(staged), package['version']], archive, env, evidence, 'register-' + name)
+            if renderer:run(['git','init','-q',str(staged)],archive,env,evidence,'initialize-'+name,renderer_kind='initialize')
+            else:legacy_run(['git', 'init', '-q', str(staged)], archive, env, evidence, 'initialize-' + name)
+        if renderer:run(['dub','add-local',str(staged),package['version']],archive,env,evidence,'register-'+name,renderer_kind='register')
+        else:legacy_run(['dub', 'add-local', str(staged), package['version']], archive, env, evidence, 'register-' + name)
         receipts[name] = {'original': str(original), 'staged': str(staged), 'version': package['version'], 'files': files}
+        if renderer:receipts[name]['nativeArtifacts']=native_files
     (evidence / 'dependency-sources.json').write_text(json.dumps(receipts, indent=2))
     return receipts
 
-def run(command,cwd,env,evidence,name):
+def run(command,cwd,env,evidence,name,renderer_kind=None):
+    if renderer_kind is not None:
+        tool = Path(command[0]).name
+        allowed = ((renderer_kind == 'describe' and tool == 'dub' and len(command) > 1 and command[1] == 'describe')
+            or (renderer_kind == 'register' and tool == 'dub' and len(command) == 4 and command[1] == 'add-local')
+            or (renderer_kind == 'initialize' and tool == 'git' and len(command) == 4 and command[1:3] == ['init','-q'])
+            or (renderer_kind in ('archive', 'compile', 'link') and tool in ('dmd', 'ldc2', 'ldc'))
+            or (renderer_kind == 'algorithm-run' and len(command) == 1
+                and Path(command[0]).is_absolute() and Path(command[0]).resolve().is_relative_to((evidence/'archive').resolve())))
+        require(allowed, 'PREPARATION-REFUSED: renderer construction invocation: '+str(renderer_kind)+':'+tool)
+    record={'argv':command,'cwd':str(cwd)}
+    if renderer_kind is not None:record.update(environment=env,rendererKind=renderer_kind)
+    (evidence/(name+'.command.json')).write_text(json.dumps(record,indent=2))
     result=subprocess.run(command,cwd=cwd,env=env,text=True,capture_output=True)
-    (evidence/(name+'.stdout.log')).write_text(result.stdout);(evidence/(name+'.stderr.log')).write_text(result.stderr)
-    (evidence/(name+'.command.json')).write_text(json.dumps({'argv':command,'cwd':str(cwd),'exit':result.returncode},indent=2))
+    (evidence/(name+'.stdout.log')).write_text(result.stdout)
+    (evidence/(name+'.stderr.log')).write_text(result.stderr)
+    record['exit']=result.returncode
+    (evidence/(name+'.command.json')).write_text(json.dumps(record,indent=2))
+    if renderer_kind in ('archive','compile','link'):
+        command_log='[cwd='+str(cwd)+'] '+shlex.join(command)+'\n'+result.stdout+result.stderr
+        (evidence/(name+'.compiler.log')).write_text(command_log)
+        compiler_commands(command_log,cwd)
+
     require(result.returncode==0,'support command failed: '+name+': '+next((s for s in (result.stdout+result.stderr).splitlines() if 'Error:' in s or 'AssertError@' in s),'see logs'))
     return result
 
@@ -4113,7 +4497,344 @@ def describe(project,owner,config,compiler,env,evidence,tests=False,recipe=None,
     (evidence/(name+'.json')).write_text(json.dumps(description,indent=2))
     return description
 
+def renderer_native_receipt(project, compiler, evidence, active):
+    import platform
+    path=evidence/'native-input-receipt.json'
+    require(path.is_file(), 'PREPARATION-REFUSED: renderer native-input-receipt.json missing')
+    receipt=json.loads(path.read_text())
+    require(receipt['schema']=='vibe3d-render-native-input-v1' and receipt['producer']
+            and receipt['construction']['exit']==0 and receipt['construction']['argv']
+            and isinstance(receipt['construction']['environment'],dict),
+            'PREPARATION-REFUSED: successful original native construction provenance')
+    require(platform.system()=='Linux' and receipt['host']['arch']==platform.machine() and receipt['host']['system']==platform.system(),
+            'PREPARATION-REFUSED: renderer native target/host')
+    require(receipt['abi']['dCompilerSha256']==legacy_digest(Path(compiler))
+            and receipt['abi']['dTarget'] and receipt['abi']['nativeTarget']==receipt['abi']['dTarget']
+            and receipt['abi']['compatible'] is True,
+            'PREPARATION-REFUSED: renderer native compiler/ABI compatibility')
+    require(receipt['mode']['configuration']=='Release' and receipt['mode']['WITH_CYCLES'] is True
+            and receipt['mode']['rpr']=='dynamic' and receipt['mode']['backendConfiguration'],
+            'PREPARATION-REFUSED: renderer native Release/WITH_CYCLES/RPR mode')
+    require(isinstance(receipt['abi']['dCompilerConfigInputs'],list)
+            and isinstance(receipt['abi']['dCompilerConfigAbsent'],list),
+            'PREPARATION-REFUSED: renderer D compiler configuration provenance')
+    for item in receipt['abi']['dCompilerConfigInputs']:
+        require(Path(item['path']).is_file() and legacy_digest(Path(item['path']))==item['sha256'],
+                'PREPARATION-REFUSED: renderer D compiler configuration identity')
+    for path in receipt['abi']['dCompilerConfigAbsent']:
+        require(not Path(path).exists(), 'PREPARATION-REFUSED: renderer D compiler configuration absence')
+    external={name:p for name,p in active.items() if not name.startswith('vibe3d-') and name!='vibe3d'}
+    require(set(receipt['packages'])==set(external), 'PREPARATION-REFUSED: renderer native dependency receipt population')
+    for name, package in external.items():
+        record=receipt['packages'][name];root=Path(package['path']).resolve()
+        native=name in {'d-cycles','bindbc-rpr','nfde','d_imgui','d-stb-image','d-opensubdiv','d-bvh','bindbc-assimp6','d-onnxruntime'}
+        require(record['tree'] and isinstance(record['gitlinks'],dict) and record['inputs']
+                and (not native or (record['headers'] and record['nativeCompiler']['identity'] and record['linker']['identity']))
+                and isinstance(record['generatedConfigurations'],list),
+                'PREPARATION-REFUSED: renderer complete native used-input provenance: '+name)
+        if name in REVISIONS:
+            require(record['revision']==REVISIONS[name][0], 'PREPARATION-REFUSED: renderer recorded source revision: '+name)
+        require(record['recipeSha256']==legacy_digest(root/'dub.json'), 'PREPARATION-REFUSED: renderer recorded recipe: '+name)
+        for relative,digest in RENDER_SOURCE_PINS.get(name,{}).items():
+            require((root/relative).is_file() and legacy_digest(root/relative)==digest,
+                    'PREPARATION-REFUSED: renderer frozen Source/header pin: '+name+':'+relative)
+        if native:
+            require(record['construction']['exit']==0 and record['construction']['argv']
+                    and isinstance(record['construction']['environment'],dict),
+                    'PREPARATION-REFUSED: renderer original native package construction: '+name)
+            for tool in ('nativeCompiler','linker'):
+                identity=record[tool]
+                require(identity['target']==receipt['abi']['nativeTarget'] and identity['identity']
+                        and Path(identity['path']).is_file() and legacy_digest(Path(identity['path']))==identity['sha256'],
+                        'PREPARATION-REFUSED: renderer original native tool/target identity: '+name+':'+tool)
+        if (root/'.git').exists():
+            require(record['tree']==subprocess.check_output(['git','rev-parse','HEAD^{tree}'],cwd=root,text=True).strip(),
+                    'PREPARATION-REFUSED: renderer source tree identity: '+name)
+            for relative,revision in record['gitlinks'].items():
+                require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=root/relative,text=True).strip()==revision,
+                        'PREPARATION-REFUSED: renderer native gitlink identity: '+name+':'+relative)
+
+        for group in ('inputs','headers','generatedConfigurations'):
+            for item in record[group]:
+                source=Path(item['path'])
+                require(source.is_file() and legacy_digest(source)==item['sha256'],
+                        'PREPARATION-REFUSED: renderer used native '+group+': '+str(source))
+        for item in record['artifacts']:
+            relative=Path(item['relative']);source=root/relative
+            require(not relative.is_absolute() and '..' not in relative.parts and source.is_file()
+                    and legacy_digest(source)==item['sha256'], 'PREPARATION-REFUSED: renderer native artifact identity: '+name)
+        require(record['artifacts'] or not native,
+                'PREPARATION-REFUSED: renderer native artifacts missing: '+name)
+    require('BindRPR_Static' not in {v for package in active.values() for v in package.get('versions',[])},
+            'PREPARATION-REFUSED: renderer static RPR mode')
+    return receipt
+
+
+def renderer_description(description, project, owner, config, tests=False, harness=None):
+    active_list=[p for p in description['packages'] if p.get('active')]
+    active={p['name']:p for p in active_list}
+    require(len(active)==len(active_list), 'support renderer active package identity')
+    root_name='vibe3d' if owner=='app' else SPECS[owner]['name']+('-tests' if tests else '')
+    require(description['rootPackage']==root_name, 'support renderer resolved root identity')
+    for name, package in active.items():
+        path=Path(package['path']).resolve()
+        require(path.is_relative_to(project) or not name.startswith('vibe3d-'), 'support renderer internal owner path')
+        if name.startswith('vibe3d-') or name==root_name:
+            selected=name.removeprefix('vibe3d-').removesuffix('-tests')
+            if owner=='app' and name==root_name:
+                expected=[(project/p).resolve() for p in APP_SOURCES]
+            else:
+                spec=SPECS[selected]
+                own=spec['testSources'] if name.endswith('-tests') else spec['sources']
+                expected=[(path/p).resolve() for p in own]
+                if not name.endswith('-tests') and package['configuration'] in ('root-tests','isolated-tests'):
+                    expected+=test_helper_files(project,selected)
+                if name.endswith('-tests') and harness is not None:
+                    expected.append(harness.resolve())
+                    generated=Path(json.loads((path/'dub.boundary.json').read_text())['mainSourceFile'])
+                    require(generated.name=='dub_test_root.d' and generated.read_bytes()==b'module dub_test_root;\nvoid main() {}\n', 'support renderer generated main identity')
+                    expected.append(generated.resolve())
+            actual=[(path/f['path']).resolve() for f in package['files'] if f['role']=='source']
+            require(sorted(actual)==sorted(expected) and len(actual)==len(set(actual)), 'support renderer exact physical owner inputs: '+name)
+            raw,cfg=raw_config(path,package['configuration'])
+            declared=set(raw.get('dependencies',{}))|set(cfg.get('dependencies',{}))
+            require(set(package.get('dependencies',[]))==declared, 'support renderer direct dependency DAG: '+name)
+            require(not any(package.get(field) for field in HOOKS), 'support renderer internal hook: '+name)
+        else:validate_external(package)
+    required={'render-model':['source/render/backend.d','source/render/scene.d'],
+              'render-backends':['source/render/backend_bridge.d','source/render/cycles_backend.d','source/render/render_diff.d','source/render/rpr_backend.d']}
+    for selected in ('render-model','render-backends') if owner in ('render-backends','app') else ('render-model',):
+        package=active[SPECS[selected]['name']] if not (selected==owner and tests) else active[root_name]
+        require('WithRender' in package.get('versions',[]), 'support renderer active WithRender: '+selected)
+        actual=[(Path(package['path'])/f['path']).resolve() for f in package['files'] if f['role']=='source']
+        for relative in required[selected]:
+            require(actual.count((project/SPECS[selected]['root']/relative).resolve())==1,
+                    'support renderer independent member: '+selected+':'+relative)
+    targets={t['rootPackage']:t for t in description['targets']}
+    require(len(targets)==len(description['targets']) and set(targets)=={n for n,p in active.items() if p['targetType']!='sourceLibrary'},
+            'support renderer exact target population')
+    for name,target in targets.items():
+        seen=set()
+        def visit(n):
+            if n in seen:return
+            seen.add(n)
+            for dep in active[n].get('dependencies',[]):visit(dep)
+        visit(name)
+        inputs=[]
+        for n in {name}|{n for n in seen if active[n]['targetType']=='sourceLibrary'}:
+            package=active[n];path=Path(package['path'])
+            inputs.extend(str((path/f['path']).resolve()) for f in package['files'] if f['role']=='source')
+        actual=[str(Path(p).resolve()) for p in target['buildSettings']['sourceFiles']]
+        require(sorted(actual)==sorted(inputs) and len(actual)==len(set(actual)), 'support renderer merged target source identity: '+name)
+        expected_archives=[]
+        for n in seen-{name}:
+            if active[n]['targetType'] not in ('library','staticLibrary'):continue
+            expected_archives.append(str((Path(active[n]['path'])/(ARCHIVES[n] if n in ARCHIVES else 'lib'+n+'.a')).resolve()))
+        require(sorted(target['buildSettings'].get('linkerFiles',[]))==sorted(expected_archives), 'support renderer exact D archive inputs: '+name)
+        roots={n:Path(active[n]['path']).resolve() for n in seen}
+        libs,lflags=native_grants(seen,roots)
+        settings=target['buildSettings']
+        require(set(settings.get('libs',[]))==libs and set(settings.get('lflags',[]))==lflags,
+                'support renderer resolved native link settings: '+name)
+        for native in seen & set(RENDER_NATIVE):
+            raw=RENDER_NATIVE[native]['raw']
+            expected=[value.replace('$$ORIGIN','$ORIGIN').replace('$PACKAGE_DIR',str(roots[native]))
+                      for value in raw.get('lflags-linux',raw.get('lflags',[]))]
+            actual=settings.get('lflags',[])
+            require(sum(actual[i:i+len(expected)]==expected for i in range(len(actual)-len(expected)+1))==1,
+                    'support renderer ordered retained native flags: '+name+':'+native)
+
+    return active
+
+
+def renderer_describe(project,owner,config,compiler,env,evidence,tests=False,recipe=None,harness=None,data=None):
+    root=project if owner=='app' else project/SPECS[owner]['root']/('tests' if tests else '')
+    build='unittest' if tests else 'debug'
+    command=['dub','describe','--root='+str(root),'--config='+config,'--compiler='+compiler,
+             '--build='+build,'--nodeps','--skip-registry=all','--quiet']
+    if recipe is not None:command+=['--recipe='+str(recipe)]
+    if data is not None:command+=['--data='+data]
+    name=('app' if owner=='app' else owner)+('-tests' if tests else '')+('-data-'+data.replace(',','-') if data else '-description')
+    result=run(command,project,env,evidence,name,renderer_kind='describe')
+    if data is not None:return shlex.split(result.stdout)
+    description=json.loads(result.stdout)
+    renderer_description(description,project,owner,config,tests,harness)
+    (evidence/(name+'.json')).write_text(json.dumps(description,indent=2))
+    return description
+
+
+def renderer_compile_target(description, target, compiler, env, evidence, label, tests=False):
+    settings=target['buildSettings'];sources=[str(Path(p).resolve()) for p in settings['sourceFiles']]
+    require(sources and len(sources)==len(set(sources)), 'support renderer nonempty unique source vector: '+label)
+    active={p['name']:p for p in description['packages'] if p.get('active')}
+    package=active[target['rootPackage']];root=Path(package['path']).resolve()
+    command=['dub','describe','--root='+str(root),'--config='+package['configuration'],'--compiler='+compiler,
+             '--build='+('unittest' if tests else 'debug'),'--nodeps','--skip-registry=all','--quiet']
+    if tests:command+=['--recipe='+str(root/'dub.boundary.json')]
+    own_description=json.loads(run(command,root,env,evidence,label+'-selected-target',renderer_kind='describe').stdout)
+    own_target=next(t for t in own_description['targets'] if t['rootPackage']==target['rootPackage'])
+    for field in ('sourceFiles','dflags','versions','debugVersions','importPaths','stringImportPaths'):
+        require(own_target['buildSettings'].get(field,[])==settings.get(field,[]),
+                'PREPARATION-REFUSED: renderer per-target configuration changed: '+label+':'+field)
+    flags=shlex.split(run(command+['--data=options,dflags,versions,debug-versions,import-paths,string-import-paths'],root,env,evidence,label+'-compile-flags',renderer_kind='describe').stdout)
+    links=shlex.split(run(command+['--data=lflags,libs'],root,env,evidence,label+'-link-flags',renderer_kind='describe').stdout)
+    response_inputs={}
+    flags=compiler_commands('[cwd='+str(root)+'] '+shlex.join([compiler]+flags),root,response_inputs)[0]['argv'][1:]
+    links=compiler_commands('[cwd='+str(root)+'] '+shlex.join([compiler]+links),root,response_inputs)[0]['argv'][1:]
+    (evidence/(label+'-response-inputs.json')).write_text(json.dumps(response_inputs,indent=2))
+    require(flags and settings.get('importPaths'), 'support renderer required flag vectors: '+label)
+    if target['rootPackage'] in ('vibe3d-render-model','vibe3d-render-backends','vibe3d-render-model-tests','vibe3d-render-backends-tests','vibe3d'):
+        require('WithRender' in settings.get('versions',[]), 'support renderer required active WithRender: '+label)
+    require(not any(a in ('-i','-c','-lib','-run','-o-') or a.startswith(('-of','-od','-op','--output','--include-imports','-i=','-I=')) for a in flags),
+            'support renderer ambient action/output/include-import flags: '+label)
+    for key,prefixes in [('importPaths',('-I',)),('stringImportPaths',('-J',)),
+                         ('versions',('-version=','-d-version=','--d-version=')),
+                         ('debugVersions',('-debug=','-d-debug=','--d-debug='))]:
+        values=[a[len(prefix):] for a in flags for prefix in prefixes if a.startswith(prefix)]
+        require(values==list(settings.get(key,[])), 'support renderer formatted '+key+': '+label)
+    expected_links=list(settings.get('lflags',[]))+['-l'+lib for lib in settings.get('libs',[])]
+    require([value[2:].removeprefix('=') for value in links if value.startswith('-L')]==expected_links,
+            'support renderer formatted ordered native link flags: '+label)
+    receipt=json.loads((evidence/'native-input-receipt.json').read_text()) if (evidence/'native-input-receipt.json').is_file() else {}
+    admitted={str(Path(item['path']).resolve()):item['sha256'] for item in receipt.get('systemInputs',[])}
+    dependency_receipt=json.loads((evidence/'dependency-sources.json').read_text())
+    for dep,record in dependency_receipt.items():
+        for relative,item in record['nativeArtifacts'].items():admitted[str((Path(record['staged'])/relative).resolve())]=item['sha256']
+    for value in expected_links:
+        if Path(value).is_absolute():
+            require(value in admitted and legacy_digest(Path(value))==admitted[value],
+                    'PREPARATION-REFUSED: renderer native link input not admitted: '+value)
+    for library in settings.get('libs',[]):
+        rows=[item for item in receipt.get('systemInputs',[]) if item.get('library')==library]
+        require(len(rows)==1 and legacy_digest(Path(rows[0]['path']))==rows[0]['sha256'],
+                'PREPARATION-REFUSED: renderer resolved system library: '+library)
+    require(all(flag in flags for flag in settings.get('dflags',[])), 'support renderer formatted D flags: '+label)
+    input_paths=set(sources)
+    for field in ('importPaths','stringImportPaths'):
+        for directory in settings.get(field,[]):
+            base=Path(directory)
+            if base.is_dir():input_paths.update(str(p.resolve()) for p in base.rglob('*') if p.is_file())
+    inputs={p:{'size':Path(p).stat().st_size,'mtime_ns':Path(p).stat().st_mtime_ns,'sha256':legacy_digest(Path(p))} for p in sorted(input_paths)}
+    (evidence/(label+'-precompile-inputs.json')).write_text(json.dumps(inputs,indent=2))
+    raw=json.loads((root/'dub.json').read_text())
+    binary=(root/(ARCHIVES[target['rootPackage']] if target['rootPackage'] in ARCHIVES else 'lib'+target['rootPackage']+'.a')) if package['targetType'] in ('staticLibrary','library') else root/raw.get('targetPath','.')/raw.get('targetName',raw['name'])
+    binary=binary.resolve()
+    binary.parent.mkdir(parents=True,exist_ok=True)
+    if package['targetType'] in ('staticLibrary','library'):
+        run([compiler]+flags+['-lib','-of='+str(binary)]+sources,root,env,evidence,label+'-archive',renderer_kind='archive')
+    else:
+        obj=evidence/(label+'.o')
+        single=['-singleobj'] if Path(compiler).name in ('ldc','ldc2') else []
+        run([compiler]+flags+single+['-c','-of='+str(obj)]+sources,root,env,evidence,label+'-compile',renderer_kind='compile')
+        archives=list(settings.get('linkerFiles',[]))
+        require(all(Path(a).is_file() for a in archives), 'PREPARATION-REFUSED: renderer D archive dependency missing')
+        require(not tests or not any('libvibe3d-' in Path(a).name for a in archives), 'support renderer algorithm overlapping internal D archives')
+        run([compiler,'-of='+str(binary),str(obj)]+archives+links,root,env,evidence,label+'-link',renderer_kind='link')
+    require(binary.is_file(), 'NO-VERDICT: renderer direct output missing: '+label)
+    (evidence/(label+'-output.json')).write_text(json.dumps({'path':str(binary),'sha256':legacy_digest(binary)},indent=2))
+    return binary
+
+
+def execute_renderer(project,owner,compiler,env,evidence):
+    require(not subprocess.check_output(['git','status','--porcelain'],cwd=project,text=True).strip(),
+            'PREPARATION-REFUSED: renderer execute requires clean committed worktree')
+    env=env.copy();env.pop('DFLAGS',None)
+    sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=project,text=True).strip()
+    (evidence/'direct-route.json').write_text(json.dumps({'owner':owner,'compiler':compiler,'sha':sha},indent=2))
+    original=renderer_describe(project,owner,'with-render',compiler,env,evidence)
+    descriptions=[original]
+    if owner!='app':descriptions.append(renderer_describe(project,owner,'algorithm',compiler,env,evidence,True))
+    active={p['name']:p for d in descriptions for p in d['packages'] if p.get('active')}
+    receipt={}
+    if owner=='render-model':
+        require(not any(not n.startswith('vibe3d-') for n in active), 'PREPARATION-REFUSED: render-model unexpected native/external dependency')
+    else:receipt=renderer_native_receipt(project,compiler,evidence,active)
+    archive=evidence/'archive';require(not archive.exists(),'PREPARATION-REFUSED: renderer archive exists');archive.mkdir()
+    import tarfile
+    members=[] if owner=='app' else [SPECS[n]['root'] for n in closure(owner)|closure(owner,True)|{owner}]
+    tar=evidence/'committed.tar'
+    with tar.open('wb') as stream:subprocess.run(['git','archive',sha]+(['--']+members if members else []),cwd=project,stdout=stream,check=True)
+    with tarfile.open(tar) as stream:stream.extractall(archive,filter='data')
+    if owner!='app':require(not (archive/'source').exists(), 'support renderer isolated archive contains desktop')
+    dependencies=stage_dependencies({n:p for n,p in active.items() if not n.startswith('vibe3d-') and n!='vibe3d'},archive,evidence,env,renderer=True)
+    shared=[];plugins=[]
+    for name,record in dependencies.items():
+        for relative,item in record['nativeArtifacts'].items():
+            native=Path(record['staged'])/relative
+            if '.so' in native.name:shared.append(str(native.parent))
+            if name=='bindbc-rpr' and 'binUbuntu20' in Path(relative).parts:
+                bundle=archive/'rpr';bundle.mkdir(exist_ok=True)
+                target=bundle/native.name
+                require(not target.exists() and not target.is_symlink(), 'PREPARATION-REFUSED: renderer duplicate RPR runtime artifact')
+                if native.is_symlink():target.symlink_to(os.readlink(native))
+                else:shutil.copy2(native,target)
+                if native.name=='libNorthstar64.so':plugins.append(str(target))
+                shared.insert(0,str(bundle))
+    if 'bindbc-rpr' in dependencies:
+        require(len(plugins)==1, 'PREPARATION-REFUSED: renderer Northstar plugin closure missing/duplicate')
+        env['VIBE3D_RPR_PLUGIN_PATH']=plugins[0]
+    env['LD_LIBRARY_PATH']=':'.join(dict.fromkeys(shared))
+    (evidence/'runtime-environment.json').write_text(json.dumps({'LD_LIBRARY_PATH':env['LD_LIBRARY_PATH'],
+        'VIBE3D_RPR_PLUGIN_PATH':env.get('VIBE3D_RPR_PLUGIN_PATH'),'loaderExecution':'UNEXECUTED until exact retained executable run and loaded-path receipt'},indent=2))
+    description=renderer_describe(archive,owner,'with-render',compiler,env,evidence)
+    for package in description['packages']:
+        if package.get('active') and package['name'] in dependencies:
+            require(Path(package['path']).resolve()==Path(dependencies[package['name']]['staged']).resolve(),
+                    'PREPARATION-REFUSED: renderer canonical dependency selected')
+    targets={t['rootPackage']:t for t in description['targets']};packages={p['name']:p for p in description['packages'] if p.get('active')}
+    built=set();outputs={}
+    def construct(name):
+        if name in built:return
+        package=packages[name]
+        for dependency in package.get('dependencies',[]):construct(dependency)
+        if name in targets:outputs[name]=renderer_compile_target(description,targets[name],compiler,env,evidence,name)
+        built.add(name)
+    construct(description['rootPackage'])
+    actual_inputs={}
+    for path in evidence.glob('*-precompile-inputs.json'):
+        actual_inputs.update(json.loads(path.read_text()))
+    for record in dependencies.values():
+        for relative,item in record['nativeArtifacts'].items():
+            actual_inputs[str(Path(record['staged'])/relative)]=item
+    for item in receipt.get('systemInputs',[]):
+        require(Path(item['path']).is_file() and legacy_digest(Path(item['path']))==item['sha256'],
+                'PREPARATION-REFUSED: renderer recorded system input identity')
+        actual_inputs[item['path']]=item
+    (evidence/'actual-input-hashes.json').write_text(json.dumps(actual_inputs,indent=2))
+    if owner=='app':
+        app=outputs[description['rootPackage']]
+        (evidence/'witness.json').write_text(json.dumps({'sha':sha,'app':str(app),'sha256':legacy_digest(app),
+            'runtime':'UNEXECUTED; retained app and admitted dependency layout require focused loader/lifecycle/readback receipt',
+            'nativeInputReceiptSha256':(legacy_digest(evidence/'native-input-receipt.json') if (evidence/'native-input-receipt.json').is_file() else None)},indent=2))
+        print('PKG-APP-CONSTRUCTED sha='+sha+' executable='+str(app));return
+    root=archive/SPECS[owner]['root'];home=Path(env['DUB_HOME'])
+    harness=root/'tests/boundary_roster.d'
+    harness.write_text('module boundary_roster; import std.stdio : writeln; import std.file : getcwd; shared static this() { writeln("PKG-CWD path=",getcwd()); foreach(info; ModuleInfo) if(info !is null) writeln("PKG-MODULE name=",info.name," unittest=",info.unitTest !is null ? 1:0); }\n')
+    generated=home/'cache'/(SPECS[owner]['name']+'-tests')/'~master/code/dub_test_root.d';generated.parent.mkdir(parents=True,exist_ok=True)
+    generated.write_text('module dub_test_root;\nvoid main() {}\n')
+    raw=json.loads((root/'tests/dub.json').read_text());raw['sourceFiles']+=['boundary_roster.d',str(generated)];raw['mainSourceFile']=str(generated)
+    recipe=root/'tests/dub.boundary.json';recipe.write_text(json.dumps(raw,indent=2))
+    (evidence/'generated-inputs.json').write_text(json.dumps({str(path):legacy_digest(path) for path in (generated,harness,recipe)},indent=2))
+    description=renderer_describe(archive,owner,'algorithm',compiler,env,evidence,True,recipe,harness)
+    target=next(t for t in description['targets'] if t['rootPackage']==description['rootPackage'])
+    binary=renderer_compile_target(description,target,compiler,env,evidence,owner+'-algorithm',True)
+    tested=run([str(binary)],root/'tests',env,evidence,'algorithm-run',renderer_kind='algorithm-run')
+    logs=''.join(path.read_text() for path in sorted(evidence.glob(owner+'-algorithm-*.compiler.log')))
+    commands=compiler_commands(logs,root/'tests')
+    actual=validate_actual_compiler(commands,archive,owner,description,home,harness,renderer=True)
+    require(re.findall(r'^PKG-CWD path=(.+)$',tested.stdout+tested.stderr,re.M)==[str(root/'tests')],
+            'support renderer algorithm actual working directory')
+    runtime=validate_runtime(tested.stdout+tested.stderr,owner)
+    (evidence/'actual-compiler-argv.json').write_text(json.dumps(commands,indent=2))
+    actual_inputs.update(json.loads((evidence/(owner+'-algorithm-precompile-inputs.json')).read_text()))
+    (evidence/'actual-input-hashes.json').write_text(json.dumps(actual_inputs,indent=2))
+    (evidence/'witness.json').write_text(json.dumps({'sha':sha,'runtime':runtime,'algorithm':str(binary),
+        'algorithmSha256':legacy_digest(binary),'actualOwnership':actual,'nativeInputReceiptSha256':(legacy_digest(evidence/'native-input-receipt.json') if (evidence/'native-input-receipt.json').is_file() else None)},indent=2))
+    print('PKG-EXECUTE package='+owner+' sha='+sha+' modules='+str(runtime['modules']))
+
 def execute(project,owner,compiler,env,evidence):
+    if owner in ('render-model','render-backends','app'):
+        return execute_renderer(project,owner,compiler,env,evidence)
     require(not subprocess.check_output(['git','status','--porcelain'],cwd=project,text=True).strip(),
             'PREPARATION-REFUSED: execute requires a clean committed worktree')
     sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=project,text=True).strip()
@@ -4133,7 +4854,8 @@ def execute(project,owner,compiler,env,evidence):
     check_raw_tree(archive,owner)
     root=archive/SPECS[owner]['root'];
     # DUB owns external native dependencies; all internal source roots are the isolated archive.
-    original=describe(project,owner,'modeling-noai',compiler,env,evidence)
+    ordinary_config=SPECS[owner].get('ordinaryConfig','modeling-noai')
+    original=describe(project,owner,ordinary_config,compiler,env,evidence)
     config=json.loads((root/'tests/dub.json').read_text())['configurations'][0]['name']
     selected=describe(project,owner,config,compiler,env,evidence,True)
     active={}
@@ -4153,7 +4875,7 @@ def execute(project,owner,compiler,env,evidence):
             if package.get('active') and not package['name'].startswith('vibe3d-'):
                 require(Path(package['path']).resolve()==Path(dependencies[package['name']]['staged']).resolve(),
                         'PREPARATION-REFUSED: canonical dependency cache selected: '+package['name'])
-    production=describe(archive,owner,'modeling-noai',compiler,env,evidence)
+    production=describe(archive,owner,ordinary_config,compiler,env,evidence)
     require_staged_dependencies(production)
     require_staged_dependencies(describe(archive,owner,config,compiler,env,evidence,True))
     legacy_validate_staged_fixture(legacy_fixture_receipt(archive,owner,FIXTURES),legacy_fixture_receipt(project,owner,FIXTURES),owner,archive,FIXTURES)
@@ -4161,7 +4883,7 @@ def execute(project,owner,compiler,env,evidence):
         frozen = {owner: fixture}
         legacy_validate_staged_fixture(legacy_fixture_receipt(archive,owner,frozen),
             legacy_fixture_receipt(project,owner,frozen),owner,archive,frozen)
-    built=run(['dub','build','--root='+str(root),'--config=modeling-noai','--compiler='+compiler,'--force','--verbose'],archive,env,evidence,'production-build')
+    built=run(['dub','build','--root='+str(root),'--config='+ordinary_config,'--compiler='+compiler,'--force','--verbose'],archive,env,evidence,'production-build')
     require((root/('lib'+SPECS[owner]['name']+'.a')).is_file(),'NO-VERDICT: ordinary static archive missing')
     harness=root/'tests/boundary_roster.d'
     receipt_source='module boundary_roster; import std.stdio : writeln; import std.file : getcwd,read; import std.digest.sha : sha256Of; import std.digest : toHexString; import std.string : toLower; shared static this() { writeln("PKG-CWD path=",getcwd()); foreach(info; ModuleInfo) if(info !is null) writeln("PKG-MODULE name=",info.name," unittest=",info.unitTest !is null ? 1:0);'
@@ -4216,7 +4938,7 @@ def self_test():
     legacy_self_test()
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--package',choices=tuple(SPECS));parser.add_argument('--root',default=str(Path(__file__).resolve().parents[1]));parser.add_argument('--compiler',default='dmd');parser.add_argument('--evidence-dir')
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--package',choices=tuple(SPECS)+('app',));parser.add_argument('--root',default=str(Path(__file__).resolve().parents[1]));parser.add_argument('--compiler',default='dmd');parser.add_argument('--evidence-dir')
     modes=parser.add_mutually_exclusive_group(required=True);modes.add_argument('--self-test',action='store_true');modes.add_argument('--check',action='store_true');modes.add_argument('--execute',action='store_true');args=parser.parse_args(argv)
     if args.self_test:self_test()
     else:
@@ -4226,7 +4948,8 @@ def main(argv=None):
         env=os.environ.copy()
         for key in ('DISPLAY','WAYLAND_DISPLAY','SDL_VIDEODRIVER','DFLAGS'):env.pop(key,None)
         for owner in (args.package,) if args.package else SPECS:
-            check_raw_tree(project,owner)
+            if owner=='app':require(args.execute,'support app selects renderer execute only')
+            else:check_raw_tree(project,owner)
             if args.execute:
                 require(args.evidence_dir is not None,'execute requires evidence directory');evidence=Path(args.evidence_dir);require(evidence.is_absolute() and not evidence.resolve().is_relative_to(project),'evidence must be absolute outside worktree');evidence.mkdir(parents=True,exist_ok=True);execute(project,owner,compiler,env,evidence)
             else:
@@ -4235,6 +4958,8 @@ def main(argv=None):
                     for config in configs:describe(project,owner,config,compiler,env,Path(tmp))
                     config=json.loads((project/SPECS[owner]['root']/'tests/dub.json').read_text())['configurations'][0]['name']
                     describe(project,owner,config,compiler,env,Path(tmp),True)
+            if owner=='app':
+                print('PKG-APP-VERDICT=CONSTRUCTION-ONLY');return 0
             print('PKG-CHECK package='+owner)
     print('PKG-BOUNDARY-VERDICT=GREEN');return 0
 

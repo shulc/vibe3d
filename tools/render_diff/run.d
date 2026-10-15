@@ -35,6 +35,8 @@ string repoRoot;
 string toolDir;
 string casesDir;
 string outDir;
+string retainedApp;
+string[string] retainedEnvironment;
 
 void log(string msg) { writeln("[run] ", msg); }
 
@@ -67,15 +69,33 @@ void main(string[] args)
         else requested ~= a;
     }
 
+    retainedApp = buildPath(repoRoot, "vibe3d");
     if (build) {
-        log("dub build --config=with-render");
-        auto r = execute(["dub", "build", "--config=with-render", "--root", repoRoot]);
+        import std.process : environment;
+        import std.file : read;
+        import std.digest.sha : sha256Of;
+        import std.digest : toHexString;
+        import std.string : toLower;
+        const evidence = environment.get("VIBE3D_RENDER_EVIDENCE_DIR", "");
+        enforce(evidence.length > 0,
+            "render-diff requires the admitted renderer evidence directory");
+        log("constructing the admitted with-render app");
+        auto r = execute(["python3", buildPath(repoRoot, "tools/check_package_support_boundary.py"),
+            "--root", repoRoot, "--package", "app", "--execute", "--evidence-dir", evidence]);
         if (r.status != 0) {
             writeln(r.output);
-            writefln("[run] dub build FAILED (exit %d)", r.status);
+            writefln("[run] renderer app construction FAILED (exit %d)", r.status);
             import core.stdc.stdlib : exit;
             exit(1);
         }
+        const witness = parseJSON(readText(buildPath(evidence, "witness.json")));
+        retainedApp = witness["app"].str;
+        enforce(sha256Of(read(retainedApp)).toHexString.toLower == witness["sha256"].str,
+            "render-diff retained app differs from its construction witness");
+        const runtime = parseJSON(readText(buildPath(evidence, "runtime-environment.json")));
+        retainedEnvironment["LD_LIBRARY_PATH"] = runtime["LD_LIBRARY_PATH"].str;
+        if (runtime["VIBE3D_RPR_PLUGIN_PATH"].type == JSONType.string)
+            retainedEnvironment["VIBE3D_RPR_PLUGIN_PATH"] = runtime["VIBE3D_RPR_PLUGIN_PATH"].str;
     }
 
     string[] cases;
@@ -144,7 +164,7 @@ CaseResult runOne(string casePath)
 
     const cyclesPpm = buildPath(outDir, stem ~ ".cycles.ppm");
     const rprPpm    = buildPath(outDir, stem ~ ".rpr.ppm");
-    const vibe3dBin = buildPath(repoRoot, "vibe3d");
+    const vibe3dBin = retainedApp;
 
     foreach (pair; [["cycles", cyclesPpm], ["rpr", rprPpm]]) {
         log(format("%s: rendering with %s", stem, pair[0]));
@@ -153,7 +173,7 @@ CaseResult runOne(string casePath)
             "--render-diff",   casePath,
             "--render-backend", pair[0],
             "--render-output",  pair[1],
-        ]);
+        ], retainedEnvironment);
         const status = pid.wait();
         if (status != 0) {
             res.status = Status.ERROR;

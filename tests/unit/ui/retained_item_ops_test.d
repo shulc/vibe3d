@@ -143,8 +143,8 @@ private final class RetainedHarness {
             new ImagePlaneSetImage(owner.document.activeMesh(), view, owner.editMode,
                                    owner.documentPtr()));
         forms = new FormsPanel;
-        layerRoles = bindLayerListPanel(owner, binding, forms, () => activeTool);
-        imageRoles = bindImageListPanel(owner, binding);
+        layerRoles = bindLayerListPanel(owner, &binding.dispatchUi, &binding.dispatchInteractiveUi, forms, () => activeTool);
+        imageRoles = bindImageListPanel(owner, &binding.dispatchUi);
         assert(imageRoles.state !is null,
             "6359 state floor: bindImageListPanel returned no ImageListPanelState");
     }

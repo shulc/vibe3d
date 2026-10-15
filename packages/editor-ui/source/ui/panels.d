@@ -44,10 +44,10 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
 import std.json : JSONValue, JSONType;
 import command_args : positionalPayload, firstPositionalString;
-import http_server;
+
 import log : logInfo, logWarn, logError;
 import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
-import prefs;
+
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import imgui_flag_boundary : beginItemContextMenu, beginPanelContextMenu,
@@ -127,10 +127,10 @@ import commands.select.drop     : SelectDropCommand;
 import commands.select.element  : SelectElementCommand;
 import commands.select.convert  : SelectConvertCommand;
 import commands.select.fill     : SelectFillHoles, SelectFillInsideLoop;
-import commands.viewport.fit_selected;
-import commands.viewport.fit;
-import commands.file.load;
-import commands.file.save;
+
+
+
+
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
 import commands.mesh.triple      : MeshTriple;
@@ -195,10 +195,10 @@ import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.mesh.transform;
 import commands.mesh.quantize;
 import commands.mesh.jitter;
-import commands.mesh.magnet : MeshMagnet;
+
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
-import commands.mesh.morph;
+
 import commands.mesh.edge_crease;
 import commands.mesh.uv_transform;
 import commands.mesh.uv_project  : UvProject;
@@ -217,7 +217,7 @@ import commands.history.undo : HistoryUndo;
 import commands.history.redo : HistoryRedo;
 import commands.history.show : HistoryShow;
 import commands.history.clear : HistoryClear;
-import commands.test_undo_flags : UndoSuppressNoop, UndoForceNoop;
+
 import commands.history.save_as_script : HistorySaveAsScript;
 import commands.macros.record : MacroRecord;
 import commands.macros.save_recorded : MacroSaveRecorded;
@@ -231,19 +231,17 @@ import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
 import commands.tool.begin_session : ToolBeginSessionCommand;
-import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
-import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
-import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
+
+
+
 import commands.tool.panel_edit    : ToolPanelEditCommand;
-import commands.snap.toggle_type : SnapToggleTypeCommand;
-import commands.snap.mode        : SnapModeCommand;
-import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
+
+
+
 import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
                                   FalloffAutoSizeCommand;
-import commands.path.define    : PathDefineCommand;
-import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
-                                WorkplaneRotateCommand, WorkplaneOffsetCommand,
-                                WorkplaneAlignToSelectionCommand;
+
+
 import command;
 import registry;
 import shortcuts;
@@ -276,11 +274,11 @@ version (web) {
     import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
         Ai3dInstallState, ai3dDefaultInstallLocation, ai3dDefaultWorkerUrl;
     import core.time : MonoTime;
-    import commands.ai3d.import_result : Ai3dImportResult;
+
 }
 import remesh.remesh_job : RemeshJob, RemeshParams,
     MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
-import commands.mesh.remesh : Remesh, RemeshStart, RemeshOpen;
+
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider, itemPropsTarget;
@@ -325,11 +323,10 @@ version (web) {
     }
 }
 
-version (WithAI) import commands.ui.copilot_panel : UiCopilotPanelCommand, g_copilotPanelShown;
 version (WithAI) {
-    import commands.copilot.analyze        : CopilotAnalyzeCommand;
-    import commands.copilot.select_finding : CopilotSelectFindingCommand;
-    import commands.copilot.cycle_finding  : CopilotCycleFindingCommand;
+
+
+
     import copilot_panel : CopilotPanel;
     import copilot_overlay : drawCopilotFindingOverlay;
 }

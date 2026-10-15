@@ -14,8 +14,8 @@
 # Counts are compiler-aware: comments and string/character literals are
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
-source-files 607
-unittest-blocks 334
+source-files 608
+unittest-blocks 303
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -28,6 +28,8 @@ block packages/document-actions/source/commands/image/commands.d 11
 block packages/document-actions/source/commands/layer/commands.d 11
 block packages/document-io/source/io/native.d 4
 block packages/editor-commands/source/commands/mesh/edge_crease.d 4
+block packages/editor-ui/source/ui/image_rows.d 1
+block packages/editor-ui/source/ui/item_rows.d 1
 block packages/http-runtime/source/http_server.d 3
 block packages/input-events/source/eventlog.d 13
 block packages/input-events/source/tool_input.d 6
@@ -90,15 +92,11 @@ block packages/viewport-gpu/source/mesh_gpu.d 4
 block packages/viewport-host/source/bg_gpu_cache.d 2
 block source/commands/mesh/morph.d 2
 block source/commands/workplane.d 3
-block source/forms.d 29
 block source/frame_stall.d 3
 block source/http_providers.d 1
 block source/input_frame_state.d 1
 block source/prefs.d 16
 block source/render/render_mvp.d 1
-block source/ui/availability.d 1
-block source/ui/image_rows.d 1
-block source/ui/item_rows.d 2
 block source/ui/viewport_render.d 1
 block util/log/source/log.d 4
 block util/math/source/math_geometry.d 1

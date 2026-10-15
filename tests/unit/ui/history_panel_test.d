@@ -437,7 +437,7 @@ unittest { // replay preserves the clicked entry's original raw index
 
 unittest { // the History panel seam cannot silently grow EditorApp back
     import std.algorithm.searching : canFind;
-    import std.file : readText;
+    import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath;
 
     const root = repositoryRoot();

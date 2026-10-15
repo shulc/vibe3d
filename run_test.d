@@ -1360,6 +1360,15 @@ string sourceDigest() {
         "packages/platform-file/tests/dub.json",
         "packages/document-actions/dub.json",
         "packages/document-actions/tests/dub.json",
+        "packages/render-model/dub.json",
+        "packages/render-model/tests/dub.json",
+        "packages/render-backends/dub.json",
+        "packages/render-backends/tests/dub.json",
+        "packages/forms-model/dub.json",
+        "packages/forms-model/tests/dub.json",
+        "packages/editor-ui/dub.json",
+        "packages/editor-ui/tests/dub.json",
+
         "packages/interactive-tools/dub.json",
         "packages/interactive-tools/tests/dub.json",
         "tools/ai3d_worker/install_linux.sh",
@@ -1393,7 +1402,15 @@ string sourceDigest() {
                 ~ (exists("packages/ai3d-runtime/source") ? ["packages/ai3d-runtime/source"] : [])
                 ~ (exists("packages/remesh-runtime/source") ? ["packages/remesh-runtime/source"] : [])
                 ~ (exists("packages/platform-file/source") ? ["packages/platform-file/source"] : [])
-                ~ (exists("packages/document-actions/source") ? ["packages/document-actions/source"] : []))
+                ~ (exists("packages/document-actions/source") ? ["packages/document-actions/source"] : [])
+                ~ (exists("packages/render-model/source") ? ["packages/render-model/source"] : [])
+                ~ (exists("packages/render-model/tests/source") ? ["packages/render-model/tests/source"] : [])
+                ~ (exists("packages/render-backends/source") ? ["packages/render-backends/source"] : [])
+                ~ (exists("packages/render-backends/tests/source") ? ["packages/render-backends/tests/source"] : [])
+                ~ (exists("packages/forms-model/source") ? ["packages/forms-model/source"] : [])
+                ~ (exists("packages/forms-model/tests/source") ? ["packages/forms-model/tests/source"] : [])
+                ~ (exists("packages/editor-ui/source") ? ["packages/editor-ui/source"] : [])
+                ~ (exists("packages/editor-ui/tests/source") ? ["packages/editor-ui/tests/source"] : []))
             foreach (e; dirEntries(futureSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
     } catch (Exception e) {

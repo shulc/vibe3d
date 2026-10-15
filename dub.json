@@ -450,7 +450,11 @@
         "vibe3d-ai3d-runtime": "modeling",
         "vibe3d-remesh-runtime": "modeling",
         "vibe3d-platform-file": "modeling",
-        "vibe3d-document-actions": "modeling"
+        "vibe3d-document-actions": "modeling",
+        "vibe3d-render-model": "modeling",
+        "vibe3d-render-backends": "modeling",
+        "vibe3d-forms-model": "modeling",
+        "vibe3d-editor-ui": "modeling"
       }
     },
     {
@@ -512,7 +516,11 @@
         "vibe3d-ai3d-runtime": "modeling-noai",
         "vibe3d-remesh-runtime": "modeling-noai",
         "vibe3d-platform-file": "modeling-noai",
-        "vibe3d-document-actions": "modeling-noai"
+        "vibe3d-document-actions": "modeling-noai",
+        "vibe3d-render-model": "modeling-noai",
+        "vibe3d-render-backends": "modeling-noai",
+        "vibe3d-forms-model": "modeling-noai",
+        "vibe3d-editor-ui": "modeling-noai"
       }
     },
     {
@@ -590,7 +598,11 @@
         "vibe3d-ai3d-runtime": "with-render",
         "vibe3d-remesh-runtime": "with-render",
         "vibe3d-platform-file": "with-render",
-        "vibe3d-document-actions": "with-render"
+        "vibe3d-document-actions": "with-render",
+        "vibe3d-render-model": "with-render",
+        "vibe3d-render-backends": "with-render",
+        "vibe3d-forms-model": "with-render",
+        "vibe3d-editor-ui": "with-render"
       }
     },
     {
@@ -1048,7 +1060,11 @@
         "vibe3d-ai3d-runtime": "web",
         "vibe3d-remesh-runtime": "web",
         "vibe3d-platform-file": "web",
-        "vibe3d-document-actions": "web"
+        "vibe3d-document-actions": "web",
+        "vibe3d-render-model": "web",
+        "vibe3d-render-backends": "web",
+        "vibe3d-forms-model": "web",
+        "vibe3d-editor-ui": "web"
       },
       "libs-wasm": [
         "dbvh_c",

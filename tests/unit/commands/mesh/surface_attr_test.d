@@ -53,7 +53,7 @@ unittest { // the attribute table names exactly the two S1e rows and S1d's sided
 }
 
 unittest { // every kSurfaceAttrs row has a Surfaces widget, and the panel draws the table
-    import std.file : readText;
+    import tests.unit.census_symbols : readText = wave15ReadText;
     import std.path : buildPath, dirName;
     import std.algorithm : canFind;
     import std.string : indexOf;

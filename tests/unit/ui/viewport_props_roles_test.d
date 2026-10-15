@@ -1,8 +1,8 @@
 module tests.unit.ui.viewport_props_roles_test;
 
 import std.algorithm : canFind, count;
-import std.file : exists, mkdirRecurse, readText, remove, rmdirRecurse,
-    tempDir, write;
+import std.file : exists, mkdirRecurse, remove, rmdirRecurse, tempDir, write;
+import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath, buildNormalizedPath, dirName;
 import std.string : indexOf;
 import std.array : join;
@@ -20,6 +20,8 @@ import display_state : BackdropStyle;
 import display_state : DisplayStyle;
 import display_state : CavityMode;
 import editmode : EditMode;
+import commands.viewport.display : kCavityGainMax, kCavityDistanceMin,
+    kCavityDistanceMax, kCavityAttenuationMax;
 import layout_reset_action : LayoutResetAction;
 import mesh : makeCube;
 import prefs : Prefs, seedLayoutIniIfMissing;
@@ -62,6 +64,80 @@ private ImVec2 center(ImVec2 lo, ImVec2 hi) {
 
 private LayoutResetAction inertReset(Prefs* prefs) {
     return new LayoutResetAction(prefs, true, (string) => false, (string) {});
+}
+
+unittest { // each physical gain call supplies the explicit scalar bound
+    import std.file : readText;
+    auto source = readText(buildPath(repoRoot, "packages/editor-ui/source/ui/panels.d"));
+    assert(source.length > 100000, "W18 cavity physical source floor");
+    assert(source.count("clampGain(ridge, kCavityGainMax)") == 1,
+        "W18 cavity ridge explicit-bound call needle");
+    assert(source.count("clampGain(valley, kCavityGainMax)") == 1,
+        "W18 cavity valley explicit-bound call needle");
+    assert(source.count("static float clampGain(float g, float kCavityGainMax)") == 1,
+        "W18 cavity static helper receives its bound");
+}
+
+unittest { // Ridge text entry clamps independently at original and injected bounds
+    import std.json : parseJSON;
+    foreach (float bound; [250.0f, 200.0f]) {
+        auto vpm = new ViewportManager(0, 0, 800, 600);
+        vpm.views[0].display.active.style = DisplayStyle.Shaded;
+        vpm.views[0].display.cavity.mode = CavityMode.Screen;
+        vpm.views[0].display.cavity.screenRidge = 0.25f;
+        vpm.views[0].display.cavity.screenValley = 0.75f;
+        string[] ids, payloads;
+        void dispatch(string id, string payload) { ids ~= id; payloads ~= payload; }
+        void reset() {}
+        auto ui = openPanel(() {
+            drawViewportPropsPanel(ViewportPropertiesReadRole(vpm), &dispatch, &reset,
+                bound, kCavityDistanceMin, kCavityDistanceMax, kCavityAttenuationMax);
+        }, "W18 Ridge bound");
+        scope (exit) ui.close();
+        resetViewportPropsDrawSnapshot();
+        ui.frame();
+        auto snap = viewportPropsDrawSnapshot();
+        assert(ui.editAt(center(snap.cavityRidgeMin, snap.cavityRidgeMax), "300"),
+            "W18 cavity screenRidge text-entry widget floor");
+        assert(payloads.length > 0 && ids[$ - 1] == "viewport.cavityParams",
+            "W18 cavity screenRidge dispatch population floor");
+        auto payload = parseJSON(payloads[$ - 1]);
+        assert(payload.object.length == 1 && "screenRidge" in payload.object,
+            "W18 cavity screenRidge must leave the other gain untouched");
+        assert(payload["screenRidge"].floating == cast(double)bound,
+            "W18 cavity screenRidge uses this call's explicit 250/200 bound");
+    }
+}
+
+unittest { // Valley text entry clamps independently at original and injected bounds
+    import std.json : parseJSON;
+    foreach (float bound; [250.0f, 200.0f]) {
+        auto vpm = new ViewportManager(0, 0, 800, 600);
+        vpm.views[0].display.active.style = DisplayStyle.Shaded;
+        vpm.views[0].display.cavity.mode = CavityMode.Screen;
+        vpm.views[0].display.cavity.screenRidge = 0.25f;
+        vpm.views[0].display.cavity.screenValley = 0.75f;
+        string[] ids, payloads;
+        void dispatch(string id, string payload) { ids ~= id; payloads ~= payload; }
+        void reset() {}
+        auto ui = openPanel(() {
+            drawViewportPropsPanel(ViewportPropertiesReadRole(vpm), &dispatch, &reset,
+                bound, kCavityDistanceMin, kCavityDistanceMax, kCavityAttenuationMax);
+        }, "W18 Valley bound");
+        scope (exit) ui.close();
+        resetViewportPropsDrawSnapshot();
+        ui.frame();
+        auto snap = viewportPropsDrawSnapshot();
+        assert(ui.editAt(center(snap.cavityValleyMin, snap.cavityValleyMax), "300"),
+            "W18 cavity screenValley text-entry widget floor");
+        assert(payloads.length > 0 && ids[$ - 1] == "viewport.cavityParams",
+            "W18 cavity screenValley dispatch population floor");
+        auto payload = parseJSON(payloads[$ - 1]);
+        assert(payload.object.length == 1 && "screenValley" in payload.object,
+            "W18 cavity screenValley must leave the other gain untouched");
+        assert(payload["screenValley"].floating == cast(double)bound,
+            "W18 cavity screenValley uses this call's explicit 250/200 bound");
+    }
 }
 
 unittest { // Quad panel projects and commands the live active cell on each draw
@@ -111,7 +187,8 @@ unittest { // Quad panel projects and commands the live active cell on each draw
     auto role = ViewportPropertiesReadRole(vpm);
     auto ui = openPanel(() {
         drawViewportPropsPanel(role, cast(ViewportCommandDispatch)&dispatch,
-                               reset);
+                               &reset.authorReset, kCavityGainMax, kCavityDistanceMin,
+                               kCavityDistanceMax, kCavityAttenuationMax);
     }, "Viewport properties host");
     resetViewportPropsDrawSnapshot();
     scope (exit) ui.close();
@@ -197,7 +274,8 @@ unittest { // successful restore stays deferred until the pre-frame boundary
     auto vpm = new ViewportManager(0, 0, 800, 600);
     auto ui = openPanel(() {
         drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
-            cast(ViewportCommandDispatch)((string id, string payload) {}), action);
+            cast(ViewportCommandDispatch)((string id, string payload) {}), &action.authorReset, kCavityGainMax, kCavityDistanceMin,
+            kCavityDistanceMax, kCavityAttenuationMax);
     }, "Viewport reset success host");
     resetViewportPropsDrawSnapshot();
     scope (exit) ui.close();
@@ -246,7 +324,8 @@ unittest { // missing shipped ini takes the separate fallback cell
     auto vpm = new ViewportManager(0, 0, 800, 600);
     auto ui = openPanel(() {
         drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
-            cast(ViewportCommandDispatch)((string id, string payload) {}), action);
+            cast(ViewportCommandDispatch)((string id, string payload) {}), &action.authorReset, kCavityGainMax, kCavityDistanceMin,
+            kCavityDistanceMax, kCavityAttenuationMax);
     }, "Viewport reset fallback host");
     resetViewportPropsDrawSnapshot();
     scope (exit) ui.close();
@@ -369,7 +448,8 @@ unittest { // 8620: the Retopology checkbox writes the mode ONLY; the preset wri
     }
     auto ui = openPanel(() {
         drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
-                               cast(ViewportCommandDispatch)&dispatch, reset);
+                               cast(ViewportCommandDispatch)&dispatch, &reset.authorReset, kCavityGainMax, kCavityDistanceMin,
+                               kCavityDistanceMax, kCavityAttenuationMax);
     }, "Viewport retopology host");
     resetViewportPropsDrawSnapshot();
     scope (exit) ui.close();
@@ -440,7 +520,8 @@ unittest { // 8620: the backdrop chooser, Vertices checkbox and point size slide
     }
     auto ui = openPanel(() {
         drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
-                               cast(ViewportCommandDispatch)&dispatch, reset);
+                               cast(ViewportCommandDispatch)&dispatch, &reset.authorReset, kCavityGainMax, kCavityDistanceMin,
+                               kCavityDistanceMax, kCavityAttenuationMax);
     }, "Viewport retopology controls host");
     resetViewportPropsDrawSnapshot();
     scope (exit) ui.close();
@@ -531,7 +612,8 @@ unittest { // S3a: the Cavity combo and Ridge/Valley sliders; greyed off Shaded 
     }
     auto ui = openPanel(() {
         drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
-                               cast(ViewportCommandDispatch)&dispatch, reset);
+                               cast(ViewportCommandDispatch)&dispatch, &reset.authorReset, kCavityGainMax, kCavityDistanceMin,
+                               kCavityDistanceMax, kCavityAttenuationMax);
     }, "Viewport cavity controls host");
     resetViewportPropsDrawSnapshot();
     scope (exit) ui.close();
@@ -645,7 +727,8 @@ unittest { // S3b: the world-cavity Distance / Attenuation / Samples sliders, Wo
     }
     auto ui = openPanel(() {
         drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
-                               cast(ViewportCommandDispatch)&dispatch, reset);
+                               cast(ViewportCommandDispatch)&dispatch, &reset.authorReset, kCavityGainMax, kCavityDistanceMin,
+                               kCavityDistanceMax, kCavityAttenuationMax);
     }, "Viewport world cavity controls host");
     resetViewportPropsDrawSnapshot();
     scope (exit) ui.close();
@@ -721,7 +804,8 @@ unittest { // S4b (task 9250): the Reflection image combo — every option throu
     }
     auto ui = openPanel(() {
         drawViewportPropsPanel(ViewportPropertiesReadRole(vpm),
-                               cast(ViewportCommandDispatch)&dispatch, reset);
+                               cast(ViewportCommandDispatch)&dispatch, &reset.authorReset, kCavityGainMax, kCavityDistanceMin,
+                               kCavityDistanceMax, kCavityAttenuationMax);
     }, "Viewport reflection controls host");
     scope (exit) ui.close();
     ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;

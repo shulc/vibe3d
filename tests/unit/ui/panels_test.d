@@ -254,6 +254,155 @@ import snap           : ItemSnapFrame;
 import viewport       : LayoutPreset, ViewportManager, Viewport3D;
 import ui.panels;
 
+unittest { // compiler capability shapes for the finite borrowed roles
+    import ui.panel_host_roles;
+    static assert([__traits(allMembers, TabLayoutBorrow)] == ["tabPosPtr", "tabSizePtr", "tabPos", "tabSize"]);
+    static assert([__traits(allMembers, SideLayoutBorrow)] == ["sidePosPtr", "sideSizePtr", "sidePos", "sideSize"]);
+    static assert([__traits(allMembers, StatusLayoutBorrow)] == ["statusPosPtr", "statusSizePtr", "statusPos", "statusSize"]);
+    static assert([__traits(allMembers, TabPanelRole)] == ["layout", "panelsPtr", "activePanelIdxPtr", "panels", "activePanelIdx", "testMode"]);
+    static assert([__traits(allMembers, SidePanelRole)] == ["layout", "panelsPtr", "activePanelIdxPtr", "activeToolIdPtr", "shortcutsPtr", "regPtr", "sessionOwner", "meshDg", "kGenerateAiAvailable", "panels", "activePanelIdx", "activeToolId", "shortcuts", "reg", "document", "editMode", "mesh", "testMode"]);
+    static assert([__traits(allMembers, StatusPanelRole)] == ["layout", "statusLineGroupsPtr", "activeToolIdPtr", "shortcutsPtr", "regPtr", "sessionOwner", "meshDg", "kAiToggleAvailable", "kCopilotEnabled", "statusLineGroups", "activeToolId", "shortcuts", "reg", "document", "editMode", "selTypeOrder", "mesh", "testMode"]);
+}
+
+unittest { // desktop presentation bindings borrow each original live slot
+    import editor_app : EditorApp, Layout, bindPanelHostRoles, kGenerateAiAvailable,
+        kAiToggleAvailable;
+    import ui.panel_host_roles;
+    import session_owner : Session;
+    import editor_app : Layout;
+    import buttonset : Panel, Group;
+    import registry : Registry;
+    import shortcuts : ShortcutTable;
+    EditorApp app;
+    Layout layout;
+    Panel[] panels;
+    Group[] groups;
+    int activePanel;
+    string toolId;
+    ShortcutTable shortcuts;
+    Registry registry;
+    Session owner;
+    Mesh firstMesh, secondMesh;
+    Mesh* liveMesh = &firstMesh;
+    ref Mesh currentMesh() nothrow @nogc { return *liveMesh; }
+    app.layoutPtr = &layout;
+    app.panelsPtr = &panels;
+    app.statusLineGroupsPtr = &groups;
+    app.activePanelIdxPtr = &activePanel;
+    app.activeToolIdPtr = &toolId;
+    app.shortcutsPtr = &shortcuts;
+    app.regPtr = &registry;
+    app.sessionOwner = &owner;
+    app.meshDg = &currentMesh;
+    auto tab = bindPanelHostRoles!TabPanelRole(app);
+    auto side = bindPanelHostRoles!SidePanelRole(app);
+    auto status = bindPanelHostRoles!StatusPanelRole(app);
+    assert(tab.panelsPtr == app.panelsPtr, "W18 tab panelsPtr borrowed identity");
+    assert(tab.activePanelIdxPtr == app.activePanelIdxPtr, "W18 tab activePanelIdxPtr borrowed identity");
+    assert(side.panelsPtr == app.panelsPtr, "W18 side panelsPtr borrowed identity");
+    assert(side.activePanelIdxPtr == app.activePanelIdxPtr, "W18 side activePanelIdxPtr borrowed identity");
+    assert(side.activeToolIdPtr == app.activeToolIdPtr, "W18 side activeToolIdPtr borrowed identity");
+    assert(side.shortcutsPtr == app.shortcutsPtr, "W18 side shortcutsPtr borrowed identity");
+    assert(side.regPtr == app.regPtr, "W18 side regPtr borrowed identity");
+    assert(side.sessionOwner == app.sessionOwner, "W18 side sessionOwner borrowed identity");
+    assert(side.meshDg == app.meshDg, "W18 side meshDg borrowed identity");
+    assert(status.statusLineGroupsPtr == app.statusLineGroupsPtr, "W18 status statusLineGroupsPtr borrowed identity");
+    assert(status.activeToolIdPtr == app.activeToolIdPtr, "W18 status activeToolIdPtr borrowed identity");
+    assert(status.shortcutsPtr == app.shortcutsPtr, "W18 status shortcutsPtr borrowed identity");
+    assert(status.regPtr == app.regPtr, "W18 status regPtr borrowed identity");
+    assert(status.sessionOwner == app.sessionOwner, "W18 status sessionOwner borrowed identity");
+    assert(status.meshDg == app.meshDg, "W18 status meshDg borrowed identity");
+    assert(tab.layout.tabPosPtr == &layout.tabPos, "W18 tab layout Pos address");
+    assert(tab.layout.tabSizePtr == &layout.tabSize, "W18 tab layout Size address");
+    assert(side.layout.sidePosPtr == &layout.sidePos, "W18 side layout Pos address");
+    assert(side.layout.sideSizePtr == &layout.sideSize, "W18 side layout Size address");
+    assert(status.layout.statusPosPtr == &layout.statusPos, "W18 status layout Pos address");
+    assert(status.layout.statusSizePtr == &layout.statusSize, "W18 status layout Size address");
+    assert(side.kGenerateAiAvailable == kGenerateAiAvailable, "W18 side generate capability");
+    assert(status.kAiToggleAvailable == kAiToggleAvailable, "W18 status toggle capability");
+    assert(status.kCopilotEnabled == kCopilotEnabled, "W18 status copilot capability");
+    liveMesh = &secondMesh;
+    assert(&side.mesh == &secondMesh, "W18 side late Mesh lookup");
+    assert(&status.mesh == &secondMesh, "W18 status late Mesh lookup");
+    assert(&side.document == &owner.document, "W18 side sole Session Document");
+    assert(&status.document == &owner.document, "W18 status sole Session Document");
+    assert(&side.editMode == &owner.editMode, "W18 side sole Session EditMode");
+    assert(&status.editMode == &owner.editMode, "W18 status sole Session EditMode");
+    assert(&status.selTypeOrder == &owner.selTypeOrder, "W18 status sole Session selection order");
+}
+
+version (web) {} else unittest { // scalar modal refs and live worker slots keep desktop custody
+    import editor_app : EditorApp, Ai3dModalState, bindPanelHostRoles;
+    import ui.panel_host_roles : Ai3dPanelRole;
+    import core.time : MonoTime;
+    import ai3d.job_controller : Ai3dJobController;
+    import ai3d.worker_manager : Ai3dWorkerManager;
+    EditorApp app;
+    Ai3dModalState modal;
+    bool open, pending, starting, installOpen, installPending;
+    string image;
+    char[256] url;
+    MonoTime deadline, nextProbe;
+    int maxFaces;
+    app.ai3dRefs.ai3dModalPtr = &modal;
+    app.ai3dRefs.ai3dModalOpenPtr = &open;
+    app.ai3dRefs.ai3dModalPendingOpenPtr = &pending;
+    app.ai3dRefs.ai3dPickedImagePathPtr = &image;
+    app.ai3dRefs.ai3dWorkerUrlBufPtr = &url;
+    app.ai3dWorkerStartingPtr = &starting;
+    app.ai3dWorkerStartDeadlinePtr = &deadline;
+    app.ai3dWorkerNextHealthProbePtr = &nextProbe;
+    app.ai3dInstallConfirmOpenPtr = &installOpen;
+    app.ai3dInstallConfirmPendingOpenPtr = &installPending;
+    app.ai3dMaxFacesPtr = &maxFaces;
+    app.ai3dController = new Ai3dJobController;
+    app.ai3dWorkerManager = new Ai3dWorkerManager("/dev/null");
+    auto role = bindPanelHostRoles!Ai3dPanelRole(app);
+    assert(role.ai3dModal.healthCheckedPtr == &modal.healthChecked, "W18 AI3D healthChecked original scalar address");
+    assert(role.ai3dModal.healthOkPtr == &modal.healthOk, "W18 AI3D healthOk original scalar address");
+    assert(role.ai3dModal.healthProtocolPtr == &modal.healthProtocol, "W18 AI3D healthProtocol original scalar address");
+    assert(role.ai3dModal.healthBackendPtr == &modal.healthBackend, "W18 AI3D healthBackend original scalar address");
+    assert(role.ai3dModal.healthObjCapablePtr == &modal.healthObjCapable, "W18 AI3D healthObjCapable original scalar address");
+    assert(role.ai3dModal.healthMessagePtr == &modal.healthMessage, "W18 AI3D healthMessage original scalar address");
+    assert(role.ai3dModal.jobIdPtr == &modal.jobId, "W18 AI3D jobId original scalar address");
+    assert(role.ai3dModal.statePtr == &modal.state, "W18 AI3D state original scalar address");
+    assert(role.ai3dModal.stagePtr == &modal.stage, "W18 AI3D stage original scalar address");
+    assert(role.ai3dModal.progressPtr == &modal.progress, "W18 AI3D progress original scalar address");
+    assert(role.ai3dModal.errorCodePtr == &modal.errorCode, "W18 AI3D errorCode original scalar address");
+    assert(role.ai3dModal.errorMessagePtr == &modal.errorMessage, "W18 AI3D errorMessage original scalar address");
+    assert(role.ai3dModalOpenPtr == &open, "W18 AI3D ai3dModalOpenPtr original identity");
+    assert(role.ai3dModalPendingOpenPtr == &pending, "W18 AI3D ai3dModalPendingOpenPtr original identity");
+    assert(role.ai3dPickedImagePathPtr == &image, "W18 AI3D ai3dPickedImagePathPtr original identity");
+    assert(role.ai3dWorkerUrlBufPtr == &url, "W18 AI3D ai3dWorkerUrlBufPtr original identity");
+    assert(role.ai3dWorkerStartingPtr == &starting, "W18 AI3D ai3dWorkerStartingPtr original identity");
+    assert(role.ai3dWorkerStartDeadlinePtr == &deadline, "W18 AI3D ai3dWorkerStartDeadlinePtr original identity");
+    assert(role.ai3dWorkerNextHealthProbePtr == &nextProbe, "W18 AI3D ai3dWorkerNextHealthProbePtr original identity");
+    assert(role.ai3dInstallConfirmOpenPtr == &installOpen, "W18 AI3D ai3dInstallConfirmOpenPtr original identity");
+    assert(role.ai3dInstallConfirmPendingOpenPtr == &installPending, "W18 AI3D ai3dInstallConfirmPendingOpenPtr original identity");
+    assert(role.ai3dMaxFacesPtr == &maxFaces, "W18 AI3D ai3dMaxFacesPtr original identity");
+    assert(role.ai3dController == app.ai3dController, "W18 AI3D ai3dController original identity");
+    assert(role.ai3dWorkerManager == app.ai3dWorkerManager, "W18 AI3D ai3dWorkerManager original identity");
+}
+
+unittest { // real desktop factories and draw calls remain wiring witnesses
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import tests.unit.census_symbols : blankNonCode, countIdent;
+    const root = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));
+    const factory = blankNonCode(readText(buildPath(root, "source/editor_app.d")));
+    const app = blankNonCode(readText(buildPath(root, "source/app.d")));
+    assert(countIdent(factory, "bindPanelHostRoles") == 1,
+        "W18 desktop role factory declaration floor");
+    assert(app.indexOf("drawTabPanel(editor_app.bindPanelHostRoles!(TabPanelRole)(app)") >= 0,
+        "W18 TabPanelRole production draw uses the live factory");
+    assert(app.indexOf("drawSidePanel(editor_app.bindPanelHostRoles!(SidePanelRole)(app)") >= 0,
+        "W18 SidePanelRole production draw uses the live factory");
+    assert(app.indexOf("drawStatusBar(editor_app.bindPanelHostRoles!(StatusPanelRole)(app)") >= 0,
+        "W18 StatusPanelRole production draw uses the live factory");
+    assert(app.indexOf("drawAi3dModal(editor_app.bindPanelHostRoles!(Ai3dPanelRole)(app)") >= 0,
+        "W18 Ai3dPanelRole production draw uses the live factory");
+}
+
 unittest {
     // Each row picks numbers a wrong-but-plausible implementation reads
     // DIFFERENTLY, not merely a case where it produces nothing.

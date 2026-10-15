@@ -464,7 +464,7 @@ private final class ToolPropsHarness {
     }
 
     void bind() {
-        auto bound = bindToolPropertiesPanel(binding, forms, session,
+        auto bound = bindToolPropertiesPanel(&binding.dispatchUi, &binding.dispatchInteractiveUi, forms, session,
             host.getActiveTool, host.getActiveToolId);
         roles = new ToolPropertiesPanelRoles(bound.read, bound.actions);
     }
@@ -647,6 +647,50 @@ private string collapseWhitespace(string text) {
         spacing = false;
     }
     return result;
+}
+
+unittest { // the real binder refuses each missing callback before construction
+    import core.exception : AssertError;
+    import std.algorithm : endsWith;
+    auto app = new ToolPropsHarness;
+    app.bind();
+    assert(app.roles !is null, "W18 tool_properties all-valid binder positive");
+    {
+        bool refused;
+        try { bindToolPropertiesPanel(null, &app.binding.dispatchInteractiveUi, app.forms, app.session, app.host.getActiveTool, app.host.getActiveToolId); }
+        catch (AssertError error) {
+            refused = true;
+            assert(error.file.endsWith("ui/tool_properties_panel.d") && error.line == 140,
+                "W18 tool_properties dispatch refusal must originate at the binder guard");
+        }
+        assert(refused, "W18 tool_properties binder accepts null dispatch");
+    }
+    {
+        bool refused;
+        try { bindToolPropertiesPanel(&app.binding.dispatchUi, null, app.forms, app.session, app.host.getActiveTool, app.host.getActiveToolId); }
+        catch (AssertError error) {
+            refused = true;
+            assert(error.file.endsWith("ui/tool_properties_panel.d") && error.line == 140,
+                "W18 tool_properties interactive refusal must originate at the binder guard");
+        }
+        assert(refused, "W18 tool_properties binder accepts null interactive");
+    }
+}
+
+unittest { // physical binder doors retain each independently guarded delegate
+    import std.file : readText;
+    import std.regex : matchAll, regex;
+    import tests.unit.census_symbols : blankNonCode, countIdent, balancedSpan;
+    auto source = blankNonCode(readText(buildPath(repoRoot, "packages/editor-ui/source/ui/tool_properties_panel.d")));
+    assert(countIdent(source, "bindToolPropertiesPanel") == 1, "W18 tool_properties binder declaration floor");
+    const site = source.indexOf("bindToolPropertiesPanel");
+    const open = source.indexOf("{", cast(size_t)site);
+    const body = balancedSpan(source, cast(size_t)open, '{', '}');
+    assert(body.length > 80, "W18 tool_properties binder body floor");
+    assert(!matchAll(body, regex(r"\bdispatch\b\s*!is\s+null")).empty,
+        "W18 tool_properties binder dispatch guard term");
+    assert(!matchAll(body, regex(r"\binteractive\b\s*!is\s+null")).empty,
+        "W18 tool_properties binder interactive guard term");
 }
 
 unittest {
