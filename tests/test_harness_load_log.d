@@ -286,6 +286,18 @@ void main() {
       ~ "  [ \"$arg\" = '-unittest' ] && unittest=1\n"
       ~ "  [ \"$arg\" = \"-of=$VIBE3D_FAILURE_LIBRARY\" ] && output=1\n"
       ~ "done\n"
+      // buildProjectLib serializes one quoted argument per line. Compare its
+      // canonical spelling, escaping the exact output operand by the same rules.
+      ~ "response_output=$(printf '%s\\n' \"-of=$VIBE3D_FAILURE_LIBRARY\" | sed 's/\\(\\\\*\\)\"/\\1\\1\\\\\"/g; s/\\(\\\\*\\)$/\\1\\1/; s/^/\"/; s/$/\"/')\n"
+      ~ "for arg do\n"
+      ~ "  case \"$arg\" in @*)\n"
+      ~ "    while IFS= read -r operand; do\n"
+      ~ "      [ \"$operand\" = '\"-lib\"' ] && lib=1\n"
+      ~ "      [ \"$operand\" = '\"-unittest\"' ] && unittest=1\n"
+      ~ "      [ \"$operand\" = \"$response_output\" ] && output=1\n"
+      ~ "    done < \"${arg#@}\"\n"
+      ~ "  esac\n"
+      ~ "done\n"
       ~ "if [ \"$lib\" = 1 ] && [ \"$unittest\" = 1 ] && [ \"$output\" = 1 ]; then\n"
       ~ "  printf '%s\\n' \"$VIBE3D_FAILURE_WITNESS_TEXT\" >> \"$VIBE3D_FAILURE_WITNESS_PATH\"\n"
       ~ "  printf '%s\\n' \"$VIBE3D_FAILURE_WITNESS_TEXT\" >&2\n"
