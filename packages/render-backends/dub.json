@@ -216,8 +216,7 @@
         "vibe3d-log": "web",
         "vibe3d-math": "web",
         "vibe3d-render-model": "web",
-        "bindbc-sdl": "static",
-        "bindbc-opengl": "static"
+        "bindbc-sdl": "static"
       }
     },
     {
