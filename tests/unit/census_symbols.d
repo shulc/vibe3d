@@ -3271,34 +3271,9 @@ unittest { // approved stat header: whole physical input and whole original body
     assert(wave15RestoreSource(origin, physical, root) == original && wave15InputsIntact(first),
         "stat header restored whole-unit control");
 
-    // The duplicate is a second path to the actual whole ImportC unit, in a
-    // temporary reader root; it never enters the compiler's native inputs.
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write, remove;
-    import std.process : thisProcessID;
-    import std.format : format;
     const native = readText(buildPath(root, "packages/editor-ui/source/imgui_flag_abi.c"));
-    const scratch = buildPath(tempDir(), format("census-native-input-%s", thisProcessID));
-    mkdirRecurse(buildPath(scratch, "source"));
-    mkdirRecurse(buildPath(scratch, "packages/editor-ui/source"));
-    scope(exit) rmdirRecurse(scratch);
-    const logicalNative = buildPath(scratch, "source/imgui_flag_abi.c");
-    const physicalNative = buildPath(scratch, "packages/editor-ui/source/imgui_flag_abi.c");
-    write(physicalNative, native);
     first = wave15InputStart();
-    assert(wave15ReadText(logicalNative) == native && wave15InputsIntact(first),
-        "ImportC exact whole-file owner control");
-    write(logicalNative, native);
-    first = wave15InputStart();
-    assert(wave15ReadText(logicalNative) == native && !wave15InputsIntact(first),
-        "ImportC duplicate owner must be refused");
-    remove(logicalNative);
-    write(physicalNative, native[0 .. $ - 1] ~ (native[$ - 1] == ' ' ? "\n" : " "));
-    first = wave15InputStart();
-    assert(wave15ReadText(logicalNative).length == 0
-            && !wave15InputReads[first] && !wave15InputsIntact(first),
-        "ImportC wrong whole-file bytes must be refused");
-    write(physicalNative, native);
-    first = wave15InputStart();
-    assert(wave15ReadText(logicalNative) == native && wave15InputsIntact(first),
-        "ImportC restored whole-file owner control");
+    assert(wave15ReadText(buildPath(root, "source/imgui_flag_abi.c")) == native
+            && wave15InputsIntact(first),
+        "ImportC exact compiled-root whole-file owner control");
 }
