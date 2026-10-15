@@ -613,7 +613,7 @@ for package in packages/forms-model packages/editor-ui util/json-number packages
                packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-snapshot \
                packages/mesh-topology packages/mesh packages/profiling packages/spatial \
                util/log util/math util/parallel util/plane-bytes util/screen-buckets \
-               packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/selection-model packages/scene-query packages/editor-commands; do
+               packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/selection-model packages/scene-query packages/editor-commands packages/render-model packages/render-backends; do
   dub build --root="$package" --config=web --compiler=dmd
 done
 for data in import-paths versions linker-files libs lflags source-files dflags \
