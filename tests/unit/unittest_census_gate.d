@@ -948,9 +948,18 @@ FileCensus[] scanRevision(string root, string rev)
     return files;
 }
 
-// Only this preparatory commit contains the three approved whole-file twins.
+// Only these seven approved preparatory commits admit the three whole-file twins.
 // Retain every origin once; all other revisions and working inputs stay physical.
 private enum historicalCustodyRevision = "412e816d9e757417bc6ab07eb152ed8071ed12b3";
+private immutable string[] historicalCustodyRevisions = [
+    "412e816d9e757417bc6ab07eb152ed8071ed12b3",
+    "492c1d91efea6b7852cea34ac190b438436acb8b",
+    "62151ecd59d9bd0d0d862d5323e4d5501a9feeb5",
+    "ad0cf0ccc4b01ee76dc71d614c402b0a6ba54ee0",
+    "d9ea2b20f3b0fd1ca3eb925029b5704d3675d9c0",
+    "2b42204f458fe3ee26959f9d4e692dfecd351c84",
+    "b0ca18e69aa88e2c42243ea445195c934656273b",
+];
 private struct HistoricalBodyAlias { string origin, destination, oid; }
 private immutable HistoricalBodyAlias[] historicalBodyAliases = [
     HistoricalBodyAlias("tests/unit/ui/channel_rows_test.d", "packages/editor-ui/tests/source/tests/unit/ui/channel_rows_test.d", "1ccb0a2621557c7ed1e10acfc15baf3f6ae35f77"),
@@ -962,7 +971,7 @@ private FileCensus[] historicalFiles(string resolvedRevision, const(TreeEntry)[]
         const Census[string] blobCensus, out bool intact)
 {
     intact = true;
-    if (resolvedRevision != historicalCustodyRevision) return filesOf(entries, blobCensus);
+    if (historicalCustodyRevisions.count(resolvedRevision) != 1) return filesOf(entries, blobCensus);
     intact = historicalBodyAliases.length == 3;
     foreach (row; historicalBodyAliases) {
         size_t origins, destinations;
@@ -1757,6 +1766,16 @@ unittest { // the three exact preparatory whole-body aliases, never generic dedu
     const string[] destinations = ["packages/editor-ui/tests/source/tests/unit/ui/channel_rows_test.d", "packages/editor-ui/tests/source/tests/unit/ui/command_notice_test.d", "packages/editor-ui/tests/source/tests/unit/ui/stat_rows_test.d"];
     const string[] oids = ["1ccb0a2621557c7ed1e10acfc15baf3f6ae35f77", "9b1d09453dfeec7a3ea4882e7b8b32aebcd90a49", "4f5e3afc42fb597fedd8ca3dfaf5d16dd030af6b"];
     const long[] blocks = [8, 2, 17], asserts = [45, 10, 123];
+    const string[] revisions = [
+        "412e816d9e757417bc6ab07eb152ed8071ed12b3",
+        "492c1d91efea6b7852cea34ac190b438436acb8b",
+        "62151ecd59d9bd0d0d862d5323e4d5501a9feeb5",
+        "ad0cf0ccc4b01ee76dc71d614c402b0a6ba54ee0",
+        "d9ea2b20f3b0fd1ca3eb925029b5704d3675d9c0",
+        "2b42204f458fe3ee26959f9d4e692dfecd351c84",
+        "b0ca18e69aa88e2c42243ea445195c934656273b",
+    ];
+    assert(revisions.length == 7, "historical fixed seven full input identities");
     auto actual = revEntries(censusRepoRoot, "412e816d9e757417bc6ab07eb152ed8071ed12b3");
     TreeEntry[] pairs;
     foreach (e; actual) if (origins.canFind(e.path) || destinations.canFind(e.path)) pairs ~= e;
@@ -1784,12 +1803,19 @@ unittest { // the three exact preparatory whole-body aliases, never generic dedu
         }
     }
     bool intact;
-    const proper = historicalFiles(historicalCustodyRevision, pairs, cache, intact);
-    assert(intact, "historical whole-table positive");
-    checkView(proper, true);
-    assert(total(proper).blocks == 27 && total(proper).asserts == 178,
-        "historical three-body contribution only, not net loss slack");
-    foreach (i; 0 .. 3) foreach (surface; 0 .. 5) {
+    foreach (revision; revisions) {
+        TreeEntry[] actualPairs;
+        foreach (e; revEntries(censusRepoRoot, revision))
+            if (origins.canFind(e.path) || destinations.canFind(e.path)) actualPairs ~= e;
+        assert(actualPairs.length == 6, "historical fixed six entries at " ~ revision);
+        const proper = historicalFiles(revision, actualPairs, cache, intact);
+        assert(intact, "historical whole-table positive at " ~ revision);
+        checkView(proper, true);
+        assert(total(proper).blocks == 27 && total(proper).asserts == 178,
+            "historical three-body contribution only, not net loss slack");
+        checkView(scanRevision(censusRepoRoot, revision), true);
+    }
+    foreach (i; 0 .. 3) foreach (surface; 0 .. 7) {
         auto changed = pairs.dup;
         auto available = cache.dup;
         if (surface == 0 || surface == 3) {
@@ -1799,7 +1825,12 @@ unittest { // the three exact preparatory whole-body aliases, never generic dedu
             foreach (e; pairs) if (e.path == origins[i]) { changed ~= e; break; }
         } else if (surface == 2) {
             foreach (ref e; changed) if (e.path == destinations[i]) e.oid = "0000000000000000000000000000000000000001";
-        } else available.remove(oids[i]);
+        } else if (surface == 4) available.remove(oids[i]);
+        else if (surface == 5) {
+            foreach (ref e; changed) if (e.path == origins[i]) e.oid = "0000000000000000000000000000000000000001";
+        } else {
+            foreach (ref e; changed) if (e.path == origins[i]) e.path = "tests/unit/unadmitted_historical_origin.d";
+        }
         historicalFiles(historicalCustodyRevision, changed, available, intact);
         Verdict refused;
         refused.ran = true;
@@ -1823,16 +1854,33 @@ unittest { // the three exact preparatory whole-body aliases, never generic dedu
     }
     assert(thirdCount == 1, "historical third copy population");
 
-    // Exercise both unchanged production callers over the actual immutable Git input.
-    checkView(scanRevision(censusRepoRoot, historicalCustodyRevision), true);
+    const currentRevision = git(censusRepoRoot, ["rev-parse", "HEAD"]).text.strip;
+    TreeEntry[] currentPairs;
+    foreach (e; revEntries(censusRepoRoot, currentRevision))
+        if (origins.canFind(e.path) || destinations.canFind(e.path)) currentPairs ~= e;
+    assert(currentPairs.length == 3, "historical current destinations stay physical");
+    foreach (e; currentPairs) if (e.path == destinations[2])
+        assert(e.oid == "510cd31eed643348329ec6d9dea3c914a6222be8",
+            "historical current unequal stat header is not an admitted twin");
+    fetchBlobs(censusRepoRoot, [currentPairs], cache, ledgers);
+    const currentFiles = historicalFiles(currentRevision, currentPairs, cache, intact);
+    assert(intact && currentFiles.length == 3,
+        "historical current physical bodies retain their complete contributions");
+    foreach (i; 0 .. 3) {
+        size_t population;
+        foreach (ref f; currentFiles) if (f.path == destinations[i]) {
+            ++population;
+            assert(f.census.blocks == blocks[i] && f.census.asserts == asserts[i],
+                "historical current physical body census stays whole");
+        }
+        assert(population == 1, "historical current physical destination population");
+    }
+
+    // Exercise both unchanged production callers over each original immutable Git object.
     const sandbox = buildPath(tempDir(), format("vibe3d-historical-custody-%d", thisProcessID));
     mkdirRecurse(sandbox);
     scope(exit) rmdirRecurse(sandbox);
     assert(git(sandbox, ["init", "-q"]).status == 0, "historical caller sandbox init");
-    assert(git(sandbox, ["fetch", "-q", "--no-tags", censusRepoRoot, historicalCustodyRevision]).status == 0,
-        "historical caller sandbox exact object fetch");
-    assert(git(sandbox, ["checkout", "-q", "-b", "probe", "FETCH_HEAD"]).status == 0,
-        "historical caller sandbox exact checkout");
     const savedBase = environment.get("VIBE3D_CENSUS_BASE", "");
     const savedPoint = environment.get(branchPointEnv, "");
     if (savedBase.length) environment.remove("VIBE3D_CENSUS_BASE");
@@ -1841,11 +1889,17 @@ unittest { // the three exact preparatory whole-body aliases, never generic dedu
         if (savedBase.length) environment["VIBE3D_CENSUS_BASE"] = savedBase;
         if (savedPoint.length) environment[branchPointEnv] = savedPoint;
     }
-    const admitted = judge(sandbox);
-    assert(admitted.ran && admitted.historicalInputsIntact && admitted.baseRev == historicalCustodyRevision,
-        "historical judge uses actual resolved preparatory commit");
-    checkView(admitted.baseFiles, true);
-    assert(admitted.base == total(admitted.baseFiles), "historical judge total and once-only view share actual bodies");
+    foreach (revision; revisions) {
+        assert(git(sandbox, ["fetch", "-q", "--no-tags", censusRepoRoot, revision]).status == 0,
+            "historical caller sandbox exact object fetch");
+        assert(git(sandbox, ["checkout", "-q", "-B", "probe", "FETCH_HEAD"]).status == 0,
+            "historical caller sandbox exact checkout");
+        const admitted = judge(sandbox);
+        assert(admitted.ran && admitted.historicalInputsIntact && admitted.baseRev == revision,
+            "historical judge uses actual resolved preparatory commit");
+        checkView(admitted.baseFiles, true);
+        assert(admitted.base == total(admitted.baseFiles), "historical judge total and once-only view share actual bodies");
+    }
     void commit(string message) {
         assert(git(sandbox, ["add", "-A"]).status == 0, "historical physical high-water add");
         assert(git(sandbox, ["-c", "user.email=census@invalid", "-c", "user.name=census", "commit", "-q", "--allow-empty", "-m", message]).status == 0,
