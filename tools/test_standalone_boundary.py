@@ -85,6 +85,24 @@ class BoundaryControls(unittest.TestCase):
                 reject(change, message)
             if any(p['name']=='d-stb-image' for p in original['packages']):
                 reject(lambda d: next(p for p in d['packages'] if p['name']=='d-stb-image').update(path='/outside/image'), 'image revision')
+                image=next(p for p in original['packages'] if p['name']=='d-stb-image')
+                alias=self.project/'image-alias'
+                alias.symlink_to(Path(image['path']).resolve(), target_is_directory=True)
+                try:
+                    affected=[t['rootPackage'] for t in original['targets'] if t['buildSettings'].get('lflags')]
+                    self.assertEqual(set(affected), {'vibe3d-cli','vibe3d-document-io','vibe3d-image-codec','d-stb-image'})
+                    for name in affected:
+                        with self.subTest(target=name):
+                            for path in (alias/'build', (Path(image['path'])/'build').resolve()):
+                                changed=copy.deepcopy(original)
+                                next(t for t in changed['targets'] if t['rootPackage']==name)['buildSettings']['lflags']=['-L'+str(path)]
+                                boundary.validate_package_settings(changed, root)
+                            for flags in ([], ['-L'], ['-I'+str(alias/'build')], ['-L/outside'],
+                                          ['-L'+str(alias/'missing')], ['-L'+str(alias/'build')]*2):
+                                reject(lambda d: next(t for t in d['targets'] if t['rootPackage']==name)['buildSettings'].update(lflags=flags),
+                                       'resolved setting changed: '+name+':lflags')
+                finally:
+                    alias.unlink()
             for index in range(len(original['targets'])):
                 for field in ('sourceFiles', 'importPaths', 'dflags', 'libs', 'lflags', 'linkerFiles',
                               'injectSourceFiles', 'frameworks', 'extraDependencyFiles', 'copyFiles',

@@ -112,7 +112,11 @@ def validate_package_settings(description, root, compiler="dmd"):
             active['vibe3d-mesh-ops']['configuration'] in ('modeling', 'modeling-noai', 'with-render', 'web') and
             Path(compiler).name in ('ldc', 'ldc2')) else []
         for field,value in {'dflags':expected_flags, 'libs':['stb_image_c','m'] if 'd-stb-image' in seen else [],'lflags':['-L'+str(image/'build')] if 'd-stb-image' in seen else []}.items():
-            require(settings.get(field,[])==value,'resolved setting changed: '+name+':'+field)
+            actual=settings.get(field,[])
+            if field=='lflags':
+                actual=['-L'+str(Path(flag[2:]).resolve()) if flag.startswith('-L') and flag[2:] else flag for flag in actual]
+                value=['-L'+str(Path(flag[2:]).resolve()) for flag in value]
+            require(actual==value,'resolved setting changed: '+name+':'+field)
         for field in HOOKS+('injectSourceFiles','frameworks','extraDependencyFiles','copyFiles','stringImportPaths','cImportPaths'):
             expected=IMAGE_BUILD if name=='d-stb-image' and field=='preBuildCommands' else []
             require(settings.get(field,[])==expected,'resolved setting changed: '+name+':'+field)
