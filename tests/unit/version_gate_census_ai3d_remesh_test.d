@@ -4,8 +4,8 @@ import tests.unit.census_symbols : isIdentChar;
 
 import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact, wave15ReadText;
 
-import std.algorithm : count, sort, startsWith;
-import std.array : join;
+import std.algorithm : count, filter, sort, startsWith;
+import std.array : array, join;
 import std.file : exists, readText, remove, tempDir, write;
 import std.format : format;
 import std.json : parseJSON;
@@ -427,12 +427,14 @@ SH";
         "http_providers", "http_server", "input_frame_state", "input_router",
         "registration", "ui.panels",
     ];
+    // 20262940: retain the original roster; the approved panel role cut removes only its transport ancestry.
+    enum expectedCurrentClassA = expectedClassA.filter!(name => name != "ui.panels").array;
     assert(reaches(webGraph.edges, "app", "http_transport"),
         "W16-A web graph lost its HTTP-router carrier; the transport census is vacuous");
-    assert(classA == expectedClassA,
+    assert(classA == expectedCurrentClassA,
         format("W16-A HTTP class-A graph-shape pin changed (not a W16-A facility witness): "
              ~ "expected %s, got %s",
-               expectedClassA, classA));
+               expectedCurrentClassA, classA));
 
     // This is the one expansion point for W16-P/W16-DEP as further native-only
     // facilities are removed from the browser target.
