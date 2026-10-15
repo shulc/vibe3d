@@ -4528,6 +4528,11 @@ def renderer_native_receipt(project, compiler, evidence, active):
     for name, package in external.items():
         record=receipt['packages'][name];root=Path(package['path']).resolve()
         native=name in {'d-cycles','bindbc-rpr','nfde','d_imgui','d-stb-image','d-opensubdiv','d-bvh','bindbc-assimp6','d-onnxruntime'}
+        origin=record.get('origin','source-built')
+        prebuilt=origin=='prebuilt-distribution'
+        require(origin=='source-built' or (prebuilt and name=='bindbc-rpr'
+                and package['configuration']=='dynamic'),
+                'PREPARATION-REFUSED: renderer native origin variant: '+name)
         require(record['tree'] and isinstance(record['gitlinks'],dict) and record['inputs']
                 and (not native or (record['headers'] and record['nativeCompiler']['identity'] and record['linker']['identity']))
                 and isinstance(record['generatedConfigurations'],list),
@@ -4538,7 +4543,93 @@ def renderer_native_receipt(project, compiler, evidence, active):
         for relative,digest in RENDER_SOURCE_PINS.get(name,{}).items():
             require((root/relative).is_file() and legacy_digest(root/relative)==digest,
                     'PREPARATION-REFUSED: renderer frozen Source/header pin: '+name+':'+relative)
-        if native:
+        # Wave17 phase0 admission: only the pinned dynamic SDK has vendor
+        # distribution provenance; source-built tools/construction stay mandatory
+        # (doc/library_layout_wave17_native_provision_admission_2026-10-15.md).
+        if prebuilt:
+            require(record['construction']=={'status':'prebuilt-distribution', 'originalBuild':'undisclosed by vendor'}
+                    and all(record[tool]=={'identity':'undisclosed by vendor'} for tool in ('nativeCompiler','linker')),
+                    'PREPARATION-REFUSED: renderer prebuilt historical provenance')
+            distribution=record['distribution']
+            sdk_relative='extern/RadeonProRenderSDK';sdk=root/sdk_relative
+            revision='e8353e0588f07a836321823c6ef81f338ff28bc2'
+            subtree='RadeonProRender/binUbuntu20';tree='a52ae4faa76e4ad90491b66da6b838e4761875bb'
+            require(distribution['publisher']=='GPUOpen-LibrariesAndSDKs'
+                    and distribution['repository']=='https://github.com/GPUOpen-LibrariesAndSDKs/RadeonProRenderSDK.git'
+                    and distribution['revision']==revision and distribution['tree']==tree
+                    and record['gitlinks'].get(sdk_relative)==revision and (root/'.git').exists()
+                    and subprocess.check_output(['git','ls-tree','HEAD','--',sdk_relative],cwd=root,text=True).strip()
+                        =='160000 commit '+revision+'\t'+sdk_relative
+                    and subprocess.check_output(['git','rev-parse','HEAD'],cwd=sdk,text=True).strip()==revision
+                    and subprocess.check_output(['git','rev-parse',revision+':'+subtree],cwd=sdk,text=True).strip()==tree,
+                    'PREPARATION-REFUSED: renderer pinned prebuilt distribution origin')
+            rows=subprocess.check_output(['git','ls-tree','-rl',revision,'--',subtree],cwd=sdk,text=True).splitlines()
+            members={}
+            inputs={str(Path(item['path'])):item['sha256'] for item in record['inputs']}
+            require(len(rows)==9, 'PREPARATION-REFUSED: renderer prebuilt distribution population')
+            for row in rows:
+                metadata,relative=row.split('\t');mode,kind,blob,size=metadata.split()
+                source=sdk/relative
+                require(mode=='100644' and kind=='blob' and relative not in members
+                        and Path(relative).parent==Path(subtree) and source.is_file() and not source.is_symlink()
+                        and not source.stat().st_mode & 0o111 and source.stat().st_size==int(size)
+                        and subprocess.check_output(['git','hash-object','--no-filters','--',str(source)],cwd=sdk,text=True).strip()==blob
+                        and inputs.get(str(source))==legacy_digest(source),
+                        'PREPARATION-REFUSED: renderer prebuilt distribution member: '+relative)
+                members[relative]=blob
+            required={subtree+'/libRadeonProRender64.so':'0793cb86649c2e4dfa961a9d758ae6a8d19bdaa0',
+                      subtree+'/libNorthstar64.so':'aadc3da73e01e2b8d75a21c3bf01ae2f617aacf4'}
+            artifacts={str(root/item['relative']):item for item in record['artifacts']}
+            require(all(members.get(relative)==blob and str(sdk/relative) in artifacts for relative,blob in required.items())
+                    and len(artifacts)==len(record['artifacts']),
+                    'PREPARATION-REFUSED: renderer required prebuilt artifacts')
+            runtime=distribution['runtimeClosure']
+            paths={item['path']:item for item in runtime}
+            require(len(paths)==len(runtime) and all(str(sdk/relative) in paths for relative in required),
+                    'PREPARATION-REFUSED: renderer prebuilt runtime closure population')
+            for source_path,item in paths.items():
+                source=Path(source_path)
+                require(source.is_absolute() and source_path==os.path.normpath(source_path)
+                        and source.is_file() and inputs.get(source_path)==item['sha256']
+                        and legacy_digest(source)==item['sha256'] and item['target']==receipt['abi']['nativeTarget']
+                        and item['elf']['class']=='ELF64' and item['elf']['machine']=='Advanced Micro Devices X86-64'
+                        and item['elf']['osabi']=='UNIX - System V' and item['elf']['soname']
+                        and isinstance(item['elf']['needed'],list) and isinstance(item['dependencies'],dict)
+                        and set(item['elf']['needed'])==set(item['dependencies']),
+                        'PREPARATION-REFUSED: renderer prebuilt runtime input/target: '+source_path)
+                witness=item['elfEvidence'];witness_path=Path(witness['path'])
+                require(witness_path.is_file() and legacy_digest(witness_path)==witness['sha256'],
+                        'PREPARATION-REFUSED: renderer prebuilt ELF evidence identity: '+source_path)
+                observed=json.loads(witness_path.read_text())
+                require(observed['exit']==0 and observed['sourceSha256']==item['sha256']
+                        and len(observed['argv'])==4 and Path(observed['argv'][0]).name=='readelf'
+                        and observed['argv'][1:]==['-h','-d',source_path]
+                        and all(re.search(r'^\s*'+label+r':\s*'+re.escape(item['elf'][key])+r'\s*$',observed['stdout'],re.M)
+                                for label,key in (('Class','class'),('Machine','machine'),('OS/ABI','osabi')))
+                        and re.findall(r'\(SONAME\).*?\[([^]\n]+)\]',observed['stdout'])==[item['elf']['soname']]
+                        and re.findall(r'\(NEEDED\).*?\[([^]\n]+)\]',observed['stdout'])==item['elf']['needed'],
+                        'PREPARATION-REFUSED: renderer prebuilt observed ELF closure: '+source_path)
+                require((not source.is_symlink() and item.get('symlink') is None)
+                        or (source.is_symlink() and item.get('symlink')==os.readlink(source)
+                            and (not source.is_relative_to(sdk) or not Path(item['symlink']).is_absolute())
+                            and os.path.normpath(str(source.parent/item['symlink'])) in paths),
+                        'PREPARATION-REFUSED: renderer prebuilt runtime symlink closure: '+source_path)
+                for dependency,target in item['dependencies'].items():
+                    require(target in paths and paths[target]['elf']['soname']==dependency,
+                            'PREPARATION-REFUSED: renderer prebuilt runtime dependency closure: '+dependency)
+                if source.is_relative_to(sdk):
+                    require(str(source.relative_to(sdk)) in members and source_path in artifacts,
+                            'PREPARATION-REFUSED: renderer foreign/unstaged prebuilt SDK dependency')
+            reached=set();pending=[str(sdk/relative) for relative in required]
+            while pending:
+                selected=pending.pop()
+                if selected in reached:continue
+                reached.add(selected);item=paths[selected];pending.extend(item['dependencies'].values())
+                if item.get('symlink'):pending.append(os.path.normpath(str(Path(selected).parent/item['symlink'])))
+            require(reached==set(paths)
+                    and set(artifacts)=={p for p in paths if Path(p).is_relative_to(sdk)},
+                    'PREPARATION-REFUSED: renderer exact consumed prebuilt SDK closure')
+        if native and not prebuilt:
             require(record['construction']['exit']==0 and record['construction']['argv']
                     and isinstance(record['construction']['environment'],dict),
                     'PREPARATION-REFUSED: renderer original native package construction: '+name)
