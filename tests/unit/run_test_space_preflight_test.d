@@ -296,12 +296,11 @@ unittest
     mkdirRecurse(mp);
     scope(exit) cast(void) collectException(rmdirRecurse(mp));
 
-    // 16 MiB: enough for rdmd's own bootstrap object-cache write (measured
-    // ~3-4 MiB on a fresh mount) so the failure observed is THIS check's own
-    // refusal, not rdmd dying before main() ever runs — a real, deeper edge
-    // case this task also found and does not claim to fix (see the header).
-    // Still far below the 256 MiB floor, so it is a genuine, not a marginal,
-    // constrained mount.
+    // A real 268431360-byte tmpfs admitted both cold shared rdmd bootstraps
+    // and their runtime refusals on DMD 2.112.1-rc.1; task 20262890 evidence:
+    // doc/library_layout_wave16_composition_source_execution_2026-10-14.md.
+    // This is a measured successful bound, not a peak, minimum or universal
+    // margin; the production refusal floor remains 256 MiB.
     // `lane.d preflight` also refuses on DISPLAY=:0 (check (2), unrelated to
     // this task) — this host's shell inherits exactly that, and its own
     // sanitizer.yaml clears DISPLAY for the same reason (every real step runs
@@ -310,7 +309,7 @@ unittest
     // DISPLAY=:0 inherited, a deliberately neutered disk check still exits 1,
     // for the wrong reason — see the mutation note in the task card).
     const script = format(
-        "mount -t tmpfs -o size=16m tmpfs %s || exit 99\n"
+        "mount -t tmpfs -o size=268431360 tmpfs %s || exit 99\n"
       // These are environment seams, not diagnostic flags: the assertion below
       // remains that the runner is invoked exactly as an ordinary caller would.
       // The log seam keeps the synthetic refusal out of the host load record
@@ -327,7 +326,7 @@ unittest
         mp, lanePath, mp, mp, runnerPath, mp);
     auto r = execute(["unshare", "--mount", "--map-root-user", "bash", "-c", script]);
 
-    enforce(r.status != 99, "could not mount a 16 MiB tmpfs inside the unprivileged "
+    enforce(r.status != 99, "could not mount a 268431360-byte tmpfs inside the unprivileged "
         ~ "namespace — canUnprivilegedMount() said yes but the mount itself failed:\n" ~ r.output);
 
     const runnerExitAt = r.output.indexOf("RUNNER_EXIT=");
@@ -337,9 +336,9 @@ unittest
 
     assert(r.output.indexOf("RUNNER_EXIT=1") >= 0, format(
         "run_test.d, invoked exactly as a caller would (`./run_test.d selection`, no "
-      ~ "diagnostic flags), did not exit 1 against a real 16 MiB tmpfs:\n%s", r.output));
+      ~ "diagnostic flags), did not exit 1 against a real 268431360-byte tmpfs:\n%s", r.output));
     assert(r.output.indexOf("LANE_EXIT=1") >= 0, format(
-        "tools/sanitizer/lane.d preflight did not exit 1 against a real 16 MiB tmpfs:\n%s",
+        "tools/sanitizer/lane.d preflight did not exit 1 against a real 268431360-byte tmpfs:\n%s",
         r.output));
 
     // The word the card asks for, verbatim, from a REAL statvfs answer.

@@ -40,7 +40,7 @@ immutable string[] kPortGroup = [
     "tests.unit.test_mode_request_gate_test",
     "tests.unit.tool_state_owned_route_test",
     // Spawns a real worker process on a port chosen the same way.
-    "ai3d.worker_manager",
+    "tests.unit.ai3d.worker_manager_source_public_test",
 ];
 
 /// Parse `UT <ms> <module>` lines (the VIBE3D_UT_TIMINGS format).
