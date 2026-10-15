@@ -4780,7 +4780,9 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
             'lflags','libs','options','requirements')
     context_root=Path(active[description['rootPackage']]['path']).resolve()
     configuration=description['configuration'];build=description['buildType']
-    construction={field:settings.get(field,[]) for field in fields if field not in ('options','requirements')}
+    # Resolved strings are literals: DUB expands recipe variables once more.
+    construction={field:[value.replace('$','$$') for value in settings.get(field,[])]
+                  for field in fields if field not in ('options','requirements')}
     construction.update(name=configuration,buildOptions=settings.get('options',[]),
                         buildRequirements=settings.get('requirements',[]))
     recipe=evidence/(label+'-selected-target.recipe.json')
