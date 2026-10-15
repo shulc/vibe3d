@@ -4510,10 +4510,13 @@ def renderer_native_receipt(project, compiler, evidence, active):
             'PREPARATION-REFUSED: successful original native construction provenance')
     require(platform.system()=='Linux' and receipt['host']['arch']==platform.machine() and receipt['host']['system']==platform.system(),
             'PREPARATION-REFUSED: renderer native target/host')
+    # Wave17: entry binds compiler/target identity; direct D construction and the
+    # algorithm run below witness their own ABI scope. Loader/session/PBO/callback
+    # acceptance stays later; no future compatibility boolean admits phase0
+    # (doc/library_layout_wave17_native_provision_admission_2026-10-15.md).
     require(receipt['abi']['dCompilerSha256']==legacy_digest(Path(compiler))
-            and receipt['abi']['dTarget'] and receipt['abi']['nativeTarget']==receipt['abi']['dTarget']
-            and receipt['abi']['compatible'] is True,
-            'PREPARATION-REFUSED: renderer native compiler/ABI compatibility')
+            and receipt['abi']['dTarget'] and receipt['abi']['nativeTarget']==receipt['abi']['dTarget'],
+            'PREPARATION-REFUSED: renderer native compiler/target identity')
     require(receipt['mode']['configuration']=='Release' and receipt['mode']['WITH_CYCLES'] is True
             and receipt['mode']['rpr']=='dynamic' and receipt['mode']['backendConfiguration'],
             'PREPARATION-REFUSED: renderer native Release/WITH_CYCLES/RPR mode')
@@ -4595,7 +4598,11 @@ def renderer_native_receipt(project, compiler, evidence, active):
                         and source.is_file() and inputs.get(source_path)==item['sha256']
                         and legacy_digest(source)==item['sha256'] and item['target']==receipt['abi']['nativeTarget']
                         and item['elf']['class']=='ELF64' and item['elf']['machine']=='Advanced Micro Devices X86-64'
-                        and item['elf']['osabi']=='UNIX - System V' and item['elf']['soname']
+                        and (item['elf']['osabi']=='UNIX - System V'
+                            or (not source.is_relative_to(sdk) and item['elf']['osabi']=='UNIX - GNU'
+                                and any(system['path']==source_path and system['sha256']==item['sha256']
+                                        for system in receipt.get('systemInputs',[]))))
+                        and item['elf']['soname']
                         and isinstance(item['elf']['needed'],list) and isinstance(item['dependencies'],dict)
                         and set(item['elf']['needed'])==set(item['dependencies']),
                         'PREPARATION-REFUSED: renderer prebuilt runtime input/target: '+source_path)
