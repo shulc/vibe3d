@@ -1008,10 +1008,10 @@ Role bindPanelHostRoles(Role)(EditorApp app) {
             role.ai3dModal.progressPtr = &app.ai3dModal.progress;
             role.ai3dModal.errorCodePtr = &app.ai3dModal.errorCode;
             role.ai3dModal.errorMessagePtr = &app.ai3dModal.errorMessage;
-            role.ai3dModalOpenPtr = &app.ai3dModalOpen;
-            role.ai3dModalPendingOpenPtr = &app.ai3dModalPendingOpen;
-            role.ai3dPickedImagePathPtr = &app.ai3dPickedImagePath;
-            role.ai3dWorkerUrlBufPtr = &app.ai3dWorkerUrlBuf;
+            role.ai3dModalOpenPtr = &app.ai3dModalOpen();
+            role.ai3dModalPendingOpenPtr = &app.ai3dModalPendingOpen();
+            role.ai3dPickedImagePathPtr = &app.ai3dPickedImagePath();
+            role.ai3dWorkerUrlBufPtr = &app.ai3dWorkerUrlBuf();
             role.ai3dWorkerStartingPtr = app.ai3dWorkerStartingPtr;
             role.ai3dWorkerStartDeadlinePtr = app.ai3dWorkerStartDeadlinePtr;
             role.ai3dWorkerNextHealthProbePtr = app.ai3dWorkerNextHealthProbePtr;

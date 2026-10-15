@@ -5,7 +5,7 @@ module tests.unit.ui.panels_test;
 
 import bindbc.sdl;
 import bindbc.opengl;
-import std.string : toStringz;
+import std.string : toStringz, indexOf;
 import std.stdio : writeln, writefln, File, stderr;
 import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
@@ -293,7 +293,7 @@ unittest { // desktop presentation bindings borrow each original live slot
     app.shortcutsPtr = &shortcuts;
     app.regPtr = &registry;
     app.sessionOwner = &owner;
-    app.meshDg = &currentMesh;
+    app.meshDg = cast(typeof(app.meshDg)) &currentMesh;
     auto tab = bindPanelHostRoles!TabPanelRole(app);
     auto side = bindPanelHostRoles!SidePanelRole(app);
     auto status = bindPanelHostRoles!StatusPanelRole(app);
@@ -322,13 +322,13 @@ unittest { // desktop presentation bindings borrow each original live slot
     assert(status.kAiToggleAvailable == kAiToggleAvailable, "W18 status toggle capability");
     assert(status.kCopilotEnabled == kCopilotEnabled, "W18 status copilot capability");
     liveMesh = &secondMesh;
-    assert(&side.mesh == &secondMesh, "W18 side late Mesh lookup");
-    assert(&status.mesh == &secondMesh, "W18 status late Mesh lookup");
-    assert(&side.document == &owner.document, "W18 side sole Session Document");
-    assert(&status.document == &owner.document, "W18 status sole Session Document");
-    assert(&side.editMode == &owner.editMode, "W18 side sole Session EditMode");
-    assert(&status.editMode == &owner.editMode, "W18 status sole Session EditMode");
-    assert(&status.selTypeOrder == &owner.selTypeOrder, "W18 status sole Session selection order");
+    assert(&side.mesh() == &secondMesh, "W18 side late Mesh lookup");
+    assert(&status.mesh() == &secondMesh, "W18 status late Mesh lookup");
+    assert(&side.document() == &owner.document(), "W18 side sole Session Document");
+    assert(&status.document() == &owner.document(), "W18 status sole Session Document");
+    assert(&side.editMode() == &owner.editMode(), "W18 side sole Session EditMode");
+    assert(&status.editMode() == &owner.editMode(), "W18 status sole Session EditMode");
+    assert(&status.selTypeOrder() == &owner.selTypeOrder(), "W18 status sole Session selection order");
 }
 
 version (web) {} else unittest { // scalar modal refs and live worker slots keep desktop custody
