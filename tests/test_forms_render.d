@@ -350,7 +350,7 @@ unittest {
 unittest {
     import std.algorithm.searching : count;
 
-    const source = readText(buildPath(repoRoot, "source", "forms_render.d"));
+    const source = readText(buildPath(repoRoot, "packages", "editor-ui", "source", "forms_render.d"));
     const drawText = bodyAt(source,
         "private void drawText(ref Row row, ref ResolvedControl rc");
     assert(drawText.count("ImGui.InputTextWithHint(") == 1
