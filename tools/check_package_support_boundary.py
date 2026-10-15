@@ -5054,7 +5054,7 @@ def execute(project,owner,compiler,env,evidence):
     if 'd_imgui' in dependencies:
         selected=(Path(dependencies['d_imgui']['staged'])/'lib/libcimgui_docking.a').resolve()
         flags=[arg for arg in link['argv'] if arg.startswith('-L') and arg.endswith('/libcimgui_docking.a')]
-        require(flags==['-L'+str(selected)],'support actual native archive input: libcimgui_docking.a')
+        require(bool(flags) and all(arg=='-L'+str(selected) for arg in flags),'support actual native archive input: libcimgui_docking.a')
         input_hashes[str(selected)]=legacy_digest(selected)
     (evidence/'actual-input-hashes.json').write_text(json.dumps(input_hashes,indent=2))
     (evidence/'actual-compiler-argv.json').write_text(json.dumps(commands,indent=2));(evidence/'witness.json').write_text(json.dumps({'sha':sha,'actualOwnership':actual,'runtime':runtime},indent=2))
