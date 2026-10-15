@@ -73,7 +73,7 @@ case " $flags " in *" -version=web "*) ;; *)
 esac
 mapfile -t files < <(dub describe --config=web --data=source-files --data-list \
     2>>"$2" | sed '/^$/d' | grep '\.d$')
-for owner in packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/alignment-ops packages/command-runtime packages/application-core packages/creation-ops packages/display-policy packages/edit-contracts packages/input-events packages/interaction-query packages/interchange packages/mesh-change packages/mesh-contracts packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-ops packages/selection-model packages/scene-query packages/editor-commands packages/interactive-tools packages/viewport-host packages/interaction-data packages/mesh-snapshot packages/mesh-topology packages/mesh packages/pipe-evaluation packages/profiling packages/spatial packages/subpatch-preview packages/tool-state packages/transform-ops packages/viewport-gpu util/log util/math util/parallel util/plane-bytes util/screen-buckets packages/pipe-contracts packages/mesh-preview util/json-number; do
+for owner in packages/forms-model packages/editor-ui packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/alignment-ops packages/command-runtime packages/application-core packages/creation-ops packages/display-policy packages/edit-contracts packages/input-events packages/interaction-query packages/interchange packages/mesh-change packages/mesh-contracts packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-ops packages/selection-model packages/scene-query packages/editor-commands packages/interactive-tools packages/viewport-host packages/interaction-data packages/mesh-snapshot packages/mesh-topology packages/mesh packages/pipe-evaluation packages/profiling packages/spatial packages/subpatch-preview packages/tool-state packages/transform-ops packages/viewport-gpu util/log util/math util/parallel util/plane-bytes util/screen-buckets packages/pipe-contracts packages/mesh-preview util/json-number; do
     mapfile -t package_files < <(dub describe --root="$owner" --config=web \
         --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
     files+=("${package_files[@]}")
@@ -157,9 +157,12 @@ SH";
     const baseline = readText(buildPath(repoRoot, "tests", "unit",
         "web_width32_baseline_modules.txt")).strip.splitLines;
     assert(baseline.length == 568, "web compiler baseline manifest population");
+    // 20262940: the historical identities stay fixed; the approved borrowed role is current-only.
+    enum currentOnlyModules = ["ui.panel_host_roles"];
+    const expectedCurrentModules = baseline ~ currentOnlyModules;
     string[] added, removed;
-    foreach (name; selectedModules) if (!baseline.canFind(name)) added ~= name;
-    foreach (name; baseline) if (!selectedModules.canFind(name)) removed ~= name;
+    foreach (name; selectedModules) if (!expectedCurrentModules.canFind(name)) added ~= name;
+    foreach (name; expectedCurrentModules) if (!selectedModules.canFind(name)) removed ~= name;
     assert(added.length == 0 && removed.length == 0,
         format("web compiler selected-set delta: added=%s removed=%s members=%s", added, removed, selectedModules));
     // Measured on the current W16 LD+B12 stack at
@@ -172,7 +175,7 @@ SH";
     // Wave5 compiler witness adds surface_pick, toolpipe.state_paths, workplane_basis.
     // Wave6A: the existing kernel reaches its extracted cluster_values leaf (+1).
     // Wave9 fixed mapping retains all566 identities and adds morph_preview/mesh_ops.triangulate.
-    enum expectedWebModules = 568; // Wave15 retains the frozen web identities; the test-only drag helper was never in this baseline. // +1 task 9504 evaluated_move_weld; +1 task 9449 tools.edit.haul_axis_latch; -1 task 9525 tools.edit.drag_weld; +1 task 9492 tool_attr_bounds; -5 wave-2 PRM2: five more param-update owner modules folded; +1 task 9429 tools.topology_step; -10 wave-2 PRM1: eleven param-update owner modules became one; +1 pen S1 tools.create.pen_geometry; +4: remesh job, stitch, command and modal state; +1 M5 toolpipe.attr_cache; +1 viewport_probe_sampling; +3 retopology S4 light_rig, retopology_line_shade, retopology_dot_cull; +1 retopology S5 retopology_order; +1 viewport shading S1a vertex_normals; +1 viewport shading SP gpu_pass_timer; +1 viewport shading S2b viewport_composite; +1 viewport shading S1e commands.mesh.surface_attr; +1 viewport shading S4b viewport_env
+    enum expectedWebModules = 568 + currentOnlyModules.length; // Wave15 retains the frozen web identities; the test-only drag helper was never in this baseline. // +1 task 9504 evaluated_move_weld; +1 task 9449 tools.edit.haul_axis_latch; -1 task 9525 tools.edit.drag_weld; +1 task 9492 tool_attr_bounds; -5 wave-2 PRM2: five more param-update owner modules folded; +1 task 9429 tools.topology_step; -10 wave-2 PRM1: eleven param-update owner modules became one; +1 pen S1 tools.create.pen_geometry; +4: remesh job, stitch, command and modal state; +1 M5 toolpipe.attr_cache; +1 viewport_probe_sampling; +3 retopology S4 light_rig, retopology_line_shade, retopology_dot_cull; +1 retopology S5 retopology_order; +1 viewport shading S1a vertex_normals; +1 viewport shading SP gpu_pass_timer; +1 viewport shading S2b viewport_composite; +1 viewport shading S1e commands.mesh.surface_attr; +1 viewport shading S4b viewport_env
     assert(closurePaths.length == expectedWebModules,
         format("W16-W web closure population changed: expected %d source modules to reach "
              ~ "the 32-bit compiler, got %d", expectedWebModules, closurePaths.length));
