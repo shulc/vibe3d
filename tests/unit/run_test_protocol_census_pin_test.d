@@ -103,6 +103,36 @@ import census_contracts
 failures = census_contracts.production_lexer_census(root)
 if failures:
     raise SystemExit("prepared-protocol production lexer census: " + "; ".join(failures))
+# These are the approved complete current units, not generated lexer fixtures.
+import hashlib
+stat_origin = "tests/unit/ui/stat_rows_test.d"
+stat_physical = (root / "packages/editor-ui/tests/source/tests/unit/ui/stat_rows_test.d").read_bytes()
+stat_header = b"module tests.unit.ui.stat_rows_test;\n\n"
+if len(stat_physical) != 42593 or stat_physical[407:445] != stat_header:
+    raise SystemExit("prepared-protocol stat physical whole-unit control")
+stat_original = stat_physical[:407] + stat_physical[445:]
+if len(stat_original) != 42555 or hashlib.sha256(stat_original).hexdigest() != "25e0025e79f39974afceb111205f5710a32a7d82cfa95916e8249e68302997ee":
+    raise SystemExit("prepared-protocol stat original whole-unit control")
+def stat_inverse_control(physical, original, accepted):
+    first = census_contracts.source_input_start()
+    restored = census_contracts._restore_source_text(stat_origin, physical.decode(), root)
+    if (restored.encode() == original and census_contracts.source_inputs_intact(first)) != accepted:
+        raise SystemExit("prepared-protocol stat complete inverse admission control")
+stat_inverse_control(stat_physical, stat_original, True)
+for invalid in (stat_original, stat_physical[:407] + stat_header + stat_physical[407:],
+                stat_physical[:-1] + (b" " if stat_physical[-1:] != b" " else b"\n")):
+    first = census_contracts.source_input_start()
+    if census_contracts._restore_source_text(stat_origin, invalid.decode(), root) or census_contracts.source_inputs_intact(first):
+        raise SystemExit("prepared-protocol stat missing/duplicate/wrong-body input must be refused")
+stat_inverse_control(stat_physical, stat_original, True)
+editor_physical = (root / "source/editor_app.d").read_bytes()
+first = census_contracts.source_input_start()
+editor_original = census_contracts._restore_source_text("source/editor_app.d", editor_physical.decode(), root).encode()
+if (len(editor_physical) != 52269 or len(editor_original) != 48220
+        or editor_original != editor_physical[:48220]
+        or hashlib.sha256(editor_original).hexdigest() != "59febb4cbc81bfbaf20d8065e9d28618c411c10f475a10a8857998a7f5ebe63c"
+        or not census_contracts.source_inputs_intact(first)):
+    raise SystemExit("prepared-protocol editor complete inverse control")
 owners = {'packages/camera-model/source': 1, 'packages/document-channels/source': 1, 'packages/image-codec/source': 1, 'packages/document-io/source': 3, 'source': 318, 'packages/alignment-ops/source': 1, 'packages/command-runtime/source': 22, 'packages/application-core/source': 7, 'packages/document-model/source': 5, 'packages/param-schema/source': 2, 'packages/pipe-runtime/source': 4, 'packages/creation-ops/source': 1, 'packages/display-policy/source': 12, 'packages/edit-contracts/source': 4, 'packages/input-events/source': 6, 'packages/interaction-query/source': 12, 'packages/interchange/source': 8, 'packages/mesh-change/source': 2, 'packages/mesh-contracts/source': 4, 'packages/mesh-edit-log/source': 1, 'packages/mesh-edit-replay/source': 1, 'packages/mesh-ops/source': 30, 'packages/mesh-snapshot/source': 1, 'packages/mesh-topology/source': 1, 'packages/mesh/source': 4, 'packages/pipe-evaluation/source': 12, 'packages/profiling/source': 1, 'packages/spatial/source': 5, 'packages/subpatch-preview/source': 5, 'packages/tool-state/source': 2, 'packages/transform-ops/source': 7, 'packages/viewport-gpu/source': 6, 'util/log/source': 1, 'util/math/source': 5, 'util/parallel/source': 1, 'util/plane-bytes/source': 1, 'util/screen-buckets/source': 1, 'packages/pipe-contracts/source': 2, 'packages/mesh-preview/source': 2, 'util/json-number/source': 1, 'packages/selection-model/source': 2, 'packages/scene-query/source': 2, 'packages/editor-commands/source': 100}
 # Independently frozen owner floors, separate from the logical populations.
 floors = {'packages/command-runtime/source': 22, 'packages/application-core/source': 7, 'packages/camera-model/source': 1, 'packages/document-channels/source': 1, 'packages/image-codec/source': 1, 'packages/document-io/source': 3, 'source': 318, 'packages/alignment-ops/source': 1, 'packages/document-model/source': 5, 'packages/param-schema/source': 2, 'packages/pipe-runtime/source': 4, 'packages/creation-ops/source': 1, 'packages/display-policy/source': 12, 'packages/edit-contracts/source': 4, 'packages/input-events/source': 6, 'packages/interaction-query/source': 12, 'packages/interchange/source': 8, 'packages/mesh-change/source': 2, 'packages/mesh-contracts/source': 4, 'packages/mesh-edit-log/source': 1, 'packages/mesh-edit-replay/source': 1, 'packages/mesh-ops/source': 21, 'packages/mesh-snapshot/source': 1, 'packages/mesh-topology/source': 1, 'packages/mesh/source': 4, 'packages/pipe-evaluation/source': 12, 'packages/profiling/source': 1, 'packages/spatial/source': 5, 'packages/subpatch-preview/source': 5, 'packages/tool-state/source': 2, 'packages/transform-ops/source': 7, 'packages/viewport-gpu/source': 6, 'util/log/source': 1, 'util/math/source': 5, 'util/parallel/source': 1, 'util/plane-bytes/source': 1, 'util/screen-buckets/source': 1, 'packages/pipe-contracts/source': 2, 'packages/mesh-preview/source': 2, 'util/json-number/source': 1, 'packages/selection-model/source': 2, 'packages/scene-query/source': 2, 'packages/editor-commands/source': 100}

@@ -3239,3 +3239,34 @@ public Wave15Entry[] wave15DirEntries(string directory, SpanMode span,
         bool followSymlink = true) {
     return wave15DirEntries(directory, "*", span, followSymlink);
 }
+
+unittest { // approved stat header: whole physical input and whole original body
+    import std.file : readText;
+    import std.digest.sha : sha256Of;
+    import std.digest : toHexString;
+    import std.string : toLower;
+    import std.path : dirName;
+    const root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    enum origin = "tests/unit/ui/stat_rows_test.d";
+    enum header = "module tests.unit.ui.stat_rows_test;\n\n";
+    const physical = readText(buildPath(root,
+        "packages/editor-ui/tests/source/tests/unit/ui/stat_rows_test.d"));
+    assert(physical.length == 42593 && physical[407 .. 445] == header,
+        "stat header physical whole-unit control");
+    const original = physical[0 .. 407] ~ physical[445 .. $];
+    assert(original.length == 42555 && sha256Of(original).toHexString.toLower ==
+        "25e0025e79f39974afceb111205f5710a32a7d82cfa95916e8249e68302997ee",
+        "stat header original whole-unit control");
+    auto first = wave15InputStart();
+    assert(wave15RestoreSource(origin, physical, root) == original && wave15InputsIntact(first),
+        "stat header exact inverse must preserve the complete original unit");
+    const wrongBody = physical[0 .. $ - 1] ~ (physical[$ - 1] == ' ' ? "\n" : " ");
+    foreach (invalid; [original, physical[0 .. 407] ~ header ~ physical[407 .. $], wrongBody]) {
+        first = wave15InputStart();
+        assert(wave15RestoreSource(origin, invalid, root).length == 0 && !wave15InputsIntact(first),
+            "stat header missing/duplicate/wrong-body input must be refused");
+    }
+    first = wave15InputStart();
+    assert(wave15RestoreSource(origin, physical, root) == original && wave15InputsIntact(first),
+        "stat header restored whole-unit control");
+}
