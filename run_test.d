@@ -1444,6 +1444,7 @@ void writeBuildStamp() {
 // must come AFTER the project lib on the command line so its undefined symbols
 // resolve against the deps.
 __gshared string g_compileFlags;
+__gshared string[] g_compileArgs;
 __gshared string g_linkTail;
 __gshared bool   g_sourceFlagsDone;
 
@@ -1453,7 +1454,7 @@ void harvestSourceFlags() {
         g_sourceFlagsDone = true;
         // Each `--data=<x> --data-list` emits one item per line; dub prints a
         // few leading "Warning" lines to stderr which 2>/dev/null drops.
-        string gather(string kind, string prefix) {
+        string gather(string kind, string prefix, bool compileArgs = false) {
             auto rr = executeShell(format(
                 "dub describe --config=modeling --data=%s --data-list 2>/dev/null", kind));
             if (rr.status != 0) return "";
@@ -1462,17 +1463,20 @@ void harvestSourceFlags() {
                 auto s = line.strip;
                 if (s.length == 0) continue;
                 acc ~= " " ~ prefix ~ s;
+                if (compileArgs) g_compileArgs ~= prefix ~ s;
             }
             return acc;
         }
-        g_compileFlags ~= gather("import-paths",        "-I=");
-        g_compileFlags ~= gather("string-import-paths", "-J=");
-        g_compileFlags ~= gather("versions",            "-version=");
+        g_compileFlags ~= gather("import-paths",        "-I=", true);
+        g_compileFlags ~= gather("string-import-paths", "-J=", true);
+        g_compileFlags ~= gather("versions",            "-version=", true);
         // ImportC preprocess flags are compile inputs too. In particular,
         // task 5930's project-owned C source includes the linked UI package's
         // header through its expanded -P-I path.
-        g_compileFlags ~= gather("dflags",               "");
-        g_compileFlags ~= " -I=packages/interactive-tools/tests/source -I=packages/viewport-host/tests/source -I=packages/interaction-data/tests/source -I=packages/ai-advisor/tests/source -I=packages/ai3d-runtime/tests/source -I=packages/remesh-runtime/tests/source -I=packages/document-actions/tests/source -J=tests -J=packages/creation-ops/tests/fixtures";
+        g_compileFlags ~= gather("dflags",               "", true);
+        const extraCompileFlags = " -I=packages/interactive-tools/tests/source -I=packages/viewport-host/tests/source -I=packages/interaction-data/tests/source -I=packages/ai-advisor/tests/source -I=packages/ai3d-runtime/tests/source -I=packages/remesh-runtime/tests/source -I=packages/document-actions/tests/source -J=tests -J=packages/creation-ops/tests/fixtures";
+        g_compileFlags ~= extraCompileFlags;
+        g_compileArgs ~= extraCompileFlags.split;
         g_linkTail     ~= gather("lflags",              "-L");
         g_linkTail     ~= gather("libs",                "-L-l");
         // linker-files (.a archives) are passed verbatim.
@@ -1533,6 +1537,8 @@ bool isSourceBackedTest(string path) {
 /// are covered by the separate `dub test` step, and the test's own asserts are
 /// unchanged (verified: identical assertion output, just fewer module unittests).
 string buildProjectLib(string scratch) {
+    import std.process : escapeShellCommand;
+
     string[] srcs;
     bool[string] seen;
     // Task 20262150: moved conditional helpers need the same unittest source
@@ -1563,8 +1569,33 @@ string buildProjectLib(string scratch) {
     }
     if (srcs.empty) return "";
     const lib = buildPath(scratch, "libvibe3d_test.a");
-    auto r = executeShell(format("dmd -lib -unittest%s %s -of=%s 2>&1",
-                                 sourceCompileFlags(), srcs.join(" "), lib));
+    // Task 20262890: keep the complete ordered compiler input in DMD's response
+    // transport, avoiding the measured shell-spawn E2BIG before compilation.
+    // DMD root/response.d uses MS-compatible backslash/quote parsing.
+    harvestSourceFlags();
+    auto args = ["-lib", "-unittest"] ~ g_compileArgs ~ srcs ~ ["-of=" ~ lib];
+    auto response = appender!string;
+    foreach (arg; args) {
+        auto value = arg;
+        // A leading @ must stay visible to DMD's nested-response detection.
+        if (value.startsWith("@")) { response.put('@'); value = value[1 .. $]; }
+        response.put('"');
+        size_t slashes;
+        foreach (c; value) {
+            if (c == '\\') { ++slashes; continue; }
+            // Before a quote, double the backslashes and escape the quote;
+            // elsewhere, backslashes are literal in DMD response arguments.
+            foreach (_; 0 .. (c == '"' ? 2 * slashes + 1 : slashes))
+                response.put('\\');
+            response.put(c);
+            slashes = 0;
+        }
+        foreach (_; 0 .. 2 * slashes) response.put('\\');
+        response.put("\"\n");
+    }
+    const rsp = buildPath(scratch, "libvibe3d_test.rsp");
+    std.file.write(rsp, response.data);
+    auto r = executeShell(escapeShellCommand(["dmd", "@" ~ rsp]) ~ " 2>&1");
     if (r.status != 0 || !exists(lib)) {
         if (r.output.length) stderr.writeln(dim(r.output));
         return "";
