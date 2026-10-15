@@ -4774,12 +4774,27 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
     require(sources and len(sources)==len(set(sources)), 'support renderer nonempty unique source vector: '+label)
     active={p['name']:p for p in description['packages'] if p.get('active')}
     package=active[target['rootPackage']];root=Path(package['path']).resolve()
-    command=['dub','describe','--root='+str(root),'--config='+package['configuration'],'--compiler='+compiler,
-             '--build='+('unittest' if tests else 'debug'),'--nodeps','--skip-registry=all','--quiet']
-    if tests:command+=['--recipe='+str(root/'dub.boundary.json')]
+    # Format the resolved target from the selected root graph, including inherited
+    # settings; a standalone dependency description is a different build context.
+    fields=('sourceFiles','dflags','versions','debugVersions','importPaths','stringImportPaths',
+            'lflags','libs','options','requirements')
+    context_root=Path(active[description['rootPackage']]['path']).resolve()
+    configuration=description['configuration'];build=description['buildType']
+    construction={field:settings.get(field,[]) for field in fields if field not in ('options','requirements')}
+    construction.update(name=configuration,buildOptions=settings.get('options',[]),
+                        buildRequirements=settings.get('requirements',[]))
+    recipe=evidence/(label+'-selected-target.recipe.json')
+    recipe.write_text(json.dumps({'name':target['rootPackage'],'targetType':package['targetType'],
+        'sourcePaths':[],'importPaths':[], 'configurations':[construction],
+        'buildTypes':{build:{}}},indent=2))
+    (evidence/(label+'-selected-context.json')).write_text(json.dumps({
+        'root':str(context_root),'configuration':configuration,'compiler':compiler,'buildType':build,
+        'target':target,'recipe':str(recipe)},indent=2))
+    command=['dub','describe','--root='+str(context_root),'--config='+configuration,'--compiler='+compiler,
+             '--build='+build,'--nodeps','--skip-registry=all','--quiet','--recipe='+str(recipe)]
     own_description=json.loads(run(command,root,env,evidence,label+'-selected-target',renderer_kind='describe').stdout)
     own_target=next(t for t in own_description['targets'] if t['rootPackage']==target['rootPackage'])
-    for field in ('sourceFiles','dflags','versions','debugVersions','importPaths','stringImportPaths'):
+    for field in fields:
         actual=own_target['buildSettings'].get(field,[]);expected=settings.get(field,[])
         if field in ('importPaths','stringImportPaths'):
             actual=[(root/p).resolve() for p in actual];expected=[(root/p).resolve() for p in expected]
