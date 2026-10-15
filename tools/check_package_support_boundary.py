@@ -4825,10 +4825,11 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
     require([value[2:].removeprefix('=') for value in links if value.startswith('-L')]==expected_links,
             'support renderer formatted ordered native link flags: '+label)
     receipt=json.loads((evidence/'native-input-receipt.json').read_text()) if (evidence/'native-input-receipt.json').is_file() else {}
-    admitted={str(Path(item['path']).resolve()):item['sha256'] for item in receipt.get('systemInputs',[])}
+    # Task20262930: declared operand identity includes aliases (doc/library_layout_wave17_plan_2026-10-14.md).
+    admitted={str(Path(item['path'])):item['sha256'] for item in receipt.get('systemInputs',[])}
     dependency_receipt=json.loads((evidence/'dependency-sources.json').read_text())
     for dep,record in dependency_receipt.items():
-        for relative,item in record['nativeArtifacts'].items():admitted[str((Path(record['staged'])/relative).resolve())]=item['sha256']
+        for relative,item in record['nativeArtifacts'].items():admitted[str(Path(record['staged'])/relative)]=item['sha256']
     for value in expected_links:
         if Path(value).is_absolute():
             require(value in admitted and legacy_digest(Path(value))==admitted[value],
