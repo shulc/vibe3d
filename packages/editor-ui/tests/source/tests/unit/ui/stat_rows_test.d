@@ -5,6 +5,8 @@
 // which command. Nothing here claims to cover where a row lands on screen —
 // that is `tests/unit/ui/stat_panel_widget_test.d` and the drawn-record test.
 
+module tests.unit.ui.stat_rows_test;
+
 import document : Document, Layer, ItemKind;
 import mesh;
 import mesh_stats;
