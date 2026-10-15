@@ -713,6 +713,39 @@ unittest {
     g_testMode = true;
     clearZones();
 
+    { // E0634: a real cmd row consumes the stored ordinary action door.
+        auto app = new ToolPropsHarness;
+        auto tool = new ProbeLegacyTool("probe.legacyA");
+        tool.amount = 0.0f;
+        app.slot = tool;
+        app.slotId = tool.id;
+        app.bind();
+        Form form;
+        form.showLabel = false;
+        form.rows = [Row.makeCmd("tool.attr probe.legacyA amount 2", "Set amount")];
+        ImVec2 buttonMin, buttonMax;
+        auto ui = openPanel(() {
+            app.roles.actions.drawToolForm(form, app.slotId);
+            buttonMin = ImGui.GetItemRectMin();
+            buttonMax = ImGui.GetItemRectMax();
+        }, "Tool properties ordinary command");
+        scope(exit) ui.close();
+        ui.frame();
+        assert(buttonMax.x > buttonMin.x && buttonMax.y > buttonMin.y
+            && app.slot is tool && app.slotId == "probe.legacyA"
+            && tool.amount == 0.0f,
+            "E0634 ordinary cmd population: real button/live target must exist before activation");
+        const point = ImVec2((buttonMin.x + buttonMax.x) * 0.5f,
+                             (buttonMin.y + buttonMax.y) * 0.5f);
+        ui.pressAt(point);
+        assert(tool.amount == 0.0f,
+            "E0634 ordinary cmd release boundary: press fired before release");
+        ui.release();
+        assert(tool.amount == 2.0f
+            && app.slot is tool && app.slotId == "probe.legacyA",
+            "E0634 ordinary dispatch witness: production cmd row lost its original action/payload/live identity");
+    }
+
     { // C1: formed transform writes through the interactive production action.
         loadFormFile("transform.yaml");
         auto app = new ToolPropsHarness;
