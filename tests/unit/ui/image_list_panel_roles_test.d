@@ -386,14 +386,18 @@ unittest { // the real binder refuses each missing callback before construction
 unittest { // physical binder doors retain each independently guarded delegate
     import std.file : readText;
     import std.regex : matchAll, regex;
+    import std.range : walkLength;
     import tests.unit.census_symbols : blankNonCode, countIdent, balancedSpan;
     auto source = blankNonCode(readText(buildPath(repoRoot, "packages/editor-ui/source/ui/image_list_panel.d")));
     assert(countIdent(source, "bindImageListPanel") == 1, "W18 image_list binder declaration floor");
     const site = source.indexOf("bindImageListPanel");
     const open = source.indexOf("{", cast(size_t)site);
     const body = balancedSpan(source, cast(size_t)open, '{', '}');
+    auto guardStart = matchAll(body, regex(r"^\{\s*assert\s*\("));
+    const guard = guardStart.empty ? "" :
+        balancedSpan(body, guardStart.front[0].length - 1, '(', ')');
     assert(body.length > 80, "W18 image_list binder body floor");
-    assert(!matchAll(body, regex(r"\bdispatch\b\s*!is\s+null")).empty,
+    assert(matchAll(guard, regex(r"\bdispatch\b\s*!is\s+null\b")).walkLength == 1,
         "W18 image_list binder dispatch guard term");
 }
 

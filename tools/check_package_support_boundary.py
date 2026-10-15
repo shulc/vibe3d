@@ -4637,7 +4637,7 @@ def renderer_description(description, project, owner, config, tests=False, harne
         require(set(settings.get('libs',[]))==libs and set(settings.get('lflags',[]))==lflags,
                 'support renderer resolved native link settings: '+name)
         for native in seen & set(RENDER_NATIVE):
-            raw=RENDER_NATIVE[native]['raw']
+            raw=json.loads((roots[native]/'dub.json').read_text())
             expected=[value.replace('$$ORIGIN','$ORIGIN').replace('$PACKAGE_DIR',str(roots[native]))
                       for value in raw.get('lflags-linux',raw.get('lflags',[]))]
             actual=settings.get('lflags',[])

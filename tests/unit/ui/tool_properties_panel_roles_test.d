@@ -680,16 +680,20 @@ unittest { // the real binder refuses each missing callback before construction
 unittest { // physical binder doors retain each independently guarded delegate
     import std.file : readText;
     import std.regex : matchAll, regex;
+    import std.range : walkLength;
     import tests.unit.census_symbols : blankNonCode, countIdent, balancedSpan;
     auto source = blankNonCode(readText(buildPath(repoRoot, "packages/editor-ui/source/ui/tool_properties_panel.d")));
     assert(countIdent(source, "bindToolPropertiesPanel") == 1, "W18 tool_properties binder declaration floor");
     const site = source.indexOf("bindToolPropertiesPanel");
     const open = source.indexOf("{", cast(size_t)site);
     const body = balancedSpan(source, cast(size_t)open, '{', '}');
+    auto guardStart = matchAll(body, regex(r"^\{\s*assert\s*\("));
+    const guard = guardStart.empty ? "" :
+        balancedSpan(body, guardStart.front[0].length - 1, '(', ')');
     assert(body.length > 80, "W18 tool_properties binder body floor");
-    assert(!matchAll(body, regex(r"\bdispatch\b\s*!is\s+null")).empty,
+    assert(matchAll(guard, regex(r"\bdispatch\b\s*!is\s+null\b")).walkLength == 1,
         "W18 tool_properties binder dispatch guard term");
-    assert(!matchAll(body, regex(r"\binteractive\b\s*!is\s+null")).empty,
+    assert(matchAll(guard, regex(r"\binteractive\b\s*!is\s+null\b")).walkLength == 1,
         "W18 tool_properties binder interactive guard term");
 }
 
