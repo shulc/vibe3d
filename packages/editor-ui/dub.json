@@ -312,6 +312,7 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-forms-model": "modeling-noai",
+        "vibe3d-ai-advisor": "modeling-noai",
         "vibe3d-ai3d-runtime": "modeling-noai",
         "vibe3d-application-core": "modeling-noai",
         "vibe3d-camera-model": "modeling-noai",
@@ -347,6 +348,9 @@
       "dependencies": {
         "vibe3d-ai3d-runtime": {
           "path": "../ai3d-runtime"
+        },
+        "vibe3d-ai-advisor": {
+          "path": "../ai-advisor"
         }
       }
     },
@@ -407,6 +411,7 @@
       ],
       "subConfigurations": {
         "vibe3d-forms-model": "web",
+        "vibe3d-ai-advisor": "web",
         "vibe3d-application-core": "web",
         "vibe3d-camera-model": "web",
         "vibe3d-command-runtime": "web",
@@ -438,6 +443,11 @@
         "vibe3d-pipe-contracts": "web",
         "vibe3d-scene-query": "web",
         "bindbc-sdl": "static"
+      },
+      "dependencies": {
+        "vibe3d-ai-advisor": {
+          "path": "../ai-advisor"
+        }
       }
     },
     {
@@ -495,6 +505,7 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-forms-model": "isolated-tests",
+        "vibe3d-ai-advisor": "isolated-tests",
         "vibe3d-ai3d-runtime": "isolated-tests",
         "vibe3d-application-core": "isolated-tests",
         "vibe3d-camera-model": "isolated-tests",
@@ -530,6 +541,9 @@
       "dependencies": {
         "vibe3d-ai3d-runtime": {
           "path": "../ai3d-runtime"
+        },
+        "vibe3d-ai-advisor": {
+          "path": "../ai-advisor"
         }
       },
       "targetType": "sourceLibrary"

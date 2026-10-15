@@ -142,6 +142,9 @@
     "vibe3d-forms-model": {
       "path": "../../forms-model"
     },
+    "vibe3d-ai-advisor": {
+      "path": "../../ai-advisor"
+    },
     "vibe3d-application-core": {
       "path": "../../application-core"
     },
@@ -261,6 +264,7 @@
       "name": "algorithm",
       "subConfigurations": {
         "vibe3d-forms-model": "isolated-tests",
+        "vibe3d-ai-advisor": "isolated-tests",
         "vibe3d-ai3d-runtime": "isolated-tests",
         "vibe3d-application-core": "isolated-tests",
         "vibe3d-camera-model": "isolated-tests",
