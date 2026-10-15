@@ -4851,7 +4851,8 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
     binary=binary.resolve()
     binary.parent.mkdir(parents=True,exist_ok=True)
     if package['targetType'] in ('staticLibrary','library'):
-        run([compiler]+flags+['-lib','-of='+str(binary)]+sources,root,env,evidence,label+'-archive',renderer_kind='archive')
+        single=['-singleobj'] if Path(compiler).name in ('ldc','ldc2') else []
+        run([compiler]+flags+single+['-lib','-of='+str(binary)]+sources,root,env,evidence,label+'-archive',renderer_kind='archive')
     else:
         obj=evidence/(label+'.o')
         single=['-singleobj'] if Path(compiler).name in ('ldc','ldc2') else []
