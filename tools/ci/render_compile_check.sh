@@ -162,8 +162,13 @@ fi
 ARGS=(-o- -vcolumns)
 # dub.json sets warningsAsErrors + debugMode; mirror them so this refuses
 # exactly what a real build refuses.
-ARGS+=(-w -debug)
-for v in "${VERSIONS[@]}"; do [ -n "$v" ] && ARGS+=("-version=$v"); done
+DEBUG_FLAG=-debug
+VERSION_FLAG=-version
+case "${DC##*/}" in
+  ldc2|ldc2.exe) DEBUG_FLAG=-d-debug; VERSION_FLAG=-d-version ;;
+esac
+ARGS+=(-w "$DEBUG_FLAG")
+for v in "${VERSIONS[@]}"; do [ -n "$v" ] && ARGS+=("$VERSION_FLAG=$v"); done
 for p in "${IMPORTS[@]}";  do [ -n "$p" ] && ARGS+=("-I$p");        done
 for p in "${STRIMPS[@]}";  do [ -n "$p" ] && ARGS+=("-J$p");        done
 for f in "${DFLAGS[@]}";   do [ -n "$f" ] && ARGS+=("$f");          done
