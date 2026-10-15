@@ -4746,7 +4746,8 @@ def renderer_description(description, project, owner, config, tests=False, harne
             expected=[value.replace('$$ORIGIN','$ORIGIN').replace('$PACKAGE_DIR',str(roots[native]))
                       for value in raw.get('lflags-linux',raw.get('lflags',[]))]
             actual=settings.get('lflags',[])
-            require(sum(actual[i:i+len(expected)]==expected for i in range(len(actual)-len(expected)+1))==1,
+            require(expected and any(actual[i:i+len(expected)]==expected
+                                     for i in range(len(actual)-len(expected)+1)),
                     'support renderer ordered retained native flags: '+name+':'+native)
 
     return active
