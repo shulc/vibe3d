@@ -64,7 +64,11 @@ private Src[] sources(bool production, bool logical = false) {
         ~ (!logical && exists(buildPath(repoRoot, "packages/document-actions/source")) ? [buildPath(repoRoot, "packages/document-actions/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/http-runtime/source")) ? [buildPath(repoRoot, "packages/http-runtime/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/platform-file/source")) ? [buildPath(repoRoot, "packages/platform-file/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/remesh-runtime/source")) ? [buildPath(repoRoot, "packages/remesh-runtime/source")] : []))
+        ~ (!logical && exists(buildPath(repoRoot, "packages/remesh-runtime/source")) ? [buildPath(repoRoot, "packages/remesh-runtime/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/render-model/source")) ? [buildPath(repoRoot, "packages/render-model/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/render-backends/source")) ? [buildPath(repoRoot, "packages/render-backends/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/forms-model/source")) ? [buildPath(repoRoot, "packages/forms-model/source")] : [])
+        ~ (!logical && exists(buildPath(repoRoot, "packages/editor-ui/source")) ? [buildPath(repoRoot, "packages/editor-ui/source")] : []))
 
     foreach (e; logical ? wave15DirEntries(scanSourceRoot, "*.d", SpanMode.depth)
                        : physicalEntries(scanSourceRoot)) {
@@ -93,8 +97,8 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     const all = sources(false), prod = sources(true);
     // Historical 2026-10-05: 587 production plus one source test. Wave6 moves
     // that six-block carrier to transform tests; Wave9 adds triangulate/morph_preview; independent tracked union =608.
-    assert(prod.length == 607, format("%s production files scanned "
-        ~ "(Wave15 physical production population 607; drag_identity is test-only)", prod.length));
+    assert(prod.length == 608, format("%s production files scanned "
+        ~ "(Wave18 physical production population 608; drag_identity is test-only)", prod.length));
     assert(all.length == prod.length, format("%s source files, %s production; "
         ~ "Wave6 source test carrier belongs to transform tests", all.length, prod.length));
 
@@ -151,12 +155,22 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     }
     assert(logicalRaw.length == 625 && logicalCode.length == 625,
            "workplane logical production and source carrier population 625");
+    // The new presentation role has current physical ownership only; the
+    // original logical625 population and its symbol rosters remain fixed.
+    enum currentPhysicalOnly = "packages/editor-ui/source/ui/panel_host_roles.d";
+    size_t currentPhysicalOnlyOccurrences;
+    foreach (physical; prod) if (physical.rel == currentPhysicalOnly) ++currentPhysicalOnlyOccurrences;
+    assert(currentPhysicalOnlyOccurrences == 1, "workplane current physical role membership");
     foreach (physical; prod) {
         size_t rawOccurrences, codeOccurrences;
         foreach (s; logicalRaw) if (s.rel == wave15LogicalPath(buildPath(repoRoot, physical.rel))[repoRoot.length + 1 .. $]) ++rawOccurrences;
         foreach (s; logicalCode) if (s.rel == wave15LogicalPath(buildPath(repoRoot, physical.rel))[repoRoot.length + 1 .. $]) ++codeOccurrences;
-        assert(rawOccurrences == 1 && codeOccurrences == 1,
-               "workplane logical physical source membership: " ~ physical.rel);
+        if (physical.rel == currentPhysicalOnly)
+            assert(rawOccurrences == 0 && codeOccurrences == 0,
+                   "workplane current physical role must not invent an old logical source");
+        else
+            assert(rawOccurrences == 1 && codeOccurrences == 1,
+                   "workplane logical physical source membership: " ~ physical.rel);
     }
 
     // Positive control of the counter and of the switch needle.
