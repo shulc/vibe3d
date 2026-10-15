@@ -3961,7 +3961,7 @@ def compiler_module(relative):
      '../source/commands/mesh/paste_.d': 'commands.mesh.paste_',
      '../source/commands/mesh/radial_array_.d': 'commands.mesh.radial_array_',
      '../source/commands/mesh/remove_.d': 'commands.mesh.remove_'}
-    nominal['source/tests/unit/ui/stat_rows_test.d'] = 'stat_rows_test'
+    nominal['source/tests/unit/ui/stat_rows_test.d'] = 'tests.unit.ui.stat_rows_test'
     nominal.update({'../../../tests/unit/fixtures.d': 'tests.unit.fixtures', '../../../tests/unit/mesh_by_value_gate.d': 'tests.unit.mesh_by_value_gate', 'source/tests/unit/bevel_cold_arm_param_image_test.d': 'unit.bevel_cold_arm_param_image_test', 'source/tests/unit/falloff_rmb_discipline_test.d': 'falloff_rmb_discipline_test', 'source/tests/unit/prepared_param_update_test.d': 'unit.prepared_param_update_test', 'source/tests/unit/prepared_tool_transition_test.d': 'unit.prepared_tool_transition_test', 'source/tests/unit/tools/edit/topology_pen/move_protocol_test.d': 'tools.edit.topology_pen.move_protocol_test', 'source/tests/unit/tools/edit/topology_pen/press_compatibility_test.d': 'tools.edit.topology_pen.press_compatibility_test'})
     if relative in nominal: return nominal[relative]
     if relative=='../../../tests/unit/mesh_by_value_gate.d':return 'tests.unit.mesh_by_value_gate'
@@ -4338,7 +4338,7 @@ ENABLED_MODULES = frozenset(['tests.unit.sdl_error_test',
  'unit.prepared_param_update_test',
  'unit.prepared_tool_transition_test'])
 
-ENABLED_MODULES = ENABLED_MODULES | frozenset(['forms_source_test', 'render_backends_population_test', 'render_model_population_test', 'tests.unit.ui.channel_rows_test', 'tests.unit.ui.command_notice_test', 'stat_rows_test', 'ui.availability_source_test', 'ui.image_rows', 'ui.item_click_source_test', 'ui.item_rows'])
+ENABLED_MODULES = ENABLED_MODULES | frozenset(['forms_source_test', 'render_backends_population_test', 'render_model_population_test', 'tests.unit.ui.channel_rows_test', 'tests.unit.ui.command_notice_test', 'tests.unit.ui.stat_rows_test', 'ui.availability_source_test', 'ui.image_rows', 'ui.item_click_source_test', 'ui.item_rows'])
 
 def validate_runtime(output, owner):
     totals=re.findall(r'^(\d+) modules passed unittests$',output,re.M)
