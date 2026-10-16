@@ -105,6 +105,7 @@ import census_contracts
 import ast
 import json
 import shutil
+import re
 sys.path.insert(0, str(root / "tools"))
 from prepared_writer_census import (scan as scan_writer_graph,
     canonical as canonical_writer_graph, module_path,
@@ -114,12 +115,29 @@ ROOT = root
 WRITER_MANIFEST = json.loads((root / "tools/prepared_writer_manifest.json").read_text())
 scanner = ast.parse((root / "tools/check_prepared_protocol.py").read_text())
 fixture_functions = {"fail", "writer_keys", "bypass_keys", "validate_writer_graph",
-                     "mutation_rejected"}
+                     "mutation_rejected", "d_string_rows"}
 exec(compile(ast.Module(body=[node for node in scanner.body
     if isinstance(node, ast.FunctionDef) and node.name in fixture_functions],
     type_ignores=[]), "check_prepared_protocol.py", "exec"))
 if mutation_rejected(lambda fixture: None, ""):
     raise SystemExit("prepared-protocol complete writer mutation fixture changed its census")
+token_source = read_source_text(root / "packages/interactive-tools/tests/source/tests/unit/prepared_tool_transition_test.d")
+token_rows = d_string_rows(token_source, "kTokenModules")
+copyable_rows = d_string_rows(token_source, "kCopyableByDesign")
+if (len(token_rows) != 46 or token_rows.count("prepared_tool_effect") != 1
+        or len(copyable_rows) != 3
+        or copyable_rows.count("prepared_tool_effect.PreparedSubjectToken") != 1):
+    raise SystemExit("prepared-protocol actual two-table identity projection")
+qualified = "vibe3d.editing.contracts.prepared_tool_effect"
+for name, expected in (
+        ("kTokenModules", ["prepared_tool_effect", "prepared_tool_effect.Child", qualified + "_neighbor"]),
+        ("kCopyableByDesign", ["prepared_tool_effect", "prepared_tool_effect.Child", qualified + "_neighbor"]),
+        ("unrelatedTable", [qualified, qualified + ".Child", qualified + "_neighbor"])):
+    fixture = ('private enum string[] ' + name + ' = [\n'
+               + ',\n'.join(json.dumps(row) for row in
+                             (qualified, qualified + ".Child", qualified + "_neighbor")) + '\n];')
+    if d_string_rows(fixture, name) != expected:
+        raise SystemExit("prepared-protocol bounded identity projection: " + name)
 failures = census_contracts.production_lexer_census(root)
 if failures:
     raise SystemExit("prepared-protocol production lexer census: " + "; ".join(failures))
