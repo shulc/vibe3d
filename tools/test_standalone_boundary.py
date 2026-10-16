@@ -1175,10 +1175,14 @@ class BoundaryControls(unittest.TestCase):
         def positive_order():
             with tempfile.TemporaryDirectory(prefix='boundary-editor-order-positive-') as directory:
                 evidence = Path(directory)
-                run_order(order_log(positive) + unrelated, evidence)
+                try:
+                    run_order(order_log(positive) + unrelated, evidence)
+                except support.BoundaryError as error:
+                    self.fail('editor-ui selected command positive: ' + str(error))
                 self.assertTrue(all((evidence / name).is_file() for name in receipt_names),
                                 'editor-ui production receipt files')
                 commands = json.loads((evidence / receipt_names[0]).read_text())
+                self.assertEqual(len(commands), 2, 'editor-ui production raw receipt')
                 selected = [command for command in commands if anchor in command['sourceInputs']]
                 self.assertEqual(len(selected), 1, 'editor-ui selected command positive')
                 self.assertEqual(selected[0]['sourceInputs'], positive, 'editor-ui production raw receipt')
