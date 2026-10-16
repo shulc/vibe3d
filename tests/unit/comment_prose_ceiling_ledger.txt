@@ -10,7 +10,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 608
-task-citation-lines 5139
+task-citation-lines 5137
 citing-files 468
 long-comment-runs 258
 files-with-long-runs 142
@@ -350,7 +350,7 @@ allow packages/mesh-ops/source/uv_unwrap.d 2
 allow packages/mesh-preview/source/morph_preview.d 4
 allow packages/mesh-snapshot/source/snapshot.d 12
 allow packages/mesh-topology/source/mesh_topo.d 23
-allow packages/mesh/source/mesh.d 500
+allow packages/mesh/source/mesh.d 498
 allow packages/mesh/source/mesh_morph.d 1
 allow packages/mesh/source/mesh_planes.d 29
 allow packages/mesh/source/mesh_selsets.d 3
