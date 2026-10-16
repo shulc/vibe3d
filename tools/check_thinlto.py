@@ -73,7 +73,7 @@ def check_link(log, platform, native_args=None):
 def check_description(description):
     platform = next(p for p in ('linux', 'osx', 'windows') if p in description['platform'])
     targets = [target for target in description['targets']
-               if target['rootPackage'] == 'vibe3d' or target['rootPackage'].startswith('vibe3d-')]
+               if target['rootPackage'] == 'vibe3d' or target['rootPackage'].startswith(('vibe3d-', 'vibe3d:'))]
     require(len(targets) >= 2, 'no first-party archive population')
     for target in targets:
         flags = target['buildSettings']['dflags']
@@ -89,7 +89,7 @@ def probe(root, compiler, evidence):
     (app / 'source').mkdir(parents=True)
     (lib / 'source').mkdir(parents=True)
     app_types = json.loads((root / 'dub.json').read_text())['buildTypes']
-    lib_types = json.loads((root / 'util/math/dub.json').read_text())['buildTypes']
+    lib_types = json.loads((root / 'libraries/util/math/dub.json').read_text())['buildTypes']
     recipes = [dict(name='thinlto-probe', dependencies={'thinlto-helper': {'path': 'helper'}},
                     buildTypes=app_types),
                dict(name='thinlto-helper', targetType='staticLibrary', buildTypes=lib_types)]

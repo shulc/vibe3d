@@ -5,6 +5,7 @@ import copy
 import os
 import shlex
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ from unittest.mock import patch
 import ci.preflight as preflight
 import check_standalone_boundary as boundary
 import check_package_support_boundary as support
+import check_thinlto as thinlto
 
 
 class BoundaryControls(unittest.TestCase):
@@ -47,6 +49,34 @@ class BoundaryControls(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.temporary.cleanup()
+
+    def test_current_thinlto_math_recipe(self):
+        actual = Path(__file__).resolve().parents[1]
+        expected = json.loads((actual / 'libraries/util/math/dub.json').read_text())['buildTypes']
+        with tempfile.TemporaryDirectory(prefix='boundary-thinlto-recipe-') as directory:
+            evidence = Path(directory)
+            # Reach the first DUB invocation after the actual probe recipes exist.
+            with patch.object(thinlto.subprocess, 'run', side_effect=RuntimeError('probe recipe witness')):
+                with self.assertRaisesRegex(RuntimeError, 'probe recipe witness'):
+                    thinlto.probe(actual, 'ldc2', evidence)
+            helper = json.loads((evidence / 'probe/helper/dub.json').read_text())
+            self.assertEqual(helper['targetType'], 'staticLibrary')
+            self.assertEqual(helper['buildTypes'], expected, 'probe copies current math build types')
+
+    def test_thinlto_qualified_target_flags(self):
+        for platform in ('linux', 'osx', 'windows'):
+            flags = thinlto.FLAGS['dflags-ldc'] + thinlto.FLAGS[f'dflags-{platform}-ldc']
+            description = {'platform': [platform], 'targets': [
+                {'rootPackage': name, 'buildSettings': {'dflags': list(flags)}}
+                for name in ('vibe3d', 'vibe3d-owner', 'vibe3d:math')]}
+            self.assertEqual(thinlto.check_description(description), 3,
+                             'ThinLTO covers root, retained owners and qualified math')
+            for flag in flags:
+                with self.subTest(platform=platform, flag=flag):
+                    changed = copy.deepcopy(description)
+                    changed['targets'][2]['buildSettings']['dflags'].remove(flag)
+                    with self.assertRaisesRegex(RuntimeError, 'vibe3d:math: missing ' + re.escape(flag)):
+                        thinlto.check_description(changed)
 
     def test_current_math_consumer_description(self):
         actual = Path(__file__).resolve().parents[1]
