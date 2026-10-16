@@ -5673,6 +5673,16 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
                 assert(original.canFind(locator.oldText)
                     && !original.canFind(locator.newText),
                     "Wave19 locator actual read caller reaches historical whole-expression inverse");
+                if (locator.id == "L01-align-owner-fixture" || locator.id == "L06-ai3d-dev-script") {
+                    import std.digest.sha : sha256Of;
+                    import std.digest : toHexString;
+                    import std.string : toLower;
+                    const expected = locator.id == "L01-align-owner-fixture"
+                        ? "0d41d5ccca2c3f8d29303911dac9bb6c0da431c91ead04fdfed61a71dde82ebf"
+                        : "a7a6881daaa2107d7a38f8618cc577997fa60cc0500001c9e50c706255db9a70";
+                    assert(sha256Of(original).toHexString.toLower == expected,
+                        "Wave19 locator actual complete-file inverse: " ~ locator.id);
+                }
                 void rejectedLocator(string changed, string reason) {
                     write(physical, changed);
                     string refusal;

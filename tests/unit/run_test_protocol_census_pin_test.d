@@ -298,7 +298,6 @@ with tempfile.TemporaryDirectory(prefix="protocol-owners-") as scratch:
         refuse_locator(raw, "Wave19 declaration/import coordinate")
         census_contracts._WAVE19_COORDINATES = saved_coordinates
         physical.unlink()
-        physical.symlink_to(link_target)
         # Select the original owner using the same finite recipe/source roles.
         _, old_root, new_root = next(row for row in census_contracts._WAVE19_OWNERS if row[0] == owner)
         recipe = partial / new_root / "dub.json"
@@ -323,6 +322,7 @@ with tempfile.TemporaryDirectory(prefix="protocol-owners-") as scratch:
         old_path.unlink()
         old_recipe.unlink()
         recipe.symlink_to(recipe_target)
+        physical.symlink_to(link_target)
     if locator_controls != 2:
         raise SystemExit("prepared-protocol bounded locator caller population")
     got = census_contracts.production_lexer_census(partial)
