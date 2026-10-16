@@ -3427,6 +3427,11 @@ unittest { // Wave19 math: real selected inputs, exact coordinates and span-only
     assertThrown!AssertError(wave19MathMoved(scratch)); // shim cannot replace missing real file
     put("libraries/util/math/source/vibe3d/util/math/math_vector.d", "module wrong;");
     assertThrown!AssertError(wave19MathMoved(scratch));
+    put("libraries/util/math/source/vibe3d/util/math/math_vector.d", "");
+    assertThrown!AssertError(wave19MathMoved(scratch)); // missing declaration
+    put("libraries/util/math/source/vibe3d/util/math/math_vector.d",
+        "module vibe3d.util.math.math_vector; module vibe3d.util.math.math_vector;");
+    assertThrown!AssertError(wave19MathMoved(scratch)); // duplicate matching declarations
     put("libraries/util/math/source/vibe3d/util/math/math_vector.d", "module vibe3d.util.math.math_vector;");
     put("util/math/source/math_vector.d", "module math_vector;");
     assertThrown!AssertError(wave19MathMoved(scratch));
