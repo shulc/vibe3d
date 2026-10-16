@@ -1,6 +1,6 @@
 import http_client : getJson, postJson, postRawAllowingErrorStatus, quiesce;
 import http_command_helpers : commandBody;
-import std.algorithm : canFind;
+import std.algorithm : canFind, startsWith;
 import std.array : array, join;
 import std.conv : to;
 import std.digest.sha : sha256Of;
@@ -201,6 +201,26 @@ private bool mappingContains(string mappings, string name) {
     return mappings.toLower.canFind(name);
 }
 
+private bool environmentContainsKey(string raw, string key) {
+    foreach (entry; raw.split("\0"))
+        if (entry.startsWith(key ~ "=")) return true;
+    return false;
+}
+
+private void environmentKeyControls() {
+    foreach (key; ["DISPLAY", "WAYLAND_DISPLAY", "SDL_VIDEODRIVER"]) {
+        foreach (value; ["", ":99"])
+            foreach (raw; [key ~ "=" ~ value ~ "\0", "OTHER=value\0" ~ key ~ "=" ~ value,
+                    "OTHER=value\0" ~ key ~ "=" ~ value ~ "\0AFTER=value\0"])
+                assert(environmentContainsKey(raw, key),
+                    "CLI environment fixture: exact key present including empty value " ~ key);
+        foreach (raw; ["", "VIBE3D_TEST_" ~ key ~ "=:99\0", key ~ "_SUFFIX=:99\0",
+                "OTHER=" ~ key ~ "=:99\0", "OTHER=line1\n" ~ key ~ "=:99\nline3\0"])
+            assert(!environmentContainsKey(raw, key),
+                "CLI environment fixture: other keys and value text are harmless " ~ key);
+    }
+}
+
 private void readinessRefusals(string root) {
     foreach (name; ["sdl", "libgl", "libegl", "imgui", "libx11", "nfde", "libxcb", "wayland"]) {
         assert(mappingContains("/usr/lib/" ~ name ~ ".so", name),
@@ -244,6 +264,7 @@ private Run runCli(string root, string input, string script, string output, stri
     foreach (key; ["DISPLAY", "WAYLAND_DISPLAY", "SDL_VIDEODRIVER"]) env.remove(key);
     string fifo, payload;
     if (observeProcess) {
+        env["VIBE3D_TEST_DISPLAY"] = ":ci-harmless";
         enforce(diagnostics.length > 0, "CLI readiness: diagnostics required");
         payload = readText(script);
         fifo = script ~ ".fifo";
@@ -272,8 +293,11 @@ private Run runCli(string root, string input, string script, string output, stri
         foreach (name; ["sdl", "libgl", "libegl", "imgui", "libx11", "nfde", "libxcb", "wayland"])
             assert(!mappingContains(mappings, name), "CLI process: forbidden mapping " ~ name);
         auto liveEnvironment = readText(proc ~ "/environ");
-        foreach (key; ["DISPLAY=", "WAYLAND_DISPLAY=", "SDL_VIDEODRIVER="])
-            assert(!liveEnvironment.canFind(key), "CLI process: display variable inherited " ~ key);
+        assert(environmentContainsKey(liveEnvironment, "VIBE3D_TEST_DISPLAY"),
+            "CLI process: harmless prefixed display key is present");
+        foreach (key; ["DISPLAY", "WAYLAND_DISPLAY", "SDL_VIDEODRIVER"])
+            assert(!environmentContainsKey(liveEnvironment, key),
+                "CLI process: display variable inherited " ~ key ~ "=");
         auto cmdline = readText(proc ~ "/cmdline");
         assert(cmdline.canFind("--state-output") && cmdline.canFind(fifo), "CLI process: real diagnostic argv");
         writeln("CLI-PROCESS source=", sourcePin, " binary-sha256=", binaryHash,
@@ -446,6 +470,7 @@ private Run differential(string root, JSONValue doc, string[] scriptRows, bool s
 
 unittest {
     import std.array : join;
+    environmentKeyControls();
     // Build once from this exact checkout, never reuse a stale helper binary.
     auto build = execute(["dub", "build", "--root=" ~ buildPath(repo, "tools/cli"), "--compiler=dmd"], null, Config.none, size_t.max, repo);
     assert(build.status == 0, "CLI fresh build: " ~ build.output);
