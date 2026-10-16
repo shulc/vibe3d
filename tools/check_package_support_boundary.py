@@ -5153,6 +5153,8 @@ def execute(project,owner,compiler,env,evidence):
             elif isinstance(value,list):
                 for item in value:fields(item)
         fields(json.loads(path.read_text()))
+    if 'math' in closure(owner)|closure(owner,True)|{owner}:
+        recipe(project/'dub.json')
     for member in tuple(members):
         recipe(project/member/'dub.json')
         recipe(project/member/'tests/dub.json')
