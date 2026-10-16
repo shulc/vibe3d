@@ -535,6 +535,16 @@ class BoundaryControls(unittest.TestCase):
         with self.assertRaisesRegex(support.BoundaryError, 'renderer resolved root identity'):
             support.renderer_description(changed, actual, 'app', 'with-render')
         self.assertFalse(support.is_internal('render-model'))
+        self.assertTrue(support.is_internal('render-model', 'render-model'))
+        self.assertEqual(support.internal_owner('render-model', 'render-model'), 'render-model')
+        with tempfile.TemporaryDirectory(prefix='boundary-renderer-outside-') as directory:
+            outside=Path(directory)/'render-model'
+            shutil.copytree(actual/'libraries/render/model',outside,
+                            ignore=shutil.ignore_patterns('.dub','*.a'))
+            changed=copy.deepcopy(direct)
+            next(p for p in changed['packages'] if p['name']=='render-model')['path']=str(outside)
+            with self.assertRaisesRegex(support.BoundaryError, 'renderer internal owner path'):
+                support.renderer_description(changed,actual,'render-model','with-render')
         with self.assertRaisesRegex(support.BoundaryError, 'unknown internal identity: render-model'):
             support.internal_owner('render-model')
         self.assertFalse(support.is_internal('render-model', 'camera-model'))
@@ -574,6 +584,91 @@ class BoundaryControls(unittest.TestCase):
                                and 'formatted ordered native link flags' in a.value
                                for a in ast.walk(n)))
             check=compile(ast.Module(body=[expected,guard],type_ignores=[]),support.__file__,'exec')
+            with_render=next(n for n in function.body if isinstance(n,ast.If)
+                             and any(isinstance(a,ast.Constant) and isinstance(a.value,str)
+                                     and 'required active WithRender' in a.value for a in ast.walk(n)))
+            role_check=compile(ast.Module(body=[with_render],type_ignores=[]),support.__file__,'exec')
+            for name in ('render-model','vibe3d:render-model','vibe3d-render-backends'):
+                namespace=dict(support.__dict__,target={'rootPackage':name},label='fixture-role',
+                               settings={'versions':['WithRender']})
+                exec(role_check,namespace)
+                namespace['settings']={'versions':[]}
+                with self.assertRaisesRegex(support.BoundaryError, 'required active WithRender: fixture-role'):
+                    exec(role_check,namespace)
+            exec(role_check,dict(support.__dict__,target={'rootPackage':'boundary-external'},
+                                 label='fixture-external',settings={'versions':[]}))
+            binary=next(n for n in function.body if isinstance(n,ast.Assign)
+                        and any(isinstance(t,ast.Name) and t.id=='binary' for t in n.targets))
+            archive_check=compile(ast.Expression(binary.value),support.__file__,'eval')
+            for name,recipe,archive in (
+                    ('render-model',{'name':'render-model','targetName':'vibe3d-render-model'},
+                     'libvibe3d-render-model.a'),
+                    ('vibe3d-render-backends',{'name':'vibe3d-render-backends'},
+                     'libvibe3d-render-backends.a')):
+                self.assertEqual(eval(archive_check,dict(support.__dict__,root=root,raw=recipe,
+                                     target={'rootPackage':name},package={'targetType':'staticLibrary'})),
+                                 root/archive,'renderer retains the original owner archive identity')
+            functions={n.name:n for n in source.body if isinstance(n,ast.FunctionDef)}
+            execute=functions['execute_renderer']
+            archive_setup=[n for n in execute.body if isinstance(n,ast.Assign)
+                           and any(isinstance(t,ast.Name) and t.id in ('members','metadata') for t in n.targets)]
+            archive_setup+= [n for n in execute.body if isinstance(n,ast.AugAssign)
+                            and isinstance(n.target,ast.Name) and n.target.id=='members']
+            actual=Path(__file__).resolve().parents[1]
+            namespace=dict(support.__dict__,project=actual,owner='render-model')
+            exec(compile(ast.Module(body=archive_setup,type_ignores=[]),support.__file__,'exec'),namespace)
+            self.assertEqual({p for p in namespace['members'] if (actual/p).is_dir()},
+                             {'libraries/render/model','libraries/util/math'},
+                             'renderer archive retains its exact two selected source roots')
+            self.assertIn('dub.json',namespace['members'],'parent path dependency retains the real root recipe')
+            self.assertIn('libraries/viewport/camera/dub.json',namespace['members'],
+                          'root registration retains unselected real descriptor metadata')
+            self.assertNotIn('source/app.d',namespace['members'],'metadata never grants desktop source')
+            archive_guard=next(n for n in execute.body if isinstance(n,ast.If)
+                               and any(isinstance(a,ast.Constant) and isinstance(a.value,str)
+                                       and 'root recipe metadata identity' in a.value for a in ast.walk(n)))
+            archive_check=compile(ast.Module(body=[archive_guard],type_ignores=[]),support.__file__,'exec')
+            isolated=root/'isolated';isolated.mkdir()
+            original=(actual/'dub.json').read_bytes();(isolated/'dub.json').write_bytes(original)
+            namespace['archive']=isolated
+            exec(archive_check,namespace)
+            (isolated/'dub.json').write_bytes(b'{}\n')
+            with self.assertRaisesRegex(support.BoundaryError, 'root recipe metadata identity'):
+                exec(archive_check,namespace)
+            (isolated/'dub.json').write_bytes(original)
+            namespace['metadata']=[p for p in namespace['metadata'] if p!='dub.json']
+            with self.assertRaisesRegex(support.BoundaryError, 'root recipe metadata identity'):
+                exec(archive_check,namespace)
+            direct_owner=next(n for n in execute.body if isinstance(n,ast.Assign)
+                             and any(isinstance(t,ast.Name) and t.id=='direct_owner' for t in n.targets))
+            selected=next(n for n in execute.body if isinstance(n,ast.If)
+                          and any(isinstance(a,ast.Constant) and isinstance(a.value,str)
+                                  and 'unexpected native/external dependency' in a.value for a in ast.walk(n)))
+            direct_check=compile(ast.Module(body=[direct_owner],type_ignores=[]),support.__file__,'exec')
+            namespace=dict(support.__dict__,owner='app')
+            exec(direct_check,namespace)
+            self.assertIsNone(namespace['direct_owner'],'app retains the global internal-identity scope')
+            active_check=compile(ast.Module(body=[direct_owner]+selected.body,type_ignores=[]),
+                                 support.__file__,'exec')
+            active={'render-model':{},'vibe3d:render-model':{}}
+            namespace=dict(support.__dict__,owner='render-model',active=active)
+            exec(active_check,namespace)
+            namespace['active']=dict(active,**{'boundary-external':{}})
+            with self.assertRaisesRegex(support.BoundaryError, 'render-model unexpected native/external dependency'):
+                exec(active_check,namespace)
+            staging=next(n for n in execute.body if isinstance(n,ast.Assign)
+                         and any(isinstance(t,ast.Name) and t.id=='dependencies' for t in n.targets))
+            native=next(n for n in functions['renderer_native_receipt'].body if isinstance(n,ast.Assign)
+                        and any(isinstance(t,ast.Name) and t.id=='external' for t in n.targets))
+            namespace.update(active=dict(active,**{'vibe3d':{},'boundary-external':{}}))
+            for expression in (staging.value.args[0],native.value):
+                self.assertEqual(eval(compile(ast.Expression(expression),support.__file__,'eval'),namespace),
+                                 {'boundary-external':{}},'selected renderer is internal in each native filter')
+                namespace['direct_owner']=None
+                self.assertEqual(eval(compile(ast.Expression(expression),support.__file__,'eval'),namespace),
+                                 {'render-model':{},'boundary-external':{}},
+                                 'global native filters retain an unselected local identity as external')
+                namespace['direct_owner']='render-model'
             for target_type in ('executable','staticLibrary'):
                 raw['targetType']=target_type;(root/'dub.json').write_text(json.dumps(raw))
                 command=['dub','describe','--root='+str(root),'--compiler=dmd',

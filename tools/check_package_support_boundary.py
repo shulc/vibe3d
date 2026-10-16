@@ -5013,6 +5013,42 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
     return binary
 
 
+def archive_metadata(project, owners):
+    members=[SPECS[n]['root'] for n in owners]
+    # DUB loads declared recipes before selecting configurations. Preserve their
+    # exact metadata closure without adding the unselected package source trees.
+    metadata=set()
+    selected_recipes={(project/member/suffix).resolve() for member in members for suffix in ('dub.json','tests/dub.json')}
+    def recipe(path):
+        path=path.resolve();relative=str(path.relative_to(project))
+        if relative in metadata:return
+        metadata.add(relative)
+        def fields(value):
+            if isinstance(value,dict):
+                for key,items in value.items():
+                    field=key.split('-',1)[0]
+                    if field=='dependencies':
+                        for dependency in items.values():
+                            if isinstance(dependency,dict) and 'path' in dependency:
+                                recipe(path.parent/dependency['path']/'dub.json')
+                    elif field=='subPackages':
+                        for package in items:
+                            if isinstance(package,str):recipe(path.parent/package/'dub.json')
+                            else:fields(package)
+                    elif field=='sourceFiles' and path in selected_recipes:
+                        metadata.update(str((path.parent/source).resolve().relative_to(project)) for source in items)
+                    else:fields(items)
+            elif isinstance(value,list):
+                for item in value:fields(item)
+        fields(json.loads(path.read_text()))
+    if any(SPECS[name]['name']=='vibe3d:'+name for name in owners):
+        recipe(project/'dub.json')
+    for member in tuple(members):
+        recipe(project/member/'dub.json')
+        recipe(project/member/'tests/dub.json')
+    return sorted(metadata)
+
+
 def execute_renderer(project,owner,compiler,env,evidence):
     require(not subprocess.check_output(['git','status','--porcelain'],cwd=project,text=True).strip(),
             'PREPARATION-REFUSED: renderer execute requires clean committed worktree')
@@ -5031,10 +5067,13 @@ def execute_renderer(project,owner,compiler,env,evidence):
     archive=evidence/'archive';require(not archive.exists(),'PREPARATION-REFUSED: renderer archive exists');archive.mkdir()
     import tarfile
     members=[] if owner=='app' else [SPECS[n]['root'] for n in closure(owner)|closure(owner,True)|{owner}]
+    metadata=[] if owner=='app' else archive_metadata(project,closure(owner)|closure(owner,True)|{owner})
+    members+=metadata
     tar=evidence/'committed.tar'
     with tar.open('wb') as stream:subprocess.run(['git','archive',sha]+(['--']+members if members else []),cwd=project,stdout=stream,check=True)
     with tarfile.open(tar) as stream:stream.extractall(archive,filter='data')
     if owner!='app':require(not (archive/'source').exists(), 'support renderer isolated archive contains desktop')
+    if owner!='app':require(not (archive/'dub.json').exists() or ((archive/'dub.json').read_bytes()==(project/'dub.json').read_bytes() and 'dub.json' in metadata), 'PREPARATION-REFUSED: root recipe metadata identity')
     dependencies=stage_dependencies({n:p for n,p in active.items() if not is_internal(n,direct_owner) and n!='vibe3d'},archive,evidence,env,renderer=True)
     shared=[];plugins=[]
     for name,record in dependencies.items():
@@ -5119,38 +5158,8 @@ def execute(project,owner,compiler,env,evidence):
     sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=project,text=True).strip()
     archive=evidence/'archive';require(not archive.exists(),'PREPARATION-REFUSED: archive exists');archive.mkdir()
     members=[SPECS[n]['root'] for n in closure(owner)|closure(owner,True)|{owner}]
-    # DUB loads declared recipes before selecting configurations. Preserve their
-    # exact metadata closure without adding the unselected package source trees.
-    metadata=set()
-    selected_recipes={(project/member/suffix).resolve() for member in members for suffix in ('dub.json','tests/dub.json')}
-    def recipe(path):
-        path=path.resolve();relative=str(path.relative_to(project))
-        if relative in metadata:return
-        metadata.add(relative)
-        def fields(value):
-            if isinstance(value,dict):
-                for key,items in value.items():
-                    field=key.split('-',1)[0]
-                    if field=='dependencies':
-                        for dependency in items.values():
-                            if isinstance(dependency,dict) and 'path' in dependency:
-                                recipe(path.parent/dependency['path']/'dub.json')
-                    elif field=='subPackages':
-                        for package in items:
-                            if isinstance(package,str):recipe(path.parent/package/'dub.json')
-                            else:fields(package)
-                    elif field=='sourceFiles' and path in selected_recipes:
-                        metadata.update(str((path.parent/source).resolve().relative_to(project)) for source in items)
-                    else:fields(items)
-            elif isinstance(value,list):
-                for item in value:fields(item)
-        fields(json.loads(path.read_text()))
-    if any(SPECS[name]['name']=='vibe3d:'+name for name in closure(owner)|closure(owner,True)|{owner}):
-        recipe(project/'dub.json')
-    for member in tuple(members):
-        recipe(project/member/'dub.json')
-        recipe(project/member/'tests/dub.json')
-    members+=sorted(metadata)
+    metadata=archive_metadata(project,closure(owner)|closure(owner,True)|{owner})
+    members+=metadata
     # Exact read-only support carrier accepted in C; no desktop production root.
     if 'mesh-ops' in closure(owner)|closure(owner,True)|{owner}:
         members += ['tests/unit/mesh_by_value_gate.d', 'tests/unit/fixtures.d']
