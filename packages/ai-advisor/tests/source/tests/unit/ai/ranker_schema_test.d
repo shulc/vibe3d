@@ -5,8 +5,8 @@ module tests.unit.ai.ranker_schema_test;
 
 import std.algorithm : min;
 import std.math : isFinite;
-import ai.debug_trace : aiElementCandidateKindId, aiIntentId;
-import ai.interaction : AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.debug_trace : aiElementCandidateKindId, aiIntentId;
+import vibe3d.editing.interaction.data.ai.interaction : AiCandidate, AiCandidateKind,
     AiElementCandidateKind, AiInteractionContext, AiInteractionPhase,
     AiIntent;
 import ai.interaction_log : AiInteractionLogRecord, aiCandidateKindId,

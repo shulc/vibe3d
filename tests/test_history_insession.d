@@ -26,7 +26,7 @@ import command_history;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import mesh : Mesh;
 import view : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
 import std.conv : to;
 

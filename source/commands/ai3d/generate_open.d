@@ -28,11 +28,11 @@ import std.uni   : toLower;
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param;
 import io.formats : FilterSpec;
 import io.file_dialog : pickOpenPath, PickResult, PickOutcome;
-import log : logWarn;
+import vibe3d.util.log.log : logWarn;
 
 /// Client-side pre-check only (fail fast with a clear message rather than
 /// uploading an oversized file and getting a worker-side 400) — mirrors the

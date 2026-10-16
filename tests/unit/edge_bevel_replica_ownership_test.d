@@ -5,17 +5,17 @@ module tests.unit.edge_bevel_replica_ownership_test;
 import bindbc.opengl;
 import bindbc.sdl;
 import display_state : DrawPlan;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import eventlog : parkOverrideMouse, setOverrideMouse;
 import handler : CubicArrow, gizmoPixelSize, gizmoBoxHalfPx, GIZMO_ALPHA_ARM,
     GIZMO_STROKE_SCALE_SHAFT_PX, HandleState, getGizmoPixels, setGizmoPixels;
 import math : Vec3, lookAt, orthographicMatrix;
-import spatial : Viewport, isOrtho, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, isOrtho, projectToWindowFull;
 import mesh : Mesh, edgeKey;
 import mesh_gpu : GpuMesh;
 import operator : VectorStack;
 import overlay_space : OverlaySpace;
-import perf_probe : g_fc, DrawPass;
+import vibe3d.util.profiling.perf_probe : g_fc, DrawPass;
 import shader : LitShader, Shader;
 import std.conv : to;
 
@@ -23,7 +23,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 import std.format : format;
 import std.math : abs;
 import std.json : JSONValue, parseJSON;
-import params : injectParamsInto;
+import vibe3d.editing.params.params : injectParamsInto;
 import std.process : environment;
 import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode, countOccurrences,

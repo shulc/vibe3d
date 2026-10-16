@@ -115,7 +115,7 @@ import editor_app         : EditorApp;
 import toolpipe.packets   : SubjectPacket, GesturePacket;
 import operator           : VectorStack;
 import toolpipe.subject   : SubjectSource, evaluateSubject;
-import seltype             : SelType, currentSelType, viewportPickType,
+import vibe3d.editing.contracts.seltype             : SelType, currentSelType, viewportPickType,
                              geometrySelType;
 import d_imgui.imgui_h    : ImVec2;
 // Task 0781 step 1c -- the pick family's own dependencies. All of these were
@@ -124,12 +124,12 @@ import d_imgui.imgui_h    : ImVec2;
 // picker takes by `ref`; `eventlog.queryMouse` is the replay-aware cursor
 // read; `document.primaryModelSpace` is the primary layer's pose (task 0617),
 // which both engines pick against.
-import editmode           : EditMode;
+import vibe3d.editing.contracts.editmode           : EditMode;
 import gpu_select         : SelectMode;
 import item_pick          : ItemRayPicker, ItemHit;
 import symmetry_pick      : symmetricSelectVertex, symmetricSelectEdge,
                             symmetricSelectFace;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import eventlog           : queryMouse;
 import document           : primaryModelSpace;
 
@@ -333,7 +333,7 @@ final class InputFrameState {
     /// not over a live subpatch preview (its drawn positions are the limit's).
     void selectVertexTieGroup(ref Viewport vp, int mx, int my) {
         import hover_state : kElementPickRadiusPx, kVertexPointSizePx;
-        import spatial : projectionSpace, projectToWindowFull;
+        import vibe3d.util.spatial.spatial : projectionSpace, projectToWindowFull;
         import mesh_visibility : VisibilityProbe, regionVisibilityProbe;
         import std.algorithm : min;
         // The id is this frame's only under the vertex type (a type switch
@@ -482,7 +482,7 @@ final class InputFrameState {
     /// so the cursor's own pixel centre stands in (the comparator then keeps
     /// V > E > F); so does a point that does not project.
     private void noteHoverPoints(EditMode em)(ref Viewport vp, int mx, int my) {
-        import spatial : projectionSpace, projectToWindowFull;
+        import vibe3d.util.spatial.spatial : projectionSpace, projectToWindowFull;
         const Viewport vl = projectionSpace(vp, primaryModelSpace());
         const m = &app.mesh();
         float[2] at(uint v) {

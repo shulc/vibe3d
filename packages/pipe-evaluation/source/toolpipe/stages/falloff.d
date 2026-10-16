@@ -7,12 +7,12 @@ import std.string    : split, strip;
 import std.math      : abs, sqrt;
 
 import math : Vec3, dot;
-import spatial : Viewport, projectToWindowFull, aimSpace, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, aimSpace, ModelSpace;
 import document : primaryModelSpace;
 import mesh : Mesh, MapDomain;
-import mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 14)
-import editmode : EditMode;
-import tool_policy_values : Rollover;
+import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 14)
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.tool_policy_values : Rollover;
 import toolpipe.stage    : Stage, TaskCode, ordWght, ToolSwitchTransient,
                            PresetClaimable;
 import toolpipe.pipeline : g_pipeCtx;
@@ -20,7 +20,7 @@ import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffSha
                             FalloffMix, LassoStyle, ElementConnect, ElementMode;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath, installPreparedStatePath;
-import params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
+import vibe3d.editing.params.params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
 
 /// How many times `recomputeSelectionWeights` has REBUILT `selWeights_` — the
 /// O(V+E) ring-seed BFS plus its two allocations, not the cheap cache-gate
@@ -1421,7 +1421,7 @@ private:
             // for one to cap; `.max(1024).enforceBounds()` on the Param is
             // hygiene, not a DoS backstop, and — like every other hand-
             // parsed stage attr — this wire route does not read it.)
-            case "steps":        { import params : assignWireInt;
+            case "steps":        { import vibe3d.editing.params.params : assignWireInt;
                                    return assignWireInt(value, steps); }
             case "connect": {
                 int v;
@@ -1616,14 +1616,14 @@ private:
     // wrote x and y before discovering a bad z. Refusal (false) reaches the
     // caller as this route's existing "rejected attr" answer.
     static bool parseFloat(string s, ref float dst) {
-        import params : assignWireFloat;
+        import vibe3d.editing.params.params : assignWireFloat;
         return assignWireFloat(s, dst);
     }
 
     // "x,y,z" → Vec3. Returns false on parse error so setAttr can
     // refuse the change instead of corrupting the field.
     static bool parseVec3(string s, ref Vec3 out_v) {
-        import params : assignWireVec3;
+        import vibe3d.editing.params.params : assignWireVec3;
         return assignWireVec3(s, out_v);
     }
 
@@ -2062,7 +2062,7 @@ unittest {
 // this block restores all three.
 // ---------------------------------------------------------------------------
 unittest {
-    import params : tableCoversEnum;
+    import vibe3d.editing.params.params : tableCoversEnum;
 
     auto fs = new FalloffStage();
 
@@ -2159,7 +2159,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : Mesh;
-    import mesh_dirty : g_topoEpochs;
+    import vibe3d.mesh.change.mesh_dirty : g_topoEpochs;
 
     Mesh* a = new Mesh;
     a.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
@@ -2226,7 +2226,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : Mesh;
-    import mesh_dirty : noteMeshChange;
+    import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
     import mesh_edit_delta : MeshEditScope;
 
     // Heap, not stack — see the M9 block above for why the epoch table's raw

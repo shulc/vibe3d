@@ -49,7 +49,7 @@ import command;
 import operator : Operator;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 
 import commands.mesh.radial_array_     : MeshRadialArray;
 import commands.mesh.array_            : MeshArray;
@@ -108,7 +108,7 @@ private struct Cand { Command cmd; string args; }
 
 private Command configured(Cand c) {
     if (c.args.length) {
-        import params    : injectParamsInto;
+        import vibe3d.editing.params.params    : injectParamsInto;
         import std.json  : parseJSON;
         auto pj = parseJSON(c.args);
         injectParamsInto(c.cmd.params(), pj);

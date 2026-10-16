@@ -4,7 +4,7 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import geometry_clipboard : geometryClipboard, GeometryClip;
 
 /// Snapshot the current selection into the global geometry clipboard: the

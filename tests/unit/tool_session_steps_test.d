@@ -40,10 +40,10 @@ import tests.unit.census_symbols : exists = wave15Exists;
 import command_history : CommandHistory, HistoryFlags, UndoState;
 import commands.tool.lifecycle : ToolActivationCommand, ToolTaskClearCommand;
 import edit_session : DropRowSpec, EditSession, ParameterChangeSource, ParameterChangePhase;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh, makeCube;
 import math : Vec3;
-import params;
+import vibe3d.editing.params.params;
 import tool : AttrImage, OpensAt, PressActivation, PressKind, StepOrigin, Tool, ToolSessionPolicy,
     TopologyStepClient;
 import command : Command;
@@ -505,7 +505,7 @@ unittest {
     store = [Pt(1, 1, null)];
     assert(paramToJson(p).integer == 1 && isUserSet(p));
     // Never a replayable argument: the serializer skips it even when set.
-    import argstring : serializeParams;
+    import vibe3d.editing.params.argstring : serializeParams;
     assert(serializeParams([p]) == "", "M3 PodArray: the argstring serializer emitted it");
     auto pj = parseJSON(`{"pts":[1,2]}`);
     bool refused;

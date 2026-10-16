@@ -10,13 +10,13 @@ import tools.transform.scale : ScaleTool, PreparedScaleActivationImage;
 unittest {
     import mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import math : Vec3;
     import prepared_record_context : PreparedRecordContext;
     import command_history : CommandHistory;
     import record_observer_hub : RecordObserverHub;
     import tools.transform.xfrm_transform : XfrmTransformTool;
-    import prepared_tool_effect : PreparedTransformProductKind;
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedTransformProductKind;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto move = new MoveTool(() => &mesh, &gpu, &mode);
     auto rotate = new RotateTool(() => &mesh, &gpu, &mode);

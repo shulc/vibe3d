@@ -3,9 +3,9 @@ module commands.tool.reset;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import commands.tool.host : ToolHost;
-import params : Param, wireArgs;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 // ---------------------------------------------------------------------------
 // ToolResetCommand — `tool.reset [<toolId>]`

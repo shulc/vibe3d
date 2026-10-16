@@ -14,7 +14,7 @@ import std.path : buildPath;
 import std.string : split, strip, startsWith;
 import std.conv : to;
 
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiInteractionPhase, AiIntent;
 import ai.interaction_log : AiInteractionLogRecord, makeAiInteractionLogRecord,
     parseAiInteractionLogLine;

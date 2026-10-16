@@ -220,7 +220,7 @@ mixin template DocumentSelection() {
     /// plus explicit invalidation from every selection mutator; this walk
     /// remains the sole computation of what the target IS.
     private inout(Layer) nthEditTargetCandidate(size_t n) inout nothrow @nogc {
-        { import perf_probe : g_perf, Cat; g_perf.count(Cat.editTargetDerive, 1); }
+        { import vibe3d.util.profiling.perf_probe : g_perf, Cat; g_perf.count(Cat.editTargetDerive, 1); }
         // Task 4061 — the same event, counted a second time for the gate that
         // actually runs. See `g_editTargetDerives`' own comment for why the
         // perf counter alone could not carry the pin.

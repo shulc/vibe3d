@@ -2,7 +2,7 @@ module overlay_space_source_cells;
 
 import overlay_space : OverlaySpace, OverlayAxis;
 import math : Vec3;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 
 version (unittest) private ModelSpace tiltedStand() {
     // Translation + rotation about Z + a DIFFERENT scale on all three axes,

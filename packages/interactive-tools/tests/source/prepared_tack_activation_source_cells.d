@@ -6,12 +6,12 @@ import mesh : Mesh;
 import tools.edit.tack : TackTool, PreparedTackActivationImage;
 
 unittest {
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuCreateOwner;
     import prepared_record_context : PreparedRecordContext;
-    import prepared_tool_effect : PreparedActivateKind;
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
 

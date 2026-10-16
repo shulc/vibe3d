@@ -6,12 +6,12 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import selection_product : repointToNothing;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math : Vec3;
-import change_bus : MeshEditScope;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 import mesh_edit_delta : MeshEditDelta, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 
 /// Tier 1.2: `vert.join`. Collapses the selected vertices to a single point —
 /// the centroid (`average=true`) or the SURVIVOR's position (`average=false`)

@@ -58,7 +58,7 @@ module image_cache;
 
 import io.image_decode : DecodedImage, ImageInfo, imageDecode, imageInfo,
                           MAX_IMAGE_BYTES;
-import log : logWarn;
+import vibe3d.util.log.log : logWarn;
 
 /// Upper bound on TOTAL resident GL bytes.
 ///

@@ -29,7 +29,7 @@ import mesh_edit_replay : apply, revert;
 
 import mesh      : Mesh, makeCube;
 import view      : View;
-import editmode  : EditMode;
+import vibe3d.editing.contracts.editmode  : EditMode;
 import snapshot  : MeshSnapshot;
 import operator  : VectorStack;
 import toolpipe.packets : SubjectPacket;
@@ -194,7 +194,7 @@ unittest { // Declaration, preference and owned noncoalescing prefix survive.
 unittest { // Rolled-back MAP latch must not poison a subsequent index write.
     import mesh_edit_delta : MeshEditTracker;
     import math : Vec3;
-    import change_bus : changeBus;
+    import vibe3d.mesh.change.change_bus : changeBus;
     MeshEditTracker t;
     auto c = t.checkpoint();
     checkpointMap(t);
@@ -210,7 +210,7 @@ unittest { // Rolled-back MAP latch must not poison a subsequent index write.
 unittest { // Rolled-back INDEX latch must not poison a subsequent map write.
     import mesh_edit_delta : MeshEditTracker;
     import math : Vec3;
-    import change_bus : changeBus;
+    import vibe3d.mesh.change.change_bus : changeBus;
     MeshEditTracker t;
     auto c = t.checkpoint();
     t.recordAddVert(8, Vec3(1, 2, 3));
@@ -226,7 +226,7 @@ unittest { // Rolled-back INDEX latch must not poison a subsequent map write.
 unittest { // Both preexisting latches remain effective after rollback.
     import mesh_edit_delta : MeshEditTracker;
     import math : Vec3;
-    import change_bus : changeBus;
+    import vibe3d.mesh.change.change_bus : changeBus;
     foreach (mapFirst; [true, false]) {
         MeshEditTracker t;
         if (mapFirst) checkpointMap(t); else t.recordAddVert(8, Vec3(1, 2, 3));

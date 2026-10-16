@@ -71,7 +71,7 @@ version (web) {
 } else {
     import gl_thread_guard : markMainThread;
 }
-import log : logInfo, logWarn;
+import vibe3d.util.log.log : logInfo, logWarn;
 import prefs;
 import sdl_error : sdlError;
 
@@ -90,19 +90,19 @@ import imgui_impl_opengl3;
 
 import app_version      : appAboutLines;
 import math;
-import spatial : ModelSpace, Viewport;
+import vibe3d.util.spatial.spatial : ModelSpace, Viewport;
 import mesh;
 import mesh_gpu : DisplayPayloadBasis, DisplayPayloadWriter, GpuMesh;
 import mesh_ops.loop_slice : loopSliceRingEdges;
 // Task 1906 stage 2 — the bus-driven per-mesh-address dirty epochs the display
 // and cage/preview upload families key on (see mesh_dirty.d's header).
-import mesh_dirty       : MeshDirtyKey, g_displayEpochs, g_geomEpochs;
+import vibe3d.mesh.change.mesh_dirty       : MeshDirtyKey, g_displayEpochs, g_geomEpochs;
 import eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
 import tool;
-import editmode;
-import seltype;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype;
 import session_owner : Session;
 import toolpipe;
 import operator         : VectorStack;
@@ -111,7 +111,7 @@ import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
 import view;
 import shader;
-import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot, g_fc,
+import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot, g_fc,
                     currentThreadId, markMainLoopThread;
 import io.assimp_runtime : initAssimp, shutdownAssimp;
 import bvh_pick : BvhPick;
@@ -280,14 +280,14 @@ import buttonset;
 // Pie menus (task 1800): state + aim live in their own module so the command,
 // the event pump and the drawer all read one place.
 import pie_state : g_pie, openPie, closePie, resetPieForAutomation;
-import ai.debug_trace : clearLatestAiDebugTraces, latestHandleDebugTraceJson;
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
+import vibe3d.editing.interaction.data.ai.debug_trace : clearLatestAiDebugTraces, latestHandleDebugTraceJson;
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
     AiInteractionPhase, AiIntent;
 import ai.interaction_log : makeAiInteractionLogRecord;
 import ai.interaction_log_writer : AiInteractionLogWriter, defaultLiveSource;
 import ai.exploration : AiExplorationController, buildCandidateKey, defaultExploreSource, OptionalGrab, ResolutionKind;
 import ai.state      : EditorAiState;
-import ai.advisor    : AiAdvisor;
+import vibe3d.editing.interaction.data.ai.advisor    : AiAdvisor;
 import ai.copilot_gate : kCopilotEnabled;
 import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelStatus, AiModelFallbackMode,
@@ -1232,7 +1232,7 @@ void main(string[] args) {
 
     // Same, for the trackball navigation setting (task 0573).
     {
-        import trackball : setTrackballGlobal, setTrackballGlobalOverride,
+        import vibe3d.util.spatial.trackball : setTrackballGlobal, setTrackballGlobalOverride,
                            setTrackballMouseSpeed, setTrackballTabletSpeed,
                            setTrackballSwing;
         setTrackballGlobal(g_prefs.trackball);
@@ -1550,7 +1550,7 @@ void main(string[] args) {
             g_prefs.coordRoundingFixedIncrement = coordRoundingFixedIncrement();
         }
         {
-            import trackball : trackballGlobal, trackballGlobalOverride,
+            import vibe3d.util.spatial.trackball : trackballGlobal, trackballGlobalOverride,
                                trackballMouseSpeed, trackballTabletSpeed,
                                trackballSwing;
             g_prefs.trackball            = trackballGlobal();
@@ -2276,7 +2276,7 @@ void main(string[] args) {
     // it, and `DirtyKey.layerEpoch` re-renders the cells from it.
     ulong fboLayerEpoch = 0;
     {
-        import change_bus : changeBus;
+        import vibe3d.mesh.change.change_bus : changeBus;
         // Task 1906 stage 0 — the mesh channel carries the subject's address
         // as well as the flags. This hub is the per-frame AGGREGATOR: it ORs
         // every delivery (synchronous ones at the edit boundary, plus the
@@ -2324,7 +2324,7 @@ void main(string[] args) {
         // on their own — so a purpose-built cell is still what pins it.
         changeBus.onMeshChanged((size_t subjectAddr, uint flags) {
             meshChangedFlags |= flags;
-            import mesh_dirty : noteMeshChange;
+            import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
             noteMeshChange(subjectAddr, flags);
         });
         // Task 1931, sel-channel census (tests/unit/sel_channel_census_test.d)
@@ -2356,7 +2356,7 @@ void main(string[] args) {
         // lines higher and relied on the per-frame drain to re-supply its word
         // after the hub had been registered.
         if (playbackMode) {
-            import change_bus : MeshChangeAll;
+            import vibe3d.mesh.change.change_bus : MeshChangeAll;
             mesh.publishChange(MeshChangeAll);
         }
     }
@@ -2419,7 +2419,7 @@ void main(string[] args) {
     bool delegate() displayUploadsHeldByToolDrag_ = null;
     void ensureDisplayCurrent() {
         import display_sync : refreshDisplay;
-        import mesh_dirty   : g_displayEpochs;
+        import vibe3d.mesh.change.mesh_dirty   : g_displayEpochs;
         if (displayUploadsHeldByToolDrag_ !is null && displayUploadsHeldByToolDrag_()) return;
         Mesh* am = &mesh();
         const size_t a = cast(size_t)am;
@@ -2858,7 +2858,7 @@ void main(string[] args) {
     //     (`noteCurrentType`) so the per-frame flush delivers the
     //     `currentTypeChanged` signal (delivered LAST, after mesh/sel/layer).
     void switchGeometryType(EditMode mode) {
-        import change_bus : noteCurrentType;
+        import vibe3d.mesh.change.change_bus : noteCurrentType;
         const t = geometrySelType(mode);
         const before = currentSelType(selTypeOrder);   // S6: the drop row's restore
         const flipped = sessionOwner.switchGeometryType(mode);
@@ -2878,7 +2878,7 @@ void main(string[] args) {
     // sequences). Installed as a hook into the two selection commands so they
     // stop writing `*editModePtr` directly.
     void promoteGeometryType(EditMode mode) {
-        import change_bus : noteCurrentType;
+        import vibe3d.mesh.change.change_bus : noteCurrentType;
         const t = geometrySelType(mode);
         const flipped = sessionOwner.promoteGeometryType(mode);
         if (flipped) noteCurrentType(t);  // current-type changed (no tool-drop)
@@ -2902,7 +2902,7 @@ void main(string[] args) {
     // the `switchGeometryType` analogue. Two verbs, one distinction, spelled
     // the same way on both sides of the geometry/item line.
     void promoteItemType() {
-        import change_bus : noteCurrentType;
+        import vibe3d.mesh.change.change_bus : noteCurrentType;
         const flipped = sessionOwner.promoteItemType();
         if (flipped)
             noteCurrentType(SelType.Item);
@@ -2929,7 +2929,7 @@ void main(string[] args) {
     //     promote path above deliberately does not — a selection is not a
     //     mode change.
     void switchItemType() {
-        import change_bus : noteCurrentType;
+        import vibe3d.mesh.change.change_bus : noteCurrentType;
         const before = currentSelType(selTypeOrder);   // S6: the drop row's restore
         const flipped = sessionOwner.switchItemType();
         dropActiveToolWith(ToolTransition.selTypeFlipDrop,
@@ -3194,7 +3194,7 @@ void main(string[] args) {
     //   5. noteChange(MeshChangeAll) on the NEW active mesh so the per-frame
     //      bus flush invalidates every subscriber exactly as a file load does.
     void delegate(size_t, size_t) onActiveLayerChanged = (size_t prev, size_t next) {
-        import change_bus : MeshChangeAll, noteLayerChange, LayerChange;
+        import vibe3d.mesh.change.change_bus : MeshChangeAll, noteLayerChange, LayerChange;
         import snap       : invalidateSnapGrids;
         // A held Command's Mesh* was bound at fire time, so dropping it here
         // beats letting it land in the wrong primary layer (task 5640).
@@ -4226,7 +4226,7 @@ void main(string[] args) {
     // line — it must name a registered command.
     {
         import std.array : appender;
-        import argstring : parseArgstring;
+        import vibe3d.editing.params.argstring : parseArgstring;
         auto missing = appender!string();
         void check(Action a) {
             version (web) {
@@ -4802,7 +4802,7 @@ void main(string[] args) {
     // reads live state when called (revision, primary mesh, edit mode, guard),
     // so nothing here goes stale between frames; the delegates' frame lives in
     // main's closure, which survives the web main loop's stack resets.
-    import change_bus : changeBus;
+    import vibe3d.mesh.change.change_bus : changeBus;
     import io.browser_pick_resume : PickDrainPorts, listDirNames, stillBoundTo;
     const PickDrainPorts pickDrainPorts = PickDrainPorts(
         (string dir) => listDirNames(dir),
@@ -5038,7 +5038,7 @@ void main(string[] args) {
         // A marked cube forces the synchronous CPU OpenSubdiv path on frame
         // one.  Move supplies a real production gizmo, whose strokes all pass
         // through drawThickLines.
-        import change_bus : MeshEditScope;
+        import vibe3d.mesh.change.change_bus : MeshEditScope;
         foreach (fi; 0 .. mesh.faces.length) mesh.setSubpatch(fi, true);
         mesh.commitChange(MeshEditScope.Marks);
         ++mesh.topologyVersion;
@@ -5965,7 +5965,7 @@ void main(string[] args) {
         if (!command.g_testMode || g_statisticsShown) {
             import ui.panels : drawStatisticsPanel;
             import commands.ui.statistics : g_statExpand;
-            import seltype : currentSelType;
+            import vibe3d.editing.contracts.seltype : currentSelType;
             drawStatisticsPanel(&app.document(), currentSelType(app.selTypeOrder),
                                 g_statExpand, app.uiCommandDelegate);
         }
@@ -6081,7 +6081,7 @@ void main(string[] args) {
         {
             import input_zones   : endZoneFrame, publishedZones;
             import input_context : publishInputContext;
-            import seltype       : selTypeToken;
+            import vibe3d.editing.contracts.seltype       : selTypeToken;
             import eventlog      : queryMouse;
             endZoneFrame();
             int _cx, _cy;
@@ -6189,7 +6189,7 @@ void main(string[] args) {
         // that block mutates the mesh (render + GPU upload are read-only / use
         // mutationVersion directly), so one flush at this point is exact.
         {
-            import change_bus : changeBus;
+            import vibe3d.mesh.change.change_bus : changeBus;
 
             // Display upload is bus-driven (campaign 0407 §D4-в): mutating
             // commands no longer refresh the display themselves — this flush
@@ -6336,7 +6336,7 @@ void main(string[] args) {
             // single flush site, and deliver it as flush's LAYER arg (delivered
             // after the item-selection domain). The next frame drains it again,
             // so it survives /api/reset without stranding.
-            import change_bus : pendingLayerChanges;
+            import vibe3d.mesh.change.change_bus : pendingLayerChanges;
             uint layerKinds = pendingLayerChanges;
             pendingLayerChanges = 0;
 
@@ -6344,7 +6344,7 @@ void main(string[] args) {
             // owning Mesh), so it accumulates in a module-level word like the
             // layer kinds and is OR-ed into the SELECTION word here, drained
             // read-and-zero. Survives /api/reset like pendingLayerChanges.
-            import change_bus : pendingItemSelDomain;
+            import vibe3d.mesh.change.change_bus : pendingItemSelDomain;
             uint itemSelDomains = pendingItemSelDomain;
             pendingItemSelDomain = 0;
 
@@ -6353,7 +6353,7 @@ void main(string[] args) {
             // module-level globals beside the bus and drain read-and-zero here,
             // at the same single flush site — delivered LAST (after mesh/sel/
             // layer). Survives /api/reset like pendingLayerChanges.
-            import change_bus : pendingCurrentType, pendingCurrentTypeSet;
+            import vibe3d.mesh.change.change_bus : pendingCurrentType, pendingCurrentTypeSet;
             bool    typeChanged = pendingCurrentTypeSet;
             SelType newType     = pendingCurrentType;
             pendingCurrentTypeSet = false;
@@ -6368,7 +6368,7 @@ void main(string[] args) {
         // dirty state in the title and settle any Save-and-exit armed this
         // frame by the quit-confirm modal.
         {
-            import change_bus  : changeBus;
+            import vibe3d.mesh.change.change_bus  : changeBus;
             import io.doc_state : syncDocRevision, docDirty, currentDocPath;
             import std.path     : baseName;
             import std.string   : toStringz;
@@ -6512,7 +6512,7 @@ void main(string[] args) {
         // (S1e): the face VBO's slots and smooth normals need the full upload.
         bool previewMaterialRefreshed = false;
         {
-            import change_bus : MeshEditScope;
+            import vibe3d.mesh.change.change_bus : MeshEditScope;
             // `Material`: `mesh.surfaceAttr` / `mesh.setMaterial` (and a crease
             // weight) — `rebuildIfStale` tells it apart through the material
             // epoch and refreshes without a topology rebuild. Declared, though
@@ -6735,7 +6735,7 @@ void main(string[] args) {
         {
             auto zFramesCache = g_frames.phase(Phase.cache);
         {
-            import change_bus : MeshEditScope;
+            import vibe3d.mesh.change.change_bus : MeshEditScope;
             // TASK 1930 — THE THIRD BRANCH OF THIS `if` IS GONE, AND SO IS
             // EVERY CACHE CALL IN THE OTHER TWO. `viewcache.d` held a
             // projected payload with no readers and no writers, so all this

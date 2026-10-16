@@ -22,7 +22,7 @@ import std.path : buildNormalizedPath, buildPath, dirName;
 import d_imgui.imgui_h : ImGuiKey;
 import forms : Form, loadForms;
 import forms_render : FormsPanel;
-import params : injectParamsInto, wireTagForValue;
+import vibe3d.editing.params.params : injectParamsInto, wireTagForValue;
 import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
 import tools.edit.topology_pen.tool : TopologyPenTool;
 

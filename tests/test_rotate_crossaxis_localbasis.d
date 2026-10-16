@@ -49,10 +49,10 @@ import drag_helpers : Vec3, dot, cross, normalize, gizmoSize,
 
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import math : NativeVec3 = Vec3;
-import spatial : NativeViewport = Viewport, ModelSpace;
+import vibe3d.util.spatial.spatial : NativeViewport = Viewport, ModelSpace;
 import mesh : Mesh;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import operator : VectorStack;
 import document : primaryModelSpaceResolver;
 import toolpipe.stages.actcenter : ActionCenterStage;

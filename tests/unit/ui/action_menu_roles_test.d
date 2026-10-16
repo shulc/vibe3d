@@ -19,11 +19,11 @@ import command : CmdFlags, Command, g_testMode;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import edit_session : EditSession;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import mesh : makeCube;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import registry : Registry;
 import session_owner : Session;
 import tests.unit.ui.headless_panel : openPanel;

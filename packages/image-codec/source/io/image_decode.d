@@ -20,7 +20,7 @@ module io.image_decode;
 import std.string : fromStringz;
 import std.format : format;
 
-import log : logWarn;
+import vibe3d.util.log.log : logWarn;
 
 private void imgWarn(string msg) nothrow { try logWarn("io", "image: " ~ msg); catch (Exception) {} }
 

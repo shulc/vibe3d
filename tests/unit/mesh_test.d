@@ -10,12 +10,12 @@ import std.math : sqrt, abs;
 import std.parallelism : parallel;
 import std.range : iota;
 import math;
-import spatial : Viewport;
-import editmode : EditMode;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope;
 import mesh_ops.bridge : kBridgeEditScope;
 import mesh_ops.thicken : thickenSurface;
-import change_bus : SelDomain;
+import vibe3d.mesh.change.change_bus : SelDomain;
 // (`import mesh_ops.bridge : MeshBridgeOps;` was here until task 1903 Stage D3
 // turned that family into free functions — the template name no longer exists.
 // Nothing in this file ever NAMED any of the templates imported around it; they
@@ -63,7 +63,7 @@ import std.format : format;
 import tests.unit.census_symbols : blankNonCode;
 import tests.unit.fixtures : makeTaggedGrid, findEdge;
 import tests.unit.mesh_ops.seam_differential : meshPlaneDiffs;
-import tsan_annotate : forceSerialLoopRunnerForTest, parallelRunnerCalls,
+import vibe3d.util.parallel.tsan_annotate : forceSerialLoopRunnerForTest, parallelRunnerCalls,
                        resetLoopRunnerProbe, serialRunnerCalls;
 import mesh;
 import mesh_ops.cut;
@@ -859,7 +859,7 @@ private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args
 // ---------------------------------------------------------------------------
 unittest {
     import math : lookAt, perspectiveMatrix;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
     import std.math : PI;
 
     Mesh m;
@@ -4606,7 +4606,7 @@ unittest {
 // `[1..6]`).
 unittest {
     import symmetry_pick : symmetricSelectFace;
-    import spatial : Viewport;
+    import vibe3d.util.spatial.spatial : Viewport;
 
     Mesh m = makeCube();
     m.resetSelection();

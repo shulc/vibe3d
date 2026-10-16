@@ -73,15 +73,15 @@ import std.path : baseName, stripExtension;
 import command;
 import mesh;
 import view;
-import editmode;
-import params    : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params    : Param;
 import document  : Document, Layer, ItemKind, ImageData;
-import seltype   : SelMode;
+import vibe3d.editing.contracts.seltype   : SelMode;
 import io.formats     : FilterSpec;
 import io.file_dialog : pickOpenPath, PickResult, PickOutcome;
 import io.image_path  : refreshImageMeta;
-import change_bus     : noteLayerChange, LayerChange;
-import log            : logWarn;
+import vibe3d.mesh.change.change_bus     : noteLayerChange, LayerChange;
+import vibe3d.util.log.log            : logWarn;
 import commands.layer.commands : LayerDelete;
 
 // ---------------------------------------------------------------------------
@@ -1084,7 +1084,7 @@ unittest {
 unittest {
     import std.json : parseJSON;
     import std.conv  : to;
-    import params    : injectParamsInto;
+    import vibe3d.editing.params.params    : injectParamsInto;
     import commands.layer.commands : LayerDuplicate;
 
     auto f = makeImgFixture("dup_replace");
@@ -1259,7 +1259,7 @@ unittest {
     import std.file : read;
     import std.json : JSONValue, parseJSON;
     import std.conv : to;
-    import params   : injectParamsInto;
+    import vibe3d.editing.params.params   : injectParamsInto;
     import commands.layer.commands : LayerRename;
 
     auto f = makeImgFixture("rename");

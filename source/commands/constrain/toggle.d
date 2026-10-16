@@ -3,7 +3,7 @@ module commands.constrain.toggle;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 
 import toolpipe.pipeline           : g_pipeCtx;
 import toolpipe.stages.constrain   : liveConstrainStage, Remembered;

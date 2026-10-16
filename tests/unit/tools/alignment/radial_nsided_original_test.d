@@ -6,7 +6,7 @@ import std.format : format;
 import math : Vec3;
 import tool;
 import mesh : Mesh;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import tools.alignment.align_kernels : radialAlignTargets, extractAlignChain;
 import falloff : weightedLerp;
 
@@ -222,7 +222,7 @@ unittest { // Actual registered session, same object/token and position delivery
     import tool : Tool, HeadlessSourcePolicy;
     import tools.transform.transform : TransformTool;
     import command_history : RecordMode;
-    import change_bus : changeBus, MeshEditScope;
+    import vibe3d.mesh.change.change_bus : changeBus, MeshEditScope;
     import mesh : g_isDocumentMesh;
     auto f=fixture(); auto rig=new LiveRegistrationRig;
     rig.session.editMesh()=original(f); rig.session.editMode=EditMode.Polygons;

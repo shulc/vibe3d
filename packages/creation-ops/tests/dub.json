@@ -16,15 +16,17 @@
     "vibe3d-interaction-query": {
       "path": "../../interaction-query"
     },
-    "vibe3d-edit-contracts": {
-      "path": "../../edit-contracts"
+    "vibe3d:edit-contracts": {
+      "path": "../../.."
     },
-    "vibe3d:math": {"path": "../../.."},
+    "vibe3d:math": {
+      "path": "../../.."
+    },
     "vibe3d-mesh": {
       "path": "../../mesh"
     },
-    "vibe3d-spatial": {
-      "path": "../../spatial"
+    "vibe3d:spatial": {
+      "path": "../../.."
     },
     "vibe3d-pipe-contracts": {
       "path": "../../pipe-contracts"
@@ -172,10 +174,10 @@
       "name": "algorithm",
       "subConfigurations": {
         "vibe3d-interaction-query": "isolated-tests",
-        "vibe3d-edit-contracts": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d:math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
         "vibe3d-pipe-contracts": "isolated-tests"
       }
     }

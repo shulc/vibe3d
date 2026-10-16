@@ -6,7 +6,7 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import mesh_ops.cleanup : unifyFaces, kCleanupEditScope;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import mesh_edit_delta : MeshEditScope, MeshEditDelta, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 

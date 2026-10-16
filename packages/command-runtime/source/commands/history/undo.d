@@ -4,7 +4,7 @@ import command;
 import command_history : CommandHistory;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 
 /// Pop the top entry off the undo stack and revert it. Wired to Ctrl+Z
 /// via shortcuts.yaml. Itself never lands on the undo stack

@@ -5,8 +5,8 @@ import std.string : strip, toLower;
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param, wireArgs;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param, wireArgs;
 import ui.stat_rows : StatExpand;
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ class UiStatisticsExpandCommand : Command {
 
     protected override bool applyImpl() {
         setArgs(target_, stateArg_);
-        import seltype : SelType;
+        import vibe3d.editing.contracts.seltype : SelType;
         if (!g_testMode) {
             baseRefusal_ = "ui.statistics.expand: only available in --test mode";
             return false;

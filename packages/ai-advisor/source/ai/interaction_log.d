@@ -6,9 +6,9 @@ import std.format : format;
 import std.json : JSONValue;
 import std.math : isFinite;
 
-import ai.debug_trace : aiElementCandidateKindFromId, aiElementCandidateKindId,
+import vibe3d.editing.interaction.data.ai.debug_trace : aiElementCandidateKindFromId, aiElementCandidateKindId,
     aiIntentFromId, aiIntentId;
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiElementCandidateKind, AiInteractionContext, AiInteractionPhase, AiIntent;
 
 enum aiInteractionLogSchemaVersion = 1;

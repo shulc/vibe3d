@@ -5,13 +5,13 @@ import subpatch_factories : subdivideCube;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import document : Document, Layer, ItemXform;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
-import change_bus : MeshChangeAll;
+import vibe3d.mesh.change.change_bus : MeshChangeAll;
 import io.doc_state : clearCurrentDoc, requestDocRebaseline;
-import params : Param, wireArgs;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 /// Reset the scene to a chosen primitive
 /// (cube/diamond/octahedron/lshape/grid/subdivcube). Replaces the legacy

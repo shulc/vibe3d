@@ -36,7 +36,7 @@ import bvh_pick   : BvhPick, SurfaceHit;
 import document   : Document, Layer, kindInfo;
 import image_plane : rayHitsPlaneQuad, resolvePlacementFor, ImagePlanePlacement;
 import math : Vec3;
-import spatial : ModelSpace, Viewport, screenPointToRay;
+import vibe3d.util.spatial.spatial : ModelSpace, Viewport, screenPointToRay;
 import mesh       : Mesh;
 import view       : ViewPreset;
 

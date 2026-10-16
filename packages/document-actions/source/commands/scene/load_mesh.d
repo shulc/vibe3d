@@ -4,11 +4,11 @@ import command;
 import math : Vec3;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
-import change_bus : MeshChangeAll;
-import params : Param, wireArgs;
+import vibe3d.mesh.change.change_bus : MeshChangeAll;
+import vibe3d.editing.params.params : Param, wireArgs;
 import std.json : JSONValue, JSONType, parseJSON;
 
 /// Replace the current mesh with a caller-supplied raw mesh (test-only,

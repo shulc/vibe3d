@@ -3,7 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.toolpipe.stage_test;
 
-import params : Param, ParamProvider, parseInto, stringifyParam;
+import vibe3d.editing.params.params : Param, ParamProvider, parseInto, stringifyParam;
 import std.algorithm : canFind;
 import toolpipe.stage;
 

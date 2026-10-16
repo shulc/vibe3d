@@ -11,11 +11,11 @@ import mesh_ops.triangulate : triangulateFacesByMask;
 import std.format : format;
 import std.math : abs;
 
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
 import mesh : Mesh, makeCube, makeGridPlane;
 import mesh_gpu : GpuMesh;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import tool : Tool;
 import tools.alignment.array_tool : ArrayTool;
 import tools.alignment.clone_tool : CloneTool;

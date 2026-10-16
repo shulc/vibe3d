@@ -181,7 +181,7 @@ unittest { // 8. the key: each term moves it, and only when it changes
     // A POSITION delivery alone (a gizmo drag is version-silent: no counter
     // moves) must invalidate the list through the geometry epoch.
     {
-        import mesh_dirty : g_geomEpochs;
+        import vibe3d.mesh.change.mesh_dirty : g_geomEpochs;
         import mesh_edit_delta : MeshEditScope;
         immutable ulong tv0 = m.topologyVersion;
         g_geomEpochs.note(cast(size_t)&m, MeshEditScope.Position);

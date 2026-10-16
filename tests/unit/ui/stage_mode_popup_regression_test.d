@@ -1,7 +1,7 @@
 module tests.unit.ui.stage_mode_popup_regression_test;
 
 import std.format : format;
-import params : valueForWireTag;
+import vibe3d.editing.params.params : valueForWireTag;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
 

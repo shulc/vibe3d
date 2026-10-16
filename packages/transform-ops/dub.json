@@ -13,15 +13,17 @@
     "vibe3d-mesh-edit-log": {
       "path": "../mesh-edit-log"
     },
-    "vibe3d-spatial": {
-      "path": "../spatial"
+    "vibe3d:spatial": {
+      "path": "../.."
     },
     "vibe3d-mesh": {
       "path": "../mesh"
     },
-    "vibe3d:math": {"path": "../.."},
-    "vibe3d-profiling": {
-      "path": "../profiling"
+    "vibe3d:math": {
+      "path": "../.."
+    },
+    "vibe3d:profiling": {
+      "path": "../.."
     },
     "vibe3d-pipe-contracts": {
       "path": "../pipe-contracts"
@@ -178,10 +180,10 @@
       "subConfigurations": {
         "vibe3d-interaction-query": "modeling",
         "vibe3d-mesh-edit-log": "modeling",
-        "vibe3d-spatial": "modeling",
+        "vibe3d:spatial": "modeling",
         "vibe3d-mesh": "modeling",
         "vibe3d:math": "modeling",
-        "vibe3d-profiling": "modeling",
+        "vibe3d:profiling": "modeling",
         "vibe3d-pipe-contracts": "modeling",
         "vibe3d-document-model": "modeling",
         "vibe3d-pipe-runtime": "modeling"
@@ -193,10 +195,10 @@
       "subConfigurations": {
         "vibe3d-interaction-query": "modeling-noai",
         "vibe3d-mesh-edit-log": "modeling-noai",
-        "vibe3d-spatial": "modeling-noai",
+        "vibe3d:spatial": "modeling-noai",
         "vibe3d-mesh": "modeling-noai",
         "vibe3d:math": "modeling-noai",
-        "vibe3d-profiling": "modeling-noai",
+        "vibe3d:profiling": "modeling-noai",
         "vibe3d-pipe-contracts": "modeling-noai",
         "vibe3d-document-model": "modeling-noai",
         "vibe3d-pipe-runtime": "modeling-noai"
@@ -211,10 +213,10 @@
       "subConfigurations": {
         "vibe3d-interaction-query": "with-render",
         "vibe3d-mesh-edit-log": "with-render",
-        "vibe3d-spatial": "with-render",
+        "vibe3d:spatial": "with-render",
         "vibe3d-mesh": "with-render",
         "vibe3d:math": "with-render",
-        "vibe3d-profiling": "with-render",
+        "vibe3d:profiling": "with-render",
         "vibe3d-pipe-contracts": "with-render",
         "vibe3d-document-model": "with-render",
         "vibe3d-pipe-runtime": "with-render"
@@ -228,10 +230,10 @@
       "subConfigurations": {
         "vibe3d-interaction-query": "web",
         "vibe3d-mesh-edit-log": "web",
-        "vibe3d-spatial": "web",
+        "vibe3d:spatial": "web",
         "vibe3d-mesh": "web",
         "vibe3d:math": "web",
-        "vibe3d-profiling": "web",
+        "vibe3d:profiling": "web",
         "vibe3d-pipe-contracts": "web",
         "vibe3d-document-model": "web",
         "vibe3d-pipe-runtime": "web"
@@ -245,10 +247,10 @@
       "subConfigurations": {
         "vibe3d-interaction-query": "root-tests",
         "vibe3d-mesh-edit-log": "root-tests",
-        "vibe3d-spatial": "root-tests",
+        "vibe3d:spatial": "root-tests",
         "vibe3d-mesh": "root-tests",
         "vibe3d:math": "root-tests",
-        "vibe3d-profiling": "root-tests",
+        "vibe3d:profiling": "root-tests",
         "vibe3d-pipe-contracts": "root-tests",
         "vibe3d-document-model": "root-tests",
         "vibe3d-pipe-runtime": "root-tests"
@@ -261,10 +263,10 @@
       "subConfigurations": {
         "vibe3d-interaction-query": "isolated-tests",
         "vibe3d-mesh-edit-log": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
         "vibe3d:math": "isolated-tests",
-        "vibe3d-profiling": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests",
         "vibe3d-pipe-contracts": "isolated-tests",
         "vibe3d-document-model": "isolated-tests",
         "vibe3d-pipe-runtime": "isolated-tests"

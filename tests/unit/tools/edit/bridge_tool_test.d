@@ -10,8 +10,8 @@ import operator : VectorStack;
 import tool;
 import mesh;
 import math;
-import editmode : EditMode;
-import params : Param;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
@@ -152,7 +152,7 @@ unittest { // Edge mode: mixed open+closed selection is a safe no-op
 unittest {
     import commands.tool.attr : ToolAttrCommand;
     import commands.tool.host : ToolHost;
-    import params : injectParamsInto;
+    import vibe3d.editing.params.params : injectParamsInto;
     import edit_session : EditSession;
     import view : View;
     Mesh m; View v;
@@ -182,7 +182,7 @@ unittest {
 }
 
 unittest {
-    import params : paramToJson, injectParamsInto, stickyParseInto;
+    import vibe3d.editing.params.params : paramToJson, injectParamsInto, stickyParseInto;
     auto t = new BridgeTool(null, null, null, null);
     auto ps = t.params();
     string[] names = ["segments", "twist", "mode", "tension", "connect", "remove",
@@ -317,7 +317,7 @@ unittest { // Prepared result metadata publishes only with its owning commit.
     import prepared_record_context : PreparedRecordContext;
     import prepared_bridge_activation : PreparedBridgeDeactivateOwner;
     import record_observer_hub : RecordObserverHub;
-    import params : injectParamsInto;
+    import vibe3d.editing.params.params : injectParamsInto;
     import view : View;
     import mesh_ops.bridge : kBridgeEditScope;
     import mesh_edit_delta : MeshEditScope;

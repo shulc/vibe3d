@@ -1,7 +1,7 @@
 module prepared_box_param;
 
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedBoxParamEffect;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedBoxParamEffect;
 import tools.create.box : BoxTool, PreparedBoxParamProjection;
 
 final class PreparedBoxParamOwner {

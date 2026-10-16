@@ -4,7 +4,7 @@ import command : Command;
 import commands.file.quit : FileQuit;
 import commands.scene.load_mesh : MeshLoadRaw;
 import commands.scene.reset : SceneReset;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import registry : CommandFactory, Registry;
 import scene_reset_effects : SceneResetEffects;

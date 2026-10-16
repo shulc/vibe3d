@@ -35,7 +35,7 @@ import bindbc.opengl : GLuint, glEnable, glDisable, GL_DEPTH_TEST;
 
 import mesh    : Mesh;
 import math    : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import handler : drawWorldSegment;
 import ai.analysis : Finding;
 

@@ -16,7 +16,7 @@ import std.path : buildPath;
 import std.process : thisProcessID;
 import std.string : indexOf;
 
-import params : Param, ParamProvider;
+import vibe3d.editing.params.params : Param, ParamProvider;
 import prefs : Prefs, loadPrefs, savePrefs;
 import prepared_pipe_activation : PreparedPipeActivationOwner;
 import registry : PreparedPipeAttrs;

@@ -29,7 +29,7 @@ final class SubpatchWorker
             res.ok = false;
             try
             {
-                import log : logError;
+                import vibe3d.util.log.log : logError;
                 logError("subpatch", "preview build failed: " ~ t.msg);
             }
             catch (Exception)

@@ -578,7 +578,7 @@ struct EventPlayer {
             return true;
         }
         catch (Exception) {
-            import log : logWarn;
+            import vibe3d.util.log.log : logWarn;
             import std.format : format;
             logWarn("eventlog", format("EventPlayer: cannot open '%s'", path));
             return false;
@@ -608,7 +608,7 @@ struct EventPlayer {
         immediateMotions_ = 0;
         framePaced_  = log.framePaced;
         {
-            import log : logInfo;
+            import vibe3d.util.log.log : logInfo;
             import std.format : format;
             logInfo("eventlog", format("EventPlayer: loaded %d events", entries.length));
         }
@@ -728,7 +728,7 @@ struct EventPlayer {
                 modCaptured = false;
             }
             {
-                import log : logInfo;
+                import vibe3d.util.log.log : logInfo;
                 logInfo("eventlog", "EventPlayer: playback finished");
             }
             return false;

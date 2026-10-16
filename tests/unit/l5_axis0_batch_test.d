@@ -53,9 +53,9 @@ import std.format : format;
 
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import command;
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 
 import tests.unit.fixtures : makeTaggedGridFull;
 import commands.mesh.subdivide          : Subdivide;

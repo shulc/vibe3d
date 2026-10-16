@@ -3,7 +3,7 @@ module toolpipe.stages.path;
 import toolpipe.stage   : Stage, TaskCode, ordPath;
 import toolpipe.packets : PathPacket;
 import operator         : Operator, Task, VectorStack, PacketKind;
-import params           : Param;
+import vibe3d.editing.params.params           : Param;
 import path             : PathSource, resolveKnots;
 import mesh             : Mesh;
 

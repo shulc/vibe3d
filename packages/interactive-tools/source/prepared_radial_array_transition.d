@@ -5,7 +5,7 @@ import tools.alignment.radial_array_tool : RadialArrayTool,
     RadialArrayTransitionImage, PreparedRadialArrayTransitionKind;
 import core.atomic : atomicOp;
 import document : Layer;
-import prepared_tool_effect : PreparedRadialArrayKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedRadialArrayKind;
 
 struct PreparedRadialArrayTransitionToken {
     @disable this(this);

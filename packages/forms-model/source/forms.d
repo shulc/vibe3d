@@ -31,8 +31,8 @@ module forms;
 // can promote to a throw, so the seam is ready.
 // ===========================================================================
 
-import params : Param, ParamHints, choicesOf, fmtFloatWire;
-import argstring : parseArgstring;
+import vibe3d.editing.params.params : Param, ParamHints, choicesOf, fmtFloatWire;
+import vibe3d.editing.params.argstring : parseArgstring;
 import command_args : positionalArgs;
 
 import std.json : JSONValue, JSONType;
@@ -775,7 +775,7 @@ string substituteQuery(const ref Binding b, JSONValue value)
 /// serializeParams() output, so forms writes stay byte-identical).
 private string quoteIfNeeded(string s)
 {
-    import argstring : quoteArgstringToken;
+    import vibe3d.editing.params.argstring : quoteArgstringToken;
     if (s.length == 0) return `""`;
     // Quote a literal "?" so a written string value can never morph into the
     // query sentinel if the line is ever re-parsed by parseBinding.

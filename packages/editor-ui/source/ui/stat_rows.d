@@ -85,7 +85,7 @@ module ui.stat_rows;
 import document  : Document, Layer, ItemKind, kindInfo, kNoEditTargetReason;
 import mesh      : Mesh, MapKind, MapDomain;
 import mesh_stats;
-import seltype   : SelType;
+import vibe3d.editing.contracts.seltype   : SelType;
 import ui.channel_rows : kindHeading;
 
 // ---------------------------------------------------------------------------

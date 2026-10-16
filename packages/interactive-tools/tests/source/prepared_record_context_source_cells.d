@@ -64,14 +64,14 @@ import toolpipe.pipeline : Pipeline;
 import pipe_gizmo_host : PipeGizmoHost;
 import document : Layer;
 import operator : VectorStack;
-import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
-import change_bus : MeshEditScope;
+import vibe3d.mesh.change.change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 
 unittest {
     import command : Command, CmdFlags;
     import mesh : Mesh;
     import view : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     final class C : Command {
         private Mesh mesh_;
         private View view_ = new View(0, 0, 1, 1);

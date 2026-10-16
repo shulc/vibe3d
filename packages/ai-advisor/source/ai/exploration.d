@@ -14,7 +14,7 @@ import std.conv   : to;
 import std.format : format;
 
 import ai.interaction_log : AiInteractionLogRecord;
-import ai.interaction     : AiCandidate;
+import vibe3d.editing.interaction.data.ai.interaction     : AiCandidate;
 
 // ---------------------------------------------------------------------------
 // Source-tag helper — mirrors defaultLiveSource() in interaction_log_writer.d.

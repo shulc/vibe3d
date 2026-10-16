@@ -7,7 +7,7 @@ import mesh;
 import document : Document, Layer;
 import math     : Vec3, matrixMirrorsWinding, transformPoint;
 import mesh_selsets : selSetsAnyLive;
-import log : logWarn;
+import vibe3d.util.log.log : logWarn;
 
 // ---------------------------------------------------------------------------
 // LWO2 export via the lwo2-writer library.

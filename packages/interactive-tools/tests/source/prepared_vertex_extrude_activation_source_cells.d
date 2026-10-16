@@ -8,12 +8,12 @@ import tools.edit.vertex_extrude_tool : VertexExtrudeTool,
 
 unittest {
     import command_history : CommandHistory;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import math : Vec3, cross;
     import mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
-    import prepared_tool_effect : PreparedActivateKind;
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
     import std.math : sqrt;

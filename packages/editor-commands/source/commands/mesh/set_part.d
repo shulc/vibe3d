@@ -4,9 +4,9 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
-import change_bus : MeshEditScope;
-import params : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
+import vibe3d.editing.params.params : Param;
 
 /// Assigns a per-face numeric part id to every selected face.
 /// Only active in Polygons edit mode; empty selection is a no-op (no history

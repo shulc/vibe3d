@@ -6,11 +6,11 @@ import tools.slice.edge_slice_tool : EdgeSliceTool, PreparedEdgeSliceActivationI
 
 unittest {
     import command_history : CommandHistory;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
-    import prepared_tool_effect : PreparedActivateKind;
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
 

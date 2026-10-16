@@ -1,6 +1,6 @@
 module operator;
 
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import toolpipe.packets : SubjectPacket, WorkplanePacket, SymmetryPacket,
                           SnapPacket, ActionCenterPacket, AxisPacket,
                           FalloffPacket, ConstrainPacket, ConstrainHitPacket,

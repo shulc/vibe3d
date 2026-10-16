@@ -1,9 +1,9 @@
 module mesh_command_registration;
 
 import command : Command;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import registry : Registry;
 import remesh.remesh_job : RemeshJob;
 import commands.mesh.subdivide;

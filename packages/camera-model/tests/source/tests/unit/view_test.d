@@ -4,16 +4,16 @@
 module tests.unit.view_test;
 
 import math;
-import spatial : Orientation, Viewport, isOrtho, sphericalToCartesian;
+import vibe3d.util.spatial.spatial : Orientation, Viewport, isOrtho, sphericalToCartesian;
 import std.math : sqrt, tan, PI;
 import std.json : JSONValue, JSONType;
-import trackball : TrackballOption, resolveTrackball, trackballRadius,
+import vibe3d.util.spatial.trackball : TrackballOption, resolveTrackball, trackballRadius,
                    trackballVector, trackballStep, trackballMouseSpeed,
                    SpinCurve, spinAngle, spinEnded, activeSpinCurve;
 import std.math : isClose, abs;
-import trackball : setTrackballGlobal, resetTrackball, setTrackballMouseSpeed, trackballRadius;
+import vibe3d.util.spatial.trackball : setTrackballGlobal, resetTrackball, setTrackballMouseSpeed, trackballRadius;
 import std.math : acos;
-import trackball : kSettleTimeMs, kSettleDurationMs, kSwingTimeMs, kSwingPeriodMs, setTrackballSwing, spinAngle, SpinCurve;
+import vibe3d.util.spatial.trackball : kSettleTimeMs, kSettleDurationMs, kSwingTimeMs, kSwingPeriodMs, setTrackballSwing, spinAngle, SpinCurve;
 import std.math : asin;
 import view;
 

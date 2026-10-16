@@ -11,7 +11,7 @@ import std.math : PI, round, sqrt;
 import std.format : format;
 
 import math : Vec3, lookAt, perspectiveMatrix;
-import spatial : ModelSpace, Viewport, projectToWindowFull;
+import vibe3d.util.spatial.spatial : ModelSpace, Viewport, projectToWindowFull;
 import mesh : Mesh;
 import snap : SnapResult, invalidateSnapGrids, snapCursor;
 import toolpipe.guide : GuideDrawState, SnapGuide;

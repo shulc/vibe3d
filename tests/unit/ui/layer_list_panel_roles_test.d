@@ -23,7 +23,7 @@ import commands.layer.commands : LayerAttr, LayerRename, LayerSelect,
 import commands.image_plane.commands : ImagePlaneAdd;
 import document : Document, ItemKind, Layer, kindInfo;
 import edit_session : EditSession;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import forms : Form, formById, g_forms, g_formsPanelEnabled, loadForms;
 import forms_render : FormsPanel;
 import guarded_action_controller : GuardObservationPorts,
@@ -31,7 +31,7 @@ import guarded_action_controller : GuardObservationPorts,
 import layer_params : itemPropsTarget;
 import mesh : makeCube;
 import registry : Registry;
-import seltype : SelType, currentSelType;
+import vibe3d.editing.contracts.seltype : SelType, currentSelType;
 import session_owner : Session;
 import tests.unit.census_symbols : blankNonCode;
 import tests.unit.ui.headless_panel : HeadlessPanel, KEY_LEFT_CTRL, MOD_CTRL,

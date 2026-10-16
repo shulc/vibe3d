@@ -15,7 +15,7 @@ import command : CmdFlags, Command, CommandOrigin, g_testMode;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import edit_session : EditSession;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import http_command_adapter : AutomationResetContext, AutomationResetHook,

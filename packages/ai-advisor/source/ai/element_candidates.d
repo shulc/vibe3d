@@ -2,8 +2,8 @@ module ai.element_candidates;
 
 import std.conv : to;
 
-import ai.debug_trace : publishElementDebugTrace;
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.debug_trace : publishElementDebugTrace;
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiElementCandidateKind, AiIntent;
 
 enum float elementAdvisorMinConfidence = 0.75f;

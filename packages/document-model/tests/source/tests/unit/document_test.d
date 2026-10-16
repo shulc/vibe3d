@@ -7,9 +7,9 @@
 module tests.unit.document_test;
 
 import mesh    : Mesh;
-import seltype : SelMode;
+import vibe3d.editing.contracts.seltype : SelMode;
 import math : Vec3, identityMatrix, translationMatrix, matrixFromEulerZYX, pivotScaleMatrix, matMul4;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 import std.conv : to;
 import document;
 
@@ -427,7 +427,7 @@ unittest {  // projectionSpace's forward-projection identity, exercised through
     // primitive; this pins document.ItemXform.modelSpace() specifically).
     import std.math : PI, isClose;
     import math : lookAt, perspectiveMatrix;
-import spatial : projectionSpace, projectToWindow, Viewport;
+import vibe3d.util.spatial.spatial : projectionSpace, projectToWindow, Viewport;
 
     ItemXform x;
     x.pos = Vec3(2, 0, -1);
@@ -556,7 +556,7 @@ unittest {  // the quadratic-oracle regression. `foregroundLayersInto` used to
 // ===========================================================================
 unittest {
     import document  : Layer;
-    import mesh_dirty : notedBirthAt;
+    import vibe3d.mesh.change.mesh_dirty : notedBirthAt;
 
     auto a = new Layer();
     auto b = new Layer();

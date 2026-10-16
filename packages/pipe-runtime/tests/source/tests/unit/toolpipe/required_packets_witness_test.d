@@ -31,7 +31,7 @@ import toolpipe.pipeline : Pipeline;
 import toolpipe.stage    : Stage, TaskCode, ordAcen, ordWork;
 import operator            : Operator, Task, VectorStack, PacketKind;
 import toolpipe.packets    : FalloffPacket;
-import log                  : snapshot, resetLogForTest, g_stderrMinLevel, LogLevel;
+import vibe3d.util.log.log                  : snapshot, resetLogForTest, g_stderrMinLevel, LogLevel;
 
 import std.algorithm : canFind, filter;
 import std.array     : array;

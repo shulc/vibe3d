@@ -5,7 +5,7 @@ import std.json;
 import std.math      : sqrt;
 
 import math : Vec3, dot, cross, pointInPolygon2D, closestOnSegment2DSquared;
-import spatial : Viewport, projectToWindowFull, AimViewport, aimSpace, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, AimViewport, aimSpace, ModelSpace;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
                           ElementConnect;
 

@@ -5,9 +5,9 @@ import command;
 import mesh            : Mesh, MapDomain, MapKind, MeshMap, MeshEditBatch,
                          kindInfo, kUvMapName, MAX_MESH_MAPS;
 import view            : View;
-import editmode        : EditMode;
+import vibe3d.editing.contracts.editmode        : EditMode;
 import mesh_edit_delta : MeshEditScope, MeshOpEntry;
-import params          : Param;
+import vibe3d.editing.params.params          : Param;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit, mapSlotOf;
 

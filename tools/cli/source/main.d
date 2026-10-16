@@ -2,7 +2,7 @@ module main;
 
 import command_invocation : CommandInvocationOutcome;
 import document : Document;
-import log : g_stderrMinLevel, LogLevel;
+import vibe3d.util.log.log : g_stderrMinLevel, LogLevel;
 import io.native : readV3d, writeV3d, lastV3dRejectReason;
 import standalone_application : StandaloneApplication;
 import std.conv : to;

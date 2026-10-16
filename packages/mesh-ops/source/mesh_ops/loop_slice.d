@@ -4,7 +4,7 @@ module mesh_ops.loop_slice;
 import mesh;
 import math;
 import std.math : sqrt;
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 import mesh_planes : rewriteFaces, FaceSource, kNoSource;
 
 /// Kernel cap on a loop slice's cut count: the captured maximum (K-A3).
@@ -2120,7 +2120,7 @@ BandCell[][] bandWalk(const(uint[])[] polys, const(uint)[] sel) {
     if (sel.length > MAX_BAND_FACES) {
         // Visible, not silent (task 1054 review): a caller handing us a
         // selection this large has no other way to learn it was cut down.
-        import log : logWarnOnce;
+        import vibe3d.util.log.log : logWarnOnce;
         import std.format : format;
         logWarnOnce("loop_slice", "bandWalkTruncated",
             format("Slice Selected band walk: selection of %d faces "

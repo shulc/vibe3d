@@ -6,10 +6,10 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : SelectionSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 
 /// Sequential mesh hygiene sweep: optionally weld coincident vertices, drop
 /// degenerate / zero-area faces, remove duplicate-vertex-set faces, remove

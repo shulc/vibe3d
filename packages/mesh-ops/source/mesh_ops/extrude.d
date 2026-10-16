@@ -5,7 +5,7 @@ import mesh;
 import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;
 import math;
 import std.math : sqrt;
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 import mesh_planes : rewriteFaces, FaceSource;
 
 // ---------------------------------------------------------------------------
@@ -2930,7 +2930,7 @@ size_t extendEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn,
     // so the side is stable for the whole drag.
     Vec3 ringOffset(uint v) {
         if (!mirror.enabled) return offset;
-        import symmetry_plane : symmetrySide;
+        import vibe3d.util.spatial.symmetry_plane : symmetrySide;
         immutable Vec3 n = mirror.planeNormal;
         immutable int side = symmetrySide(mirror.planePoint, n, ed.vertices[v], 0);
         if (side == 0) return offset - n * dot(offset, n);

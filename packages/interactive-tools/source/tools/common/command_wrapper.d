@@ -1,8 +1,8 @@
 module tools.common.command_wrapper;
 import display_state : DrawPlan;
-import prepared_tool_effect : PreparedParamDelta, PreparedParamKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedParamDelta, PreparedParamKind,
     PreparedSessionActivateEffect, PreparedActivateKind;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedToolParamDoorClient;
 import prepared_command_wrapper_activation : PreparedCommandWrapperActivationOwner;
@@ -29,14 +29,14 @@ import command : Command;
 import mesh : Mesh;
 import mesh_gpu : GpuMesh;
 import view    : View;
-import editmode : EditMode;
-import seltype  : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype  : SelType;
 import display_sync : refreshDisplay;
 import tool   : Tool, GestureRecordMode, ToolSessionPolicy, CommandClose;
 import edit_session : FrameParameterEvalClient, RefireClient;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import tools.create.create_common : screenToPlacementWorld;
 import shader : Shader;
 import handler : ClickPointHandler;
@@ -932,7 +932,7 @@ public:
     }
 
     private void installPilotPreview() {
-        import change_bus : MeshEditScope;
+        import vibe3d.mesh.change.change_bus : MeshEditScope;
         import mesh : MeshEditBatch;
         auto ed = MeshEditBatch.unrecorded(*meshPtr, MeshEditScope.Position);
         ed.setVertexPositions(latestResult_.indices, latestResult_.after);
@@ -1326,7 +1326,7 @@ unittest {
             // path must acknowledge the falloff config it consumed.  The
             // following explicit frame tick must then be a strict no-op: a
             // stale cache would silently publish Position again every frame.
-            import change_bus : changeBus;
+            import vibe3d.mesh.change.change_bus : changeBus;
             import display_sync : activeMeshResolver;
             import edit_session : EditSession;
             import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;

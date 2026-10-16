@@ -19,10 +19,10 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import math : Vec3;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : MeshSnapshot;
-import change_bus : MeshEditScope;
-import params : Param;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
+import vibe3d.editing.params.params : Param;
 import remesh.remesh_job : RemeshJob, RemeshParams,
                             MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
 

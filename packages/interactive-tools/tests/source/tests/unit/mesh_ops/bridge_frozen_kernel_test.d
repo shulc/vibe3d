@@ -2,7 +2,7 @@ module tests.unit.mesh_ops.bridge_frozen_kernel_test;
 import mesh;
 import math;
 import tools.edit.bridge_tool : BridgeParams, BridgeMode, applyBridgeOp, resolveBridgeSelection;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import std.json;
 import std.file : readText;
 import std.conv : to;

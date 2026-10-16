@@ -2,9 +2,9 @@ module tools.create.create_common;
 
 import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import math : Vec3, dot, matMul4, matrixMirrorsWinding, normalize, rayPlaneIntersect;
-import spatial : Viewport, isOrtho, projectToWindowFull, screenPointToRay;
+import vibe3d.util.spatial.spatial : Viewport, isOrtho, projectToWindowFull, screenPointToRay;
 import std.math : abs;
-public import workplane_basis : BuildPlane, mostFacingAxis, pickMostFacingPlane;
+public import vibe3d.util.spatial.workplane_basis : BuildPlane, mostFacingAxis, pickMostFacingPlane;
 import viewgrid : vectorSnap, viewVectorQuantum, viewWorkPlaneAnchor;
 
 /// Kernel cap on a primitive's ring counts (sides / segments): the captured
@@ -25,8 +25,8 @@ import drag                    : HandleDrag, DragFrame, DragKind, planeDragDelta
 import handler                 : MoveHandler;
 
 import mesh : Mesh;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.subject : evaluateSubject, viewOnlySubject, SubjectSource;
 import snap : SnapResult, snapCursor, snapPacketOf;
 import toolpipe.stages.snap : liveSnapGuides;

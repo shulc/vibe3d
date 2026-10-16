@@ -9,20 +9,20 @@ import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets, al
 import falloff : weightedLerp;
 import mesh;
 import mesh_gpu : GpuMesh;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import shader;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import tool : ToolSessionPolicy, HeadlessSourcePolicy, InputBindable;
 import bindbc.sdl : SDL_MouseButtonEvent, SDL_GetModState;
 import tool_input : InputBinding, InputButton, InputMod, InputPhase, ToolAction,
     toButton, toMods;
-import change_bus : MeshEditScope;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import document : Layer;
 import prepared_transform_activation : PreparedTransformActivationOwner;
-import prepared_tool_effect : PreparedTransformActivationEffect,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedTransformActivationEffect,
     PreparedTransformActivationKind;
 
 /// Radial Align uses the existing Apply command for panel and plain viewport

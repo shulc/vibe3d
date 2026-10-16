@@ -5,7 +5,7 @@ import math;
 import mesh_ops.bridge;
 import mesh_ops.bridge_patch;
 import tools.edit.bridge_tool : applyBridgeOp, BridgeParams, resolveBridgeSelection;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import std.json;
 import std.file : readText;
 import std.math : fabs;

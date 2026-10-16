@@ -169,8 +169,8 @@
     "vibe3d-document-model": {
       "path": "../../document-model"
     },
-    "vibe3d-edit-contracts": {
-      "path": "../../edit-contracts"
+    "vibe3d:edit-contracts": {
+      "path": "../../.."
     },
     "vibe3d-editor-commands": {
       "path": "../../editor-commands"
@@ -190,8 +190,8 @@
     "vibe3d-mesh-ops": {
       "path": "../../mesh-ops"
     },
-    "vibe3d-param-schema": {
-      "path": "../../param-schema"
+    "vibe3d:param-schema": {
+      "path": "../../.."
     },
     "vibe3d-pipe-evaluation": {
       "path": "../../pipe-evaluation"
@@ -199,8 +199,8 @@
     "vibe3d-pipe-runtime": {
       "path": "../../pipe-runtime"
     },
-    "vibe3d-profiling": {
-      "path": "../../profiling"
+    "vibe3d:profiling": {
+      "path": "../../.."
     },
     "vibe3d-remesh-runtime": {
       "path": "../../remesh-runtime"
@@ -211,15 +211,17 @@
     "vibe3d-viewport-host": {
       "path": "../../viewport-host"
     },
-    "vibe3d-log": {
-      "path": "../../../util/log"
+    "vibe3d:log": {
+      "path": "../../.."
     },
-    "vibe3d:math": {"path": "../../.."},
-    "vibe3d-spatial": {
-      "path": "../../spatial"
+    "vibe3d:math": {
+      "path": "../../.."
     },
-    "vibe3d-interaction-data": {
-      "path": "../../interaction-data"
+    "vibe3d:spatial": {
+      "path": "../../.."
+    },
+    "vibe3d:interaction-data": {
+      "path": "../../.."
     },
     "vibe3d-interaction-query": {
       "path": "../../interaction-query"
@@ -272,24 +274,24 @@
         "vibe3d-document-channels": "isolated-tests",
         "vibe3d-document-io": "isolated-tests",
         "vibe3d-document-model": "isolated-tests",
-        "vibe3d-edit-contracts": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d-editor-commands": "isolated-tests",
         "vibe3d-input-events": "isolated-tests",
         "vibe3d-interactive-tools": "isolated-tests",
         "vibe3d-interchange": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
         "vibe3d-mesh-ops": "isolated-tests",
-        "vibe3d-param-schema": "isolated-tests",
+        "vibe3d:param-schema": "isolated-tests",
         "vibe3d-pipe-evaluation": "isolated-tests",
         "vibe3d-pipe-runtime": "isolated-tests",
-        "vibe3d-profiling": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests",
         "vibe3d-remesh-runtime": "isolated-tests",
         "vibe3d-viewport-gpu": "isolated-tests",
         "vibe3d-viewport-host": "isolated-tests",
-        "vibe3d-log": "isolated-tests",
+        "vibe3d:log": "isolated-tests",
         "vibe3d:math": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests",
-        "vibe3d-interaction-data": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:interaction-data": "isolated-tests",
         "vibe3d-interaction-query": "isolated-tests",
         "vibe3d-mesh-snapshot": "isolated-tests",
         "vibe3d-pipe-contracts": "isolated-tests",

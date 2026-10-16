@@ -4,13 +4,13 @@ import std.math : sqrt, round, floor, isNaN;
 import core.sync.mutex : Mutex;
 
 import math : Vec3, frontFacingLocal, rayPlaneIntersect, pointInPolygon2D, closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot, perpendicularFrame, rayTriangleIntersect, closestPointOnTriangle2D, triangulatePolygonEarClip;
-import spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull, screenRay, screenPointToRay, isOrtho, viewPixelScale;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull, screenRay, screenPointToRay, isOrtho, viewPixelScale;
 import mesh : Mesh;
 import mesh_visibility : VisibilityProbe, visibilityProbe;
-import mesh_dirty : MeshDirtyKey, g_geomEpochs, g_settledGeomEpochs;
+import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, g_geomEpochs, g_settledGeomEpochs;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import constraint : BackgroundSource;
 import snap_election : SnapElection;
 import operator : VectorStack;
@@ -2284,7 +2284,7 @@ private void clearExcludeMembership(const(uint)[] exclude) {
 // ---------------------------------------------------------------------------
 unittest {
     import mesh                      : makeCube;
-    import change_bus                : MeshEditScope;
+    import vibe3d.mesh.change.change_bus                : MeshEditScope;
     import math                      : lookAt, perspectiveMatrix;
     import std.math                  : PI;
     import std.algorithm.searching   : canFind;
@@ -2348,7 +2348,7 @@ unittest {
 
     // --- C. the change-bus epoch IS the key ---------------------------------
     {
-        import mesh_dirty : noteMeshChange;
+        import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
         noteMeshChange(cast(size_t)&cube, MeshEditScope.Position);
     }
     auto candsFresh = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
@@ -2853,7 +2853,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import math : lookAt, perspectiveMatrix;
-import spatial : viewPixelScale;
+import vibe3d.util.spatial.spatial : viewPixelScale;
     import std.math : PI, abs;
 
     Viewport vp;
@@ -3064,7 +3064,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import math : lookAt, perspectiveMatrix;
-import spatial : viewPixelScale;
+import vibe3d.util.spatial.spatial : viewPixelScale;
     import std.math : PI, abs;
 
     Viewport vp;

@@ -1,7 +1,7 @@
 module commands.tool.bridge_headless;
 
 import commands.tool.headless : ToolHeadlessCommand;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh;
 import registry : ToolFactory;
 import tools.edit.bridge_tool : BridgeTool;

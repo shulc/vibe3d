@@ -24,10 +24,10 @@ import tools.create.create_common : BuildPlane,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
                               workplaneCursorPlaneHit;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;

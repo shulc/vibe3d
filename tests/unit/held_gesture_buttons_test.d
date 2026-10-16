@@ -150,7 +150,7 @@ unittest { // u5: the history chokepoint refuses while a button is held
     // take (slice M4: the redo positive control reads the history, the
     // former SessionLiveRedo stand-in left with the interface).
     final class RedoCmd : Command {
-        import editmode : EditMode;
+        import vibe3d.editing.contracts.editmode : EditMode;
         import view : View;
         size_t* redos;
         View view_;

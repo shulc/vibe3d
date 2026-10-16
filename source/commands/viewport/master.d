@@ -3,10 +3,10 @@ module commands.viewport.master;
 import command;
 import commands.viewport.command_base : ViewportCommand;
 import mesh;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import view;
 import viewport : ViewportManager;
-import params : Param, wireArgs;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 /// `viewport.master <id>` — set the ACTIVE cell's per-cell master override,
 /// camera-only, no undo (task 0761; previously intercepted ahead of the

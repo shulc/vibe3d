@@ -2,15 +2,15 @@ module tests.unit.standalone_application_test;
 import mesh_edit_replay : apply, revert;
 
 import active_mesh_resolver : activeMeshResolver;
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 import command : g_editTargetResolver;
 import command_invocation : CommandInvocationOutcome;
 import document : Document, primaryModelSpaceResolver;
 import mesh : Mesh, makeCube, g_isDocumentMesh;
-import mesh_dirty : allWatchers, MeshDirtyEpochs, g_geomEpochs, g_topoEpochs, noteMeshChange;
+import vibe3d.mesh.change.mesh_dirty : allWatchers, MeshDirtyEpochs, g_geomEpochs, g_topoEpochs, noteMeshChange;
 import mesh_edit_delta : MeshEditScope;
 import snapshot : MeshSnapshot, SelectionSnapshot;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import std.algorithm : sort, canFind;
 import std.conv : to;
 import std.json : JSONValue;

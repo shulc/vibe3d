@@ -24,7 +24,7 @@ import mesh_edit_delta;
 
 import std.array : insertInPlace;
 
-import change_bus : changeBus;   // the seam counters (task 1903 §5.8 / L1-P1)
+import vibe3d.mesh.change.change_bus : changeBus;   // the seam counters (task 1903 §5.8 / L1-P1)
 
 import mesh;            // Mesh, Marks, edgeKey (mutual import — see note below)
 import math : Vec3;
@@ -904,7 +904,7 @@ private StableEntry captureStableEntry(in Mesh m) {
 unittest // W7 — the fast path's asserts are COMPILED (see the header above)
 {
     import core.exception : AssertError;
-    import mesh_corner_maps : CornerDrop;
+    import vibe3d.mesh.contracts.mesh_corner_maps : CornerDrop;
 
     Mesh m = makeGridPlane(2);
     m.resetSelection();

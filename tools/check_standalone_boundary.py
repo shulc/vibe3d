@@ -26,10 +26,10 @@ CORE_CELLS = ('document-primary', 'invocation-order', 'invocation-outcomes', 'in
 STB_REVISION = 'a66f6917718ea128076a2c5660e37f362a785144'
 # Canonical JSON pins include configuration/build-type grants and platform keys.
 DESCRIPTORS = {
-    'packages/command-runtime': '8dfc0d96acc464e36a3e11aa045ed91dad6ce6ae22f430972bc2a31c0bc4dec4',
-    'packages/application-core': '456bd7b1818be6f17a87fbd044c1c5ee923ff81baba10208e732ee77b0bc7915',
-    'tests/core': '19f46994b1aebd17cc00ed5f39b9d03a56942f1e5e986367bdf563a56a9f2eaa',
-    'tools/cli': '2b13fbc0b4d8b2d3e463947d86bb667377564319ff67d606b1459abd6ef59545',
+    'packages/command-runtime': '7e3f393e50c787470e615c0fa5fb51f8f55f75ba06d6ed27c20e462879a344ea',
+    'packages/application-core': 'a2a24d838625b785aef49ede8386e999b39f73d1236e367b828771e4ce81801a',
+    'tests/core': '3790a284610cea9738c1ebb2d3984b039ec69a66ac6c17e43bfb5cf10e6d3bb6',
+    'tools/cli': '82365b33a1aa67624cb8e51e903bedb128ec8287a8674cbc5f65cec4167f9f20',
 }
 HOOKS = ('preGenerateCommands', 'postGenerateCommands', 'preBuildCommands',
          'postBuildCommands', 'preRunCommands', 'postRunCommands')

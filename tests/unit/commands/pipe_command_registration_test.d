@@ -15,7 +15,7 @@ import commands.workplane : WorkplaneResetCommand, WorkplaneEditCommand,
     WorkplaneRotateCommand, WorkplaneOffsetCommand,
     WorkplaneAlignToSelectionCommand;
 import edit_session : EditSession, LiveEvalClient, ParameterChangeBatch;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
 import mesh : Mesh;
 import pipe_command_registration : registerPipeStageCommands;

@@ -13,7 +13,7 @@ import command_history : CommandHistory;
 import edit_session    : EditSession;
 import forms           : Form, Row;
 import forms_render    : FormsPanel;
-import params          : Param;
+import vibe3d.editing.params.params          : Param;
 import property_panel  : PropertyPanel;
 import tool            : Tool;
 import toolpipe.stages.constrain;

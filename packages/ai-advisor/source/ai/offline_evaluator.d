@@ -2,7 +2,7 @@ module ai.offline_evaluator;
 
 import std.math : isFinite;
 
-import ai.interaction : AiAdvisorDecision, AiCandidate;
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate;
 import ai.interaction_log : AiInteractionLogRecord;
 
 struct AiOfflineBaselinePrediction {

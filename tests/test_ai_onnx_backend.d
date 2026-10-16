@@ -8,7 +8,7 @@
 import std.file : write, remove, tempDir;
 import std.path : buildPath;
 
-import ai.interaction : AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.interaction : AiCandidate, AiCandidateKind,
     AiInteractionContext, AiIntent;
 import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelFallbackMode, AiModelStatus;

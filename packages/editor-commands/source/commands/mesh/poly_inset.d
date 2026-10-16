@@ -6,8 +6,8 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import mesh_ops.poly_bevel;
 import view;
-import editmode;
-import params : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
 
 /// Polygon Inset (one-shot, undoable): for each selected face, move each

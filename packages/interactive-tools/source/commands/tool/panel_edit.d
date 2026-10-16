@@ -3,10 +3,10 @@ module commands.tool.panel_edit;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math : Vec3;
 import commands.tool.host : ToolHost;
-import params : Param, wireArgs;
+import vibe3d.editing.params.params : Param, wireArgs;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 
 // ---------------------------------------------------------------------------

@@ -9,8 +9,8 @@
   "importPaths": [],
   "dflags": [],
   "dependencies": {
-    "vibe3d-log": {
-      "path": "../../util/log"
+    "vibe3d:log": {
+      "path": "../.."
     },
     "vibe3d-document-model": {
       "path": "../../packages/document-model"
@@ -29,7 +29,7 @@
     "dmd": ">=2.111.0"
   },
   "subConfigurations": {
-    "vibe3d-log": "modeling-noai",
+    "vibe3d:log": "modeling-noai",
     "vibe3d-document-model": "modeling-noai",
     "vibe3d-document-io": "modeling-noai",
     "vibe3d-command-runtime": "modeling-noai",

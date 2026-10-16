@@ -39,7 +39,7 @@ import math        : Vec3;
 import mesh        : Mesh, MapKind, makeCube;
 import document    : Document, Layer;
 import view        : View;
-import editmode    : EditMode;
+import vibe3d.editing.contracts.editmode    : EditMode;
 import morph_target;
 import session_owner : Session;
 import tests.unit.census_symbols : blankNonCode;

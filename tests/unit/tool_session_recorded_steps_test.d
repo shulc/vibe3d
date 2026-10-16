@@ -8,7 +8,7 @@ import command_history : RunCloseMode, RecordedRunBoundaryMode, RunCloseScope, H
 import commands.tool.lifecycle : ToolActivationCommand;
 import command_executor : CommandExecutor;
 import edit_session : EditSession, RefireClient;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import tool : Tool, ToolSessionPolicy;
 import tool_presets : loadToolPresets;
 import tool_activation_ownership : ToolTransition;

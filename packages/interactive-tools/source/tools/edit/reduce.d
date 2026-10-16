@@ -4,7 +4,7 @@ import prepared_record_context : PreparedToolParamDoorClient,
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -14,8 +14,8 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.decimate : reduceToTarget, kReduceEditScope;
 import math;
-import editmode : EditMode;
-import params : Param;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
 import display_sync : refreshDisplay;
 import shader : LitShader;
 import command_history : CommandHistory;
@@ -24,13 +24,13 @@ import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 
 import std.math : lround;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
 import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
-import prepared_tool_effect : PreparedReductionParamEffect,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedReductionParamEffect,
     PreparedReductionParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;

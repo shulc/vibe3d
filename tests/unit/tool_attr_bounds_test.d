@@ -7,7 +7,7 @@ module tests.unit.tool_attr_bounds_test;
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
-import params : Param, ParamFlags;
+import vibe3d.editing.params.params : Param, ParamFlags;
 import tool_attr_bounds : applyToolAttrBound, clampStoredToBounds, kToolAttrBounds;
 import toolpipe.stages.constrain;
 import toolpipe.stage;
@@ -17,7 +17,7 @@ unittest { // population floor: the table's row count, measured
 }
 
 unittest { // an axis row takes the number and clamps it; unarmed, the number is refused
-    import params : IntEnumEntry, injectParamsInto;
+    import vibe3d.editing.params.params : IntEnumEntry, injectParamsInto;
     import std.exception : assertThrown;
     import std.json : parseJSON;
     static immutable IntEnumEntry[] xyz = [IntEnumEntry(0, "x", "X"),
@@ -160,7 +160,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
 
 
 unittest { // a stage row uses the same table; stored paths keep their values
-    import params : parseInto;
+    import vibe3d.editing.params.params : parseInto;
     import toolpipe.stages.constrain : ConstrainStage;
     import toolpipe.attr_cache : recallNodeAttrs;
     auto cs = new ConstrainStage;
@@ -189,7 +189,7 @@ private final class RefusingOffset : toolpipe.stages.constrain.ConstrainStage {
 unittest { // normalization respects a stage override's refusal boundary
     import commands.tool.pipe : ToolPipeAttrCommand;
     import commands.tool.host : ToolHost;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import mesh : makeCube;
     import view : View;
     import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
@@ -225,7 +225,7 @@ private final class AxisStageProbe : toolpipe.stage.Stage {
         return toolpipe.stage.TaskCode.Cons;
     }
     override Param[] params() {
-        import params : IntEnumEntry;
+        import vibe3d.editing.params.params : IntEnumEntry;
         static immutable IntEnumEntry[] xyz = [IntEnumEntry(0, "x", "X"),
             IntEnumEntry(1, "y", "Y"), IntEnumEntry(2, "z", "Z")];
         return [Param.intEnum_("axis", "Axis", &axis, xyz, 2)];
@@ -235,7 +235,7 @@ private final class AxisStageProbe : toolpipe.stage.Stage {
 unittest { // numeric enum rows retain the wire tag the stage setter expects
     import commands.tool.pipe : ToolPipeAttrCommand;
     import commands.tool.host : ToolHost;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import mesh : makeCube;
     import view : View;
     import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;

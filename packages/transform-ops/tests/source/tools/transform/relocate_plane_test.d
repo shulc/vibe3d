@@ -28,7 +28,7 @@ module tools.transform.relocate_plane_test;
 version (unittest) {
 
 import math : Vec3, lookAt, perspectiveMatrix, orthographicMatrix, normalize;
-import spatial : Viewport, lockedViewAxis;
+import vibe3d.util.spatial.spatial : Viewport, lockedViewAxis;
 import tools.transform.relocate_plane;
 import viewgrid : axisComp, dnint, niceOrigin;
 import std.math : abs, PI, tan;

@@ -3,7 +3,7 @@ module registry_source_cells;
 import mesh;
 import mesh_gpu : GpuMesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import shader;
 import tool;
 import command;
@@ -14,7 +14,7 @@ import command_history : CommandHistory;
 import command_invocation : CommandInvocationService, RefireDispatch, UiInvocation,
     InteractiveConfiguration, RefusalNotice;
 import live_registration_roles : LiveSessionRole;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import registry;
 
 unittest {

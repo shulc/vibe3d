@@ -6,16 +6,16 @@ module tests.unit.toolpipe.stages.axis_test;
 import std.format : format;
 import std.math   : abs, sqrt;
 import math : Vec3, cross, dot, normalize, frameMatrix, frameMatrixInverse, applyAffine;
-import spatial : Viewport, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
 import mesh    : Mesh;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAxis;
 import toolpipe.packets  : AxisPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath;
 import document          : Layer;
-import params            : IntEnumEntry, wireTagForValue, valueForWireTag,
+import vibe3d.editing.params.params            : IntEnumEntry, wireTagForValue, valueForWireTag,
                            tableCoversEnumOf;
 import std.math : isClose, sin, cos, PI;
 import math : matMul4, applyAffine, identityMatrix;
@@ -87,7 +87,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import document : Layer;
-    import seltype  : SelType;
+    import vibe3d.editing.contracts.seltype  : SelType;
 
     bool vecEq(Vec3 a, Vec3 b) {
         return isClose(a.x, b.x, 1e-6f, 1e-6f) && isClose(a.y, b.y, 1e-6f, 1e-6f)
@@ -149,7 +149,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import mesh     : makeCube;
-    import seltype  : SelType;
+    import vibe3d.editing.contracts.seltype  : SelType;
     import std.conv : to;
 
     bool vecEq(Vec3 a, Vec3 b) {

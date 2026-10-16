@@ -3,9 +3,9 @@ module commands.select.element;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : SelectionSnapshot;
-import params : Param, wireArgs;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 // One invocation owns one ordered selection image without changing active type.
 // Invalid IDs are skipped; nonempty set clears on its first valid ID only.

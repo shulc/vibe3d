@@ -5,14 +5,14 @@ import handles.shapes;
 import std.conv : to;
 import std.format : format;
 
-import perf_probe : g_fc;
+import vibe3d.util.profiling.perf_probe : g_fc;
 
-import ai.advisor : AiAdvisor;
-import ai.debug_trace : publishHandleDebugTrace;
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.advisor : AiAdvisor;
+import vibe3d.editing.interaction.data.ai.debug_trace : publishHandleDebugTrace;
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiInteractionPhase, AiIntent;
 import math;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import std.json : JSONValue;
 
 private AiAdvisor g_handleAiAdvisor;

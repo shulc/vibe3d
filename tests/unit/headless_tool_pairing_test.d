@@ -13,15 +13,15 @@ import commands.mesh.morph_edit : MeshMorphEdit;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import document : Document, Layer;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import editor_app : EditorApp;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import pipe_gizmo_host : PipeGizmoHost;
 import registration : registerTools;
 import registry : Registry, ToolFactory;
-import seltype : SelMode;
+import vibe3d.editing.contracts.seltype : SelMode;
 import session_owner : Session;
 import tests.unit.census_symbols : balancedSpan, blankNonCode, countOccurrences,
     registrationFamilyBytes;

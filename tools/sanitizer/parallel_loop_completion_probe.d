@@ -13,7 +13,7 @@ import std.parallelism : parallel;
 import std.range : iota;
 import std.stdio : writeln;
 
-import tsan_annotate : parallelForWithCompletion;
+import vibe3d.util.parallel.tsan_annotate : parallelForWithCompletion;
 
 enum size_t kRounds = 300;
 enum size_t kItems = 4096;

@@ -3,7 +3,7 @@
 import std.algorithm : canFind;
 import std.json : JSONType, parseJSON;
 
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiElementCandidateKind, AiInteractionContext, AiInteractionPhase,
     AiIntent;
 import ai.interaction_log : AiInteractionLogRecord,

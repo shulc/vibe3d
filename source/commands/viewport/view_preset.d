@@ -3,10 +3,10 @@ module commands.viewport.view_preset;
 import command;
 import commands.viewport.command_base : ViewportCommand;
 import mesh;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import view;
 import viewport : ViewportManager;
-import params : Param, wireArgs;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 /// `viewport.view <preset>` — camera-only preset switch (task 0215),
 /// registered as a command (task 0761; previously intercepted ahead of the

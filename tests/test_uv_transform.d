@@ -31,7 +31,7 @@ import std.conv   : to;
 
 import mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
 import view       : View;
-import editmode   : EditMode;
+import vibe3d.editing.contracts.editmode   : EditMode;
 import commands.mesh.uv_transform;
 import std.net.curl : post, get;
 
@@ -105,7 +105,7 @@ private void selectOnlyFace(ref Mesh m, uint fi) {
 
 // Set param named `name` to string value on cmd.
 private void setStrParam(T)(T cmd, string name, string value) {
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params())
         if (p.name == name) { *p.sptr = value; return; }
     assert(false, "param not found: " ~ name);

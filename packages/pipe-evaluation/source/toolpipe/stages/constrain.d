@@ -5,10 +5,10 @@ import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           SubjectPacket;
 import operator         : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths      : setStatePath, installPreparedStatePath;
-import params           : Param, IntEnumEntry, wireTagForValue;
+import vibe3d.editing.params.params           : Param, IntEnumEntry, wireTagForValue;
 import surface_pick     : BackgroundRayPicker, SurfaceHit;
 import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import constraint        : BackgroundSource;
 import snap             : backgroundSourcesFull;
 
@@ -75,7 +75,7 @@ struct GuideEnvironment {
     ConstrainGeom geometry;
     Viewport viewport;
     bool supported() const {
-        import spatial : isOrtho, lockedViewAxis;
+        import vibe3d.util.spatial.spatial : isOrtho, lockedViewAxis;
         return requested && (isOrtho(viewport)
             ? geometry == ConstrainGeom.Off && lockedViewAxis(viewport) >= 0
             : geometry == ConstrainGeom.Point);
@@ -141,7 +141,7 @@ public:
     // (9528, doc/tool_perspective_component_guide_amendment_2026-10-06.md).
     auto componentGuide(Vec3 incoming, const ref GuideEnvironment env) {
         import toolpipe.packets : ComponentGuide;
-        import spatial : lockedViewAxis, eyeVectorAt, isOrtho, projectToWindowFull, screenPointToRay;
+        import vibe3d.util.spatial.spatial : lockedViewAxis, eyeVectorAt, isOrtho, projectToWindowFull, screenPointToRay;
         import constraint : surfaceComponentMask;
         ComponentGuide result;
         if (!env.supported()) return result;
@@ -198,7 +198,7 @@ public:
     }
 
     private static void pixelRay(int x, int y, const ref Viewport vp, out Vec3 org, out Vec3 dir) {
-        import spatial : screenPointToRay;
+        import vibe3d.util.spatial.spatial : screenPointToRay;
         screenPointToRay(x + 0.5f, y + 0.5f, vp, org, dir);
     }
 
@@ -443,7 +443,7 @@ ConstrainStage liveConstrainStage() {
 // hand-written geom<->token switches).
 // ---------------------------------------------------------------------------
 unittest {
-    import params : tableCoversEnum;
+    import vibe3d.editing.params.params : tableCoversEnum;
 
     auto cs = new ConstrainStage();
     // Round-trip every wire tag through setAttr -> listAttrs.

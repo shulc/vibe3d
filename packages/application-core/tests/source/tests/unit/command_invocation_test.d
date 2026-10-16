@@ -5,17 +5,17 @@ import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import command_invocation;
 import command_registry : CommandRegistry;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import falloff : IFalloffAware;
 import toolpipe.packets : FalloffPacket;
 import mesh : Mesh, makeCube, g_isDocumentMesh;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import pilot_command_registration;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import view : View;
 import math : Vec3;
-import spatial : Viewport;
-import change_bus : changeBus, ChangeBus;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.mesh.change.change_bus : changeBus, ChangeBus;
 import std.stdio : writeln;
 
 private final class InvocationProbe : Command, IFalloffAware {

@@ -1,9 +1,9 @@
 module session_owner;
 
 import document : Document, noEditTargetMesh;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh;
-import seltype : SelType, SelTypeOrder, geometryEditMode, geometrySelType;
+import vibe3d.editing.contracts.seltype : SelType, SelTypeOrder, geometryEditMode, geometrySelType;
 
 /// The one approved active-layer lifecycle seam (task 5720). It is a function
 /// pointer, not a subscriber collection: this pilot moves one cleanup and does

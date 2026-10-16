@@ -3,7 +3,7 @@ module commands.file.quit;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 
 /// "File → Quit" — terminates the main loop cleanly. Wired in
 /// app.d to a `() { running = false; }` delegate so the next pass

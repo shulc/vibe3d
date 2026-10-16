@@ -12,7 +12,7 @@ module tests.unit.mesh_remove_own_orphans_test;
 // (0, 11) hanging off F0's corner 0. Removing F0 orphans corner 3 and the
 // edges (0, 1), (3, 0), (4, 3); corner 0 keeps its wire, so it stays.
 
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 import math : Vec3;
 import mesh : Mesh;
 import mesh_topo : edgeKey;

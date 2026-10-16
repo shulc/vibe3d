@@ -17,13 +17,13 @@ import mesh_edit_replay : apply, revert;
 import std.conv   : to;
 import std.format : format;
 
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 import command;
 import math    : Vec3;
 import mesh;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope, MeshOpEntry;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 
 import tests.unit.fixtures : makeTaggedGridFull;
 

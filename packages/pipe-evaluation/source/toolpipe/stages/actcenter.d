@@ -3,15 +3,15 @@ module toolpipe.stages.actcenter;
 import std.format : format;
 
 import math : Vec3, rayPlaneIntersect, applyAffine;
-import spatial : Pin, Viewport, screenRay, screenPointToRay, ModelSpace;
+import vibe3d.util.spatial.spatial : Pin, Viewport, screenRay, screenPointToRay, ModelSpace;
 import mesh    : Mesh, edgeKey, MeshKey, MeshTermMarks;
-import mesh_dirty : MeshDirtyKey, MeshTermTopoEpoch, g_topoEpochs;  // task 1906 stage 2d (row 15)
-import editmode : EditMode;
-import tool_policy_values : Rollover;
-import seltype : SelType;
+import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, MeshTermTopoEpoch, g_topoEpochs;  // task 1906 stage 2d (row 15)
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.tool_policy_values : Rollover;
+import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAcen, ToolSwitchTransient,
                            PresetClaimable;
-import params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
+import vibe3d.editing.params.params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
 import toolpipe.stages.symmetry : liveSymmetryStage;
@@ -2291,7 +2291,7 @@ private:
                 // Task 3020 — the shared wire gate; a non-finite pivot
                 // component makes every later frame NaN, so it is refused
                 // rather than written.
-                import params : assignWireFloat;
+                import vibe3d.editing.params.params : assignWireFloat;
                 float v;
                 if (!assignWireFloat(value, v)) return false;
                 if      (name == "cenX") manualCenter.x = v;
@@ -2313,7 +2313,7 @@ private:
                 // mouse-down relocate and tests rely on it staging.
                 // Task 3020 — the shared wire gate, atomic across the three
                 // components (nothing is staged unless all three are finite).
-                import params : assignWireVec3;
+                import vibe3d.editing.params.params : assignWireVec3;
                 Vec3 hit;
                 if (!assignWireVec3(value, hit)) return false;
                 setUserPlaced(hit);
@@ -2328,7 +2328,7 @@ private:
                 // use to simulate the post-click state for the Element
                 // falloff pivot path without a real GPU-hover-driven
                 // click.
-                import params : assignWireFloat;
+                import vibe3d.editing.params.params : assignWireFloat;
                 float v;
                 if (!assignWireFloat(value, v)) return false;
                 if      (name == "userPlacedX") userPin.center.x = v;
@@ -2385,7 +2385,7 @@ private:
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : makeCube;
-    import params : tableCoversEnum;
+    import vibe3d.editing.params.params : tableCoversEnum;
 
     Mesh cube = makeCube();
     Mesh* meshPtr = &cube;
@@ -2504,7 +2504,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import mesh       : Mesh;
-    import mesh_dirty : g_topoEpochs;
+    import vibe3d.mesh.change.mesh_dirty : g_topoEpochs;
 
     Mesh* a = new Mesh;
     a.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
@@ -2571,7 +2571,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import mesh            : Mesh;
-    import mesh_dirty      : noteMeshChange;
+    import vibe3d.mesh.change.mesh_dirty      : noteMeshChange;
     import mesh_edit_delta : MeshEditScope;
 
     Mesh* m = new Mesh;   // heap — see the M9 block above

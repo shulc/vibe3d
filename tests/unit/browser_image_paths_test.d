@@ -21,7 +21,7 @@ import command : g_testMode;
 import commands.file.save : FileSave, FileSaveMode;
 import commands.image.commands : ImageLoad;
 import document : Document;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import io.browser_pick_resume : setWorkRootForTest;
 import io.doc_state : clearCurrentDoc, currentDocPath, hasCurrentDoc;
 import io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;

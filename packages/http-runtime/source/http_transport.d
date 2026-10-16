@@ -57,7 +57,7 @@ mixin template HttpServerTransport()
     import std.socket;
     import std.string : split, strip, toLower;
 
-    import log : logError, logInfo, logWarn;
+    import vibe3d.util.log.log : logError, logInfo, logWarn;
 
     private Socket serverSocket;
     // WHY THIS IS `shared` AND WHY EVERY ACCESS GOES THROUGH core.atomic

@@ -5,11 +5,11 @@ module tests.unit.handles.gl_util_test;
 
 import bindbc.opengl;
 import std.math : sqrt, PI, abs;
-import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
+import vibe3d.util.profiling.perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import gl_thread_guard : glThreadGuard;
 import shader : seedSharedFragUniforms;
 import math;
-import spatial : Viewport, isAxisView, lockedViewAxis;
+import vibe3d.util.spatial.spatial : Viewport, isAxisView, lockedViewAxis;
 import handles.gl_util;
 
 unittest {

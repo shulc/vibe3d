@@ -10,8 +10,8 @@
     "vibe3d-document-model": {
       "path": "../document-model"
     },
-    "vibe3d-edit-contracts": {
-      "path": "../edit-contracts"
+    "vibe3d:edit-contracts": {
+      "path": "../.."
     },
     "vibe3d-mesh": {
       "path": "../mesh"
@@ -161,7 +161,7 @@
       ],
       "subConfigurations": {
         "vibe3d-document-model": "modeling",
-        "vibe3d-edit-contracts": "modeling",
+        "vibe3d:edit-contracts": "modeling",
         "vibe3d-mesh": "modeling"
       }
     },
@@ -170,7 +170,7 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-document-model": "modeling-noai",
-        "vibe3d-edit-contracts": "modeling-noai",
+        "vibe3d:edit-contracts": "modeling-noai",
         "vibe3d-mesh": "modeling-noai"
       }
     },
@@ -182,7 +182,7 @@
       ],
       "subConfigurations": {
         "vibe3d-document-model": "with-render",
-        "vibe3d-edit-contracts": "with-render",
+        "vibe3d:edit-contracts": "with-render",
         "vibe3d-mesh": "with-render"
       }
     },
@@ -193,7 +193,7 @@
       ],
       "subConfigurations": {
         "vibe3d-document-model": "web",
-        "vibe3d-edit-contracts": "web",
+        "vibe3d:edit-contracts": "web",
         "vibe3d-mesh": "web"
       }
     },
@@ -205,7 +205,7 @@
       ],
       "subConfigurations": {
         "vibe3d-document-model": "root-tests",
-        "vibe3d-edit-contracts": "root-tests",
+        "vibe3d:edit-contracts": "root-tests",
         "vibe3d-mesh": "root-tests"
       },
       "targetType": "sourceLibrary"
@@ -215,7 +215,7 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-document-model": "isolated-tests",
-        "vibe3d-edit-contracts": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d-mesh": "isolated-tests"
       },
       "targetType": "sourceLibrary"

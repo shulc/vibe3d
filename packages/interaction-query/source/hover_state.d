@@ -145,7 +145,7 @@ PickGather pickDistances(int mx, int my, const(float[2])* v, const(float[2][2])*
 // Tool presses have their own facing admission; ordinary selection keeps its policy.
 import mesh : Mesh;
 import math : Vec3, dot, cross, closestPointOnSegmentToRay, closestOnSegment2D, rayTriangleIntersect;
-import spatial : Viewport, ModelSpace, screenPointToRay, projectToWindowFull, eyeVectorAt, aimSpace;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace, screenPointToRay, projectToWindowFull, eyeVectorAt, aimSpace;
 
 struct ToolPressSource { const(Mesh)* mesh; ModelSpace space; int layer = -1; }
 struct ToolPressTarget {

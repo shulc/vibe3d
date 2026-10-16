@@ -1,7 +1,7 @@
 module property_panel;
 
 import tool   : Tool, AttrImage;
-import params : Param, ParamProvider;
+import vibe3d.editing.params.params : Param, ParamProvider;
 import params_widgets : drawParamWidget;
 import tool_attr_bounds : applyToolAttrBound, clampStoredToBounds;
 import edit_session : EditSession, ParameterChangePhase, ParameterChangeSource;

@@ -1,14 +1,14 @@
 module symmetry;
-static import spatial;
+static import spatial = vibe3d.util.spatial.spatial;
 
 import std.algorithm : sort, max;
 import std.math      : abs;
 
 import math : Vec3, dot;
-public import symmetry_plane : symmetrySide;
+public import vibe3d.util.spatial.symmetry_plane : symmetrySide;
 static import math;
 import mesh : Mesh;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import toolpipe.packets : SymmetryPacket;
 
 // ---------------------------------------------------------------------------
@@ -719,7 +719,7 @@ void writeMovePositions(ref Mesh mesh, const(SymmetryPacket)* sp,
 // symmetric weld owns absorption on the plane. The query retains client reach.
 bool moveMirrorCenter(const ref SymmetryPacket sp,uint source,Vec3 point,
         spatial.ModelSpace space,const ref spatial.Viewport view,float reach,ref Vec3 center) {
-    import spatial : projectToWindowFull;
+    import vibe3d.util.spatial.spatial : projectToWindowFull;
     if(source>=sp.pairOf.length || sp.pairOf[source]<0) return false;
     float ax,ay,az,bx,by,bz;
     if(!projectToWindowFull(space.toWorldPoint(point),view,ax,ay,az)

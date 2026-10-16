@@ -3,10 +3,10 @@ module commands.viewport.independence;
 import command;
 import commands.viewport.command_base : ViewportCommand;
 import mesh;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import view;
 import viewport : ViewportManager;
-import params : Param, wireArgs;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 /// Which of a cell's three independence flags this instance backs. One
 /// class, three registrations (`viewport.indCenter`/`indScale`/`indRotate`)

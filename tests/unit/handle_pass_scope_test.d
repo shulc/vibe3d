@@ -1,6 +1,6 @@
 module tests.unit.handle_pass_scope_test;
 
-import perf_probe : DrawPass, FrameWorkProbe, kMaxHandleReceipts;
+import vibe3d.util.profiling.perf_probe : DrawPass, FrameWorkProbe, kMaxHandleReceipts;
 import std.algorithm : canFind;
 
 unittest {

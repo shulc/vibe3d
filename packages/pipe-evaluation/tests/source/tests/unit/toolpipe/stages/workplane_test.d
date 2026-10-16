@@ -7,11 +7,11 @@ import std.math : sin, cos, PI, abs;
 import std.conv : to;
 import std.format : format;
 import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import toolpipe.stage    : Stage, TaskCode, ordWork;
 import toolpipe.packets  : WorkplanePacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import workplane_basis : pickMostFacingPlane;
+import vibe3d.util.spatial.workplane_basis : pickMostFacingPlane;
 import toolpipe.state_paths        : setStatePath;
 import toolpipe.stages.workplane;
 

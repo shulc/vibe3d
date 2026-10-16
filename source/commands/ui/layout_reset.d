@@ -1,7 +1,7 @@
 module commands.ui.layout_reset;
 
 import command;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import mesh;
 import view;
 

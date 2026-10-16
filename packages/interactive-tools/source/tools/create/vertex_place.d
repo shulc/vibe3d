@@ -7,8 +7,8 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import spatial : Viewport;
-import params : Param;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.params.params : Param;
 import shader : Shader, LitShader;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
@@ -17,9 +17,9 @@ import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame,
                               transformPoint, snapLocalHit, screenToPlacementLocal,
                               placeFreePoint, baseDragTarget, axisUnit;
 import tools.common.session_mesh_key : SessionMeshKey;
-import change_bus : MeshEditScope;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 import drag : HandleDrag;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap, SnapOverlayOwner;
 import operator : VectorStack;

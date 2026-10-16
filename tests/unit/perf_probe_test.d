@@ -6,7 +6,7 @@
 module tests.unit.perf_probe_test;
 
 import core.time : MonoTime, Duration;
-import perf_probe;
+import vibe3d.util.profiling.perf_probe;
 
 unittest { // a committed frame folds its per-pass work into the totals
     FrameWorkProbe fc;

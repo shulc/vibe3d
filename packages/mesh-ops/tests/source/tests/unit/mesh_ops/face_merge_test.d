@@ -2,7 +2,7 @@ module tests.unit.mesh_ops.face_merge_test;
 import mesh_ops.triangulate : triangulateFacesByMask;
 import mesh;
 import math;
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 import mesh_ops.face_merge;
 
 // Public legacy cells moved from tests/unit/mesh_test.d (task 20262350).

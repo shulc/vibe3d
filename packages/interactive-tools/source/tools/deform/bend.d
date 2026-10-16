@@ -7,15 +7,15 @@ import operator : VectorStack;
 import tools.transform.transform;
 import mesh;
 import mesh_gpu : GpuMesh;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math : Vec3, Vec4, dot, cross, pivotRotationMatrix, mulMV;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import shader;
 
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import document : Layer;
-import prepared_tool_effect : PreparedTransformActivationEffect,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedTransformActivationEffect,
     PreparedTransformActivationKind;
 import prepared_transform_activation : PreparedTransformActivationOwner;
 

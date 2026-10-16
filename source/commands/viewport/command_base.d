@@ -2,7 +2,7 @@ module commands.viewport.command_base;
 
 import command;
 import mesh;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import view;
 import viewport : ViewportManager;
 

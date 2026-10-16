@@ -10,7 +10,7 @@ import tools.alignment.radial_sweep_tool : RadialSweepTool,
 unittest {
     import math : Vec3;
     import mesh : makeCube;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import shader : LitShader;
     import prepared_record_context : PreparedRecordContext;
     import command_history : CommandHistory;
@@ -262,7 +262,7 @@ unittest {
     producerTool.setGestureBindings(deactHistory, () => new MeshSessionEdit(
         &layer.meshRef(), deactView, mode, "test.radialSweep", "Radial Sweep"));
     auto liveVertexCount = layer.meshRef().vertices.length;
-    import change_bus : PreparedDeliveryJournal;
+    import vibe3d.mesh.change.change_bus : PreparedDeliveryJournal;
     auto journalFaultContext = new PreparedRecordContext(deactHistory,
         new RecordObserverHub());
     journalFaultContext.setResourceIdentity(7, 11);
@@ -310,7 +310,7 @@ unittest {
     // A positionally mis-bound carrier keeps the exact legacy edit and
     // counted diagnostic, but does not manufacture a history entry.
     import command : Command, CmdFlags;
-    import change_bus : changeBus;
+    import vibe3d.mesh.change.change_bus : changeBus;
     final class WrongCarrier : Command {
         private Mesh ownedMesh_;
         this(View view) { super(&ownedMesh_, view, EditMode.Polygons); }

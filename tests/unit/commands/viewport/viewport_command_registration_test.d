@@ -34,7 +34,7 @@ import commands.viewport.layout_preset : ViewportLayoutPreset;
 import commands.viewport.master : ViewportMaster;
 import commands.viewport.view_preset : ViewportViewPreset;
 import display_state : DisplayStyle;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
 import math : Vec3;
 import prefs : g_prefs;
@@ -713,7 +713,7 @@ unittest { // initiating lens, historical scale-owner aspect and write targets
         initiating.setSize(1000,100);scale.setSize(200,300);
         f.layerA.selected=true;f.layerB.selected=true;
         // Item selection frames the cube and translated octahedron in world space.
-        import seltype : SelType;
+        import vibe3d.editing.contracts.seltype : SelType;
         f.session.selTypeOrder.touch(SelType.Item);
         f.sentinels();
         const radius=sqrt(140.25f)*.5f;

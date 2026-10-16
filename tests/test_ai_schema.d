@@ -1,7 +1,7 @@
 // Pure schema and no-op advisor tests for the AI interaction API.
 
-import ai.advisor;
-import ai.interaction;
+import vibe3d.editing.interaction.data.ai.advisor;
+import vibe3d.editing.interaction.data.ai.interaction;
 
 void main() {}
 

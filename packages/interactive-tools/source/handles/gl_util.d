@@ -2,14 +2,14 @@ module handles.gl_util;
 
 import bindbc.opengl;
 import std.math : sqrt, PI, abs;
-import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
+import vibe3d.util.profiling.perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 version (web) {
 } else {
     import gl_thread_guard : glThreadGuard;
 }
 import shader : seedSharedFragUniforms;
 import math;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 
 // ---------------------------------------------------------------------------
 // Thick-line shader state — set once from app.d via initThickLineProgram().

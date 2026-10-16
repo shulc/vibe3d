@@ -13,9 +13,9 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.poly_bevel;
 import math;
-import spatial : Viewport;
-import editmode : EditMode;
-import params : Param;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
 import drag : viewWorldPerPixel;
 import value_drag : ValueDrag, insetValueDragLaw;
 import overlay_space : OverlaySpace;
@@ -25,15 +25,15 @@ import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
     PreviewRebuildCounts;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_inset_activation : PreparedPolyInsetActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
-import prepared_tool_effect : PreparedPolyInsetParamEffect,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedPolyInsetParamEffect,
     PreparedPolyInsetParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;

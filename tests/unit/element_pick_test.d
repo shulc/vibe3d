@@ -180,7 +180,7 @@ unittest {
         toolPressVertexAdmitted, toolPressFaceAdmitted;
     import mesh : Mesh, makeGridPlane;
     import math : Vec3, lookAt, orthographicMatrix;
-import spatial : Viewport, ModelSpace, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
     import std.math : round;
     import std.algorithm : reverse;
     auto vp = Viewport(lookAt(Vec3(0, 5, 0), Vec3(0, 0, 0), Vec3(0, 0, -1)),
@@ -255,7 +255,7 @@ unittest {
     import hover_state : ToolPressSource, toolPressAt, toolPressSupport;
     import mesh : makeGridPlane;
     import math : Vec3, lookAt, orthographicMatrix;
-import spatial : Viewport, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
     import std.algorithm : reverse;
     import core.time : MonoTime;
     import core.memory : GC;

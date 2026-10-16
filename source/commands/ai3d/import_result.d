@@ -3,15 +3,15 @@ module commands.ai3d.import_result;
 import std.path : baseName;
 
 import ai3d.scene_validator : validateImportedSceneForAi3d;
-import change_bus : MeshChangeAll, LayerChange, noteLayerChange;
+import vibe3d.mesh.change.change_bus : MeshChangeAll, LayerChange, noteLayerChange;
 import command;
 import document : Document, Layer;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import io.scene_import : importViaAssimp;
 import io.scene_ir : ImportedScene, flattenToMesh;
-import log : logWarn;
+import vibe3d.util.log.log : logWarn;
 import mesh;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import view;
 
 final class Ai3dImportResult : Command {

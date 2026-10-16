@@ -2,7 +2,7 @@ module snap_render_source_cells;
 
 import snap_render;
 import math : Vec3;
-import spatial : Viewport, projectToWindowFull, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, ModelSpace;
 import mesh : Mesh;
 import snap : SnapResult;
 import toolpipe.packets : SnapType;

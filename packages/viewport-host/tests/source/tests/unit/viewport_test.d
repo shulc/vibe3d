@@ -6,7 +6,7 @@ module tests.unit.viewport_test;
 import view          : View, ProjKind, ViewPreset;
 import gpu_select    : GpuSelectBuffer;
 import math : Vec3;
-import spatial : Viewport, Orientation;
+import vibe3d.util.spatial.spatial : Viewport, Orientation;
 import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim;
 import bindbc.opengl;
 import std.conv : to;

@@ -5,8 +5,8 @@ import std.string : strip, toLower;
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param, wireArgs;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 // ---------------------------------------------------------------------------
 // g_channelsShown — test-mode visibility flag for the Channels window

@@ -3,7 +3,7 @@ module ai.synthetic_dataset;
 import std.array : appender;
 
 import ai.element_candidates : collectElementCandidates;
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiInteractionPhase, AiIntent;
 import ai.interaction_log : AiInteractionLogRecord,
     makeAiInteractionLogRecord;

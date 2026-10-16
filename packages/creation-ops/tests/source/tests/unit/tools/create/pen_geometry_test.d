@@ -8,9 +8,9 @@ module tests.unit.tools.create.pen_geometry_test;
 import std.format : format;
 
 import math : Vec3, cross, dot;
-import spatial : Viewport, eyeVectorAt;
+import vibe3d.util.spatial.spatial : Viewport, eyeVectorAt;
 import mesh : Mesh;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.packets : SymmetryPacket;
 import tools.create.pen_geometry;
 

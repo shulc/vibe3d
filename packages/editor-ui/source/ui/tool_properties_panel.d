@@ -204,7 +204,7 @@ private enum bool kSnappingHasOwnTab = true;
 // log service's once-gate keeps the diagnostic to a single line per stage
 // instead of per-frame spam.
 private void warnStageFormOnce(string stageId, string msg) {
-    import log : logWarnOnce;
+    import vibe3d.util.log.log : logWarnOnce;
     logWarnOnce("forms", stageId,
                 "stage form for '" ~ stageId ~
                 "' failed to draw; falling back to legacy panel: " ~ msg);

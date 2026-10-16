@@ -30,7 +30,7 @@ import std.format : format;
 import std.math : PI;
 
 import math : Vec3, lookAt, perspectiveMatrix, frontFacingLocal;
-import spatial : Viewport, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
 import mesh : Mesh, makeCube;
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ import command : Command;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.tool.headless : ToolHeadlessCommand;
 import mesh : Mesh;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import registration : registerTools;
 import registry : ToolFactory;
 import tests.unit.live_registration_rig : LiveRegistrationRig;

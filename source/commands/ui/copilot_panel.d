@@ -8,8 +8,8 @@ version (WithAI):
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param;
 
 // ---------------------------------------------------------------------------
 // g_copilotPanelShown — test-mode visibility flag for the "AI Findings"

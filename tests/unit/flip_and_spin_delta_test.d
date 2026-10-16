@@ -34,10 +34,10 @@ import std.format : format;
 import mesh;
 import mesh_edit_delta;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import command;
 import command_history : CommandHistory;
-import change_bus      : changeBus;
+import vibe3d.mesh.change.change_bus      : changeBus;
 
 import commands.mesh.flip            : MeshFlip;
 import commands.mesh.fix_orientation : MeshFixOrientation;

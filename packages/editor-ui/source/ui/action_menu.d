@@ -105,7 +105,7 @@ ActionMenuRoles bindActionMenu(ActionMenuRefusal refusal,
 }
 
 void dispatchAction(ActionMenuActions actions, ref Action action) {
-    import argstring : parseArgstring;
+    import vibe3d.editing.params.argstring : parseArgstring;
 
     final switch (action.kind) {
         case ActionKind.tool:

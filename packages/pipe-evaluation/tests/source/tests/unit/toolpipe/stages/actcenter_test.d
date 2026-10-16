@@ -5,12 +5,12 @@ module tests.unit.toolpipe.stages.actcenter_test;
 
 import std.format : format;
 import math : Vec3, rayPlaneIntersect, applyAffine;
-import spatial : Pin, Viewport, screenRay, screenPointToRay, ModelSpace;
+import vibe3d.util.spatial.spatial : Pin, Viewport, screenRay, screenPointToRay, ModelSpace;
 import mesh    : Mesh, MeshCacheKey;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAcen;
-import params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
+import vibe3d.editing.params.params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
 import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath;
@@ -467,7 +467,7 @@ unittest {
 unittest {
     import mesh : Mesh;
     import math : Vec3;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 
     // A stand with an ORPHAN vertex: two quads sharing an edge, plus vertex 6
     // at (100, 100, 100), which no edge and no face reference. Every

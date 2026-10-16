@@ -15,7 +15,7 @@ import tests.unit.live_registration_rig : LiveRegistrationRig;
 import application_command_binding : CommandInvocationContext, CommandInvocationOutcome;
 import std.json : JSONValue;
 import command : CommandOrigin;
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 
 
 private final class SourceTool : Tool {

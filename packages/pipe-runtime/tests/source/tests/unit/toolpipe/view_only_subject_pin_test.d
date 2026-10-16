@@ -11,10 +11,10 @@ module tests.unit.toolpipe.view_only_subject_pin_test;
 // declaration instead. Mutation M6 (plan §8) reddens this test.
 
 import toolpipe.subject : viewOnlySubject;
-import editmode          : EditMode;
-import seltype            : SelType;
+import vibe3d.editing.contracts.editmode          : EditMode;
+import vibe3d.editing.contracts.seltype            : SelType;
 import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 
 unittest {
     // Every field set explicitly, none left at `.init` -- `Viewport.init`

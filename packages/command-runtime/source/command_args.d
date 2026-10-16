@@ -54,8 +54,8 @@ module command_args;
 import std.json : JSONValue, JSONType, parseJSON;
 
 import command  : Command;
-import params   : Param, injectParamsInto;
-import argstring : kPositionalKey;
+import vibe3d.editing.params.params   : Param, injectParamsInto;
+import vibe3d.editing.params.argstring : kPositionalKey;
 
 // ---------------------------------------------------------------------------
 // The scalar spelling of a JSON argument.

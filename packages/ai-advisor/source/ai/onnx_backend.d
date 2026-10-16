@@ -19,7 +19,7 @@ module ai.onnx_backend;
 // OnnxModelBackend is likewise under version(WithAI).
 version (WithAI):
 
-import ai.interaction : AiCandidate, AiCandidateKind, AiInteractionContext;
+import vibe3d.editing.interaction.data.ai.interaction : AiCandidate, AiCandidateKind, AiInteractionContext;
 import ai.model_adapter : AiModelAvailability, AiModelBackend,
     AiModelBackendPrediction, AiModelStatus;
 import ai.ranker_schema : aiRankerDefaultMaxCandidates,

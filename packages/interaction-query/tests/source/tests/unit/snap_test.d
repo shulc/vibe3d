@@ -6,11 +6,11 @@ module tests.unit.snap_test;
 import std.math : sqrt, round, floor, isNaN;
 import core.sync.mutex : Mutex;
 import math : Vec3, rayPlaneIntersect, pointInPolygon2D, closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot, closestPointOnLineToRay, perpendicularFrame, rayTriangleIntersect, closestPointOnTriangle2D, triangulatePolygonEarClip;
-import spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull, screenRay, screenPointToRay, isOrtho, viewPixelScale;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull, screenRay, screenPointToRay, isOrtho, viewPixelScale;
 import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import constraint : BackgroundSource;
 import toolpipe.guide : GuideDrawState;
 import snap;
@@ -1916,7 +1916,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import math : lookAt, perspectiveMatrix, translationMatrix;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
     import toolpipe.packets : SnapPacket, SnapType, SnapMode;
     import std.math         : PI, round, sqrt;
 

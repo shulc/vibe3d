@@ -6,7 +6,7 @@ import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
 import http_server : BridgeResultKind, ClaimProbePoint, HttpServer;
-import perf_probe : DrawPass, FrameWorkProbe, g_fc;
+import vibe3d.util.profiling.perf_probe : DrawPass, FrameWorkProbe, g_fc;
 import std.algorithm : canFind, count;
 import std.file : readText;
 import std.path : buildPath, dirName;

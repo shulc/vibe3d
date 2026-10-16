@@ -5,7 +5,7 @@ module tests.unit.handles.shapes_test;
 
 import handles.gl_util;
 import math;
-import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
+import vibe3d.util.profiling.perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import shader;
 import viewport_scheme;
 import bindbc.sdl;
@@ -13,6 +13,6 @@ import bindbc.opengl;
 import std.math : sin, cos, sqrt, PI, abs;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
-import ai.interaction : AiIntent;
+import vibe3d.editing.interaction.data.ai.interaction : AiIntent;
 import handles.shapes;
 

@@ -341,8 +341,8 @@ unittest {
 // (u5b) ActionCenterStage — the EVENT of A.
 unittest {
     import operator : VectorStack;
-    import editmode : EditMode;
-    import seltype : SelType;
+    import vibe3d.editing.contracts.editmode : EditMode;
+    import vibe3d.editing.contracts.seltype : SelType;
     import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
     import toolpipe.packets : ActionCenterPacket;
     import toolpipe.stages.symmetry : SymmetryStage;
@@ -440,7 +440,7 @@ unittest {
     // primary layer moved +2 in X a world point at x 1.5 is local x -0.5.
     {
         import document : primaryModelSpaceResolver;
-        import spatial : ModelSpace;
+        import vibe3d.util.spatial.spatial : ModelSpace;
         ModelSpace moved;
         moved.m    = [1,0,0,0, 0,1,0,0, 0,0,1,0,  2,0,0,1];
         moved.mInv = [1,0,0,0, 0,1,0,0, 0,0,1,0, -2,0,0,1];
@@ -726,7 +726,7 @@ unittest {
 // (u8) the production kernel `applyXformMatrix` in the authoring frame, both loops.
 unittest {
     import math : lookAt, perspectiveMatrix;
-import spatial : AimViewport, Viewport, aimSpace, ModelSpace;
+import vibe3d.util.spatial.spatial : AimViewport, Viewport, aimSpace, ModelSpace;
     import std.math : PI;
     import toolpipe.packets : FalloffPacket, FalloffType;
     import tools.transform.transform : TransformTool;

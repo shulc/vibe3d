@@ -27,7 +27,7 @@ import mesh_gpu : GpuMesh;
 import pipe_gizmo_host : PipeGizmoHost;
 import registration : registerTools;
 import registry : Registry;
-import seltype : SelMode;
+import vibe3d.editing.contracts.seltype : SelMode;
 import session_owner : Session;
 import tests.unit.census_symbols : blankNonCode, countOccurrences;
 import tools.edit.topology_pen : TopologyPenTool;

@@ -21,7 +21,7 @@ import commands.select.ring : SelectRing;
 import commands.select.sets : SelectSetApply, SelectSetDelete, SelectSetEdit,
     SelectSetRename, SelectSetStore;
 import commands.select.type_from : SelectTypeFromCommand;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import registry : Registry;
 import mesh : Mesh;

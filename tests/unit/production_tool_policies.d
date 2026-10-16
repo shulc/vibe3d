@@ -25,7 +25,7 @@ package(tests.unit) string[4][] productionPolicies(out size_t ids,
     import pipe_gizmo_host : PipeGizmoHost;
     import registration : registerTools;
     import registry : Registry;
-    import seltype : SelMode;
+    import vibe3d.editing.contracts.seltype : SelMode;
     import session_owner : Session;
     import tool : capturedTopologyModel, firstStepCarriesActivation, opensAtArm,
         postmodeStartsOnPressFor;

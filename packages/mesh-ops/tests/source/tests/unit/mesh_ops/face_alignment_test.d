@@ -1,7 +1,7 @@
 module tests.unit.mesh_ops.face_alignment_test;
 import mesh;
 import math;
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 import mesh_ops.face_alignment;
 
 // Public legacy cells moved from tests/unit/mesh_test.d (task 20262350).

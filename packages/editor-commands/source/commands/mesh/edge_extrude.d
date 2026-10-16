@@ -5,8 +5,8 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import mesh_ops.extrude;
 import view;
-import editmode;
-import params : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param;
 import snapshot : MeshSnapshot;
 
 /// Edge Extrude (one-shot, undoable): shift the selected edges outward along

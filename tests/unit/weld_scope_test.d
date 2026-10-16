@@ -17,7 +17,7 @@ import std.path   : buildPath, dirName;
 
 import mesh;
 import math : Vec3;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 import tools.alignment.mirror : MirrorParams, mirrorInPlace;
 import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
 

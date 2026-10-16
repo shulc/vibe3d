@@ -4,11 +4,11 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : MeshSnapshot;
 import subpatch_osd : catmullClarkOsd;
-import change_bus : MeshEditScope;
-import params : Param;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
+import vibe3d.editing.params.params : Param;
 import commands.mesh.subdivide_faceted : runFacetedFamily;
 
 class Subdivide : Command, Operator {

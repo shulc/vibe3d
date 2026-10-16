@@ -2,7 +2,7 @@ module tools.deform.stroke_extrude_tool;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
     PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner;
 import command_history : PreparedHistoryKind;
@@ -15,9 +15,9 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.revolve;
 import math;
-import spatial : Viewport, screenPointToLocalRay;
-import editmode : EditMode;
-import params : Param;
+import vibe3d.util.spatial.spatial : Viewport, screenPointToLocalRay;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;

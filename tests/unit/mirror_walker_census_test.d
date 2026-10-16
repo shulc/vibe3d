@@ -232,7 +232,7 @@ unittest { // (w1) an AUTO (view-turned) work plane maps the axis by the IDENTIT
     // reads the same plane bit for bit. The published pair table names the partner.
     import math : Vec3, identityMatrix;
     import mesh : Mesh;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import operator : VectorStack;
     import toolpipe.packets : SubjectPacket, SymmetryPacket, WorkplanePacket;
     import toolpipe.stages.symmetry : SymmetryStage;
@@ -292,7 +292,7 @@ unittest { // (w1) an AUTO (view-turned) work plane maps the axis by the IDENTIT
 unittest { // (w1e) an EMPTY mesh: no pair table is built, currentPlane still reads the applied plane
     import math : Vec3, identityMatrix;
     import mesh : Mesh;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import operator : VectorStack;
     import toolpipe.packets : SubjectPacket, SymmetryPacket;
     import toolpipe.stages.symmetry : SymmetryStage;
@@ -335,7 +335,7 @@ unittest { // (w1e) an EMPTY mesh: no pair table is built, currentPlane still re
 unittest { // (w6) the plane maps the axis and the offset through W once (K-S2 S2z)
     import math : Vec3, identityMatrix;
     import mesh : Mesh;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import operator : VectorStack;
     import toolpipe.packets : SubjectPacket, SymmetryPacket;
     import toolpipe.stages.symmetry : SymmetryStage;

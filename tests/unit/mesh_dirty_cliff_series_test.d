@@ -56,7 +56,7 @@
 // window even if `B != D` or `D` is raised.
 module tests.unit.mesh_dirty_cliff_series_test;
 
-import mesh_dirty : g_geomEpochs, noteMeshBirth, noteMeshChange,
+import vibe3d.mesh.change.mesh_dirty : g_geomEpochs, noteMeshBirth, noteMeshChange,
                      meshDirtySlotCeiling, meshBirthSlotCeiling,
                      meshBirthsRecorded, resetMeshDirtyStateForTest;
 import mesh_edit_delta : MeshEditScope;

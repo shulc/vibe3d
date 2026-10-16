@@ -4,9 +4,9 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
-import change_bus : MeshEditScope;
-import params : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
+import vibe3d.editing.params.params : Param;
 
 /// What a surface attribute's value means (and how the command validates it).
 enum SurfaceAttrKind {

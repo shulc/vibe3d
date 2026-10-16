@@ -1,8 +1,8 @@
 module unit.prepared_tool_transition_test;
 
-import prepared_tool_effect;
+import vibe3d.editing.contracts.prepared_tool_effect;
 import prepared_tool_transition;
-import change_bus : ChangeBus, PreparedDeliveryJournal, PreparedDeliverySpec,
+import vibe3d.mesh.change.change_bus : ChangeBus, PreparedDeliveryJournal, PreparedDeliverySpec,
                     PreparedMeshSubjectOwner;
 import command_history : CommandHistory, HistoryEntry, HistoryFlags,
                         PreparedHistoryImage;
@@ -18,7 +18,7 @@ import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.tool.lifecycle : ToolActivationCommand;
 import document : Layer;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
 import mesh : makeCube;
 import mesh_gpu : GpuMesh;
@@ -26,7 +26,7 @@ import operator : VectorStack;
 import pipe_gizmo_host : PipeGizmoHost;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import record_observer_hub : RecordObserverHub;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import std.json : JSONValue;
 import toolpipe.packets : SubjectPacket;
 import toolpipe.pipeline : g_pipeCtx, Pipeline;

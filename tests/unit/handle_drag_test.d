@@ -21,7 +21,7 @@ import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, containsWo
     isIdentChar, symbolTokenHits;
 
 import math : Vec3, lookAt, orthographicMatrix, perspectiveMatrix;
-import spatial : Viewport, projectToWindow;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindow;
 import drag : ComponentGuide, HandleDrag, DragFrame, DragKind, screenAxisDelta, planeDragDelta, planeJacobian;
 import viewgrid : vectorSnap;
 import tools.transform.move : MoveTool;
@@ -372,7 +372,7 @@ unittest {
 // separate from the real View so a projection discrepancy remains visible.
 unittest {
     import view : View;
-    import spatial : Orientation, projectToWindowFull, screenPointToRay;
+    import vibe3d.util.spatial.spatial : Orientation, projectToWindowFull, screenPointToRay;
     import drag : preparePlaneDrag;
     import viewgrid : viewWorldPerPixel, viewVectorQuantum;
     import std.math : atan;

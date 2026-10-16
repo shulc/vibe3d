@@ -141,27 +141,29 @@
     }
   },
   "dependencies": {
-    "vibe3d:math": {"path": "../.."},
-    "vibe3d-spatial": {
-      "path": "../spatial"
+    "vibe3d:math": {
+      "path": "../.."
     },
-    "vibe3d-parallel": {
-      "path": "../../util/parallel"
+    "vibe3d:spatial": {
+      "path": "../.."
     },
-    "vibe3d-profiling": {
-      "path": "../profiling"
+    "vibe3d:parallel": {
+      "path": "../.."
     },
-    "vibe3d-edit-contracts": {
-      "path": "../edit-contracts"
+    "vibe3d:profiling": {
+      "path": "../.."
     },
-    "vibe3d-mesh-contracts": {
-      "path": "../mesh-contracts"
+    "vibe3d:edit-contracts": {
+      "path": "../.."
+    },
+    "vibe3d:mesh-contracts": {
+      "path": "../.."
     },
     "vibe3d-mesh-topology": {
       "path": "../mesh-topology"
     },
-    "vibe3d-mesh-change": {
-      "path": "../mesh-change"
+    "vibe3d:mesh-change": {
+      "path": "../.."
     },
     "vibe3d-mesh-edit-log": {
       "path": "../mesh-edit-log"
@@ -175,13 +177,13 @@
       ],
       "subConfigurations": {
         "vibe3d:math": "modeling",
-        "vibe3d-spatial": "modeling",
-        "vibe3d-parallel": "modeling",
-        "vibe3d-profiling": "modeling",
-        "vibe3d-edit-contracts": "modeling",
-        "vibe3d-mesh-contracts": "modeling",
+        "vibe3d:spatial": "modeling",
+        "vibe3d:parallel": "modeling",
+        "vibe3d:profiling": "modeling",
+        "vibe3d:edit-contracts": "modeling",
+        "vibe3d:mesh-contracts": "modeling",
         "vibe3d-mesh-topology": "modeling",
-        "vibe3d-mesh-change": "modeling",
+        "vibe3d:mesh-change": "modeling",
         "vibe3d-mesh-edit-log": "modeling"
       }
     },
@@ -190,13 +192,13 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d:math": "modeling-noai",
-        "vibe3d-spatial": "modeling-noai",
-        "vibe3d-parallel": "modeling-noai",
-        "vibe3d-profiling": "modeling-noai",
-        "vibe3d-edit-contracts": "modeling-noai",
-        "vibe3d-mesh-contracts": "modeling-noai",
+        "vibe3d:spatial": "modeling-noai",
+        "vibe3d:parallel": "modeling-noai",
+        "vibe3d:profiling": "modeling-noai",
+        "vibe3d:edit-contracts": "modeling-noai",
+        "vibe3d:mesh-contracts": "modeling-noai",
         "vibe3d-mesh-topology": "modeling-noai",
-        "vibe3d-mesh-change": "modeling-noai",
+        "vibe3d:mesh-change": "modeling-noai",
         "vibe3d-mesh-edit-log": "modeling-noai"
       }
     },
@@ -208,13 +210,13 @@
       ],
       "subConfigurations": {
         "vibe3d:math": "with-render",
-        "vibe3d-spatial": "with-render",
-        "vibe3d-parallel": "with-render",
-        "vibe3d-profiling": "with-render",
-        "vibe3d-edit-contracts": "with-render",
-        "vibe3d-mesh-contracts": "with-render",
+        "vibe3d:spatial": "with-render",
+        "vibe3d:parallel": "with-render",
+        "vibe3d:profiling": "with-render",
+        "vibe3d:edit-contracts": "with-render",
+        "vibe3d:mesh-contracts": "with-render",
         "vibe3d-mesh-topology": "with-render",
-        "vibe3d-mesh-change": "with-render",
+        "vibe3d:mesh-change": "with-render",
         "vibe3d-mesh-edit-log": "with-render"
       }
     },
@@ -225,13 +227,13 @@
       ],
       "subConfigurations": {
         "vibe3d:math": "web",
-        "vibe3d-spatial": "web",
-        "vibe3d-parallel": "web",
-        "vibe3d-profiling": "web",
-        "vibe3d-edit-contracts": "web",
-        "vibe3d-mesh-contracts": "web",
+        "vibe3d:spatial": "web",
+        "vibe3d:parallel": "web",
+        "vibe3d:profiling": "web",
+        "vibe3d:edit-contracts": "web",
+        "vibe3d:mesh-contracts": "web",
         "vibe3d-mesh-topology": "web",
-        "vibe3d-mesh-change": "web",
+        "vibe3d:mesh-change": "web",
         "vibe3d-mesh-edit-log": "web"
       }
     },
@@ -241,13 +243,13 @@
       "targetType": "sourceLibrary",
       "subConfigurations": {
         "vibe3d:math": "root-tests",
-        "vibe3d-spatial": "root-tests",
-        "vibe3d-parallel": "root-tests",
-        "vibe3d-profiling": "root-tests",
-        "vibe3d-edit-contracts": "root-tests",
-        "vibe3d-mesh-contracts": "root-tests",
+        "vibe3d:spatial": "root-tests",
+        "vibe3d:parallel": "root-tests",
+        "vibe3d:profiling": "root-tests",
+        "vibe3d:edit-contracts": "root-tests",
+        "vibe3d:mesh-contracts": "root-tests",
         "vibe3d-mesh-topology": "root-tests",
-        "vibe3d-mesh-change": "root-tests",
+        "vibe3d:mesh-change": "root-tests",
         "vibe3d-mesh-edit-log": "root-tests"
       }
     },
@@ -257,13 +259,13 @@
       "targetType": "sourceLibrary",
       "subConfigurations": {
         "vibe3d:math": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests",
-        "vibe3d-parallel": "isolated-tests",
-        "vibe3d-profiling": "isolated-tests",
-        "vibe3d-edit-contracts": "isolated-tests",
-        "vibe3d-mesh-contracts": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:parallel": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
+        "vibe3d:mesh-contracts": "isolated-tests",
         "vibe3d-mesh-topology": "isolated-tests",
-        "vibe3d-mesh-change": "isolated-tests",
+        "vibe3d:mesh-change": "isolated-tests",
         "vibe3d-mesh-edit-log": "isolated-tests"
       }
     },
@@ -275,13 +277,13 @@
       ],
       "subConfigurations": {
         "vibe3d:math": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests",
-        "vibe3d-parallel": "isolated-tests",
-        "vibe3d-profiling": "isolated-tests",
-        "vibe3d-edit-contracts": "isolated-tests",
-        "vibe3d-mesh-contracts": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:parallel": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
+        "vibe3d:mesh-contracts": "isolated-tests",
         "vibe3d-mesh-topology": "isolated-tests",
-        "vibe3d-mesh-change": "isolated-tests",
+        "vibe3d:mesh-change": "isolated-tests",
         "vibe3d-mesh-edit-log": "isolated-tests"
       }
     }

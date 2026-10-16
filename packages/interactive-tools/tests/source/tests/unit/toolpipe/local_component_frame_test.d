@@ -5,18 +5,18 @@ import std.json : JSONValue, JSONType, parseJSON;
 import std.math : abs;
 import std.format : format;
 import math : Vec3, frameMatrix, frameMatrixInverse;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 import mesh : Mesh;
 import document : primaryModelSpaceResolver;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import operator : VectorStack;
 import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
 import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
 import tools.transform.xfrm_transform : XfrmTransformTool;
-import params : injectParamsInto;
+import vibe3d.editing.params.params : injectParamsInto;
 
 private double number(JSONValue j) { return j.type == JSONType.integer ? cast(double)j.integer : j.floating; }
 private Vec3 vector(JSONValue j) { return Vec3(cast(float)number(j[0]), cast(float)number(j[1]), cast(float)number(j[2])); }
@@ -107,7 +107,7 @@ unittest {
 
 unittest { // Partition constructions, cache domains and validated independent service.
     import toolpipe.stages.actcenter : g_acenClusterRebuilds;
-    import mesh_dirty : noteMeshChange;
+    import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
     import mesh_edit_delta : MeshEditScope;
     Mesh mesh;
     mesh.vertices=[Vec3(0,0,0),Vec3(3,0,0),Vec3(0,1,0),Vec3(-2,0,0),Vec3(0,-1,0),Vec3(8,0,0),Vec3(9,0,0),Vec3(8,1,0)];

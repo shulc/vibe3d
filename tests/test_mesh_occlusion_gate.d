@@ -30,7 +30,7 @@ import std.format : format;
 import std.math : PI, sqrt, fabs;
 
 import math : Vec3, lookAt, perspectiveMatrix;
-import spatial : Viewport, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
 import mesh : Mesh;
 import mesh_visibility : visibleVertices;
 
@@ -296,7 +296,7 @@ unittest {
     // not. Driven through `snapCursor` itself, cursor on the quad's centre.
     import snap : snapCursor, SnapResult, invalidateSnapGrids;
     import toolpipe.packets : SnapPacket, SnapType, SnapMode;
-    import spatial : projectToWindowFull;
+    import vibe3d.util.spatial.spatial : projectToWindowFull;
     float cx, cy, cz;
     assert(projectToWindowFull(Vec3(0.2f, 0.1f, 0), vp, cx, cy, cz),
         "fixture: the quad's interior must project");

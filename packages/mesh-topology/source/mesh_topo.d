@@ -161,7 +161,7 @@ struct VertexDartRange {
 /// stay well-defined) — log once so the issue stays visible without
 /// being a hard stop.
 private void warnMaxStepsExceeded(string rangeName) nothrow {
-    import log : logWarnOnce;
+    import vibe3d.util.log.log : logWarnOnce;
     import std.format : format;
     try {
         logWarnOnce("mesh", "maxSteps", format(

@@ -42,8 +42,8 @@ import subpatch_preview : SubpatchPreview;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math : Vec3;
-import editmode : EditMode;
-import params : Param;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
 import tool : Tool;
 import tools.edit.edge_extend : EdgeExtendTool;
 import tools.edit.edge_bevel  : EdgeBevelTool;
@@ -118,7 +118,7 @@ private final class Rig {
     /// assertion in this file was free. Inside a batch a publish only
     /// REGISTERS, which is the state a command's kernel runs in.
     void frame(int depth = 2) {
-        import mesh_dirty : noteMeshChange;
+        import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
         if (mesh.undeliveredChanges_ != 0) ++fedNonEmpty;
         noteMeshChange(cast(size_t)&mesh, mesh.undeliveredChanges_);
         // What the real delivery would have done. A rig that only READ the

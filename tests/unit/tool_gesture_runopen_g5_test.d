@@ -89,7 +89,7 @@ import std.conv    : to;
 
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
 import mesh : Mesh;
 import mesh_edit_delta : MeshEditScope;

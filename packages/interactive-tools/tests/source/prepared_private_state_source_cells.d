@@ -5,7 +5,7 @@ import core.atomic : atomicOp;
 import tools.create.box : BoxTool, PreparedBoxDeactivateImage;
 import tools.create.pen : PenTool, PreparedPenDeactivateImage,
     PreparedPenParamImage;
-import prepared_tool_effect : PreparedPenParamKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedPenParamKind;
 import tools.create.primitive_create_tool : PrimitiveCreateTool, HandledCreateTool,
     PreparedPrimitiveDeactivateImage;
 import tools.create.sphere : SphereTool;
@@ -26,11 +26,11 @@ unittest {
     import command_history : CommandHistory;
     import commands.mesh.session_edit : MeshSessionEdit;
     import document : Layer;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuUploadOwner, GpuResourceOwner;
     import prepared_record_context : PreparedRecordContext;
-    import prepared_tool_effect : PreparedDeactivateKind;
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
     import snap_render : SnapOverlayOwner;

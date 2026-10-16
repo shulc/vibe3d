@@ -6,7 +6,7 @@ module tests.unit.trackball_test;
 import math : Vec3, cross, dot;
 import std.math : sqrt, atan2, isFinite, sin, PI;
 import std.math : isClose, abs, cos;   // sin/PI come from the module import  // The two pane aspect ratios every radius assertion runs on. The first is // the corpus viewport (landscape, WIDTH is the larger dimension). The // second is a tall narrow pane observed in a reference trace, and it is the // discriminating one: its two half-extents differ by 2.27x, so `max` and // `min` cannot both be right to any tolerance. private enum int kWideW = 1098, kWideH = 832;
-import trackball;
+import vibe3d.util.spatial.trackball;
 
 unittest { // the speed multiplier shrinks the CIRCLE, not just the rate
     immutable float r  = 200.0f;

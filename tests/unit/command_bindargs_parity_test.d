@@ -32,10 +32,10 @@ import std.array  : join;
 import std.format : format;
 import std.json   : JSONValue, parseJSON;
 
-import argstring   : parseArgstring, serializeParams;
+import vibe3d.editing.params.argstring   : parseArgstring, serializeParams;
 import command     : Command;
 import command_args : bindArgs;
-import editmode    : EditMode;
+import vibe3d.editing.contracts.editmode    : EditMode;
 import mesh        : Mesh;
 import view        : View;
 

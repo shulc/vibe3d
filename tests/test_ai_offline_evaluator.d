@@ -1,6 +1,6 @@
 // Pure tests for the AI offline evaluator baseline.
 
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiIntent;
 import ai.interaction_log : makeAiInteractionLogRecord;
 import ai.offline_evaluator : evaluateAiOfflineBaseline,

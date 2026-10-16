@@ -115,7 +115,7 @@ import std.math : sqrt;
 // supply. `MeshEditScope` for `cleanDegenerateFaces`'s tail commit and for the
 // family's declared scope below; `rewriteFaces` / `FaceSource` for the single
 // plane-carrying rewrite (task 1902 site 11).
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 import mesh_planes : rewriteFaces, FaceSource;
 
 /// The change classes one hygiene sweep actually commits, for the batch its

@@ -7,7 +7,7 @@
 module ui.grid_plane_test;
 
 import math : Vec3, lookAt, normalize, orthographicMatrix, perspectiveMatrix;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import toolpipe.stages.workplane : WorkplaneStage;
 import ui.viewport_render : gridPlaneModel, workPlaneLatticeModel;
 

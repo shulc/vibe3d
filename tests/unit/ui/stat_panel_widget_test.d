@@ -38,10 +38,10 @@
 
 import command   : Command, g_testMode;
 import document  : Document, Layer;
-import editmode  : EditMode;
+import vibe3d.editing.contracts.editmode  : EditMode;
 import mesh;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope;
-import seltype   : SelType, SelMode;
+import vibe3d.editing.contracts.seltype   : SelType, SelMode;
 import ui.panels : drawStatisticsBody;
 import ui.stat_rows;
 import ui.stat_record : drawnStatRows, drawnStatFrame;

@@ -1,7 +1,7 @@
 module ai.mode_candidates;
 
-import ai.debug_trace : publishModeToolContextDebugTrace;
-import ai.interaction : AiCandidate, AiCandidateKind, AiInteractionContext,
+import vibe3d.editing.interaction.data.ai.debug_trace : publishModeToolContextDebugTrace;
+import vibe3d.editing.interaction.data.ai.interaction : AiCandidate, AiCandidateKind, AiInteractionContext,
     AiIntent;
 
 private bool startsWithId(string value, string prefix) {

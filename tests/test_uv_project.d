@@ -29,7 +29,7 @@ import std.conv   : to;
 import mesh     : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
 import math     : Vec3;
 import view     : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import commands.mesh.uv_project : UvProject;
 import uv_project : UvProjMode, UvProjAxis, projectUv, dominantAxis;
 import std.net.curl : post, get;
@@ -64,7 +64,7 @@ private bool feq(float a, float b) { return fabs(a - b) < eps; }
 
 // Set enum/string param named `name` on cmd.
 private void setStrParam(T)(T cmd, string name, string value) {
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params())
         if (p.name == name) { *p.sptr = value; return; }
     assert(false, "string param not found: " ~ name);

@@ -11,7 +11,7 @@ import document : Document, Layer, ItemKind;
 import mesh;
 import mesh_stats;
 import mesh_selsets;
-import seltype  : SelType;
+import vibe3d.editing.contracts.seltype  : SelType;
 import ui.stat_rows;
 import math     : Vec3;
 import std.algorithm : canFind, count, filter, map;
@@ -478,7 +478,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import view : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import commands.select.by_stat : SelectByStatVertex, SelectByStatEdge,
                                      SelectByStatPolygon;
     import commands.select.by_tag  : SelectByTag;

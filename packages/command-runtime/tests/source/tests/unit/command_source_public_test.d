@@ -3,8 +3,8 @@ module tests.unit.command_source_public_test;
 import command : Command;
 import mesh : Mesh;
 import view : View;
-import editmode : EditMode;
-import spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.util.spatial.spatial : Viewport;
 
 // ---------------------------------------------------------------------------
 // Task 0619 — the packet `Command.applyImpl()` builds carries a REAL camera.

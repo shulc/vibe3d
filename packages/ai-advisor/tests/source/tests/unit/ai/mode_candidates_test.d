@@ -3,8 +3,8 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.ai.mode_candidates_test;
 
-import ai.debug_trace : publishModeToolContextDebugTrace;
-import ai.interaction : AiCandidate, AiCandidateKind, AiInteractionContext,
+import vibe3d.editing.interaction.data.ai.debug_trace : publishModeToolContextDebugTrace;
+import vibe3d.editing.interaction.data.ai.interaction : AiCandidate, AiCandidateKind, AiInteractionContext,
     AiIntent;
 import ai.mode_candidates;
 

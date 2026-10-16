@@ -4,7 +4,7 @@ import bindbc.sdl;
 
 import handler : Arrow, BoxHandler, Handler, ToolHandles, gizmoSize;
 import math : Vec3, closestOnSegment2D, dot;
-import spatial : Viewport, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
 import viewport_scheme : axisColor, schemeColor, SchemeColor;
 import shader : Shader;
 import drag   : screenAxisDelta, haulWorldPerPixel, HandleDrag, DragFrame, DragKind;

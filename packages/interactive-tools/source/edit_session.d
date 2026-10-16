@@ -41,14 +41,14 @@ import std.json        : JSONValue;
 import command_history : CommandHistory, UndoState, HistoryFlags;
 import held_gesture_buttons : g_heldGestureButtons;
 import std.typecons    : Rebindable;
-import params          : ParamProvider;
+import vibe3d.editing.params.params          : ParamProvider;
 import toolpipe.stage  : Stage;
 import tool_activation_ownership : CloseReason, CommandDoor, CloseOutcome, DropContext;
 import tools.common.session_mesh_key : SessionMeshKey;
 import snapshot : MeshSnapshot;
 import mesh : Mesh;
 import math : Vec3;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import tool : HeadlessSourcePolicy;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.gesture_payload : GesturePayload;
@@ -1408,7 +1408,7 @@ private struct ToolSession {
             // already reverted, so the pair is split. The step taken stands, the
             // resync below re-baselines the tool on the mesh it now sees, and
             // no predecessor was restored — said, not silent.
-            import log : logWarn;
+            import vibe3d.util.log.log : logWarn;
             logWarn("tool", "session undo: the activation row paired with the record refused its undo");
             last = null;
             break;
@@ -1547,7 +1547,7 @@ private struct ToolSession {
         if (ok && pair && !history_.redo()) {
             // The row came back but its record refused (review of slice M4): the
             // tool is armed without the record; the resync below re-baselines it.
-            import log : logWarn;
+            import vibe3d.util.log.log : logWarn;
             logWarn("tool", "session redo: the record paired with its activation row refused its redo");
         }
         if (ok) {
@@ -2744,7 +2744,7 @@ private struct ToolSession {
     // the group comes back LIVE and released, on the same mesh or not at all.
     private void replayFirstGroup_() {
         import commands.tool.lifecycle : ToolActivationCommand;
-        import log : logWarn;
+        import vibe3d.util.log.log : logWarn;
         auto t = tool_();
         if (!reporting_(t)) return;
         auto act = cast(const ToolActivationCommand) replayFor_.get;

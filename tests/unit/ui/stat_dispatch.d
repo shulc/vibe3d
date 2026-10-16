@@ -19,10 +19,10 @@ import std.json : JSONValue, parseJSON;
 
 import command   : Command;
 import document  : Document;
-import editmode  : EditMode;
+import vibe3d.editing.contracts.editmode  : EditMode;
 import mesh      : Mesh;
-import params    : injectParamsInto;
-import seltype   : SelType;
+import vibe3d.editing.params.params    : injectParamsInto;
+import vibe3d.editing.contracts.seltype   : SelType;
 import view      : View;
 
 import commands.select.by_stat : SelectByStatVertex, SelectByStatEdge,

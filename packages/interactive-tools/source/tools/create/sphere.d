@@ -1,5 +1,5 @@
 module tools.create.sphere;
-import prepared_tool_effect : PreparedParamDelta, PreparedParamKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedParamDelta, PreparedParamKind;
 private struct SpherePreparedParamHandle {
     bool apply; int axis; float x, y, z; bool consumable;
     @disable this(this);
@@ -8,8 +8,8 @@ private struct SpherePreparedParamHandle {
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import spatial : Viewport;
-import params : Param;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.params.params : Param;
 import shader : LitShader;
 import tools.create.primitive_create_tool : SizedRadialCreateTool;
 import tools.create.create_common : primitivePlacementFrame, ringCount;
@@ -557,7 +557,7 @@ public:
     override string name() const { return ellipsoidMode_ ? "Ellipsoid" : "Sphere"; }
 
     override Param[] params() {
-        import params : IntEnumEntry;
+        import vibe3d.editing.params.params : IntEnumEntry;
         // Ellipsoid mode: globe-locked, method and order hidden.
         if (ellipsoidMode_) {
             return [

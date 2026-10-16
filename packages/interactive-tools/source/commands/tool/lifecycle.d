@@ -3,9 +3,9 @@ module commands.tool.lifecycle;
 import command;
 import mesh;
 import view;
-import editmode;
-import seltype : SelType;
-import tool_policy_values : DropUndoPolicy, DropRedoPopulation;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype : SelType;
+import vibe3d.editing.contracts.tool_policy_values : DropUndoPolicy, DropRedoPopulation;
 public import history_lifecycle_contract : ToolArmLifecyclePolicy;
 
 // ---------------------------------------------------------------------------

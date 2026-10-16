@@ -81,7 +81,7 @@ module mesh_ops.decimate;
 // ---------------------------------------------------------------------------
 import mesh;
 import math;
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 // `sqrt` — the 1902 rule cashed out, and the plan's own §4.3 table got this
 // file wrong ("decimate.d: nothing beyond what they already import"). A free
 // name in a `mixin template` body binds in the INSTANTIATION scope, and

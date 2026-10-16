@@ -8,7 +8,7 @@ import std.path : isAbsolute, absolutePath, buildNormalizedPath, dirName,
                   relativePath, isDirSeparator;
 import document       : ImageData;
 import io.image_decode : ImageInfo, imageInfo, MAX_IMAGE_BYTES;
-import log            : logWarn;
+import vibe3d.util.log.log            : logWarn;
 import std.file : write, remove, tempDir, mkdirRecurse, rmdirRecurse;
 import std.path : buildPath;
 import std.conv : to;

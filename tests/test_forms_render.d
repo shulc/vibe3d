@@ -270,7 +270,7 @@ unittest {
 //    The generated difference covers the pre-fix second list exhaustively.
 // ---------------------------------------------------------------------------
 unittest {
-    import argstring : isArgstringBareword, isArgstringBarewordChar,
+    import vibe3d.editing.params.argstring : isArgstringBareword, isArgstringBarewordChar,
         parseArgstring;
 
     foreach (c; "Aa09_./-?#")

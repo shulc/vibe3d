@@ -4,9 +4,9 @@ module tests.unit.mesh_registration_boundary_test;
 import tests.unit.census_symbols : exists = wave15Exists;
 
 import core.exception : AssertError;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import mesh_command_registration : MeshCommandDeps, registerMeshCommands;
 static import mesh_command_registration;
 import registry : Registry;

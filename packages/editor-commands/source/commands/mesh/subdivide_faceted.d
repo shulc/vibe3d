@@ -4,9 +4,9 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : MeshSnapshot;
-import change_bus : MeshEditScope;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 
 /// Shared kernel dispatcher for the faceted family (flat and smooth modes).
 /// Runs `facetedSubdivide` (smooth=false) or `smoothSubdivide` (smooth=true),

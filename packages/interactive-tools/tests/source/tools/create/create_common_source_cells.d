@@ -3,9 +3,9 @@ module tools.create.create_common_source_cells;
 import tools.create.create_common;
 import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import math : Vec3, dot, matMul4, matrixMirrorsWinding, normalize, rayPlaneIntersect;
-import spatial : Viewport, isOrtho, projectToWindowFull, screenPointToRay;
+import vibe3d.util.spatial.spatial : Viewport, isOrtho, projectToWindowFull, screenPointToRay;
 import std.math : abs;
-public import workplane_basis : BuildPlane, mostFacingAxis, pickMostFacingPlane;
+public import vibe3d.util.spatial.workplane_basis : BuildPlane, mostFacingAxis, pickMostFacingPlane;
 import viewgrid : vectorSnap, viewVectorQuantum, viewWorkPlaneAnchor;
 import toolpipe.pipeline       : g_pipeCtx;
 import toolpipe.packets        : SubjectPacket, WorkplanePacket;
@@ -15,8 +15,8 @@ import operator                : VectorStack;
 import drag                    : HandleDrag, DragFrame, DragKind, planeDragDelta;
 import handler                 : MoveHandler;
 import mesh : Mesh;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.subject : evaluateSubject, viewOnlySubject, SubjectSource;
 import snap : SnapResult, snapCursor, snapPacketOf;
 import toolpipe.stages.snap : liveSnapGuides;
@@ -106,7 +106,7 @@ unittest { // ortho: the plane's DEPTH is the focus snapped to q (K-W2 finding 2
 
 unittest { // the placement click is TOTAL where the old floor plane refused
     import std.math : abs;
-    import spatial : screenPointToRay;
+    import vibe3d.util.spatial.spatial : screenPointToRay;
 
     immutable float dist  = 3.0f;
     // The focus is deliberately OFF the world origin on all three axes. With

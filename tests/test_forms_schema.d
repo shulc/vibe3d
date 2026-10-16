@@ -13,7 +13,7 @@
 // main), so main() is intentionally empty.
 
 import forms;
-import params : Param, ParamHints, IntEnumEntry, choicesOf;
+import vibe3d.editing.params.params : Param, ParamHints, IntEnumEntry, choicesOf;
 
 void main() {}
 
@@ -112,7 +112,7 @@ unittest { // the whole transform form resolves: every value row binds to a real
     // the resolved copy).
     auto txRc = resolveControl(
         Row.makeControl("tool.attr xfrm.transform TX ?"), prov);
-    import params : paramToJson;
+    import vibe3d.editing.params.params : paramToJson;
     import std.math : fabs;
     assert(fabs(paramToJson(txRc.param).floating - 1.5) < 1e-6);
 

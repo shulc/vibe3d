@@ -1,6 +1,6 @@
 module params_widgets;
 
-import params : Param, ParamHints;
+import vibe3d.editing.params.params : Param, ParamHints;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -128,7 +128,7 @@ bool drawString(ref Param p) {
 }
 
 bool drawIntEnum(ref Param p) {
-    import params : IntEnumEntry;
+    import vibe3d.editing.params.params : IntEnumEntry;
     if (p.hints.widget == ParamHints.Widget.Combo)
         return drawIntEnumCombo(p);
     return drawIntEnumRadio(p);

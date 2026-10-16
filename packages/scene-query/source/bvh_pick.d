@@ -2,10 +2,10 @@ module bvh_pick;
 
 import bvh.c;
 import math : Vec3, cross;
-import spatial : Viewport, screenRay, screenPointToRay, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, screenRay, screenPointToRay, ModelSpace;
 import mesh : Mesh;
 import mesh_gpu : GpuMesh;
-import perf_probe : g_perf, Cat, g_fc;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc;
 // Task 1906 stage 2b — the SURFACE tree's freshness key. See `pickSurfaceRay`.
 public import surface_pick : SurfaceHit, BackgroundRayPicker;
 import surface_pick : SurfacePicker, hideSkipFace;

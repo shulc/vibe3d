@@ -16,7 +16,7 @@ import std.path : buildPath, dirName;
 import std.string : count;
 
 import display_state : DrawPlan, ViewportDisplay, resolveDrawPlan;
-import item_xform : ItemXform;
+import vibe3d.util.spatial.item_xform : ItemXform;
 import math : Vec3, faceNormalFirst3, identityMatrix;
 import mesh_gpu : FacePass, buildReverseFaceIndices;
 import ui.viewport_render : facePassFor;

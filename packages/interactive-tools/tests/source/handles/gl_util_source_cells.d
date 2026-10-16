@@ -2,14 +2,14 @@ module handles.gl_util_source_cells;
 
 import bindbc.opengl;
 import std.math : sqrt, PI, abs;
-import perf_probe : g_fc, DrawPass;
+import vibe3d.util.profiling.perf_probe : g_fc, DrawPass;
 version (web) {
 } else {
     import gl_thread_guard : glThreadGuard;
 }
 import shader : seedSharedFragUniforms;
 import math;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import handles.gl_util;
 
 unittest {

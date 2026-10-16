@@ -127,6 +127,7 @@ if failures:
 import hashlib
 stat_origin = "tests/unit/ui/stat_rows_test.d"
 stat_physical = (root / "packages/editor-ui/tests/source/tests/unit/ui/stat_rows_test.d").read_bytes()
+stat_physical = census_contracts._wave19_import_original(root / "packages/editor-ui/tests/source/tests/unit/ui/stat_rows_test.d", stat_physical.decode(), root).encode()
 stat_header = b"module tests.unit.ui.stat_rows_test;\n\n"
 if len(stat_physical) != 42593 or stat_physical[407:445] != stat_header:
     raise SystemExit("prepared-protocol stat physical whole-unit control")
@@ -147,6 +148,7 @@ for invalid in (stat_original, stat_physical[:407] + stat_header + stat_physical
         raise SystemExit("prepared-protocol stat missing/duplicate/wrong-body input must be refused")
 stat_inverse_control(stat_physical, stat_original, True)
 editor_physical = (root / "source/editor_app.d").read_bytes()
+editor_physical = census_contracts._wave19_import_original(root / "source/editor_app.d", editor_physical.decode(), root).encode()
 first = census_contracts.source_input_start()
 editor_original = census_contracts._restore_source_text("source/editor_app.d", editor_physical.decode(), root).encode()
 if (len(editor_physical) != 52269 or len(editor_original) != 48220
@@ -171,10 +173,8 @@ backing_paths = {census_contracts.physical_source_path(path, root=root)
                  for inputs in owner_inputs.values() for path in inputs}
 backing_paths.update(root / fragment["destination"]
                      for fragment in census_contracts.SOURCE_FRAGMENTS)
-# Math's physical coordinate is selected by its operational recipe.
-backing_paths.update(path for path in (root / "util/math/dub.json",
-                                      root / "libraries/util/math/dub.json")
-                     if path.is_file())
+# Every finite selected owner's physical coordinate is chosen by its recipe.
+backing_paths.update(root / relative for relative in ['util/math/dub.json', 'libraries/util/math/dub.json', 'packages/edit-contracts/dub.json', 'libraries/editing/contracts/dub.json', 'packages/interaction-data/dub.json', 'libraries/editing/interaction/data/dub.json', 'packages/mesh-change/dub.json', 'libraries/mesh/change/dub.json', 'packages/mesh-contracts/dub.json', 'libraries/mesh/contracts/dub.json', 'packages/param-schema/dub.json', 'libraries/editing/params/dub.json', 'packages/profiling/dub.json', 'libraries/util/profiling/dub.json', 'packages/spatial/dub.json', 'libraries/util/spatial/dub.json', 'util/json-number/dub.json', 'libraries/util/json-number/dub.json', 'util/log/dub.json', 'libraries/util/log/dub.json', 'util/parallel/dub.json', 'libraries/util/parallel/dub.json', 'util/plane-bytes/dub.json', 'libraries/util/plane-bytes/dub.json', 'util/screen-buckets/dub.json', 'libraries/util/screen-buckets/dub.json'] if (root / relative).is_file())
 with tempfile.TemporaryDirectory(prefix="protocol-owners-") as scratch:
     partial = Path(scratch)
     for path in sorted(backing_paths):

@@ -3,10 +3,10 @@ module commands.viewport.layout_preset;
 import command;
 import commands.viewport.command_base : ViewportCommand;
 import mesh;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import view;
 import viewport : ViewportManager;
-import params : Param, wireArgs;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 /// `viewport.layout <preset>` — switch layout (Single/SplitH/SplitV/Quad).
 /// APPLICATION-WIDE, not per-cell — unlike displayStyle/wireOverlay/

@@ -1,8 +1,8 @@
 // Pure tests for read-only Smart Tool / Mode / Intent candidates.
 
-import ai.debug_trace : clearLatestAiDebugTraces,
+import vibe3d.editing.interaction.data.ai.debug_trace : clearLatestAiDebugTraces,
     latestModeToolContextDebugTrace;
-import ai.interaction : AiCandidateKind, AiInteractionContext, AiIntent;
+import vibe3d.editing.interaction.data.ai.interaction : AiCandidateKind, AiInteractionContext, AiIntent;
 import ai.mode_candidates : collectContextCandidates, collectModeCandidates,
     collectModeToolContextCandidates, collectToolCandidates,
     publishModeToolContextCandidates;

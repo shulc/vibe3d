@@ -20,7 +20,7 @@ bool preparedVec3SliceEqual(const Vec3[] a, const Vec3[] b)
         if (!preparedVec3Equal(a[i], b[i])) return false;
     return true;
 }
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 
 struct PreparedTransformActivationImage {
     float[16] gpuMatrix;
@@ -50,11 +50,11 @@ import command_history : PreparedHistoryKind;
 import operator : VectorStack;
 import mesh;
 import mesh_gpu : GpuMesh;
-import editmode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype : SelType;
 import math : Vec3;
-import spatial : Viewport, AimViewport, aimSpace;
-import change_bus : MeshEditScope, changeBus;
+import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace;
+import vibe3d.mesh.change.change_bus : MeshEditScope, changeBus;
 import command : Command;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
@@ -1011,7 +1011,7 @@ protected:
         cur.stamp(*mesh);
         if (selHashKey_.agreesOn!MeshTermMarks(cur) && *editMode == selHashKeyMode_)
             return selHashCache_;
-        { import perf_probe : g_perf, Cat; g_perf.count(Cat.selectionHashCompute, 1); }
+        { import vibe3d.util.profiling.perf_probe : g_perf, Cat; g_perf.count(Cat.selectionHashCompute, 1); }
         selHashCache_   = mesh.selectionSignature(*editMode);
         selHashKey_     = cur;
         selHashKeyMode_ = *editMode;
@@ -1830,7 +1830,7 @@ protected:
         import tools.create.create_common         : primitivePlacementFrame;
         import viewgrid : viewVectorQuantum;
         import math : rayPlaneIntersect;
-import spatial : screenPointToRay, isOrtho;
+import vibe3d.util.spatial.spatial : screenPointToRay, isOrtho;
         Vec3 crHitOrig, dir;
         screenPointToRay(cast(float)sx, cast(float)sy, cachedVp, crHitOrig, dir);
         auto mode = ActionCenterStage.Mode.Auto;

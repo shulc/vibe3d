@@ -5,11 +5,11 @@ import core.atomic : atomicOp;
 import math : Vec3;
 import tools.transform.move : MoveTool, PreparedMoveUpdateImage,
                               PreparedMoveUpdateBranch;
-import prepared_tool_effect : PreparedMoveUpdateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedMoveUpdateKind;
 
 unittest {
     import command_history : CommandHistory;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import math : Vec3;
     import mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;

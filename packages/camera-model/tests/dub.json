@@ -139,12 +139,14 @@
     }
   },
   "dependencies": {
-    "vibe3d:math": {"path": "../../.."},
-    "vibe3d-spatial": {
-      "path": "../../spatial"
+    "vibe3d:math": {
+      "path": "../../.."
     },
-    "vibe3d-json-number": {
-      "path": "../../../util/json-number"
+    "vibe3d:spatial": {
+      "path": "../../.."
+    },
+    "vibe3d:json-number": {
+      "path": "../../.."
     }
   },
   "importPaths": [
@@ -156,8 +158,8 @@
       "name": "algorithm",
       "subConfigurations": {
         "vibe3d:math": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests",
-        "vibe3d-json-number": "isolated-tests"
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:json-number": "isolated-tests"
       }
     }
   ],

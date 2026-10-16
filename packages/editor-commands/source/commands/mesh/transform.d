@@ -5,16 +5,16 @@ import std.json;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math : Vec3, Vec4, mulMV, pivotRotationMatrix, pivotScaleMatrix;
-import change_bus : MeshEditScope;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
 import toolpipe.packets  : SubjectPacket, SymmetryPacket;
 import symmetry          : applySymmetryMirror, applySymmetryMirrorDelta, projectOnPlane,
                            authored;
 import symmetry_pick     : captureLiveSymmetry;
 import operator          : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import params            : Param, wireArgs;
+import vibe3d.editing.params.params            : Param, wireArgs;
 // GpuMesh lives in mesh.d, already imported above.
 
 /// Transform the selected vertices by translate / rotate / scale. Replaces

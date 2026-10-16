@@ -1,10 +1,10 @@
 module toolpipe.packets;
 
 import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import mesh : Mesh, MapKind;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 
 // ---------------------------------------------------------------------------
 // Packet types — the wire format between tool pipe stages.

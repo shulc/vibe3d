@@ -46,7 +46,7 @@ module tools.alignment.align_kernels;
 //   `weight` at the call site — this module has no falloff dependency.
 
 import mesh     : Mesh, edgeKey;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math     : Vec3, dot, cross;
 import std.math : sqrt, cos, sin, atan, PI, abs;
 import std.algorithm : sort;

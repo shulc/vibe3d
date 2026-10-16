@@ -23,7 +23,7 @@ import mesh;
 import mesh_ops.edge_bevel;
 import mesh_ops.bevel_vertex;
 import math;
-import spatial : Pin;
+import vibe3d.util.spatial.spatial : Pin;
 import tests.unit.fixtures;
 
 // ===========================================================================

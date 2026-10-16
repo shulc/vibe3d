@@ -74,7 +74,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
     import tools.transform.xfrm_transform : XfrmTransformTool;
     import mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto reused = new XfrmTransformTool(() => &mesh, &gpu, &mode);
     Registry registry;
@@ -116,7 +116,7 @@ unittest {
     import tools.transform.scale : ScaleTool;
     import mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import operator : VectorStack;
     import bindbc.sdl : SDL_MouseButtonEvent, SDL_BUTTON_LEFT;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;

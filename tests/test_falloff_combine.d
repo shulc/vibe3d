@@ -22,7 +22,7 @@
 import std.math : isClose;
 
 import math : Vec3;
-import spatial : Viewport, aimSpace, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, aimSpace, ModelSpace;
 import toolpipe.pipeline : Pipeline;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,

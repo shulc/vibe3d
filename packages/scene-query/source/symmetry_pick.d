@@ -1,10 +1,10 @@
 module symmetry_pick;
 
 import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import mesh    : Mesh;
-import editmode : EditMode;
-import seltype  : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype  : SelType;
 import toolpipe.packets       : SubjectPacket, SymmetryPacket;
 import toolpipe.stages.symmetry : SymmetryStage, liveSymmetryStage;
 import toolpipe.subject        : evaluateSubject, SubjectSource;

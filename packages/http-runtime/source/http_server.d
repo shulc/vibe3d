@@ -20,14 +20,14 @@ import http_json : jsonEsc, meshToJsonDetailed, meshPlanesJson,
 import http_transport : HttpServerTransport, httpTransportSleep,
     httpTransportThreadIdentity;
 import core.atomic;
-import perf_probe : g_perf, g_commandGc, FrameProbe, FrameProbeSnapshot,
+import vibe3d.util.profiling.perf_probe : g_perf, g_commandGc, FrameProbe, FrameProbeSnapshot,
                     FrameWorkProbe, FrameWorkSnapshot, toJson;
 
 import eventlog : ImmediateEventSink;
 import playback_controller : PlaybackController, PlaybackStatus,
     encodePlaybackStatus;
-import argstring : parseArgstring, ParsedLine;
-import log : logInfo, logWarn, logError;
+import vibe3d.editing.params.argstring : parseArgstring, ParsedLine;
+import vibe3d.util.log.log : logInfo, logWarn, logError;
 import app_version : appVersion;
 
 // ============================================================================
@@ -3538,7 +3538,7 @@ class HttpServer {
             response.body = `{"error":"gc/commands is only available in --test mode"}`;
             return;
         }
-        import perf_probe : g_commandGc;
+        import vibe3d.util.profiling.perf_probe : g_commandGc;
         response.statusCode = 200;
         response.body = g_commandGc.toJson();
     }
@@ -3596,15 +3596,15 @@ class HttpServer {
             response.statusCode = 403;
             response.body = `{"error":"changes is only available in --test mode"}`;
         } else {
-            import change_bus : changeBus, regradeCensusChecks,
+            import vibe3d.mesh.change.change_bus : changeBus, regradeCensusChecks,
                                 regradeCensusArmedChecks,
                                 regradeCensusDisagreements;
-            import seltype    : selTypeToken;
+            import vibe3d.editing.contracts.seltype    : selTypeToken;
             import std.format : format;
             // TASK 1932 (stage 4) — the slot-ceiling instruments; see the
             // route's own comment above for why these four are safe to read
             // here when the SCANNED tables beside them are not.
-            import mesh_dirty : meshDirtySlotCeiling, meshBirthSlotCeiling,
+            import vibe3d.mesh.change.mesh_dirty : meshDirtySlotCeiling, meshBirthSlotCeiling,
                                 meshBirthsRecorded, g_bgGpuUploads;
             const snap = changeBus;
             response.statusCode = 200;

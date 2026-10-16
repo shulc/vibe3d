@@ -9,13 +9,13 @@ import bindbc.sdl;
 import tool;
 import mesh;
 import math;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame, transformPoint;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import std.math : sin, cos, PI;
 import tools.create.arc;
 

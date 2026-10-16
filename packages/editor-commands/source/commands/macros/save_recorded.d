@@ -3,8 +3,8 @@ module commands.macros.save_recorded;
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param;
 import macro_recorder : MacroRecorder;
 
 /// `macro.saveRecorded path:S` — write the recorder's captured

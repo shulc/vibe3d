@@ -62,7 +62,7 @@ version (web)
     import io.scene_ir : ImportedScene;
     import io.assimp_wire : decodeAssimpWire;
     import std.string : toStringz;
-    import log : logWarn;
+    import vibe3d.util.log.log : logWarn;
 
     version (WebAssembly) {
     extern(C) int vibe3d_web_assimp_import(const(char)* path, void** data, uint* length);
@@ -96,7 +96,7 @@ import std.math   : abs;
 import std.format : format;
 
 import bindbc.assimp;
-import log : logWarn;
+import vibe3d.util.log.log : logWarn;
 
 import math;
 import io.scene_ir;

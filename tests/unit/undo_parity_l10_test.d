@@ -63,10 +63,10 @@ import std.json   : JSONValue, parseJSON;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math      : Vec3;
 import http_json : meshPlanesJson, PlaneDumpMeta;
-import change_bus : MeshEditScope;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 
 import tests.unit.fixtures            : makeTaggedGridWeldSets;
 import tests.unit.undo_parity_l0_test : ParityCell, fixturePath, compareOrCapture,
@@ -804,7 +804,7 @@ unittest
 unittest // the GIGO rollback sites: refuse, roll back, leak nothing
 {
     import tests.unit.fixtures : dumpMeshPlanes, diffMeshPlanes;
-    import change_bus          : changeBus;
+    import vibe3d.mesh.change.change_bus          : changeBus;
 
     // Each of these refuses on the stand for its OWN reason, named per row so
     // a red says which guard fired:

@@ -2,8 +2,8 @@
 
 import std.json : JSONType, parseJSON;
 
-import ai.debug_trace;
-import ai.interaction;
+import vibe3d.editing.interaction.data.ai.debug_trace;
+import vibe3d.editing.interaction.data.ai.interaction;
 
 void main() {}
 

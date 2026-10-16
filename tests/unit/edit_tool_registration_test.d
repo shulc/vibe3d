@@ -3,7 +3,7 @@ module tests.unit.edit_tool_registration_test;
 import command : Command;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh;
 import registration : registerTools;
 import tests.unit.live_registration_rig : LiveRegistrationRig;

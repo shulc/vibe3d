@@ -6,12 +6,12 @@ import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_edge_extrude_activation : PreparedEdgeExtrudeActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
-import prepared_tool_effect : PreparedEdgeExtrudeParamEffect,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedEdgeExtrudeParamEffect,
     PreparedEdgeExtrudeParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;
@@ -27,9 +27,9 @@ import command : Command;
 import mesh;
 import mesh_ops.extrude;
 import math;
-import spatial : Viewport;
-import editmode : EditMode;
-import params : Param;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
 import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta, gesturePrevPixel;
@@ -45,7 +45,7 @@ import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 
 struct PreparedEdgeExtrudeActivationImage {
     MeshSnapshot before;

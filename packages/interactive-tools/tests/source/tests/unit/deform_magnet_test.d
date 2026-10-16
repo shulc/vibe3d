@@ -5,7 +5,7 @@ module tests.unit.deform_magnet_test;
 
 import mesh : Mesh;
 import math : Vec3;
-import spatial : Viewport, AimViewport, aimSpace, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace, ModelSpace;
 import falloff : evaluateFalloff;
 import toolpipe.packets : FalloffPacket;
 import deform_magnet;

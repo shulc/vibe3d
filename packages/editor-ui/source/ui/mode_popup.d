@@ -1,7 +1,7 @@
 module ui.mode_popup;
 
 import buttonset : ActionKind, Checked, PopupItem, PopupItemKind;
-import params : IntEnumEntry;
+import vibe3d.editing.params.params : IntEnumEntry;
 
 // Which action a generated mode row fires. This used to be an empty-string
 // sentinel on the command prefix, which left one of the two argument fields

@@ -28,11 +28,11 @@ import mesh : Mesh, Surface;
 import subpatch_preview : SubpatchPreview;
 import view : View, ProjKind;
 import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 // Modeling-side bus constants and the watcher masks (boundary-safe: render
 // may read modeling, never the reverse).
-import change_bus : MeshChangeAll, MeshEditScope;
-import mesh_dirty : DisplayEpochMask, GeomEpochMask, TopoEpochMask;
+import vibe3d.mesh.change.change_bus : MeshChangeAll, MeshEditScope;
+import vibe3d.mesh.change.mesh_dirty : DisplayEpochMask, GeomEpochMask, TopoEpochMask;
 
 import render.backend;
 import render.scene;
@@ -262,7 +262,7 @@ static assert((DisplayEpochMask & kRenderTriggers) != kRenderTriggers
 /// already set by the time the frame's tick reads it.
 void initIPR()
 {
-    import change_bus : changeBus;
+    import vibe3d.mesh.change.change_bus : changeBus;
     changeBus.onMeshChanged((size_t, uint flags) {
         const uint relevant = flags & kRenderTriggers;
         if (relevant) {
@@ -956,7 +956,7 @@ private void shadowCheckMeshChanged(const(Mesh)* m, bool busSaysChanged,
     const ulong mv = m.mutationVersion;
     const bool hashChanged = (h != shadowHash) || (mv != shadowVer);
     if (hashChanged != busSaysChanged && !g_hashMismatchWarned) {
-        import log        : logWarn;
+        import vibe3d.util.log.log        : logWarn;
         import std.format : format;
         logWarn("render", format(
             "ipr: RENDER_HASH_CHECK MISMATCH (%s): bus=%s hash=%s "

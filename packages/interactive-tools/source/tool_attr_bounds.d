@@ -1,6 +1,6 @@
 module tool_attr_bounds;
 
-import params : Param, ParamFlags, paramGateFloat, paramGateInt;
+import vibe3d.editing.params.params : Param, ParamFlags, paramGateFloat, paramGateInt;
 
 // The bound every interactive door clamps a tool or stage attribute write to (task
 // 9492 / 9519, captures K-A3 table b and K-SC scr_neg). The rows are the EXECUTED

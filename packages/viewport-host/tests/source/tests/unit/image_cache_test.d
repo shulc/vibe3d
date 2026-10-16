@@ -5,7 +5,7 @@ module tests.unit.image_cache_test;
 
 import io.image_decode : DecodedImage, ImageInfo, imageDecode, imageInfo,
                           MAX_IMAGE_BYTES;
-import log : logWarn;
+import vibe3d.util.log.log : logWarn;
 import bindbc.opengl;
 import gl_thread_guard : glThreadGuard;
 import io.image_path : writeTestBmp, imageTestDir;

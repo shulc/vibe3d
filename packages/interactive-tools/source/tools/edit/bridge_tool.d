@@ -10,8 +10,8 @@ import mesh_gpu : GpuMesh;
 import mesh_ops.bridge : BridgeOpenParams, openBridgeSegments, bridgeLoopsSpans, bridgeOpenRows, facesBoundedByLoop,
                          kBridgeEditScope;
 import math;
-import editmode : EditMode;
-import params : IntEnumEntry, Param;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : IntEnumEntry, Param;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import tools.common.session_mesh_key : SessionMeshKey;
@@ -20,7 +20,7 @@ import mesh_edit_delta : MeshEditScope;
 import shader : Shader, LitShader;
 import model_preview : ModelPreviewView;
 import std.json : JSONValue;
-import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
     PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,

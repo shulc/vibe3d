@@ -10,8 +10,8 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import spatial : Viewport, eyeVectorAt, projectToWindowFull;
-import params : Param;
+import vibe3d.util.spatial.spatial : Viewport, eyeVectorAt, projectToWindowFull;
+import vibe3d.editing.params.params : Param;
 import handler : BoxHandler, gizmoSize, ToolHandles;
 import viewport_scheme : schemeColor, SchemeColor;
 import eventlog : queryMouse;
@@ -23,7 +23,7 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedPenParamDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind, PreparedPenParamEffect,
     PreparedPenParamKind;
 import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
@@ -44,8 +44,8 @@ import toolpipe.stages.snap : liveSnapGuides, liveSnapStage;
 import toolpipe.stages.constrain : liveConstrainStage;
 import bvh_pick : SurfaceHit;
 import symmetry : mirrorPosition, symmetryMirrorsEqual, symmetryPacketsEqual;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import snap : SnapResult, snapCursor, cascadeClassWins, kAbsentClassDist,
     kCascadeVertex, kCascadeEdge, kCandidateToleranceBasePx, kVertexToleranceScale,
     elementPlaced, kMergeSnappedEdgeEndPx, kMergeAfterSnapPx;
@@ -882,7 +882,7 @@ public:
     }
 
     override Param[] params() {
-        import params : IntEnumEntry;
+        import vibe3d.editing.params.params : IntEnumEntry;
         return [
             Param.intEnum_("type", "Type", &params_.type,
                 [IntEnumEntry(PenType.polygons, "polygons", "Polygons"),

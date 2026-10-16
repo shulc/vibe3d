@@ -22,7 +22,7 @@ import std.json;
 import std.math      : PI;
 import std.stdio     : File, writeln;
 import core.thread   : Thread, msecs, seconds;
-import log           : logError;
+import vibe3d.util.log.log           : logError;
 import core.time     : MonoTime, dur;
 
 import render.backend;

@@ -19,7 +19,7 @@ import std.math          : hypot;
 
 import mesh              : Mesh, MeshTopoKey;
 import math : Vec3, dot;
-import spatial : Viewport, screenPointToRay, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, screenPointToRay, projectToWindowFull;
 import document          : primaryModelSpace;
 import toolpipe.guide    : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import toolpipe.packets  : SnapType, SymmetryPacket;

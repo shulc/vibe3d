@@ -8,11 +8,11 @@ import std.conv      : to;
 import std.string    : split, strip;
 import std.math      : abs;
 import math : Vec3, dot;
-import spatial : Viewport, projectToWindowFull, aimSpace, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, aimSpace, ModelSpace;
 import document : primaryModelSpace;
 import std.math : sqrt;
 import mesh : Mesh, MapDomain, MeshCacheKey;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffShape,
@@ -20,7 +20,7 @@ import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffSha
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.stages.workplane : WorkplaneStage;
 import toolpipe.state_paths       : setStatePath;
-import params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
+import vibe3d.editing.params.params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
 import toolpipe.stages.falloff;
 
 // ---------------------------------------------------------------------------

@@ -3,9 +3,9 @@ module commands.falloff;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import commands.tool.host : ToolHost;
-import params : Param, wireArgs;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 import toolpipe.pipeline         : g_pipeCtx, noteUserStageChoice;
 import toolpipe.stages.falloff   : FalloffStage;

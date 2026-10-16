@@ -4,7 +4,7 @@ module mesh_ops.edge_bevel;
 import mesh;
 import std.math : sqrt;
 import math;
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 import mesh_planes : rewriteFaces, FaceSource, kNoSource;
 import mesh_ops.bevel_fin : bevelIsolatedFinBundleSpine,
                              bevelFinBundleSpineMultiEdge;

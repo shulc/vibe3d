@@ -1,6 +1,6 @@
 module history_macro_registration;
 
-import argstring : serializeCommandLine;
+import vibe3d.editing.params.argstring : serializeCommandLine;
 import command : Command;
 import command_history : CommandHistory, HistoryFlags;
 import commands.history.clear : HistoryClear;

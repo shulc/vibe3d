@@ -38,8 +38,8 @@ import command;
 import operator : Operator;
 import mesh;
 import view;
-import editmode;
-import change_bus : changeBus, MeshEditScope;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.mesh.change.change_bus : changeBus, MeshEditScope;
 
 // A NON-`Operator` command whose kernel is an `override applyImpl()` — the
 // exact shape stage 0's anchor could not reach — committing twice.

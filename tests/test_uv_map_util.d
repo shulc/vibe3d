@@ -25,7 +25,7 @@ import std.math   : fabs;
 
 import mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
 import view       : View;
-import editmode   : EditMode;
+import vibe3d.editing.contracts.editmode   : EditMode;
 import snapshot   : MeshSnapshot;
 import commands.mesh.uv_map_util;
 import std.net.curl : post, get;
@@ -139,7 +139,7 @@ unittest {
     auto cmd = new UvRename(&m, view, EditMode.Vertices);
 
     // set params via direct field write (same approach as test_uv_transform.d)
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params())
         if (p.name == "from") *p.sptr = kUvMapName;
     foreach (ref p; cmd.params())
@@ -178,7 +178,7 @@ unittest {
     View view = new View(0, 0, 800, 600);
     auto cmd  = new UvRename(&m, view, EditMode.Vertices);
 
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params()) {
         if (p.name == "from") *p.sptr = kUvMapName;
         if (p.name == "to")   *p.sptr = kUvMapName;
@@ -200,7 +200,7 @@ unittest {
     assert(ok !is null);
 
     auto cmd = new UvRename(&m, view, EditMode.Vertices);
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params()) {
         if (p.name == "from") *p.sptr = kUvMapName;
         if (p.name == "to")   *p.sptr = "uv2";
@@ -223,7 +223,7 @@ unittest {
     View view    = new View(0, 0, 800, 600);
 
     auto cmd = new UvCopy(&m, view, EditMode.Vertices);
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params()) {
         if (p.name == "from") *p.sptr = kUvMapName;
         if (p.name == "to")   *p.sptr = "uv2";
@@ -253,7 +253,7 @@ unittest {
     auto m    = makeCube();
     View view = new View(0, 0, 800, 600);
     auto cmd  = new UvCopy(&m, view, EditMode.Vertices);
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params()) {
         if (p.name == "from") *p.sptr = kUvMapName;
         if (p.name == "to")   *p.sptr = "uv2";
@@ -271,7 +271,7 @@ unittest {
     assert(ok !is null);
     View view = new View(0, 0, 800, 600);
     auto cmd  = new UvCopy(&m, view, EditMode.Vertices);
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params()) {
         if (p.name == "from") *p.sptr = kUvMapName;
         if (p.name == "to")   *p.sptr = "uv2";
@@ -287,7 +287,7 @@ unittest {
     auto m    = makeCubeWithUv();
     View view = new View(0, 0, 800, 600);
     auto cmd  = new UvCopy(&m, view, EditMode.Vertices);
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params()) {
         if (p.name == "from") *p.sptr = kUvMapName;
         if (p.name == "to")   *p.sptr = kUvMapName;
@@ -344,7 +344,7 @@ unittest {
     assert(wm !is null);
     View view = new View(0, 0, 800, 600);
     auto cmd  = new UvClear(&m, view, EditMode.Vertices);
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params())
         if (p.name == "name") *p.sptr = "w";
     bool threw = false;

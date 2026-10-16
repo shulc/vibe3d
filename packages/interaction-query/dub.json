@@ -14,21 +14,23 @@
     "vibe3d-mesh": {
       "path": "../mesh"
     },
-    "vibe3d:math": {"path": "../.."},
-    "vibe3d-spatial": {
-      "path": "../spatial"
+    "vibe3d:math": {
+      "path": "../.."
     },
-    "vibe3d-profiling": {
-      "path": "../profiling"
+    "vibe3d:spatial": {
+      "path": "../.."
     },
-    "vibe3d-edit-contracts": {
-      "path": "../edit-contracts"
+    "vibe3d:profiling": {
+      "path": "../.."
     },
-    "vibe3d-mesh-change": {
-      "path": "../mesh-change"
+    "vibe3d:edit-contracts": {
+      "path": "../.."
     },
-    "vibe3d-screen-buckets": {
-      "path": "../../util/screen-buckets"
+    "vibe3d:mesh-change": {
+      "path": "../.."
+    },
+    "vibe3d:screen-buckets": {
+      "path": "../.."
     },
     "vibe3d-pipe-contracts": {
       "path": "../pipe-contracts"
@@ -182,11 +184,11 @@
       "subConfigurations": {
         "vibe3d-mesh": "modeling",
         "vibe3d:math": "modeling",
-        "vibe3d-spatial": "modeling",
-        "vibe3d-profiling": "modeling",
-        "vibe3d-edit-contracts": "modeling",
-        "vibe3d-mesh-change": "modeling",
-        "vibe3d-screen-buckets": "modeling",
+        "vibe3d:spatial": "modeling",
+        "vibe3d:profiling": "modeling",
+        "vibe3d:edit-contracts": "modeling",
+        "vibe3d:mesh-change": "modeling",
+        "vibe3d:screen-buckets": "modeling",
         "vibe3d-pipe-contracts": "modeling",
         "vibe3d-mesh-preview": "modeling"
       }
@@ -197,11 +199,11 @@
       "subConfigurations": {
         "vibe3d-mesh": "modeling-noai",
         "vibe3d:math": "modeling-noai",
-        "vibe3d-spatial": "modeling-noai",
-        "vibe3d-profiling": "modeling-noai",
-        "vibe3d-edit-contracts": "modeling-noai",
-        "vibe3d-mesh-change": "modeling-noai",
-        "vibe3d-screen-buckets": "modeling-noai",
+        "vibe3d:spatial": "modeling-noai",
+        "vibe3d:profiling": "modeling-noai",
+        "vibe3d:edit-contracts": "modeling-noai",
+        "vibe3d:mesh-change": "modeling-noai",
+        "vibe3d:screen-buckets": "modeling-noai",
         "vibe3d-pipe-contracts": "modeling-noai",
         "vibe3d-mesh-preview": "modeling-noai"
       }
@@ -215,11 +217,11 @@
       "subConfigurations": {
         "vibe3d-mesh": "with-render",
         "vibe3d:math": "with-render",
-        "vibe3d-spatial": "with-render",
-        "vibe3d-profiling": "with-render",
-        "vibe3d-edit-contracts": "with-render",
-        "vibe3d-mesh-change": "with-render",
-        "vibe3d-screen-buckets": "with-render",
+        "vibe3d:spatial": "with-render",
+        "vibe3d:profiling": "with-render",
+        "vibe3d:edit-contracts": "with-render",
+        "vibe3d:mesh-change": "with-render",
+        "vibe3d:screen-buckets": "with-render",
         "vibe3d-pipe-contracts": "with-render",
         "vibe3d-mesh-preview": "with-render"
       }
@@ -232,11 +234,11 @@
       "subConfigurations": {
         "vibe3d-mesh": "web",
         "vibe3d:math": "web",
-        "vibe3d-spatial": "web",
-        "vibe3d-profiling": "web",
-        "vibe3d-edit-contracts": "web",
-        "vibe3d-mesh-change": "web",
-        "vibe3d-screen-buckets": "web",
+        "vibe3d:spatial": "web",
+        "vibe3d:profiling": "web",
+        "vibe3d:edit-contracts": "web",
+        "vibe3d:mesh-change": "web",
+        "vibe3d:screen-buckets": "web",
         "vibe3d-pipe-contracts": "web",
         "vibe3d-mesh-preview": "web"
       }
@@ -249,11 +251,11 @@
       "subConfigurations": {
         "vibe3d-mesh": "root-tests",
         "vibe3d:math": "root-tests",
-        "vibe3d-spatial": "root-tests",
-        "vibe3d-profiling": "root-tests",
-        "vibe3d-edit-contracts": "root-tests",
-        "vibe3d-mesh-change": "root-tests",
-        "vibe3d-screen-buckets": "root-tests",
+        "vibe3d:spatial": "root-tests",
+        "vibe3d:profiling": "root-tests",
+        "vibe3d:edit-contracts": "root-tests",
+        "vibe3d:mesh-change": "root-tests",
+        "vibe3d:screen-buckets": "root-tests",
         "vibe3d-pipe-contracts": "root-tests",
         "vibe3d-mesh-preview": "root-tests"
       },
@@ -265,11 +267,11 @@
       "subConfigurations": {
         "vibe3d-mesh": "isolated-tests",
         "vibe3d:math": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests",
-        "vibe3d-profiling": "isolated-tests",
-        "vibe3d-edit-contracts": "isolated-tests",
-        "vibe3d-mesh-change": "isolated-tests",
-        "vibe3d-screen-buckets": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
+        "vibe3d:mesh-change": "isolated-tests",
+        "vibe3d:screen-buckets": "isolated-tests",
         "vibe3d-pipe-contracts": "isolated-tests",
         "vibe3d-mesh-preview": "isolated-tests"
       },

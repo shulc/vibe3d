@@ -35,11 +35,11 @@ import operator : VectorStack;
 // ---------------------------------------------------------------------------
 unittest {
     import math : Vec3, lookAt, perspectiveMatrix;
-import spatial : Viewport, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
     import mesh             : Mesh;
     import toolpipe.packets : SubjectPacket;
     import snap             : invalidateSnapGrids;
-    import editmode         : EditMode;
+    import vibe3d.editing.contracts.editmode         : EditMode;
     import std.math         : PI, round;
 
     invalidateSnapGrids();

@@ -2,7 +2,7 @@ module tests.unit.commands.ui.layout_reset_test;
 
 import command_history : CommandHistory;
 import commands.ui.layout_reset : UiLayoutResetCommand;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh;
 import view : View;
 

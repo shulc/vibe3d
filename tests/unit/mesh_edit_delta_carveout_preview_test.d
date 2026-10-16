@@ -39,7 +39,7 @@ import std.format : format;
 import mesh;
 import math : Vec3;
 import mesh_edit_delta;
-import mesh_dirty : noteMeshChange;
+import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
 
 private struct PreviewRow {
     string           name;

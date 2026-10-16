@@ -10,13 +10,13 @@ unittest {
     import command_history : CommandHistory;
     import commands.mesh.session_edit : MeshSessionEdit;
     import document : Layer;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import math : Vec3;
     import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuUploadOwner,
         GpuResourceOwner;
     import prepared_record_context : PreparedRecordContext;
-    import prepared_tool_effect : PreparedActivateKind, PreparedDeactivateKind;
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind, PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
     import snapshot : MeshSnapshot;

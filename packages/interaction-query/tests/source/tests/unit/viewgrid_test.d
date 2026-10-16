@@ -5,7 +5,7 @@ module tests.unit.viewgrid_test;
 
 import std.math : log10, floor, pow, fabs, isFinite, sqrt, isNaN;
 import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import math : lookAt, perspectiveMatrix, orthographicMatrix;
 import std.math : PI, sin, cos, tan;
 import viewgrid;

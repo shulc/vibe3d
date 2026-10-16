@@ -3,15 +3,15 @@
 import std.conv : to;
 import std.json : parseJSON;
 
-import ai.advisor : AiAdvisor;
-import ai.debug_trace : clearLatestHandleDebugTrace, latestHandleDebugTrace,
+import vibe3d.editing.interaction.data.ai.advisor : AiAdvisor;
+import vibe3d.editing.interaction.data.ai.debug_trace : clearLatestHandleDebugTrace, latestHandleDebugTrace,
     latestHandleDebugTraceJson;
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiInteractionPhase, AiIntent;
 import bindbc.sdl : SDL_BUTTON_LEFT, SDL_MouseButtonEvent;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import handler : Handler, HandleState, ToolHandles, setHandleAiAdvisor;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import operator : VectorStack;

@@ -4,7 +4,7 @@ import tools.edit.topology_pen;
 import hover_state;
 import mesh : Mesh, makeGridPlane;
 import math : Vec3, lookAt, orthographicMatrix;
-import spatial : Viewport, ModelSpace, screenPointToRay, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace, screenPointToRay, projectToWindowFull;
 import std.math : abs;
 import std.format : format;
 import std.stdio : writefln;
@@ -31,9 +31,9 @@ version (PerspectivePenFocused) {} else unittest {
     import bindbc.sdl;
     import command_history : CommandHistory;
     import commands.mesh.session_edit : MeshSessionEdit;
-    import change_bus : MeshEditScope;
+    import vibe3d.mesh.change.change_bus : MeshEditScope;
     import edit_session : EditSession;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import view : View;
     import tool : Tool;
     import snapshot : MeshSnapshot, SelectionSnapshot;
@@ -600,7 +600,7 @@ version (PerspectivePenFocused) {} else unittest {
 version (PerspectivePenFocused) {} else unittest {
     import document : ItemXform, primaryModelSpaceResolver;
     import toolpipe.packets : SubjectPacket;
-    import spatial : aimSpace;
+    import vibe3d.util.spatial.spatial : aimSpace;
     const vp=viewport();ItemXform transform;transform.pos=Vec3(.5f,1,-.5f);transform.scl=Vec3(2,4,.5f);
     const ms=transform.modelSpace();const saved=primaryModelSpaceResolver;scope(exit)primaryModelSpaceResolver=saved;
     primaryModelSpaceResolver=()=>ms;
@@ -774,7 +774,7 @@ unittest {
     import snap : setBackgroundSnapSources, backgroundSourcesFull;
     import view : View;
     import math : translationMatrix, orthographicMatrix;
-import spatial : Orientation;
+import vibe3d.util.spatial.spatial : Orientation;
     import drag : HandleDrag, DragFrame, DragKind;
     import bvh_pick : SurfaceHit;
     import std.file : readText;

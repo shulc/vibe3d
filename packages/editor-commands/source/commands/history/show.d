@@ -3,7 +3,7 @@ module commands.history.show;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 
 /// Toggle the floating Command-History panel. Wired to a button in
 /// buttons.yaml; the panel state owns visibility and this command reaches it

@@ -63,11 +63,11 @@ module tests.unit.undo_parity_l7d_test;
 
 import std.format : format;
 
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import http_json : meshPlanesJson, PlaneDumpMeta;
 
 import tests.unit.fixtures            : makeTaggedGridFull;

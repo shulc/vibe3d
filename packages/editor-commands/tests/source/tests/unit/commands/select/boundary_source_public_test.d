@@ -5,7 +5,7 @@ import commands.select.boundary;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : SelectionSnapshot;
 
 // ---------------------------------------------------------------------------

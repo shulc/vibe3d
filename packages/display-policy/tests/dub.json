@@ -139,15 +139,17 @@
     }
   },
   "dependencies": {
-    "vibe3d:math": {"path": "../../.."},
+    "vibe3d:math": {
+      "path": "../../.."
+    },
     "vibe3d-mesh": {
       "path": "../../mesh"
     },
     "vibe3d-document-model": {
       "path": "../../document-model"
     },
-    "vibe3d-mesh-change": {
-      "path": "../../mesh-change"
+    "vibe3d:mesh-change": {
+      "path": "../../.."
     }
   },
   "importPaths": [
@@ -161,7 +163,7 @@
         "vibe3d:math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
         "vibe3d-document-model": "isolated-tests",
-        "vibe3d-mesh-change": "isolated-tests"
+        "vibe3d:mesh-change": "isolated-tests"
       }
     }
   ],

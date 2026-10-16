@@ -3,7 +3,7 @@ module constraint;
 import std.math : sqrt;
 
 import math : Vec3, dot, cross, normalize, closestOnSegment2D;
-import spatial : Viewport, ModelSpace, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
 import mesh : Mesh, edgeKey;
 import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           HoverTarget, HoverTargetKind, SnapPacket;

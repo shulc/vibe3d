@@ -8,12 +8,12 @@ import std.format;
 import std.algorithm;
 import mesh;
 import math;
-import spatial;
+import vibe3d.util.spatial.spatial;
 import document;
 import layer_params;
-import params;
+import vibe3d.editing.params.params;
 import io.image_path;
-import seltype;
+import vibe3d.editing.contracts.seltype;
 import mesh_selsets;
 
 // ===========================================================================

@@ -13,7 +13,7 @@ import core.exception : AssertError;
 import handles.gl_util : drawThickLinesExt, initThickLineProgram,
     setThickLineScreenSize, shutdownThickLineProgram;
 import math : Vec3, identityMatrix, perspectiveMatrix;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import shader : createProgram, thickLineFragSrc, thickLineVertexSrc;
 import std.conv : to;
 import std.format : format;

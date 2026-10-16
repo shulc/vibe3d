@@ -1,7 +1,7 @@
 module args_dialog;
 
 import command : Command;
-import params  : Param, ParamHints;
+import vibe3d.editing.params.params  : Param, ParamHints;
 import params_widgets : drawParamWidget;
 
 import ImGui = d_imgui;

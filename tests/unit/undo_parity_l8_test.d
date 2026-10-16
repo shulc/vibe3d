@@ -113,12 +113,12 @@ module tests.unit.undo_parity_l8_test;
 
 import std.format : format;
 
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 import command;
 import mesh;
 import math    : Vec3;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import http_json : meshPlanesJson, PlaneDumpMeta;
 
 import tests.unit.fixtures            : makeTaggedGridBent;

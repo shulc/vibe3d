@@ -3,10 +3,10 @@ module prepared_rotate_update_source_cells;
 import prepared_rotate_update;
 import core.atomic : atomicOp;
 import document : Layer;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedRotateUpdateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedRotateUpdateKind;
 import math : Vec3;
 import tools.transform.rotate : RotateTool, PreparedRotateUpdateImage,
     PreparedRotateUpdateBranch;

@@ -11,12 +11,12 @@ import tools.slice.loop_slice_tool : LoopSliceTool,
 unittest {
     import command_history : CommandHistory;
     import commands.mesh.session_edit : MeshSessionEdit;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuUploadOwner;
     import prepared_record_context : PreparedRecordContext;
-    import prepared_tool_effect : PreparedDeactivateKind;
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
     import view : View;

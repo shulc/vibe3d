@@ -18,13 +18,13 @@ import commands.mesh.smooth : MeshSmooth, SurfaceLineIndex, preserveProjectsAt,
 version (PerfProbe) import commands.mesh.smooth : surfaceHitTests;
 import commands.mesh.vertex_position_result : VertexPositionResult;
 import document : primaryModelSpaceResolver;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import falloff : evaluateFalloff;
 import math : Vec3;
-import spatial : ModelSpace, aimSpace;
+import vibe3d.util.spatial.spatial : ModelSpace, aimSpace;
 import mesh : Mesh;
 import operator : VectorStack;
-import params : Param, ParamProvider;
+import vibe3d.editing.params.params : Param, ParamProvider;
 import toolpipe.packets : FalloffPacket, FalloffShape, FalloffType, SubjectPacket;
 import tools.edit.smooth_relax : RelaxVec3;
 import view : View;

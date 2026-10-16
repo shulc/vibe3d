@@ -11,7 +11,7 @@ import tools.slice.edge_slide : EdgeSlideTool;
 unittest {
     import commands.mesh.vertex_position_result : VertexPositionResultBuilder;
     import command_history : CommandHistory;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;

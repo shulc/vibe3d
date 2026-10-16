@@ -5,8 +5,8 @@ import std.array : array;
 
 import mesh;
 import math;
-import change_bus : MeshChangeAll;
-import perf_probe : g_perf, Cat;
+import vibe3d.mesh.change.change_bus : MeshChangeAll;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 
 // ---------------------------------------------------------------------------
 // MeshSnapshot — full pre-apply mesh + selection + subpatch state, used by
@@ -230,7 +230,7 @@ struct MeshSnapshot {
     /// `@nogc` is deliberate and not decoration: a measuring device that
     /// allocates perturbs the GC readout printed beside its own number.
     size_t byteSize() const pure nothrow @safe @nogc {
-        import plane_bytes : planeBytes;
+        import vibe3d.util.plane_bytes.plane_bytes : planeBytes;
         // Rule 5: the struct's own bytes, once. `filled` and the three
         // selection-order counters are scalars and live inside this term.
         size_t n = MeshSnapshot.sizeof;

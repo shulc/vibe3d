@@ -12,7 +12,7 @@ import toolpipe.packets  : SnapPacket, SnapConfig, SnapHitPacket, SnapType, Snap
 import toolpipe.guide    : SnapGuide, GuideDrawState;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath;
-import params            : Param, IntEnumEntry;
+import vibe3d.editing.params.params            : Param, IntEnumEntry;
 import math : Vec3;
 import toolpipe.stages.snap;
 
@@ -102,11 +102,11 @@ unittest { // The snap config is ONE declaration — and `enabled` is the
 // ---------------------------------------------------------------------------
 unittest {
     import math : Vec3, lookAt, perspectiveMatrix;
-import spatial : Viewport, ModelSpace, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
     import mesh             : Mesh;
     import toolpipe.packets : SubjectPacket;
     import snap             : snapCursor, SnapResult, invalidateSnapGrids;
-    import editmode         : EditMode;
+    import vibe3d.editing.contracts.editmode         : EditMode;
     import std.math         : PI, round, sqrt;
 
     // snap.d's global candidate grids are keyed by (mesh address, mutation

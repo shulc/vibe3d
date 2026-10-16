@@ -5,7 +5,7 @@ module tests.unit.drag_test;
 
 import std.math : sqrt, isNaN, abs;
 import math;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
 import toolpipe.packets : GesturePacket, GestureTrack;
 import coord_rounding : CoordinateRounding, kFixedIncrementDefault;

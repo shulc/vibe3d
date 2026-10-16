@@ -19,7 +19,7 @@ unittest {
     import std.algorithm : canFind;
     import commands.file.load : FileLoad;
     import view     : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
 
     auto root = v3dTestDir("refusal_chain");
     enum string tri = `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}`;

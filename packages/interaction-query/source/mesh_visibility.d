@@ -36,9 +36,9 @@ module mesh_visibility;
 
 import mesh : Mesh;
 import math : Vec3, frontFacingLocal, pointInPolygon2D;
-import spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull;
-import perf_probe : g_perf, Cat;
-import screen_buckets : ScreenBuckets, buildScreenBuckets, queryScreenCell,
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
+import vibe3d.util.screen_buckets.screen_buckets : ScreenBuckets, buildScreenBuckets, queryScreenCell,
                         OCCL_CELL_PX, MAX_OCCL_BUCKET_INTS;
 
 // ---------------------------------------------------------------------------
@@ -470,7 +470,7 @@ private VisibilityProbe buildVisibilityProbe(const ref Mesh m, Vec3 eye,
                                               float queryPadPx,
                                               bool exemptCoincidentSurfaces) {
     import math : frontFacingLocal;
-    import spatial : projectToWindowFull, projectionSpace, ModelSpace;
+    import vibe3d.util.spatial.spatial : projectToWindowFull, projectionSpace, ModelSpace;
     import std.math : isFinite;
 
     // DoS clamp on the one numeric that SCALES this call's allocation.

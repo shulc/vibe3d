@@ -147,15 +147,15 @@
     }
   },
   "dependencies": {
-    "vibe3d-log": {
-      "path": "../../../util/log"
+    "vibe3d:log": {
+      "path": "../../.."
     }
   },
   "configurations": [
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-log": "isolated-tests"
+        "vibe3d:log": "isolated-tests"
       }
     }
   ]

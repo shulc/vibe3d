@@ -2,7 +2,7 @@ module tests.unit.shared_hover_record_test;
 import hover_state;
 import mesh : Mesh, makeGridPlane;
 import math : Vec3, lookAt, orthographicMatrix;
-import spatial : Viewport, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
 import constraint : resolveHoverTarget, BackgroundSource;
 import toolpipe.packets : ConstrainHitPacket, HoverTargetKind, SnapType;
 import snap : SnapResult, elementPlaced, kMergeSnappedEdgeEndPx, kMergeAfterSnapPx;

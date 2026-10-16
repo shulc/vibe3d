@@ -14,7 +14,7 @@ module tests.unit.primary_memo_fixture;
 
 import document;
 import mesh   : Mesh;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import std.format : format;
 
 /// `n` mesh-kind layers. Layer 0 arrives selected (bootstrap's `setActive`);

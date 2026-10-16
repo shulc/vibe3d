@@ -3,10 +3,10 @@ module tests.unit.ai.exploration_source_public_test;
 import ai.exploration;
 
 version (unittest) {
-    import ai.interaction : AiInteractionContext;
+    import vibe3d.editing.interaction.data.ai.interaction : AiInteractionContext;
     import ai.interaction_log : makeAiInteractionLogRecord,
         AiInteractionLogRecord;
-    import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind;
+    import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind;
 
     private AiInteractionLogRecord _makeTestRecord(string[] ids, int appliedIdx) {
         AiCandidate[] cands;

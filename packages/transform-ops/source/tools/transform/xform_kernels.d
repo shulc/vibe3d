@@ -22,16 +22,16 @@ module tools.transform.xform_kernels;
 // captureFalloffForDrag / captureSymmetryForDrag.
 
 import math : Vec3, dot, cross, rotateAboutPivot;
-import spatial : Viewport, AimViewport;
+import vibe3d.util.spatial.spatial : Viewport, AimViewport;
 import math : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine, matMul4, identityMatrix, pivotRotationMatrix;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 import mesh    : Mesh, MeshMap;
 import tools.transform.morph_route : MorphRoute, storeRouted;
 import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror, authored, frameSource;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform.cluster_values : ClusterPivots, ClusterAxes;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 
 // Coarse perf instrumentation for the kernels (doc/perf_harness_plan.md).
 // One scope at function entry (NEVER inside the per-vertex loop), the

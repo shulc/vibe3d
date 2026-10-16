@@ -27,7 +27,7 @@ import std.format    : format;
 import mesh;
 import math;
 import io.scene_ir;
-import log : logWarn, logInfo;
+import vibe3d.util.log.log : logWarn, logInfo;
 
 // Diagnostics for the LWO reader funnel through the "io" log subsystem; the
 // "LWO" label stays in the message body (echoed as `[io] LWO: …`). Structural

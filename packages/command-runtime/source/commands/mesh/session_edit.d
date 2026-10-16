@@ -5,12 +5,12 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import commands.mesh.gesture_payload : GesturePayload;
 import commands.mesh.mesh_edit_payload : MeshEditPayload;
-import tool_policy_values : AttrImage, StepOrigin;
+import vibe3d.editing.contracts.tool_policy_values : AttrImage, StepOrigin;
 
 /// Generic record-flavor command for an interactive mesh-editing session
 /// (see e.g. BevelTool, EdgeExtrudeTool, ArrayTool, LoopSliceTool, ...). The

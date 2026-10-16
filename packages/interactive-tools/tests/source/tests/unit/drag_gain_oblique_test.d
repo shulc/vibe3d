@@ -25,7 +25,7 @@ import drag : axisArmDelta, axisArmDeltaUnsnapped,
               axisDragRoundingStep, screenAxisDelta, viewWorldPerPixel;
 import handler : getGizmoPixels, gizmoSize, setGizmoPixels;
 import math : Vec3, dot, lookAt, perspectiveMatrix;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import std.file : readText;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;

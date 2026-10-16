@@ -6,10 +6,10 @@ module tests.unit.ai.exploration_test;
 import std.conv   : to;
 import std.format : format;
 import ai.interaction_log : AiInteractionLogRecord;
-import ai.interaction     : AiCandidate;
-import ai.interaction : AiInteractionContext;
+import vibe3d.editing.interaction.data.ai.interaction     : AiCandidate;
+import vibe3d.editing.interaction.data.ai.interaction : AiInteractionContext;
 import ai.interaction_log : makeAiInteractionLogRecord, AiInteractionLogRecord;
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind;
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind;
 import ai.exploration;
 
 unittest { // fromEnv with no env var ⇒ disabled
@@ -55,7 +55,7 @@ unittest { // seeded determinism: same seed ⇒ same sequence
 }
 
 unittest { // buildCandidateKey is order-independent
-    import ai.interaction : AiCandidate, AiCandidateKind;
+    import vibe3d.editing.interaction.data.ai.interaction : AiCandidate, AiCandidateKind;
     AiCandidate c1, c2, c3;
     c1.id = "handle:20"; c1.kind = AiCandidateKind.handle;
     c2.id = "handle:0";  c2.kind = AiCandidateKind.handle;

@@ -46,7 +46,7 @@ import std.format : format;
 import mesh;
 import mesh_edit_delta;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import command;
 import command_history : CommandHistory;
 
@@ -60,7 +60,7 @@ import commands.mesh.make_polygon  : MeshMakePolygon;
 import commands.mesh.thicken       : MeshThicken;
 import commands.mesh.polygon_align : MeshAlign;
 import math : Vec3;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 
 import tests.unit.fixtures : makeTaggedGridBent, findEdge;
 

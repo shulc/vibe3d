@@ -22,7 +22,7 @@ import tests.unit.census_symbols : blankNonCode, containsWord, countOccurrences;
 
 import handler : Handler, HandlePart, firstHitPart, BoxHandler;
 import math : Vec3, lookAt, orthographicMatrix;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import drag : ctrlLockPending, kCtrlLockWaitPx, screenAxisFraction;
 import tools.transform.move : MoveTool;
 import tools.transform.scale : ScaleTool;
@@ -181,10 +181,10 @@ unittest {
     import std.math : sqrt;
     import mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import view : View;
     import math : cross, dot;
-import spatial : Orientation;
+import vibe3d.util.spatial.spatial : Orientation;
     import handler : ToolHandles, HitRule;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto mv = new MoveTool(() => &mesh, &gpu, &mode);

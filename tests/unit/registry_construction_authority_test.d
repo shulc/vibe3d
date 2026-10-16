@@ -16,12 +16,12 @@ import std.string : indexOf, splitLines;
 
 import application_command_binding : CommandInvocationContext;
 import command : Command, CommandOrigin;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import live_registration_roles : LiveSessionRole;
 import mesh : Mesh;
 import registry : CommandFactory, Registry;
 import command_registry : CommandRegistry;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes,
     symbolTokenHits;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
@@ -623,11 +623,11 @@ unittest { // The desktop receiver instantiates the same operation-only helpers.
     import command_executor : CommandExecutor;
     import command_history : CommandHistory;
     import command_invocation;
-    import change_bus : changeBus, ChangeBus;
+    import vibe3d.mesh.change.change_bus : changeBus, ChangeBus;
     import mesh : makeCube, g_isDocumentMesh;
     import pilot_command_registration;
     import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 
     const savedResolver = g_editTargetResolver; auto savedBus = changeBus;
     const savedFilter = g_isDocumentMesh;

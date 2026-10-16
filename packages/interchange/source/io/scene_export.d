@@ -53,7 +53,7 @@ module io.scene_export;
 version (web)
 {
     import document : Document, Layer;
-    import log : logWarn;
+    import vibe3d.util.log.log : logWarn;
     import mesh : Mesh, detachedPreparedMesh;
     import io.assimp_wire : encodeAssimpWire;
     import std.string : toStringz;
@@ -98,7 +98,7 @@ import std.array  : appender;
 import std.format : format;
 
 import bindbc.assimp;
-import log : logWarn;
+import vibe3d.util.log.log : logWarn;
 
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
 import mesh_selsets : selSetsAnyLive;

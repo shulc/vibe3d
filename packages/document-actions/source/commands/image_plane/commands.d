@@ -35,13 +35,13 @@ module commands.image_plane.commands;
 import command;
 import mesh;
 import view;
-import editmode;
-import params     : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params     : Param;
 import document   : Document, Layer, ItemKind, ImagePlaneData, kindInfo;
-import seltype    : SelMode;
+import vibe3d.editing.contracts.seltype    : SelMode;
 import image_plane : kImageLinkSlot;
-import change_bus : noteLayerChange, LayerChange;
-import log        : logWarn;
+import vibe3d.mesh.change.change_bus : noteLayerChange, LayerChange;
+import vibe3d.util.log.log        : logWarn;
 
 // ---------------------------------------------------------------------------
 // imagePlane.add — create a reference-image plane item.

@@ -9,7 +9,7 @@ import forms : Form;
 import forms_render : FormsPanel;
 import imgui_flag_boundary : inputTextSubmitOnEnter;
 import layer_params : LayerPropsProvider, itemPropsTarget;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import session_owner : Session;
 import tool : Tool;
 import ui.item_rename : ItemRenameDispatch, ItemRenameExit, ItemRenameState,
@@ -30,7 +30,7 @@ public:
     }
     const(Document)* document() { return owner_.documentPtr(); }
     SelType currentSelType() {
-        import seltype : resolve = currentSelType;
+        import vibe3d.editing.contracts.seltype : resolve = currentSelType;
         return resolve(owner_.selTypeOrder);
     }
     bool transformToolActive() {

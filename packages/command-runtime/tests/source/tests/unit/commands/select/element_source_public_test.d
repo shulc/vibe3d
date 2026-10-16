@@ -3,7 +3,7 @@ module tests.unit.commands.select.element_source_public_test;
 import commands.select.element : SelectElementCommand;
 import mesh : Mesh;
 import view : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 
 version (unittest) {
     import math : Vec3;

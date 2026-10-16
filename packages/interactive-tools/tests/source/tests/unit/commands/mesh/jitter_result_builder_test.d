@@ -7,17 +7,17 @@ module tests.unit.commands.mesh.jitter_result_builder_test;
 import std.format : format;
 import std.math : fabs, sqrt;
 
-import change_bus : MeshEditScope, changeBus;
+import vibe3d.mesh.change.change_bus : MeshEditScope, changeBus;
 import command_history : CommandHistory;
 import commands.mesh.jitter : MeshJitter;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.mesh.vertex_position_result : VertexPositionResult;
 import display_sync : activeMeshResolver;
 import document : primaryModelSpaceResolver;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import falloff : evaluateFalloff;
 import math : Vec3;
-import spatial : ModelSpace, aimSpace, projectToWindowFull;
+import vibe3d.util.spatial.spatial : ModelSpace, aimSpace, projectToWindowFull;
 import mesh : Mesh, makeCube;
 import operator : VectorStack;
 import toolpipe.packets : FalloffPacket, FalloffShape, FalloffType,

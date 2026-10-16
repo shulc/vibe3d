@@ -4,15 +4,15 @@ import std.algorithm : sort, remove, SwapStrategy;
 import std.array     : array;
 import std.conv      : to;
 
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import toolpipe.stage   : Stage, TaskCode;
-import editmode : EditMode;
-static import tool_policy_values;
+import vibe3d.editing.contracts.editmode : EditMode;
+static import tool_policy_values = vibe3d.editing.contracts.tool_policy_values;
 import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket,
                           WorkplanePacket, FalloffPacket, SymmetryPacket,
                           SnapPacket, ConstrainPacket;
 import operator : Operator, Task, VectorStack, PacketKind;
-import perf_probe : g_perf, Cat, g_fc;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc;
 
 // ---------------------------------------------------------------------------
 // Pipeline — ordered list of Stages with dispatch.
@@ -274,7 +274,7 @@ public:
     /// A correctly-configured pipeline produces zero warnings, so the set
     /// stays empty in the steady state.
     private static void checkRequiredPackets(Operator op, ref const VectorStack vts) {
-        import log : logWarnOnce;
+        import vibe3d.util.log.log : logWarnOnce;
         import std.format : format;
         foreach (kind; op.requiredPackets()) {
             if (vts.has(kind)) continue;

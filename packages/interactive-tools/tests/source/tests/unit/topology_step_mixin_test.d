@@ -5,7 +5,7 @@
 // the body hands the session, nor the commit pair's re-base (the 9429 drill).
 module tests.unit.topology_step_mixin_test;
 
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;

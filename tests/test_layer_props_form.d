@@ -28,7 +28,7 @@
 
 import forms;
 import layer_params : LayerPropsProvider, layerAttrUniverse, itemPropsTarget;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 
 import std.algorithm : canFind;
 import std.conv      : to;
@@ -324,7 +324,7 @@ unittest {
 unittest {
     import document : Document, Layer, ItemKind, ImagePlaneData;
     import mesh     : makeCube;
-    import seltype  : SelMode;
+    import vibe3d.editing.contracts.seltype  : SelMode;
 
     auto doc = Document.bootstrap(makeCube());
     auto plane = new Layer;

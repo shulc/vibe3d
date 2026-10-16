@@ -13,8 +13,8 @@ import core.atomic : atomicOp;
 import math;    // Vec3
 import shader;  // LitShader
 import mesh;    // Mesh, FaceList
-import change_bus : MeshEditScope;  // Position class for the preview-refresh publish
-import perf_probe : g_fc, DrawPass, g_perf, Cat;  // always-on per-frame work counters; upload-path timers (task 9140)
+import vibe3d.mesh.change.change_bus : MeshEditScope;  // Position class for the preview-refresh publish
+import vibe3d.util.profiling.perf_probe : g_fc, DrawPass, g_perf, Cat;  // always-on per-frame work counters; upload-path timers (task 9140)
 import viewport_scheme : schemeColor, SchemeColor, pointSizePx, kBasePointSize,
                          kOccludedSelectionAlpha, kFaceHoverFill;
 import vertex_normals : FaceAdjacency, SmoothNormalCache, SmoothPolicy, buildFaceAdjacency,

@@ -4,7 +4,7 @@ import display_state : DrawPlan;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedToolParamDoorClient, PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
 import document : Layer;
 
@@ -16,11 +16,11 @@ import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import spatial : Viewport;
-import editmode : EditMode;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
 import drag : HandleDrag, DragFrame, DragKind;
 import overlay_space : OverlaySpace;
-import params : Param, IntEnumEntry;
+import vibe3d.editing.params.params : Param, IntEnumEntry;
 import shader : Shader;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;

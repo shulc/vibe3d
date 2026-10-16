@@ -2,7 +2,7 @@ module display_sync;
 
 import mesh : Mesh;
 import mesh_gpu : GpuMesh;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 
 // The display-refresh gate (seam 2b) — since task 0427 a TOOL-side seam.
 //

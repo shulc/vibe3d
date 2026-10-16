@@ -3,7 +3,7 @@ import perspective_camera_rig_helpers : PerspectiveCameraRig;
 import http_client : postJson;
 import drag_helpers : fetchCamera,viewportFromCamera,Vec3;
 import math : ProductionVec3=Vec3;
-import spatial : ProductionViewport=Viewport;
+import vibe3d.util.spatial.spatial : ProductionViewport=Viewport;
 import drag : preparePlaneDrag,HandleDrag,DragFrame,DragKind,viewWorldPerPixel;
 import viewgrid : viewVectorQuantum,g_viewGrid,ViewGridPrefs;
 import std.math : abs;

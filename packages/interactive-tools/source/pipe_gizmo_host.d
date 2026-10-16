@@ -2,7 +2,7 @@ module pipe_gizmo_host;
 
 import bindbc.sdl;
 
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import shader  : Shader;
 import handler : ToolHandles;
 import eventlog : queryMouse;

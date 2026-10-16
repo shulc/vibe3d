@@ -142,13 +142,15 @@
     "vibe3d-document-model": {
       "path": "../../document-model"
     },
-    "vibe3d-edit-contracts": {
-      "path": "../../edit-contracts"
+    "vibe3d:edit-contracts": {
+      "path": "../../.."
     },
     "vibe3d-mesh": {
       "path": "../../mesh"
     },
-    "vibe3d:math": {"path": "../../.."},
+    "vibe3d:math": {
+      "path": "../../.."
+    },
     "vibe3d-subpatch-preview": {
       "path": "../../subpatch-preview"
     }
@@ -162,7 +164,7 @@
       "name": "algorithm",
       "subConfigurations": {
         "vibe3d-document-model": "isolated-tests",
-        "vibe3d-edit-contracts": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
         "vibe3d:math": "isolated-tests",
         "vibe3d-subpatch-preview": "isolated-tests"

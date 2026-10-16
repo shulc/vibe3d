@@ -8,7 +8,7 @@
 module tests.unit.ortho_relocate_prior_test;
 
 import math : Vec3, lookAt, orthographicMatrix;
-import spatial : Viewport, screenPointToRay;
+import vibe3d.util.spatial.spatial : Viewport, screenPointToRay;
 import tools.transform.relocate_plane : orthoRelocateThroughPrior;
 import std.format : format;
 import std.math : abs, PI, tan;

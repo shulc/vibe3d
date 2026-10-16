@@ -6,13 +6,13 @@ module tests.unit.toolpipe.stages.symmetry_test;
 import std.format : format;
 import math    : Vec3, dot;
 import mesh    : Mesh;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordSymm;
 import toolpipe.packets  : SymmetryPacket, SymmetryConfig;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath;
 import symmetry          : rebuildPairing, rebuildPairingTopological;
-import params            : Param, IntEnumEntry;
+import vibe3d.editing.params.params            : Param, IntEnumEntry;
 import toolpipe.stages.symmetry;
 
 unittest { // One symmetry config, with one named behaviour-preserving exception.
@@ -104,8 +104,8 @@ unittest { // One symmetry config, with one named behaviour-preserving exception
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : makeCube;
-    import change_bus : MeshEditScope;
-    import mesh_dirty : noteMeshChange;
+    import vibe3d.mesh.change.change_bus : MeshEditScope;
+    import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
     import operator : VectorStack;
 
     Mesh cube = makeCube();

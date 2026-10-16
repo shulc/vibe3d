@@ -5,8 +5,8 @@ import commands.select.by_tag;
 import command;
 import mesh;
 import view;
-import editmode;
-import params   : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params   : Param;
 import snapshot : SelectionSnapshot;
 
 // ---------------------------------------------------------------------------

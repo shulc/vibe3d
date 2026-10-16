@@ -3,8 +3,8 @@ module commands.prefs.coord_rounding;
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param, wireArgs;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 import coord_rounding : CoordinateRounding, parseCoordRounding,
                         setCoordRounding, coordRounding, coordRoundingName;

@@ -19,8 +19,8 @@ unittest {
 }
 import mesh;
 import math;
-import editmode : EditMode;
-import params : Param, IntEnumEntry, wireTagForValue;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param, IntEnumEntry, wireTagForValue;
 import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;

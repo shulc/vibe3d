@@ -7,7 +7,7 @@ import commands.tool.lifecycle : ToolActivationCommand;
 import document : Layer, beginPreparedLayerRead;
 import mesh : Mesh;
 import operator : VectorStack;
-import params : injectPreparedParamsInto;
+import vibe3d.editing.params.params : injectPreparedParamsInto;
 import pipe_gizmo_host : PipeGizmoHost;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedToolParamDoorClient, PreparedToolPoseDoorClient;
@@ -16,7 +16,7 @@ import registry : PreparedPipeAttrs, ToolFactory;
 import std.json : JSONType, JSONValue;
 import tool : Tool, firstStepCarriesActivation;
 import view : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import tool_presets : prepareStickyToolDefaults;
 import tool_attr_bounds : applyToolAttrBound;
 import toolpipe.attr_cache : DroppedNodes, NodeAttrs, PipelineAttrCache,

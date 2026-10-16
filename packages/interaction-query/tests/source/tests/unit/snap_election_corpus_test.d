@@ -38,7 +38,7 @@ module tests.unit.snap_election_corpus_test;
 
 import std.math : PI, sqrt, round, isNaN;
 import math : Vec3, lookAt, perspectiveMatrix, orthographicMatrix;
-import spatial : Viewport, ModelSpace, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
 import mesh : Mesh, makeCube;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, GuideDrawState, kGuidePrioritySeed;
@@ -462,7 +462,7 @@ unittest {
     // moved a `toWorld` would show here and nowhere in sweep A.
     // -----------------------------------------------------------------------
     {
-        import item_xform : ItemXform;
+        import vibe3d.util.spatial.item_xform : ItemXform;
         ItemXform[3] xs;
         xs[0].pos = Vec3(0.4f, -0.3f, 0.2f);
         xs[1].rot = Vec3(15.0f, 40.0f, -10.0f);
@@ -502,7 +502,7 @@ unittest {
     // slot and the centre refinement has to fold through the right one.
     // -----------------------------------------------------------------------
     {
-        import item_xform : ItemXform;
+        import vibe3d.util.spatial.item_xform : ItemXform;
         ItemXform bgX;
         bgX.pos = Vec3(-0.5f, 0.25f, -0.15f);
         bgX.scl = Vec3(0.8f, 1.3f, 0.9f);

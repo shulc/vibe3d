@@ -150,7 +150,7 @@ private void populateUvMap(ref Mesh m, const float[] uv, bool hasUv) {
 private void populateMorphMaps(ref Mesh m, const PartMorph[] morphs,
                                size_t vertexOffset = 0) {
     import mesh : MapKind;
-    import log  : logWarn;
+    import vibe3d.util.log.log  : logWarn;
     foreach (ref pm; morphs) {
         if (pm.name.length == 0) continue;
         if (pm.values.length != pm.verts.length * 3) {

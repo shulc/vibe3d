@@ -1,8 +1,8 @@
 module command_registry;
 
 import command : Command;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 
 alias CommandFactory = Command delegate();
 
@@ -80,7 +80,7 @@ public:
     bool[string] commandCommitsToolEditBeforeApply;
 
     void cacheSupportedModes() {
-        import params : paramsSchemaJson;
+        import vibe3d.editing.params.params : paramsSchemaJson;
         const commandKeys = commandIds();
         foreach (id; commandKeys) {
             auto cmd = makeCommand(id);

@@ -11,7 +11,7 @@ import command_history : CommandHistory;
 import commands.file.load : FileLoad, FileLoadMode;
 import commands.file.save : FileSave, FileSaveMode;
 import document : Document, Layer;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import file_io_registration : registerFileIoCommands;
 import live_registration_roles : LiveSessionRole, LiveView,
     LiveViewModeRole;

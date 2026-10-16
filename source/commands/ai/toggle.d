@@ -3,7 +3,7 @@ module commands.ai.toggle;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import ai.state : EditorAiState;
 
 enum AiToggleAction {

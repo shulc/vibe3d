@@ -228,7 +228,7 @@ unittest {
     import core.time    : msecs, seconds;
     import core.thread  : Thread;
     import std.algorithm: canFind;
-    import log          : snapshot, LogLevel;
+    import vibe3d.util.log.log          : snapshot, LogLevel;
 
     // Take a free port the way the OS offers one: bind ephemeral, read the
     // number back, release it.
@@ -501,7 +501,7 @@ unittest { // a claimed bridge must not swallow Error
 }
 
 unittest { // direct submitClaimed dispatch also needs the channel marker
-    import perf_probe : FrameWorkProbe;
+    import vibe3d.util.profiling.perf_probe : FrameWorkProbe;
 
     auto server = new HttpServer();
     server.setFrameCountsBudgetForTest(Duration.zero);
@@ -517,7 +517,7 @@ unittest { // direct submitClaimed dispatch also needs the channel marker
 }
 
 unittest { // submitClaimed distinguishes owner absence and preserves the frame fence
-    import perf_probe : FrameWorkProbe;
+    import vibe3d.util.profiling.perf_probe : FrameWorkProbe;
 
     auto server = new HttpServer();
     server.setFrameCountsBudgetForTest(5.msecs);
@@ -575,7 +575,7 @@ unittest { // submitClaimed distinguishes owner absence and preserves the frame 
 }
 
 version (PerfProbe) unittest { // FrameProbe has the same owner-frame fence
-    import perf_probe : FrameProbe;
+    import vibe3d.util.profiling.perf_probe : FrameProbe;
 
     auto server = new HttpServer();
     server.markProvidersWired();

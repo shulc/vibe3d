@@ -51,7 +51,7 @@ import forms;
 // Pure write-path serialization helpers live in forms.d (ImGui-free, so they
 // stay headless-unit-testable without dragging d_imgui into a test link).
 import forms : valueToArgToken, substituteQuery, currentEnumTag;
-import params : Param, ParamProvider, MixedValueProvider, kMixedPlaceholder;
+import vibe3d.editing.params.params : Param, ParamProvider, MixedValueProvider, kMixedPlaceholder;
 import tool_attr_bounds : applyToolAttrBound;
 
 import ImGui = d_imgui;
@@ -809,7 +809,7 @@ class FormsPanel {
 
     private void fireInteractive(string line, InteractiveDispatchFn idispatch)
     {
-        import argstring : parseArgstring;
+        import vibe3d.editing.params.argstring : parseArgstring;
         auto parsed = parseArgstring(line);
         if (parsed.isEmpty) return;
         idispatch(parsed.commandId, parsed.params.toString());
@@ -817,7 +817,7 @@ class FormsPanel {
 
     private void fireLine(string line, DispatchFn dispatch)
     {
-        import argstring : parseArgstring;
+        import vibe3d.editing.params.argstring : parseArgstring;
         if (dispatch is null) return;
         auto parsed = parseArgstring(line);
         if (parsed.isEmpty) return;

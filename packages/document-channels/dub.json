@@ -144,11 +144,11 @@
     "vibe3d-document-model": {
       "path": "../document-model"
     },
-    "vibe3d-param-schema": {
-      "path": "../param-schema"
+    "vibe3d:param-schema": {
+      "path": "../.."
     },
-    "vibe3d-edit-contracts": {
-      "path": "../edit-contracts"
+    "vibe3d:edit-contracts": {
+      "path": "../.."
     }
   },
   "configurations": [
@@ -159,8 +159,8 @@
       ],
       "subConfigurations": {
         "vibe3d-document-model": "modeling",
-        "vibe3d-param-schema": "modeling",
-        "vibe3d-edit-contracts": "modeling"
+        "vibe3d:param-schema": "modeling",
+        "vibe3d:edit-contracts": "modeling"
       }
     },
     {
@@ -168,8 +168,8 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-document-model": "modeling-noai",
-        "vibe3d-param-schema": "modeling-noai",
-        "vibe3d-edit-contracts": "modeling-noai"
+        "vibe3d:param-schema": "modeling-noai",
+        "vibe3d:edit-contracts": "modeling-noai"
       }
     },
     {
@@ -180,8 +180,8 @@
       ],
       "subConfigurations": {
         "vibe3d-document-model": "with-render",
-        "vibe3d-param-schema": "with-render",
-        "vibe3d-edit-contracts": "with-render"
+        "vibe3d:param-schema": "with-render",
+        "vibe3d:edit-contracts": "with-render"
       }
     },
     {
@@ -191,8 +191,8 @@
       ],
       "subConfigurations": {
         "vibe3d-document-model": "web",
-        "vibe3d-param-schema": "web",
-        "vibe3d-edit-contracts": "web"
+        "vibe3d:param-schema": "web",
+        "vibe3d:edit-contracts": "web"
       }
     },
     {
@@ -202,8 +202,8 @@
       ],
       "subConfigurations": {
         "vibe3d-document-model": "root-tests",
-        "vibe3d-param-schema": "root-tests",
-        "vibe3d-edit-contracts": "root-tests"
+        "vibe3d:param-schema": "root-tests",
+        "vibe3d:edit-contracts": "root-tests"
       },
       "targetType": "sourceLibrary"
     },
@@ -212,8 +212,8 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-document-model": "isolated-tests",
-        "vibe3d-param-schema": "isolated-tests",
-        "vibe3d-edit-contracts": "isolated-tests"
+        "vibe3d:param-schema": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

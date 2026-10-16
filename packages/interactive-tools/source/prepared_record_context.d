@@ -79,8 +79,8 @@ import toolpipe.pipeline : Pipeline;
 import pipe_gizmo_host : PipeGizmoHost;
 import document : Layer;
 import operator : VectorStack;
-import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
-import change_bus : MeshEditScope;
+import vibe3d.mesh.change.change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 
 /// Capability implemented only by concrete products admitted to the P1.0c
 /// unified door. Keeping it beside the transaction owner avoids adding two
@@ -1841,7 +1841,7 @@ version (unittest) unittest {
     import mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import handler : ClickPointHandler, ClickPointResourceOwner;
-    import change_bus : changeBus;
+    import vibe3d.mesh.change.change_bus : changeBus;
     auto history = new CommandHistory();
     auto hub = new RecordObserverHub();
 

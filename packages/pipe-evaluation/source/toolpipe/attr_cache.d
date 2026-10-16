@@ -18,7 +18,7 @@
 /// prefs document (`prefs.d`), so it reaches disk only where prefs do.
 module toolpipe.attr_cache;
 
-import params : Param, ParamProvider, isStickyCapturable, stickyParseInto,
+import vibe3d.editing.params.params : Param, ParamProvider, isStickyCapturable, stickyParseInto,
     stickyStringify;
 import toolpipe.stage : PresetClaimable, Stage;
 

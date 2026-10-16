@@ -52,12 +52,12 @@
 // LANE: `dub test --config=tests`.
 module tests.unit.gesture_record_belt_test;
 
-import change_bus       : changeBus;
+import vibe3d.mesh.change.change_bus       : changeBus;
 import command          : Command, CmdFlags;
 import command_history  : CommandHistory;
 import commands.mesh.gesture_payload : GesturePayload;
 import commands.mesh.session_edit    : MeshSessionEdit;
-import editmode         : EditMode;
+import vibe3d.editing.contracts.editmode         : EditMode;
 import math             : Vec3;
 import mesh             : Mesh;
 import mesh_edit_delta  : MeshEditScope;

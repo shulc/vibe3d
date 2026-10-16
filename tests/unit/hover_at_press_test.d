@@ -4,10 +4,10 @@
 module tests.unit.hover_at_press_test;
 
 import bindbc.sdl;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import hover_state;
 import math;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import mesh;
 import mesh_gpu : GpuMesh;
 import operator : VectorStack;
@@ -27,7 +27,7 @@ private void clearHover() {
 }
 
 unittest { // publishHover: HOLDS the ids while stale (task 1730); V > E > F under a tool
-    import ai.debug_trace : latestElementDebugTrace;
+    import vibe3d.editing.interaction.data.ai.debug_trace : latestElementDebugTrace;
     import core.time : MonoTime;
     import input_frame_state : InputFrameState;
     import subpatch_preview : SubpatchPreview;

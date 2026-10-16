@@ -23,11 +23,11 @@
 // all `sel.known` are row-model FIELDS, and no wire carries them.
 
 import document : Document, Layer, ItemKind;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh;
 import mesh_selsets;
 import mesh_stats;
-import seltype  : SelType, SelMode;
+import vibe3d.editing.contracts.seltype  : SelType, SelMode;
 import ui.stat_rows;
 import tests.unit.ui.stat_dispatch : dispatchStatAction;
 import math     : Vec3;
@@ -284,7 +284,7 @@ unittest {
 unittest {
     import view : View;
     import commands.layer.commands : LayerSelect;
-    import params : injectParamsInto;
+    import vibe3d.editing.params.params : injectParamsInto;
     import std.json : parseJSON;
 
     Document build() {

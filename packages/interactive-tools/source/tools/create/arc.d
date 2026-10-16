@@ -8,15 +8,15 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import spatial : Viewport;
-import params : Param;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.params.params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame, transformPoint;
-import editmode : EditMode;
-import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
 import document : Layer;
@@ -149,7 +149,7 @@ public:
     override string name() const { return "Arc"; }
 
     override Param[] params() {
-        import params : IntEnumEntry;
+        import vibe3d.editing.params.params : IntEnumEntry;
         return [
             Param.float_("cenX",       "Position X",   &params_.cenX,       0.0f),
             Param.float_("cenY",       "Position Y",   &params_.cenY,       0.0f),

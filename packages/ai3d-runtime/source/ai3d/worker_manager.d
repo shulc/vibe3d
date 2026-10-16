@@ -48,7 +48,7 @@ import std.stdio   : File, stdin;
 import core.time   : MonoTime, msecs, seconds;
 import core.thread : Thread;
 
-import log : logWarn;
+import vibe3d.util.log.log : logWarn;
 import ai3d.stage_artifact : normalizeLocalWorkerUrl;
 
 // ---------------------------------------------------------------------------

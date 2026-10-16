@@ -1,8 +1,8 @@
 module toolpipe.guide;
-static import spatial;
+static import spatial = vibe3d.util.spatial.spatial;
 
 import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import toolpipe.packets : SnapPacket, SnapType;
 
 // ---------------------------------------------------------------------------

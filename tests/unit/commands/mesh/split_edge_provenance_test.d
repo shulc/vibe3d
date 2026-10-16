@@ -50,7 +50,7 @@ import std.format : format;
 import std.math   : abs;
 
 import command;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math : Vec3;
 import mesh;
 import view;

@@ -12,7 +12,7 @@ import std.format : format;
 
 import document;
 import mesh    : Mesh;
-import seltype : SelMode;
+import vibe3d.editing.contracts.seltype : SelMode;
 import retopology_order : entersItemSequence, retopologyDrawSequence, SeqEntry;
 
 // ---------------------------------------------------------------------------

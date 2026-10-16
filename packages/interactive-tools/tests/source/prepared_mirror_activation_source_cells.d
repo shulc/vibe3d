@@ -10,11 +10,11 @@ unittest {
     import command_history : CommandHistory;
     import document : Layer;
     import math : Vec3;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
     import mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
-    import prepared_tool_effect : PreparedActivateKind, PreparedDeactivateKind;
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind, PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
     import snapshot : MeshSnapshot;
@@ -142,7 +142,7 @@ import spatial : ModelSpace;
         idleContext.installTraceForTest() == [8,40]);
 
     import commands.mesh.session_edit : MeshSessionEdit;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import view : View;
     auto historyLayer = new Layer;
     MeshSnapshot.capture(commitSource).restore(historyLayer.meshRef());

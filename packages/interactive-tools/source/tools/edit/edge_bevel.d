@@ -13,9 +13,9 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
 import math;
-import spatial : Viewport;
-import editmode : EditMode;
-import params : Param;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
 import handler : CubicArrow, ToolHandles, HandleState, HandlePart, firstHitPart,
     gizmoSize, gizmoPixelSize, gizmoBoxHalfPx, GIZMO_STROKE_SCALE_SHAFT_PX,
     GIZMO_ALPHA_ARM;
@@ -32,15 +32,15 @@ import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_edge_bevel_activation : PreparedEdgeBevelActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
-import prepared_tool_effect : PreparedEdgeBevelParamEffect,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedEdgeBevelParamEffect,
     PreparedEdgeBevelParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;

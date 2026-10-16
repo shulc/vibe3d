@@ -1,6 +1,6 @@
 module mesh_selsets;
 
-public import mesh_plane_types : WireKeyPolicy;
+public import vibe3d.mesh.contracts.mesh_plane_types : WireKeyPolicy;
 
 // ---------------------------------------------------------------------------
 // mesh_selsets — named, typed, per-mesh SELECTION SETS (task 1060).

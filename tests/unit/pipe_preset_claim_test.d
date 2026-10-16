@@ -13,7 +13,7 @@ import tool_activation_ownership : PipeArmScope;
 import toolpipe.pipeline : Pipeline, noteUserStageChoice;
 import toolpipe.stage : PresetClaimable;
 import math : Vec3;
-import spatial : Pin;
+import vibe3d.util.spatial.spatial : Pin;
 import toolpipe.packets : FalloffConfig, FalloffShape, FalloffType;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;

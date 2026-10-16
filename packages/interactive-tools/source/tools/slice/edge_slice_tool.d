@@ -14,9 +14,9 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import spatial : AimViewport, Viewport, aimSpace, projectToWindowFull, screenPointToRay;
-import editmode : EditMode;
-import params : Param, IntEnumEntry, wireTagForValue;
+import vibe3d.util.spatial.spatial : AimViewport, Viewport, aimSpace, projectToWindowFull, screenPointToRay;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param, IntEnumEntry, wireTagForValue;
 import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale, hoverAtPress;
 import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
@@ -29,11 +29,11 @@ import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels;
 import viewport_scheme : schemeColor, SchemeColor;
 import document : Layer, primaryModelSpace;
 import overlay_space : OverlaySpace;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind, PreparedEdgeSliceParamEffect,
     PreparedEdgeSliceParamKind;
 import prepared_edge_slice_activation : PreparedEdgeSliceActivationOwner;

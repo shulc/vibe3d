@@ -167,7 +167,7 @@ public:
     HistoryMacroStatus macroStatus() { return actions_.macroStatus(); }
 
     HistoryReplOutcome submitRepl() {
-        import argstring : parseArgstring;
+        import vibe3d.editing.params.argstring : parseArgstring;
 
         // Own the line through parsing and synchronous dispatch.  Clearing the
         // widget buffer after dispatch must not invalidate parser-owned slices.

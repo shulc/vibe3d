@@ -17,7 +17,7 @@ module io.assimp_runtime;
 
 version (web)
 {
-    import log : logWarn;
+    import vibe3d.util.log.log : logWarn;
     version (WebAssembly)
         extern(C) int vibe3d_web_assimp_available() nothrow @nogc;
 
@@ -48,7 +48,7 @@ import std.format : format;
 import std.string : toStringz, fromStringz;
 
 import bindbc.assimp;
-import log : logInfo, logWarn;
+import vibe3d.util.log.log : logInfo, logWarn;
 
 private bool g_loaded = false;
 

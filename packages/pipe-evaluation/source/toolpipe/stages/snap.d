@@ -12,7 +12,7 @@ import toolpipe.packets  : SnapPacket, SnapConfig, SnapHitPacket, SnapType, Snap
 import toolpipe.guide    : SnapGuide, GuideDrawState;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath, installPreparedStatePath;
-import params            : Param, IntEnumEntry;
+import vibe3d.editing.params.params            : Param, IntEnumEntry;
 
 // ---------------------------------------------------------------------------
 // The snap TYPE table — one row per candidate class, single-sourced.
@@ -278,7 +278,7 @@ class SnapStage : Stage, Operator {
         import snap             : snapCursor, SnapResult,
                                   backgroundSourceLayerIndices;
         import math : Vec3;
-import spatial : projectToWindowFull;
+import vibe3d.util.spatial.spatial : projectToWindowFull;
         import std.math         : sqrt;
         // Task 0617 Stage 4: `subj.mesh` is the active/primary layer's mesh
         // (the toolpipe addresses the foreground mesh transparently, per
@@ -749,7 +749,7 @@ private:
     // innerRange nan` was accepted and put a NaN in a pixel radius that every
     // later comparison then answers "no" to.
     static bool parseFloat(string s, ref float dst) {
-        import params : assignWireFloat;
+        import vibe3d.editing.params.params : assignWireFloat;
         return assignWireFloat(s, dst);
     }
 }

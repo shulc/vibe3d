@@ -22,7 +22,7 @@ import d_imgui.imgui_h : ImVec2;
 
 import held_gesture_buttons : g_heldGestureButtons;
 import math : Vec3;
-import spatial : Viewport, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
 import mesh        : Mesh;
 import snap        : SnapResult;
 import snap_render : SnapMark, drawSnapOverlay;

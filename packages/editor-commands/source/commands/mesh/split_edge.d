@@ -6,7 +6,7 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import shader;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;

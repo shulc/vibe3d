@@ -815,7 +815,7 @@ private struct TreeEntry { string oid; string path; }
 /// its names that revision used.
 private TreeEntry[] revEntries(string root, string rev)
 {
-    auto ls = git(root, ["ls-tree", "-r", "-z", rev, "--"] ~ censusRoots.dup ~ ["libraries/util/math/source", "libraries/util/math/tests/source"]);
+    auto ls = git(root, ["ls-tree", "-r", "-z", rev, "--"] ~ censusRoots.dup ~ ["libraries/util/math/source", "libraries/util/math/tests/source", "libraries/editing/contracts/source", "libraries/editing/contracts/tests/source", "libraries/editing/interaction/data/source", "libraries/editing/interaction/data/tests/source", "libraries/util/json-number/source", "libraries/util/json-number/tests/source", "libraries/util/log/source", "libraries/util/log/tests/source", "libraries/mesh/contracts/source", "libraries/mesh/contracts/tests/source", "libraries/util/parallel/source", "libraries/util/parallel/tests/source", "libraries/editing/params/source", "libraries/editing/params/tests/source", "libraries/util/plane-bytes/source", "libraries/util/plane-bytes/tests/source", "libraries/util/profiling/source", "libraries/util/profiling/tests/source", "libraries/util/screen-buckets/source", "libraries/util/screen-buckets/tests/source", "libraries/util/spatial/source", "libraries/util/spatial/tests/source", "libraries/mesh/change/source", "libraries/mesh/change/tests/source"]);
     if (ls.status != 0) return null;
 
     auto acc = appender!(TreeEntry[]);

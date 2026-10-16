@@ -4,11 +4,11 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import shader;
 import math : Vec3;
-import params : Param;
-import change_bus : MeshEditScope;
+import vibe3d.editing.params.params : Param;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 
 /// Move a vertex from one position to another, identified by current world
 /// coordinates (within EPS tolerance). Useful for test scenarios that need

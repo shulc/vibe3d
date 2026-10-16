@@ -7,9 +7,9 @@
 module selection_projection;
 
 import document : Document, tokenOf;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh;
-import seltype : SelTypeOrder, geometryEditMode, selTypeToken;
+import vibe3d.editing.contracts.seltype : SelTypeOrder, geometryEditMode, selTypeToken;
 import std.json : JSONValue;
 
 /// Everything the selection read-model may observe. The mesh is nullable:

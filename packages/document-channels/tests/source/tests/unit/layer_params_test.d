@@ -3,10 +3,10 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.layer_params_test;
 
-import params   : Param, ParamProvider;
+import vibe3d.editing.params.params   : Param, ParamProvider;
 import document : Layer, Document, kindInfo, ItemKind, ItemXform,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG, sanitizeItemXform;
-import seltype  : SelType;
+import vibe3d.editing.contracts.seltype  : SelType;
 import layer_params;
 
 // ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ unittest {
 unittest {
     import document : Document, ItemKind, ImageData;
     import mesh     : makeCube;
-    import seltype  : SelMode;
+    import vibe3d.editing.contracts.seltype  : SelMode;
 
     auto doc = Document.bootstrap(makeCube());
     doc.layers[0].name = "the mesh";
@@ -119,7 +119,7 @@ unittest {
 unittest {
     import document : Document, ItemKind, ImagePlaneData;
     import mesh     : makeCube;
-    import seltype  : SelMode;
+    import vibe3d.editing.contracts.seltype  : SelMode;
     import std.conv : to;
 
     auto doc = Document.bootstrap(makeCube());
@@ -232,7 +232,7 @@ unittest {
 unittest {
     import std.math : isClose;
     import std.json : JSONValue;
-    import params   : paramToJson, injectParamsInto;
+    import vibe3d.editing.params.params   : paramToJson, injectParamsInto;
     import math     : Vec3;
 
     auto l = new Layer;
@@ -588,7 +588,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import std.json  : JSONValue;
-    import params    : paramToJson, injectParamsInto;
+    import vibe3d.editing.params.params    : paramToJson, injectParamsInto;
     import document  : ImageData;
 
     auto img = new Layer;
@@ -741,7 +741,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import std.json  : JSONValue, parseJSON;
-    import params    : paramToJson, injectParamsInto;
+    import vibe3d.editing.params.params    : paramToJson, injectParamsInto;
     import document  : ImagePlaneData;
 
     auto lyr = new Layer;

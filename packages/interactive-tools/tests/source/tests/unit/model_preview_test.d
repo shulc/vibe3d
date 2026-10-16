@@ -7,7 +7,7 @@ import mesh_gpu : GpuMesh;
 import tools.edit.bridge_tool : BridgeTool;
 import tools.create.cylinder : CylinderParams, buildCylinder;
 import tools.create.primitive_create_tool : SizedRadialCreateTool;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
 import std.json : JSONType;
 
@@ -154,7 +154,7 @@ private Mesh primitiveSource() {
 
 private void drawIdle(Tool tool) {
     import math : lookAt, perspectiveMatrix;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
     import shader : Shader;
     import display_state : DrawPlan;
     import operator : VectorStack;
@@ -246,7 +246,7 @@ unittest {
             auto concrete = cast(CylinderTool) tool;
             import bindbc.sdl : SDL_MouseButtonEvent, SDL_BUTTON_LEFT;
             import operator : VectorStack;
-            import params : parseInto;
+            import vibe3d.editing.params.params : parseInto;
             foreach (p; concrete.params())
                 if (p.name == "sizeX" || p.name == "sizeY" || p.name == "sizeZ")
                     assert(parseInto(p, "1.25"), "public parameter image supplies nondegenerate committable radii");

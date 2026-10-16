@@ -811,11 +811,11 @@ version (unittest) {
                                      refreshImageMeta;
     import commands.image.commands : ImageLoad, ImageReplace, ImageReload;
     import commands.layer.commands : LayerAdd;
-    import params                  : injectParamsInto;
+    import vibe3d.editing.params.params                  : injectParamsInto;
     import mesh                    : makeCube;
     import view                    : View;
-    import editmode                : EditMode;
-    import seltype                 : SelMode;
+    import vibe3d.editing.contracts.editmode                : EditMode;
+    import vibe3d.editing.contracts.seltype                 : SelMode;
 
     struct RowFixture {
         Document doc;

@@ -150,21 +150,23 @@
       "repository": "git+https://github.com/shulc/D-OpenSubdiv.git"
     },
     "bindbc-opengl": "~>1.1.1",
-    "vibe3d-edit-contracts": {
-      "path": "../../edit-contracts"
+    "vibe3d:edit-contracts": {
+      "path": "../../.."
     },
     "vibe3d-interaction-query": {
       "path": "../../interaction-query"
     },
-    "vibe3d-log": {
-      "path": "../../../util/log"
+    "vibe3d:log": {
+      "path": "../../.."
     },
-    "vibe3d:math": {"path": "../../.."},
+    "vibe3d:math": {
+      "path": "../../.."
+    },
     "vibe3d-mesh": {
       "path": "../../mesh"
     },
-    "vibe3d-mesh-change": {
-      "path": "../../mesh-change"
+    "vibe3d:mesh-change": {
+      "path": "../../.."
     },
     "vibe3d-mesh-edit-log": {
       "path": "../../mesh-edit-log"
@@ -175,11 +177,11 @@
     "vibe3d-mesh-snapshot": {
       "path": "../../mesh-snapshot"
     },
-    "vibe3d-profiling": {
-      "path": "../../profiling"
+    "vibe3d:profiling": {
+      "path": "../../.."
     },
-    "vibe3d-spatial": {
-      "path": "../../spatial"
+    "vibe3d:spatial": {
+      "path": "../../.."
     }
   },
   "versions": [
@@ -195,17 +197,17 @@
       "subConfigurations": {
         "vibe3d-display-policy": "isolated-tests",
         "vibe3d-viewport-gpu": "isolated-tests",
-        "vibe3d-edit-contracts": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d-interaction-query": "isolated-tests",
-        "vibe3d-log": "isolated-tests",
+        "vibe3d:log": "isolated-tests",
         "vibe3d:math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
-        "vibe3d-mesh-change": "isolated-tests",
+        "vibe3d:mesh-change": "isolated-tests",
         "vibe3d-mesh-edit-log": "isolated-tests",
         "vibe3d-mesh-edit-replay": "isolated-tests",
         "vibe3d-mesh-snapshot": "isolated-tests",
-        "vibe3d-profiling": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests"
+        "vibe3d:profiling": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests"
       }
     }
   ],

@@ -38,7 +38,7 @@ import std.math : abs, sqrt;
 import handler : ScaleHandler, gizmoSize, gizmoBoxHalfPx, gizmoHeadLenPx,
                  getGizmoPixels, setGizmoPixels, setGizmoHandleScale;
 import math : Vec3;
-import spatial : Viewport, projectToWindowFull, Orientation;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, Orientation;
 import view : View;
 
 void main() {}

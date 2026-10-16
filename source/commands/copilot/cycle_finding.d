@@ -6,8 +6,8 @@ version (WithAI):
 import command;
 import mesh;
 import view;
-import editmode;
-import params        : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params        : Param;
 import copilot_panel : CopilotPanel;
 import ai.state       : EditorAiState;
 import commands.copilot.select_finding : CopilotSelectFindingCommand;

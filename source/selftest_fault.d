@@ -61,9 +61,9 @@ import core.time        : msecs, seconds;
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param;
-import log    : logWarn;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param;
+import vibe3d.util.log.log    : logWarn;
 
 // Sinks. Every fault below writes through a `__gshared` so the optimiser
 // cannot prove the effect dead and delete the defect we are trying to inject

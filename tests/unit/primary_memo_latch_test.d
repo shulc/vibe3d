@@ -16,7 +16,7 @@ module tests.unit.primary_memo_latch_test;
 // --- cell (a): latchEditTarget seats a DESELECTED member at the front -------
 unittest {
     import document;
-    import seltype : SelMode;
+    import vibe3d.editing.contracts.seltype : SelMode;
     import tests.unit.primary_memo_fixture : layeredDocument;
 
     auto doc = layeredDocument(4);
@@ -59,7 +59,7 @@ unittest {
 unittest {
     import document;
     import document_selection : g_editTargetDerives, resetEditTargetDerives;
-    import seltype : SelMode;
+    import vibe3d.editing.contracts.seltype : SelMode;
     import std.format : format;
     import tests.unit.primary_memo_fixture : layeredDocument;
 

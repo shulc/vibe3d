@@ -3,7 +3,7 @@ module commands.history.clear;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 
 /// Wipe both undo + redo stacks. Backs the History panel's
 /// right-click "Clear history" menu item (Phase 3 of the

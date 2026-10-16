@@ -5,7 +5,7 @@ module tests.unit.ui.channel_rows_test;
 
 import document     : Document, Layer, ItemKind, kindInfo;
 import layer_params : LayerPropsProvider, itemPropsTarget;
-import params       : Param, ParamProvider;
+import vibe3d.editing.params.params       : Param, ParamProvider;
 import forms        : Form, Row, RowKind, WidgetKind, widgetForKind;
 import std.algorithm : startsWith;
 import std.conv      : to;
@@ -52,7 +52,7 @@ private ChannelsModel modelFor(ref Document doc) {
 unittest {
     import document : Document, ImagePlaneData;
     import mesh     : makeCube;
-    import seltype  : SelMode;
+    import vibe3d.editing.contracts.seltype  : SelMode;
     import forms    : resolveControl;
 
     auto doc = Document.bootstrap(makeCube());
@@ -340,7 +340,7 @@ unittest {
     auto p2 = new ChannelsProvider(plane);
     assert(p2.paramEnabled("pos.x"), "no tool active: the transform row is live");
     {
-        import seltype : SelType;
+        import vibe3d.editing.contracts.seltype : SelType;
         p2.setTransformGuard(true, SelType.Vertex);
         assert(!p2.paramEnabled("pos.x"),
             "the base's mid-gesture transform interlock still greys the row "
@@ -361,7 +361,7 @@ unittest {
 unittest {
     import document : Document, ImagePlaneData;
     import mesh     : makeCube;
-    import seltype  : SelMode;
+    import vibe3d.editing.contracts.seltype  : SelMode;
 
     auto doc = Document.bootstrap(makeCube());
     auto a = modelFor(doc);

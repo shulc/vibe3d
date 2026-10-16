@@ -9,16 +9,16 @@ import std.algorithm : sort;
 import mesh;
 static import mesh_ = mesh;   // disambiguates mesh.kindInfo(MapKind) from document.kindInfo(LayerKind)
 import math;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 import document : Document, Layer, ItemXform, sanitizeItemXform,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
                   ItemKind, ImageData, ImagePlaneData,
                   kindInfo, kindFromToken, tokenOf;
 import layer_params : LayerPropsProvider;
-import params   : Param, paramToJson, injectParamsTolerant;
+import vibe3d.editing.params.params   : Param, paramToJson, injectParamsTolerant;
 import io.image_path : storePathFor, resolveStoredPath, refreshImageMeta;
-import seltype  : SelMode;
-import log : logWarn, logInfo;
+import vibe3d.editing.contracts.seltype  : SelMode;
+import vibe3d.util.log.log : logWarn, logInfo;
 import mesh_selsets : selSetNamesVertex, selSetNamesEdge, selSetNamesPolygon,
     selSetMembersVertex, selSetMembersEdge, selSetMembersPolygon,
     selSetEditVertex, selSetEditEdge, selSetEditPolygon, SetEditMode,

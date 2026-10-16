@@ -3,12 +3,12 @@ module commands.tool.pipe;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import commands.tool.host : ToolHost;
 
 import toolpipe.pipeline : g_pipeCtx, noteUserStageChoice;
 import toolpipe.stage    : Stage;
-import params : Param, paramToJson, parseInto, wireArgs;
+import vibe3d.editing.params.params : Param, paramToJson, parseInto, wireArgs;
 import tool_attr_bounds : applyToolAttrBound;
 
 import std.json : JSONValue, JSONType;

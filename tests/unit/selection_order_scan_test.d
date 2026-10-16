@@ -66,7 +66,7 @@ import std.format : format;
 import mesh;
 import math     : Vec3;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
 import command         : Command;
 import command_history : CommandHistory;

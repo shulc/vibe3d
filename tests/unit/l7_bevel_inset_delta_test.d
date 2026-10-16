@@ -22,8 +22,8 @@ import command;
 import mesh;
 import mesh_edit_delta : MeshEditDelta;
 import view;
-import editmode;
-import change_bus : changeBus;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.mesh.change.change_bus : changeBus;
 
 import tests.unit.fixtures : makeTaggedGridFull, dumpMeshPlanes, diffMeshPlanes;
 import commands.mesh.poly_inset : MeshPolygonInset;

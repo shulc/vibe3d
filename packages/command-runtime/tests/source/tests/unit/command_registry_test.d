@@ -2,10 +2,10 @@ module tests.unit.command_registry_test;
 
 import command : Command;
 import command_registry : CommandFactory, CommandRegistry;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh;
-import params : Param;
-import seltype : SelType;
+import vibe3d.editing.params.params : Param;
+import vibe3d.editing.contracts.seltype : SelType;
 import view : View;
 import std.algorithm : sort;
 import std.stdio : writeln;

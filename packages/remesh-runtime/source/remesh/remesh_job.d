@@ -51,7 +51,7 @@ import std.string  : strip;
 import core.time   : MonoTime, Duration;
 
 import mesh : Mesh, MeshKey, MeshTermMutation, edgeKey;
-import mesh_dirty : MeshTermGeomEpoch, noteMeshChange;
+import vibe3d.mesh.change.mesh_dirty : MeshTermGeomEpoch, noteMeshChange;
 import math : Vec3;
 import remesh.region_stitch : stitchRegion, StitchResult;
 

@@ -24,7 +24,7 @@ import std.string    : strip;
 import std.stdio     : writeln, writefln;
 import buttonset     : loadButtons, loadStatusLine, Panel, Group, Button,
                        Action, ActionKind, PopupItemKind, allButtons;
-import argstring     : parseArgstring;
+import vibe3d.editing.params.argstring     : parseArgstring;
 import ui.mode_popup : dynamicModePopupItems;
 
 void main() {}

@@ -5,7 +5,7 @@ module tests.unit.io.image_decode_test;
 
 import std.string : fromStringz;
 import std.format : format;
-import log : logWarn;
+import vibe3d.util.log.log : logWarn;
 import std.digest.crc : crc32Of;
 import std.bitmanip : nativeToBigEndian;
 import io.image_decode;

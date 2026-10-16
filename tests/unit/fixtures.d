@@ -6,7 +6,7 @@
 // one-off helpers is just a second god-file.
 module tests.unit.fixtures;
 import mesh_ops.face_alignment : alignFacesByMask;
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 
 import mesh;
 import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;

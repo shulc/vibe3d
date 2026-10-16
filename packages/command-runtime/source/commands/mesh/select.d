@@ -3,9 +3,9 @@ module commands.mesh.select;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : SelectionSnapshot;
-import params            : Param, wireArgs;
+import vibe3d.editing.params.params            : Param, wireArgs;
 
 /// Replace the current selection with the given indices in the given mode.
 /// Switches editMode to match (vertices/edges/polygons). Used to be a direct

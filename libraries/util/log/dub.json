@@ -1,0 +1,186 @@
+{
+  "name": "log",
+  "targetType": "staticLibrary",
+  "sourcePaths": [
+    "source"
+  ],
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "dependencies": {},
+  "configurations": [
+    {
+      "name": "modeling",
+      "versions": [
+        "WithAI"
+      ]
+    },
+    {
+      "name": "modeling-noai",
+      "versions": []
+    },
+    {
+      "name": "with-render",
+      "versions": [
+        "WithRender",
+        "WithAI"
+      ]
+    },
+    {
+      "name": "web",
+      "versions": [
+        "web"
+      ]
+    },
+    {
+      "name": "root-tests",
+      "versions": [
+        "WithAI"
+      ],
+      "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "targetType": "sourceLibrary"
+    }
+  ],
+  "targetName": "vibe3d-log",
+  "targetPath": ".",
+  "importPaths": [
+    "source"
+  ]
+}

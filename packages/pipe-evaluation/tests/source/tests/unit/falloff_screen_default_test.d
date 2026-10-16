@@ -26,7 +26,7 @@ module tests.unit.falloff_screen_default_test;
 
 import toolpipe.packets       : FalloffConfig, FalloffType;
 import toolpipe.stages.falloff : FalloffStage;
-import params                 : Param;
+import vibe3d.editing.params.params                 : Param;
 
 import std.conv : to;
 

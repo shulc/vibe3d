@@ -65,8 +65,8 @@ block packages/interactive-tools/source/tools/transform/xfrm_transform.d 6
 block packages/interchange/source/io/lwo_import.d 5
 block packages/interchange/source/io/scene_import.d 2
 block packages/interchange/source/io/scene_ir.d 7
-block packages/mesh-change/source/mesh_dirty.d 9
-block packages/mesh-contracts/source/mesh_corner_maps.d 1
+block libraries/mesh/change/source/vibe3d/mesh/change/mesh_dirty.d 9
+block libraries/mesh/contracts/source/vibe3d/mesh/contracts/mesh_corner_maps.d 1
 block packages/mesh-edit-log/source/mesh_edit_delta.d 3
 block packages/mesh-edit-replay/source/mesh_edit_replay.d 8
 block packages/mesh-ops/source/mesh_ops/extrude.d 18
@@ -76,7 +76,7 @@ block packages/mesh-ops/source/mesh_ops/triangulate.d 1
 block packages/mesh-topology/source/mesh_topo.d 2
 block packages/mesh/source/mesh.d 18
 block packages/mesh/source/mesh_planes.d 1
-block packages/param-schema/source/argstring.d 1
+block libraries/editing/params/source/vibe3d/editing/params/argstring.d 1
 block packages/pipe-evaluation/source/toolpipe/stages/actcenter.d 5
 block packages/pipe-evaluation/source/toolpipe/stages/axis.d 2
 block packages/pipe-evaluation/source/toolpipe/stages/constrain.d 1
@@ -86,8 +86,8 @@ block packages/platform-file/source/io/file_dialog.d 1
 block packages/remesh-runtime/source/remesh/region_stitch.d 3
 block packages/remesh-runtime/source/remesh/remesh_job.d 4
 block packages/scene-query/source/bvh_pick.d 3
-block packages/spatial/source/spatial.d 17
-block packages/spatial/source/trackball.d 4
+block libraries/util/spatial/source/vibe3d/util/spatial/spatial.d 17
+block libraries/util/spatial/source/vibe3d/util/spatial/trackball.d 4
 block packages/tool-state/source/tools/common/session_mesh_key.d 1
 block packages/viewport-gpu/source/gl_thread_guard.d 1
 block packages/viewport-gpu/source/mesh_gpu.d 4
@@ -100,9 +100,9 @@ block source/input_frame_state.d 1
 block source/prefs.d 16
 block source/render/render_mvp.d 1
 block source/ui/viewport_render.d 1
-block util/log/source/log.d 4
-block util/plane-bytes/source/plane_bytes.d 5
-block util/screen-buckets/source/screen_buckets.d 1
+block libraries/util/log/source/vibe3d/util/log/log.d 4
+block libraries/util/plane-bytes/source/vibe3d/util/plane_bytes/plane_bytes.d 5
+block libraries/util/screen-buckets/source/vibe3d/util/screen_buckets/screen_buckets.d 1
 
 # Files above the per-file version(unittest) ceiling of 10. This list may
 # only shrink, and each number is EXACT: shed a guard and lower the row.

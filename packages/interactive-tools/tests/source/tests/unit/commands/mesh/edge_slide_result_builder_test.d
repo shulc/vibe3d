@@ -1,12 +1,12 @@
 module tests.unit.commands.mesh.edge_slide_result_builder_test;
 
-import change_bus : changeBus, MeshEditScope;
+import vibe3d.mesh.change.change_bus : changeBus, MeshEditScope;
 import command_history : CommandHistory;
 import commands.mesh.edge_slide : MeshEdgeSlide;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.mesh.vertex_position_result : VertexPositionResult;
 import display_sync : activeMeshResolver;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
 import mesh : Mesh, edgeSlidePositions, g_isDocumentMesh;
 import operator : VectorStack;

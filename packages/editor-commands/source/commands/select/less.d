@@ -3,7 +3,7 @@ module commands.select.less;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : SelectionSnapshot;
 
 // SelectLess: all edit modes.

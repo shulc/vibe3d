@@ -13,7 +13,7 @@ module subpatch_preview;
 
 import mesh;
 import math;
-import mesh_dirty;   // MeshTermGeomEpoch (plain, per the note above)
+import vibe3d.mesh.change.mesh_dirty;   // MeshTermGeomEpoch (plain, per the note above)
 import subpatch_osd;
 version (web) {
     import subpatch_worker_web;
@@ -385,7 +385,7 @@ struct SubpatchPreview {
             if (!ceilingFired) {
                 ceilingFired = true;
                 try {
-                    import log        : logWarn;
+                    import vibe3d.util.log.log        : logWarn;
                     import std.format : format;
                     logWarn("subpatch", format(
                         "preview build still running after %d ms — delivering "
@@ -420,7 +420,7 @@ struct SubpatchPreview {
             buildAbandoned = true;
             buildPending   = false;
             try {
-                import log : logError;
+                import vibe3d.util.log.log : logError;
                 logError("subpatch", "preview build did not finish within the "
                     ~ "join ceiling — abandoning it and leaking its topology "
                     ~ "rather than freeing memory it may still be reading");

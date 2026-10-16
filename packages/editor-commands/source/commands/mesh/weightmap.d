@@ -4,9 +4,9 @@ import mesh_edit_replay : apply, revert;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import mesh_edit_delta : MeshEditScope, MeshOpEntry;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit, mapSlotOf;
 

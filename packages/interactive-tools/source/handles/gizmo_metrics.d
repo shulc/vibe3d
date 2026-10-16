@@ -35,7 +35,7 @@ module handles.gizmo_metrics;
 
 import std.math : sqrt, PI, abs;
 import math;
-import spatial : Viewport, eyeVectorAt, isAxisView, isOrtho, lockedViewAxis;
+import vibe3d.util.spatial.spatial : Viewport, eyeVectorAt, isAxisView, isOrtho, lockedViewAxis;
 
 // ---------------------------------------------------------------------------
 // Global gizmo scale — shared by MoveHandler, RotateHandler, ScaleHandler.

@@ -3,7 +3,7 @@ module commands.select.invert;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : SelectionSnapshot;
 
 class SelectInvert : Command {

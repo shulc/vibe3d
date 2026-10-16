@@ -4,10 +4,10 @@ import buttonset : Panel, Group;
 import command : g_testMode;
 import d_imgui.imgui_h : ImVec2;
 import document : Document;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh;
 import registry : Registry;
-import seltype : SelTypeOrder;
+import vibe3d.editing.contracts.seltype : SelTypeOrder;
 import session_owner : Session;
 import shortcuts : ShortcutTable;
 

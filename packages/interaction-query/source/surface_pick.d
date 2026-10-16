@@ -2,10 +2,10 @@ module surface_pick;
 
 import bvh.c;
 import math : Vec3, cross;
-import spatial : Viewport, screenPointToRay, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, screenPointToRay, ModelSpace;
 import mesh : Mesh;
-import perf_probe : g_perf, Cat, g_fc;
-import mesh_dirty : MeshDirtyKey, g_geomEpochs;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc;
+import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, g_geomEpochs;
 
 
 // ---------------------------------------------------------------------------

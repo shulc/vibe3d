@@ -158,15 +158,17 @@
     "vibe3d-interaction-query": {
       "path": "../interaction-query"
     },
-    "vibe3d-mesh-change": {
-      "path": "../mesh-change"
+    "vibe3d:mesh-change": {
+      "path": "../.."
     },
-    "vibe3d:math": {"path": "../.."},
-    "vibe3d-log": {
-      "path": "../../util/log"
+    "vibe3d:math": {
+      "path": "../.."
     },
-    "vibe3d-profiling": {
-      "path": "../profiling"
+    "vibe3d:log": {
+      "path": "../.."
+    },
+    "vibe3d:profiling": {
+      "path": "../.."
     }
   },
   "versions": [
@@ -183,10 +185,10 @@
         "vibe3d-viewport-gpu": "modeling",
         "vibe3d-mesh": "modeling",
         "vibe3d-interaction-query": "modeling",
-        "vibe3d-mesh-change": "modeling",
+        "vibe3d:mesh-change": "modeling",
         "vibe3d:math": "modeling",
-        "vibe3d-log": "modeling",
-        "vibe3d-profiling": "modeling"
+        "vibe3d:log": "modeling",
+        "vibe3d:profiling": "modeling"
       }
     },
     {
@@ -197,10 +199,10 @@
         "vibe3d-viewport-gpu": "modeling-noai",
         "vibe3d-mesh": "modeling-noai",
         "vibe3d-interaction-query": "modeling-noai",
-        "vibe3d-mesh-change": "modeling-noai",
+        "vibe3d:mesh-change": "modeling-noai",
         "vibe3d:math": "modeling-noai",
-        "vibe3d-log": "modeling-noai",
-        "vibe3d-profiling": "modeling-noai"
+        "vibe3d:log": "modeling-noai",
+        "vibe3d:profiling": "modeling-noai"
       }
     },
     {
@@ -214,10 +216,10 @@
         "vibe3d-viewport-gpu": "with-render",
         "vibe3d-mesh": "with-render",
         "vibe3d-interaction-query": "with-render",
-        "vibe3d-mesh-change": "with-render",
+        "vibe3d:mesh-change": "with-render",
         "vibe3d:math": "with-render",
-        "vibe3d-log": "with-render",
-        "vibe3d-profiling": "with-render"
+        "vibe3d:log": "with-render",
+        "vibe3d:profiling": "with-render"
       }
     },
     {
@@ -230,10 +232,10 @@
         "vibe3d-viewport-gpu": "web",
         "vibe3d-mesh": "web",
         "vibe3d-interaction-query": "web",
-        "vibe3d-mesh-change": "web",
+        "vibe3d:mesh-change": "web",
         "vibe3d:math": "web",
-        "vibe3d-log": "web",
-        "vibe3d-profiling": "web"
+        "vibe3d:log": "web",
+        "vibe3d:profiling": "web"
       }
     },
     {
@@ -246,10 +248,10 @@
         "vibe3d-viewport-gpu": "root-tests",
         "vibe3d-mesh": "root-tests",
         "vibe3d-interaction-query": "root-tests",
-        "vibe3d-mesh-change": "root-tests",
+        "vibe3d:mesh-change": "root-tests",
         "vibe3d:math": "root-tests",
-        "vibe3d-log": "root-tests",
-        "vibe3d-profiling": "root-tests"
+        "vibe3d:log": "root-tests",
+        "vibe3d:profiling": "root-tests"
       },
       "targetType": "sourceLibrary"
     },
@@ -261,10 +263,10 @@
         "vibe3d-viewport-gpu": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
         "vibe3d-interaction-query": "isolated-tests",
-        "vibe3d-mesh-change": "isolated-tests",
+        "vibe3d:mesh-change": "isolated-tests",
         "vibe3d:math": "isolated-tests",
-        "vibe3d-log": "isolated-tests",
-        "vibe3d-profiling": "isolated-tests"
+        "vibe3d:log": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

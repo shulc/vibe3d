@@ -1,7 +1,7 @@
 module tools.edit.topology_pen.move_protocol_test;
 import mesh : Mesh;
 import math : Vec3;
-import spatial : Viewport, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
 import toolpipe.packets : SnapType, SymmetryPacket;
 import tools.edit.topology_pen.snap_guide : admitsMoveElement;
 import evaluated_move_weld : EvaluatedMoveWeld, searchMoveElement, pairedMoveEnds, moveFaceNormal, MoveElementHit, evaluatedMoveHandle, heldMoveEngages;
@@ -312,7 +312,7 @@ unittest {
     import bindbc.sdl;
     loadSDL(); SDL_SetModState(cast(SDL_Keymod)0);
     import math : lookAt, perspectiveMatrix;
-import spatial : projectToWindowFull;
+import vibe3d.util.spatial.spatial : projectToWindowFull;
     import std.math : PI;
     auto m=rig(); Viewport vp; vp.width=800;vp.height=800;vp.eye=Vec3(0,0,5);
     vp.view=lookAt(vp.eye,Vec3(0,0,0),Vec3(0,1,0));
@@ -411,7 +411,7 @@ private void ordinaryPolygonMove(PenMode mode,float extent, bool closed = false,
     assert(pen.onMouseButtonDown(down,stack),"ordinary polygon press consumed");
     assert(pen.moveArmed_ && pen.moveVerts_==[3u,4u,5u,6u],"ordinary polygon press population");
     if (stale) {
-        import change_bus : changeBus;
+        import vibe3d.mesh.change.change_bus : changeBus;
         const before = m.vertices.dup, faces = m.faces.dup;
         const deliveries = changeBus.deliveryCount, topology = m.mutationVersion;
         const image = pen.buildPreparedDeactivate(null);
@@ -600,7 +600,7 @@ unittest {
     import document : ItemXform, primaryModelSpaceResolver;
     import snap : setBackgroundSnapSources;
     import math : lookAt, orthographicMatrix;
-import spatial : projectToWindowFull;
+import vibe3d.util.spatial.spatial : projectToWindowFull;
     import tool : ToolFlag;
     ItemXform xf; xf.pos=Vec3(.3,0,0); xf.scl=Vec3(2,1,1);
     const ms=xf.modelSpace();
@@ -654,8 +654,8 @@ private void symmetricConfinedFrames(PenMode mode) {
     import bindbc.sdl;
     import math : lookAt, orthographicMatrix;
     import snap : invalidateSnapGrids, g_snapGridBuilds, snapCursor;
-    import mesh_dirty : noteMeshChange, g_settledGeomEpochs, g_geomEpochs;
-    import change_bus : changeBus, MeshEditScope;
+    import vibe3d.mesh.change.mesh_dirty : noteMeshChange, g_settledGeomEpochs, g_geomEpochs;
+    import vibe3d.mesh.change.change_bus : changeBus, MeshEditScope;
     import display_sync : activeMeshResolver;
     import std.algorithm : canFind;
     import std.math : abs;

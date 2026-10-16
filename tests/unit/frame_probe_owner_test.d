@@ -9,7 +9,7 @@ import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
 import http_server : ClaimProbePoint, HttpServer;
-import perf_probe : g_frames, FrameProbe, FrameRec, Phase, toJson;
+import vibe3d.util.profiling.perf_probe : g_frames, FrameProbe, FrameRec, Phase, toJson;
 import std.algorithm : canFind, count;
 
 import tests.unit.census_symbols : readText = wave15ReadText;

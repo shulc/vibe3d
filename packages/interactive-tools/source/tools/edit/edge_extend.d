@@ -9,9 +9,9 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.extrude;
 import math;
-import spatial : ModelSpace, Viewport, screenPointToRay;
-import editmode : EditMode;
-import params : Param;
+import vibe3d.util.spatial.spatial : ModelSpace, Viewport, screenPointToRay;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -26,10 +26,10 @@ import pipe_gizmo_host : PipeGizmoHost;
 import tools.transform.move : MoveTool, PreparedMoveActivationImage;
 import tools.transform.rotate : RotateTool, PreparedRotateActivationImage;
 import tools.transform.scale : ScaleTool, PreparedScaleActivationImage;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedEdgeExtendParamEffect, PreparedEdgeExtendParamKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_tool_effect : PreparedXfrmUpdateEffect, PreparedXfrmUpdateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedXfrmUpdateEffect, PreparedXfrmUpdateKind;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedToolPoseDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
@@ -42,7 +42,7 @@ import document : Layer;
 import mesh_gpu : GpuUploadOwner;
 
 import std.json : JSONValue;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import toolpipe.packets : SymmetryPacket;
 
 struct PreparedEdgeExtendToolActivationImage {

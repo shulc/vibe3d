@@ -5,8 +5,8 @@ import commands.select.by_stat;
 import command;
 import mesh;
 import view;
-import editmode;
-import params   : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params   : Param;
 import snapshot : SelectionSnapshot;
 import std.algorithm : canFind;
 import std.conv       : to;
@@ -18,7 +18,7 @@ version (unittest) {
     import std.algorithm : sort;
     import math      : Vec3;
     import document  : Document, Layer;
-    import seltype   : SelMode;
+    import vibe3d.editing.contracts.seltype   : SelMode;
     // The boundary-law discriminator (§3): this module reaches INTO
     // boundary.d for the unittest only — a direction that does not exist
     // outside version(unittest). Legal in D for class references; no

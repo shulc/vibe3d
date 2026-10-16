@@ -3,11 +3,11 @@ module tool;
 import bindbc.sdl;
 
 import math;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import shader;
-import params : Param, ParamProvider;
-import editmode : EditMode;
-public import tool_policy_values : Rollover, rolloverDraws, AttrImage, StepOrigin,
+import vibe3d.editing.params.params : Param, ParamProvider;
+import vibe3d.editing.contracts.editmode : EditMode;
+public import vibe3d.editing.contracts.tool_policy_values : Rollover, rolloverDraws, AttrImage, StepOrigin,
     DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation, DropUndoPolicy;
 import operator : VectorStack;
 import command : Command;
@@ -16,11 +16,11 @@ import model_preview : ModelPreviewView;
 import snapshot : MeshSnapshot;
 import command_history : CommandHistory;
 import commands.mesh.gesture_payload : GesturePayload;
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 import std.json : JSONValue;
 import tool_input : ToolAction, PassThrough, InputPhase, InputButton, InputMod,
                     ResetScope, InputBinding, resolveToolAction, resolveResetScope;
-import prepared_tool_effect : OwnedId, PreparedParamDelta, PreparedParamKind;
+import vibe3d.editing.contracts.prepared_tool_effect : OwnedId, PreparedParamDelta, PreparedParamKind;
 import display_state : DrawPlan;
 import core.atomic : atomicOp;
 

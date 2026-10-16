@@ -18,13 +18,13 @@ import mesh_visibility : visibleVertices;
 import std.math : sqrt;
 import math : Vec3;
 import mesh : Mesh, SubpatchTrace, edgeKey, makeCube, Surface;
-import mesh_dirty : foldSubpatchKeyMember;
+import vibe3d.mesh.change.mesh_dirty : foldSubpatchKeyMember;
 import mesh_gpu : kFaceStride;
 import vertex_normals : FaceAdjacency, SmoothPolicy, adjacencyEntries, buildFaceAdjacency,
     buildSmoothPolicy;
 import mesh : kSurfaceSlots;
 import osd.c;
-import perf_probe : g_perf, Cat, g_fc, DrawPass;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc, DrawPass;
 
 /// Global gate for the GPU stencil evaluator. App.d flips this to true
 /// after SDL+OpenGL are loaded and the smoke test passes; it stays
@@ -447,7 +447,7 @@ struct PreviewBuildResult {
 /// Phase 3 VBO refactor lands (see doc/osd_gpu_evaluator_phase3.md).
 float runGlEvaluatorSmokeTest() {
     import bindbc.opengl;
-    import log : logWarn;
+    import vibe3d.util.log.log : logWarn;
 
     void warn(string s) {
         try logWarn("subpatch", "gl_smoke: " ~ s);
@@ -517,7 +517,7 @@ float runGlEvaluatorSmokeTest() {
         if (d > maxDelta) maxDelta = d;
     }
     try {
-        import log : logInfo;
+        import vibe3d.util.log.log : logInfo;
         import std.format : format;
         logInfo("subpatch", format("gl_smoke: OK: %d limit verts, max "
                         ~ "|CPU - GPU| = %.6g", limitVerts, maxDelta));
@@ -1247,7 +1247,7 @@ private import bindbc.opengl;
 /// Generic GLSL compile helper — returns 0 on failure, logging the
 /// compile error to stderr.
 private GLuint compileShaderStage(GLenum stage, string src) {
-    import log        : logWarn;
+    import vibe3d.util.log.log        : logWarn;
     import std.string : toStringz;
     import std.conv   : to;
     GLuint sh = glCreateShader(stage);
@@ -1275,7 +1275,7 @@ private GLuint linkTfProgram(string vertSrc, string fragSrc,
                               const(char*)[] varyings,
                               GLenum bufferMode)
 {
-    import log       : logWarn;
+    import vibe3d.util.log.log       : logWarn;
     import std.conv  : to;
     GLuint vs = compileShaderStage(GL_VERTEX_SHADER,   vertSrc);
     if (!vs) return 0;
@@ -2588,7 +2588,7 @@ struct OsdAccel {
         g_perf.count(res.cacheHit ? Cat.subpatchTopoHit : Cat.subpatchTopoMiss, 1);
         g_perf.count(Cat.subpatchLevelChosen, res.chosenLevel);
         if (res.chosenLevel != res.requestedLevel) {
-            import log        : logWarn;
+            import vibe3d.util.log.log        : logWarn;
             import std.format : format;
             try {
                 logWarn("subpatch", format(

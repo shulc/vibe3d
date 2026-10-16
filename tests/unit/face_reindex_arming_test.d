@@ -58,7 +58,7 @@ import mesh_ops.loop_slice;
 import mesh_ops.cleanup;
 import mesh_ops.revolve;
 import mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 // Task 3280 — the one attribute-chain predicate; see
 // tests/unit/decl_needle.d for the four lanes that each rediscovered
 // this blindness and wrote it down differently.

@@ -3,8 +3,8 @@ module commands.select.drop;
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param, wireArgs;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param, wireArgs;
 import snapshot : SelectionSnapshot;
 
 // Drop owns an ordered component image and restores the prior component mode

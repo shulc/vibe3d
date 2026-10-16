@@ -315,7 +315,7 @@ unittest // W-7-P3-b: stride, registration order, layout and the presence byte
 
 unittest // W-7-P3-c: a map VANISHES between record and revert — count drift
 {
-    import change_bus : changeBus;
+    import vibe3d.mesh.change.change_bus : changeBus;
 
     Mesh m = twoPointMapWeldStand();
     const preV = m.vertices.length;
@@ -375,7 +375,7 @@ unittest // W-7-P3-c: a map VANISHES between record and revert — count drift
 
 unittest // W-7-P3-c2: the same COUNT, a different DIM — the other drift
 {
-    import change_bus : changeBus;
+    import vibe3d.mesh.change.change_bus : changeBus;
 
     // SEPARATE FROM c AND NOT A PARAMETER OF IT. The bind has two terms, and
     // they fail on different histories: c removes neither map and adds one
@@ -636,7 +636,7 @@ unittest // W-7-P3-f: the tail-append arm restores values and presence too
 unittest // W-7-P3-g: mesh.cleanup, one undo step, depth delta exactly one
 {
     import view : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import command_history : CommandHistory;
     import commands.mesh.cleanup : MeshCleanup;
 

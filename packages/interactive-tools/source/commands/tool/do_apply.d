@@ -3,7 +3,7 @@ module commands.tool.do_apply;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : MeshSnapshot;
 import commands.mesh.mesh_edit_payload : MeshEditPayload, MeshRestorePolicy;
 import commands.tool.host : ToolHost;

@@ -26,7 +26,7 @@
 
 import http_client : testBaseUrl;
 import forms;
-import params : Param, ParamHints, IntEnumEntry;
+import vibe3d.editing.params.params : Param, ParamHints, IntEnumEntry;
 
 import std.exception : assertThrown, collectExceptionMsg;
 import std.algorithm : canFind;
@@ -360,7 +360,7 @@ unittest {
     import toolpipe.stages.falloff : FalloffStage;
     import toolpipe.packets : FalloffType, FalloffShape;
     import mesh     : Mesh;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
 
     Mesh m;
     EditMode em = EditMode.Vertices;

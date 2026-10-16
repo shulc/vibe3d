@@ -37,9 +37,9 @@ module toolpipe.subject;
 // module only writes into it.
 
 import mesh             : Mesh, MapKind;
-import editmode          : EditMode;
-import seltype            : SelType;
-import spatial : Viewport;
+import vibe3d.editing.contracts.editmode          : EditMode;
+import vibe3d.editing.contracts.seltype            : SelType;
+import vibe3d.util.spatial.spatial : Viewport;
 import toolpipe.packets    : SubjectPacket, GesturePacket;
 import operator            : VectorStack;
 import toolpipe.pipeline   : g_pipeCtx;

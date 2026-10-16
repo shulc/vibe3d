@@ -2,7 +2,7 @@
 
 import std.algorithm : canFind;
 
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiIntent;
 import ai.interaction_log : makeAiInteractionLogRecord;
 import ai.ranker_schema : aiRankerCandidateFeatureNames,

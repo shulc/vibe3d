@@ -31,7 +31,7 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
 import std.json : JSONValue, JSONType;
 import http_server;
-import log : logInfo, logWarn, logError;
+import vibe3d.util.log.log : logInfo, logWarn, logError;
 import prefs;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -43,8 +43,8 @@ import eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
 import tool;
-import editmode;
-import seltype;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype;
 import toolpipe;
 import operator         : VectorStack;
 import toolpipe.packets : SubjectPacket;
@@ -52,7 +52,7 @@ import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
 import view;
 import shader;
-import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import bvh_pick : BvhPick;
 import tools.create.box;
@@ -99,16 +99,16 @@ import command;
 import registry;
 import shortcuts;
 import buttonset;
-import ai.debug_trace : latestHandleDebugTraceJson;
+import vibe3d.editing.interaction.data.ai.debug_trace : latestHandleDebugTraceJson;
 import ai.element_candidates : publishElementCandidates,
     collectElementCandidates, resolveElementCandidateDecision;
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
     AiInteractionPhase, AiIntent;
 import ai.interaction_log : AiInteractionLogRecord, makeAiInteractionLogRecord;
 import ai.interaction_log_writer : AiInteractionLogWriter, defaultLiveSource;
 import ai.exploration : AiExplorationController, buildCandidateKey,
     defaultExploreSource, OptionalGrab, Resolution, ResolutionKind;
-import ai.advisor    : AiAdvisor;
+import vibe3d.editing.interaction.data.ai.advisor    : AiAdvisor;
 import ai.copilot_gate : kCopilotEnabled;
 import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelStatus, AiModelFallbackMode,

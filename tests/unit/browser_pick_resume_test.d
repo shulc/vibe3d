@@ -21,7 +21,7 @@ import command_history : RecordMode;
 import commands.file.load : FileLoad;
 import commands.image.commands : ImageLoad, ImageReplace;
 import document : Document, ItemKind, Layer;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import guarded_action_controller;
 import io.browser_pick_resume;
 import io.file_dialog : PickOutcome, PickResult, pickOpenPath,
@@ -29,7 +29,7 @@ import io.file_dialog : PickOutcome, PickResult, pickOpenPath,
 import io.formats : FilterSpec;
 import io.image_path : writeTestBmp;
 import mesh : Mesh, makeCube;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import ui.discard_guard : GuardAnswer, GuardRecord, UiRunOutcome;
 import view : View;
 

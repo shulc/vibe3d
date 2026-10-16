@@ -5,7 +5,7 @@ import mesh;
 import mesh_edge_slice : insertEdgePoint, rebuildFacesWithChordSplits, edgeIndexOfVerts;
 import mesh_ops.loop_slice : capShellCycles;
 import math;
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 
 // ---------------------------------------------------------------------------
 // The plane-cut kernel family: `cutByPlane` / `cutByPlaneRestricted` /

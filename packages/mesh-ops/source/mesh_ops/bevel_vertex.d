@@ -3,7 +3,7 @@ module mesh_ops.bevel_vertex;
 
 import mesh;
 import math;
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 import mesh_planes : rewriteFaces, FaceSource;
 
 // ---------------------------------------------------------------------------

@@ -36,7 +36,7 @@ module commands.mesh.morph_edit;
 import command   : Command, CmdFlags, CompareResult, RunMergeable;
 import mesh      : Mesh, MapKind, isMorphKind;
 import view      : View;
-import editmode  : EditMode;
+import vibe3d.editing.contracts.editmode  : EditMode;
 import math      : Vec3;
 import mesh_edit_delta : MeshEditScope;
 

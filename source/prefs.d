@@ -30,7 +30,7 @@ import std.path   : buildPath, absolutePath;
 import std.process : environment;
 import std.format : format;
 
-import log            : logWarn;
+import vibe3d.util.log.log            : logWarn;
 import toolpipe.attr_cache : PipelineAttrCache, NodeAttrs, kToolNode;
 import viewport       : LayoutPreset;
 import display_state  : BackdropStyle, CavityMode, CavityState, DisplayStyle,
@@ -41,7 +41,7 @@ import viewport_scheme : MAX_POINT_SIZE;
 import coord_rounding : CoordinateRounding, kCoordRoundingDefault,
                         kFixedIncrementDefault, coordRoundingName,
                         parseCoordRounding;
-import trackball      : kTrackballDefault, kTrackballSpeedDefault,
+import vibe3d.util.spatial.trackball      : kTrackballDefault, kTrackballSpeedDefault,
                         clampTrackballSpeed, kSpinSwingDefault;
 
 // ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ private immutable RenamedAttr[] kRenamedAttrs = [
 private string[] legacyWeldAttrs(string value) {
     import std.conv : to;
     import mesh : CloneWeld;
-    import params : fmtFloatWire;
+    import vibe3d.editing.params.params : fmtFloatWire;
     try {
         const weld = CloneWeld.fromLegacy(value.to!float);
         return [weld.merge ? "true" : "false", fmtFloatWire(weld.distance)];

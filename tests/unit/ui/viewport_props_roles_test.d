@@ -19,7 +19,7 @@ import commands.viewport.display : ViewportBackdropStyle, ViewportPointSize,
 import display_state : BackdropStyle;
 import display_state : DisplayStyle;
 import display_state : CavityMode;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import commands.viewport.display : kCavityGainMax, kCavityDistanceMin,
     kCavityDistanceMax, kCavityAttenuationMax;
 import layout_reset_action : LayoutResetAction;

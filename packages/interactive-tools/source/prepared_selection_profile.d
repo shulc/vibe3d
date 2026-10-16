@@ -1,6 +1,6 @@
 module prepared_selection_profile;
 
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh;
 import snapshot : MeshSnapshot;
 import tools.common.session_mesh_key : SessionMeshKey;

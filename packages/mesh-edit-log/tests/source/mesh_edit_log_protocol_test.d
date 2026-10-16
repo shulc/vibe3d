@@ -1,7 +1,7 @@
 module mesh_edit_log_protocol_test;
 import mesh_edit_delta;
-import mesh_types;
-import mesh_plane_types;
+import vibe3d.mesh.contracts.mesh_types;
+import vibe3d.mesh.contracts.mesh_plane_types;
 import math : Vec3;
 
 unittest {

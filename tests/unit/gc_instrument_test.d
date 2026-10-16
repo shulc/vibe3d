@@ -15,7 +15,7 @@
 module tests.unit.gc_instrument_test;
 
 import core.memory : GC;
-import perf_probe : GcSample, gcSampleNow, gcWindowMaxPauseNs,
+import vibe3d.util.profiling.perf_probe : GcSample, gcSampleNow, gcWindowMaxPauseNs,
                     CommandGcProbe, currentThreadId, g_mainLoopThreadId;
 
 // Allocate roughly `mb` megabytes in blocks the GC cannot fold away, and drop

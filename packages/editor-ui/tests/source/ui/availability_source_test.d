@@ -3,14 +3,14 @@ module ui.availability_source_test;
 import ui.availability;
 import buttonset : Action, ActionKind, Button;
 import registry : Registry;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 
 unittest {
     import command  : Command, kNoEditTargetReason;
     import tool     : Tool;
     import mesh     : Mesh;
     import view     : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
 
     static final class NeedsCmd : Command {
         private Mesh  _m;

@@ -9,7 +9,7 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh    : Mesh;
 import view;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math     : Vec3, dot, cross, normalize;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stages.workplane : WorkplaneStage;

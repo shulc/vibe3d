@@ -29,7 +29,7 @@ module tests.unit.undo_parity_l1_test;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math : Vec3;
 
 import tests.unit.fixtures : makeTaggedGridMaps;

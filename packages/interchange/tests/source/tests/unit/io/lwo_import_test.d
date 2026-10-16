@@ -9,7 +9,7 @@ import std.format    : format;
 import mesh;
 import math;
 import io.scene_ir;
-import log : logWarn, logInfo;
+import vibe3d.util.log.log : logWarn, logInfo;
 import std.bitmanip : nativeToBigEndian;
 import io.lwo_import;
 

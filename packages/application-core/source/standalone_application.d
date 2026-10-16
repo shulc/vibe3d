@@ -1,7 +1,7 @@
 module standalone_application;
 
 import active_mesh_resolver : activeMeshResolver;
-import change_bus : changeBus, ChangeBus, MeshChangeAll;
+import vibe3d.mesh.change.change_bus : changeBus, ChangeBus, MeshChangeAll;
 import command : CommandOrigin, g_editTargetResolver;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, HistoryEntry;
@@ -10,9 +10,9 @@ import command_invocation : CommandInvocationService, CommandInvocationContext,
 import command_registry : CommandRegistry;
 import document : Document, primaryModelSpaceResolver;
 import http_json : meshPlanesJson;
-import spatial : ModelSpace, Viewport;
+import vibe3d.util.spatial.spatial : ModelSpace, Viewport;
 import mesh : Mesh, g_isDocumentMesh;
-import mesh_dirty : noteMeshChange;
+import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
 import pilot_command_registration : PilotCommandDeps, registerTripleCommand,
     registerMeshSelectionCommand, registerHistoryNavigationCommands,
     registerElementSelectionCommand, registerDropSelectionCommand, registerInvertSelectionCommand;

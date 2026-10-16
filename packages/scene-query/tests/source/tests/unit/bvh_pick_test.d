@@ -5,10 +5,10 @@ module tests.unit.bvh_pick_test;
 
 import bvh.c;
 import math : Vec3, cross;
-import spatial : Viewport, screenRay, screenPointToRay, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, screenRay, screenPointToRay, ModelSpace;
 import mesh : Mesh;
 import mesh_gpu : GpuMesh;
-import perf_probe : g_perf, Cat, g_fc;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc;
 import bvh_pick;
 
 unittest {
@@ -111,7 +111,7 @@ unittest {
     // calls with the delivered (address, flags), and it is public for exactly
     // this use — the same arrangement `snap.invalidateSnapGrids()` has.
     import std.math      : fabs;
-    import mesh_dirty : noteMeshChange;
+    import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
     import mesh_edit_delta : MeshEditScope;
 
     Mesh src;
@@ -184,7 +184,7 @@ unittest {
     // import document.d — see the module header note).
     import std.math : PI;
     import math : lookAt, perspectiveMatrix, translationMatrix, pivotRotationMatrix, matMul4;
-import spatial : projectToWindow;
+import vibe3d.util.spatial.spatial : projectToWindow;
 
     Mesh src;
     src.vertices = [

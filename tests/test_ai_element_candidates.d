@@ -1,10 +1,10 @@
 // Pure tests for observational element candidate collection.
 
-import ai.debug_trace : clearLatestAiDebugTraces, latestElementDebugTrace;
+import vibe3d.editing.interaction.data.ai.debug_trace : clearLatestAiDebugTraces, latestElementDebugTrace;
 import ai.element_candidates : collectElementCandidates,
     publishElementCandidates, publishElementCandidatesWithAdvisor,
     resolveElementCandidateDecision;
-import ai.interaction : AiAdvisorDecision, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidateKind,
     AiElementCandidateKind, AiIntent;
 
 void main() {}

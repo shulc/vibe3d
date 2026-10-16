@@ -3,7 +3,7 @@ import display_state : DrawPlan;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient;
 import prepared_box_param : PreparedBoxParamOwner;
-import prepared_tool_effect : PreparedBoxParamEffect, PreparedSessionActivateEffect,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedBoxParamEffect, PreparedSessionActivateEffect,
     PreparedActivateKind, PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_private_state : PreparedPrivateStateOwner;
 import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
@@ -19,7 +19,7 @@ import bindbc.sdl;
 import tool;
 import mesh;
 import math;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize,
                  axisFacesViewer, ToolHandles;
 import viewport_scheme : axisColor, schemeColor, SchemeColor;
@@ -39,10 +39,10 @@ import tools.create.create_common : WorkplaneFrame,
                               transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
                               workplaneCursorPlaneHit, moverDrag, snapMoverCentre, heightDragNormal, baseDragPoint;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import view : View;
 
 import ImGui = d_imgui;
@@ -931,7 +931,7 @@ public:
     /// Phase 6.1b: 3 rounded-edge attrs (radius/segmentsR/axis).
     /// Phase 6.1c: sharp attr (enabled only when radius > 0).
     override Param[] params() {
-        import params : IntEnumEntry;
+        import vibe3d.editing.params.params : IntEnumEntry;
         if (state != BoxState.Idle) {
             paramBeforeParams = params_;
             paramBeforeState = state;

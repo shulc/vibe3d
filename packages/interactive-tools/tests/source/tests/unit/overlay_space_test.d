@@ -5,7 +5,7 @@ module tests.unit.overlay_space_test;
 
 import std.math : sqrt, isNaN;
 import math : Vec3;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 import document : primaryModelSpace;
 import overlay_space;
 

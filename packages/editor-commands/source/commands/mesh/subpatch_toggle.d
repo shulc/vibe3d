@@ -4,9 +4,9 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
-import seltype : SelType;
-import change_bus : MeshEditScope;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype : SelType;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 
 // Task 5911. A face with fewer than three corners is never made subpatch; one
 // that already is becomes plain like any other face, in the same press.

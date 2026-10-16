@@ -5,16 +5,16 @@ import std.typecons : Flag, Yes;
 
 import math    : Vec3;
 import mesh    : Mesh;
-import mesh_dirty : MeshDirtyKey, g_settledGeomEpochs;
-import editmode : EditMode;
+import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, g_settledGeomEpochs;
+import vibe3d.editing.contracts.editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordSymm;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : SymmetryPacket, SymmetryConfig;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath;
 import symmetry          : rebuildPairing, rebuildPairingTopological, symmetrySide;
-import perf_probe        : g_perf, Cat;
-import params            : Param, IntEnumEntry;
+import vibe3d.util.profiling.perf_probe        : g_perf, Cat;
+import vibe3d.editing.params.params            : Param, IntEnumEntry;
 
 /// How many times `evaluate()` has actually re-run `rebuildPairing` /
 /// `rebuildPairingTopological` — the O(V log V) geometric mirror search plus
@@ -489,7 +489,7 @@ private:
                 // Task 3020 — through the shared wire gate, which refuses a
                 // non-finite. `to!float` on its own accepts std.conv's textual
                 // sentinels, so `offset nan` used to be answered `status ok`.
-                import params : assignWireFloat;
+                import vibe3d.editing.params.params : assignWireFloat;
                 return assignWireFloat(value, offset);
             }
             case "useWorkplane":
@@ -507,7 +507,7 @@ private:
                 // `tool.pipe.attr symmetry epsilon nan` answered `status ok`.
                 // `assignWireFloat` refuses the non-finite first; the positivity
                 // rule is unchanged and still this stage's own.
-                import params : assignWireFloat;
+                import vibe3d.editing.params.params : assignWireFloat;
                 float v;
                 if (!assignWireFloat(value, v)) return false;
                 if (v <= 0.0f) return false;

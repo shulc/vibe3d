@@ -1,6 +1,6 @@
 module mesh;
 
-public import mesh_types;
+public import vibe3d.mesh.contracts.mesh_types;
 
 import std.math : sqrt, isIdentical;
 import std.array : uninitializedArray;
@@ -9,12 +9,12 @@ import std.traits : Unqual, isDynamicArray, isAssociativeArray, isStaticArray,
                     KeyType, ValueType;
 import std.range.primitives : ElementType;
 import math;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 import std.array : insertInPlace;
 import mesh_selsets : selSetGatherVertexMaskReverse, selSetDropFilterVertexMask;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta, MeshOpEntry;
-import change_bus : SelDomain, changeBus;
+import vibe3d.mesh.change.change_bus : SelDomain, changeBus;
 // Tasks 4600-4602 close one reverse dependency at a time: every migrated
 // family's callers import its `mesh_ops` module directly, so this base module
 // has no edge back to that operation family.
@@ -27,8 +27,8 @@ import mesh_planes : rewriteFaces, FaceSource, kNoSource,
 // Snap-visibility instrumentation (task 1350/1351). `perf_probe` imports only
 // core.time, so this is a leaf dependency and cannot cycle; every call compiles
 // to nothing unless the `perf`/`perf-count` build defines PerfProbe.
-import perf_probe : g_perf, Cat;
-import tsan_annotate : parallelForWithCompletion;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
+import vibe3d.util.parallel.tsan_annotate : parallelForWithCompletion;
 
 // Half-edge dart type + the topology ranges → extracted to source/mesh_topo.d
 // (task 0717). Re-exported so every `import mesh : Loop;` / `mesh.EdgeFaceRange`
@@ -43,7 +43,7 @@ public import mesh_topo;
 // unchanged. The Mesh-COUPLED half of the obligation (`CornerRewrite`, which
 // captures the old corner space and arms the drop) stays here — it holds a
 // `Mesh*`, so it cannot live in a module Mesh imports.
-public import mesh_corner_maps;
+public import vibe3d.mesh.contracts.mesh_corner_maps;
 
 // ---------------------------------------------------------------------------
 // Mesh
@@ -736,7 +736,7 @@ void drainPreparedShadowDelivery(ref Mesh mesh, out uint flags,
 }
 
 version (unittest) unittest {
-    import change_bus : changeBus;
+    import vibe3d.mesh.change.change_bus : changeBus;
     Mesh shadow = makeCube();
     ulong before;
     {
@@ -3660,7 +3660,7 @@ struct Mesh {
     // ---------------------------------------------------------------------------
     void restoreSelectionValues(MeshOpEntry.SelDomain dom,
                                 in uint[] idx, in uint[] vals) {
-        import change_bus : BusSelDomain = SelDomain;
+        import vibe3d.mesh.change.change_bus : BusSelDomain = SelDomain;
         bool any = false;
         BusSelDomain busDom;
         final switch (dom) {
@@ -12097,7 +12097,7 @@ struct Mesh {
     /// the selected branch needs no filter because §3.1's Select ∧ Hide = ∅
     /// invariant makes a hidden vertex unselectable).
     int[] selectedVertexIndicesVertices() const {
-        { import perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
+        { import vibe3d.util.profiling.perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
         int[] idx;
         if (hasAnySelectedVertices()) {
             foreach (i; 0 .. vertices.length)
@@ -12380,7 +12380,7 @@ struct Mesh {
     /// If nothing is selected, returns every VISIBLE vertex index (§3.2 shape
     /// A, task 0613 — see selectedVertexIndicesVertices above).
     int[] selectedVertexIndicesEdges() const {
-        { import perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
+        { import vibe3d.util.profiling.perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
         int[] idx;
         if (hasAnySelectedEdges()) {
             bool[] added = new bool[](vertices.length);
@@ -12400,7 +12400,7 @@ struct Mesh {
     /// If nothing is selected, returns every VISIBLE vertex index (§3.2 shape
     /// A, task 0613 — see selectedVertexIndicesVertices above).
     int[] selectedVertexIndicesFaces() const {
-        { import perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
+        { import vibe3d.util.profiling.perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
         int[] idx;
         if (hasAnySelectedFaces()) {
             bool[] added = new bool[](vertices.length);
@@ -13708,7 +13708,7 @@ struct Mesh {
             // them on purpose, an LWO import brings them in) and must not be
             // reported as bad winding (task 1290).
             if (anySameDir) {
-                import log : logWarnOnce;
+                import vibe3d.util.log.log : logWarnOnce;
                 logWarnOnce("mesh", "sameDirTwin",
                     "buildLoops: inconsistently-wound faces detected (a shared "
                     ~ "edge traversed the same direction by both faces) — the "
@@ -16006,7 +16006,7 @@ version (unittest) private Mesh makeGridWithLooseGeometry(int n) {
 version (unittest) version (MeshSnapshotFixtures) {
 @("mesh-snapshot-private-cells")
 unittest {
-    import change_bus : MeshEditScope;
+    import vibe3d.mesh.change.change_bus : MeshEditScope;
     import std.conv   : to;
 
     // ---- CELL 1 (task 0401): the version-SILENT position edit. --------

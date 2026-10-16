@@ -27,8 +27,8 @@ import commands.ui.tool_properties : UiToolPropertiesCommand,
 import commands.ui.viewport_props : UiViewportPropsCommand,
     g_viewportPropsShown;
 import edit_session : LiveEvalClient, ParameterChangeBatch;
-import editmode : EditMode;
-import params : Param;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
 import std.algorithm : count;
 import std.file : exists, readText;
 import std.format : format;

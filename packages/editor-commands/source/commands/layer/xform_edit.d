@@ -14,9 +14,9 @@ module commands.layer.xform_edit;
 import command : Command, CmdFlags, CompareResult, RunMergeable;
 import mesh : Mesh;
 import view : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import document : Layer, ItemXform;
-import change_bus : noteLayerChange, LayerChange;
+import vibe3d.mesh.change.change_bus : noteLayerChange, LayerChange;
 
 /// One target's before/after `ItemXform` pair. A plain array (not an
 /// associative structure) so the payload stays ordered and trivially

@@ -109,7 +109,7 @@ import std.json   : JSONValue, parseJSON;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math      : Vec3;
 import http_json : meshPlanesJson, PlaneDumpMeta;
 

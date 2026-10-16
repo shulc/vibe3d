@@ -20,7 +20,7 @@ import snapshot : MeshSnapshot;
 unittest {
     import mesh      : Mesh;
     import view       : View;
-    import editmode   : EditMode;
+    import vibe3d.editing.contracts.editmode   : EditMode;
 
     Mesh mesh;
     View view = new View(0, 0, 1, 1);

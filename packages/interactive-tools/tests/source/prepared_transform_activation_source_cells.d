@@ -11,11 +11,11 @@ import tools.deform.push : PushTool;
 unittest {
     import mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import prepared_record_context : PreparedRecordContext;
     import command_history : CommandHistory;
     import record_observer_hub : RecordObserverHub;
-    import prepared_tool_effect : PreparedTransformActivationEffect,
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedTransformActivationEffect,
         PreparedTransformActivationKind;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto linear = new LinearAlignTool(() => &mesh, &gpu, &mode);

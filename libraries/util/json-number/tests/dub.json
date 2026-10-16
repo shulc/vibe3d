@@ -1,0 +1,27 @@
+{
+  "name": "vibe3d-json-number-tests",
+  "description": "Independent public json-number tests",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": [],
+  "importPaths": [
+    "../source",
+    "source"
+  ],
+  "sourceFiles": [
+    "../source/vibe3d/util/json_number/json_num.d",
+    "source/vibe3d/util/json_number/tests/unit/json_num_test.d"
+  ],
+  "dflags": [],
+  "dependencies": {},
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "configurations": [
+    {
+      "name": "algorithm",
+      "subConfigurations": {}
+    }
+  ]
+}

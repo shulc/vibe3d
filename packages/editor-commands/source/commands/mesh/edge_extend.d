@@ -6,8 +6,8 @@ import mesh;
 import mesh_ops.extrude;
 import math : Vec3;
 import view;
-import editmode;
-import params : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param;
 import snapshot : MeshSnapshot;
 
 /// Edge Extend (one-shot, undoable): ADDITIVE, non-manifold. Per selected edge

@@ -16,7 +16,7 @@ import mesh_visibility : visibilityProbe;
 import std.format : format;
 import std.math : PI, sqrt, abs;
 import math : Vec3, lookAt, perspectiveMatrix, frontFacingLocal;
-import spatial : Viewport, ModelSpace, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
 import mesh : Mesh;
 import mesh_visibility : g_visCounters;
 

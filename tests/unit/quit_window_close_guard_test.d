@@ -58,7 +58,7 @@ module tests.unit.quit_window_close_guard_test;
 
 import mesh     : Mesh, makeCube;
 import view     : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import commands.file.quit : FileQuit;
 static import command;
 

@@ -3,7 +3,7 @@ module registry;
 import mesh;
 import mesh_gpu : GpuMesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import shader;
 import tool;
 import command;
@@ -14,7 +14,7 @@ import command_history : CommandHistory;
 import command_invocation : CommandInvocationService, RefireDispatch, UiInvocation,
     InteractiveConfiguration, RefusalNotice;
 import live_registration_roles : LiveSessionRole;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 
 // ---------------------------------------------------------------------------
 // AppContext — raw references to per-app state shared by tools and commands
@@ -270,7 +270,7 @@ public:
     /// `supportedModes()` into the cache. Call after all
     /// command/tool registrations.
     void cacheSupportedModes() {
-        import params : paramsSchemaJson;
+        import vibe3d.editing.params.params : paramsSchemaJson;
         commandRegistry_.cacheSupportedModes();
         const toolKeys = toolIds();
         foreach (id; toolKeys) {
@@ -547,7 +547,7 @@ unittest {
 // context, and it is the part that has to stay at zero.
 // ---------------------------------------------------------------------------
 version (unittest) {
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
 
     private int _regCtorCalls;   // reset by each test that reads it
 

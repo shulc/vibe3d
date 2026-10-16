@@ -32,7 +32,7 @@ import mesh                : Mesh, MeshCacheKey, MeshEditBatch;
                              // names them.
 import mesh_gpu            : GpuMesh;
 import math : Vec3, closestOnSegment2D, closestPointOnSegmentToRay, dot, cross, pointInPolygon2D, rayPlaneIntersect;
-import spatial : Viewport, projectToWindowFull, screenPointToRay, AimViewport, aimSpace, ModelSpace, screenPointToLocalRay;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, screenPointToRay, AimViewport, aimSpace, ModelSpace, screenPointToLocalRay;
 import document             : Layer, primaryModelSpace;
 import shader              : Shader;
 import operator            : VectorStack, viewportOf, pickOcclusionOf;
@@ -57,15 +57,15 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import command               : Command;
 import snapshot              : MeshSnapshot;
 import display_sync         : refreshDisplay;
-import change_bus            : MeshEditScope;
-import params                : Param, IntEnumEntry, wireTagForValue;
+import vibe3d.mesh.change.change_bus            : MeshEditScope;
+import vibe3d.editing.params.params                : Param, IntEnumEntry, wireTagForValue;
 import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
                                 InputMod, ResetScope, InputBinding,
                                 resolveToolAction, toButton, toMods;
 import drag                  : planeDragDelta, HandleDrag, DragFrame, DragKind;
 import eventlog               : queryMouse;
 import held_gesture_buttons   : g_heldGestureButtons;
-import prepared_tool_effect   : PreparedSessionActivateEffect,
+import vibe3d.editing.contracts.prepared_tool_effect   : PreparedSessionActivateEffect,
                                  PreparedActivateKind,
                                  PreparedTopologyPenUpdateEffect,
                                  PreparedTopologyPenUpdateKind,
@@ -4195,7 +4195,7 @@ public:
         bool skip;
         auto cs = liveConstrainStage();
         import drag : ComponentGuideResolver;
-        import spatial : isOrtho;
+        import vibe3d.util.spatial.spatial : isOrtho;
         const env = cs is null ? typeof(cs.guideEnvironment(false, vp)).init
                                : cs.guideEnvironment(moveAxisLock_ && (isOrtho(vp) || perspectiveGuideRequested), vp);
         const guidedRoute = cs !is null && env.supported();

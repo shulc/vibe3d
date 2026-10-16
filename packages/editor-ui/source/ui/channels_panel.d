@@ -6,7 +6,7 @@ import document : Document, Layer;
 import forms : Form;
 import forms_render : FormsPanel;
 import mesh : Mesh;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import session_owner : Session;
 import tool : Tool;
 import ui.channel_rows : ChannelsKey, ChannelsModel, ChannelsProvider,
@@ -57,7 +57,7 @@ public:
     }
     const(Document)* document() { return owner_.documentPtr(); }
     SelType currentSelType() {
-        import seltype : resolve = currentSelType;
+        import vibe3d.editing.contracts.seltype : resolve = currentSelType;
         return resolve(owner_.selTypeOrder);
     }
     bool transformToolActive() {

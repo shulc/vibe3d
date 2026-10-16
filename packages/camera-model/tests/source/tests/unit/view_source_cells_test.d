@@ -2,10 +2,10 @@ module tests.unit.view_source_cells_test;
 
 import view;
 import math;
-import spatial;
+import vibe3d.util.spatial.spatial;
 import std.math;
 import std.json;
-import trackball;
+import vibe3d.util.spatial.trackball;
 
 version(unittest) {
     import math;
@@ -260,7 +260,7 @@ unittest { // the bank term downstream: reachable, decidable, and quantified
 // ---------------------------------------------------------------------------
 
 version (unittest) {
-    import trackball : setTrackballGlobal, resetTrackball, setTrackballMouseSpeed,
+    import vibe3d.util.spatial.trackball : setTrackballGlobal, resetTrackball, setTrackballMouseSpeed,
                        trackballRadius;
 
     // The two pane shapes every pane-dependent assertion runs on. The first is
@@ -693,7 +693,7 @@ unittest { // the composed rotation stays a clean rotation over a long gesture
 // ---------------------------------------------------------------------------
 
 version (unittest) {
-    import trackball : kSettleTimeMs, kSettleDurationMs, kSwingTimeMs,
+    import vibe3d.util.spatial.trackball : kSettleTimeMs, kSettleDurationMs, kSwingTimeMs,
                        kSwingPeriodMs, setTrackballSwing, spinAngle,
                        SpinCurve;
 

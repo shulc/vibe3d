@@ -65,7 +65,7 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import handler : MoveHandler, BoxHandler, gizmoSize, axisFacesViewer, ToolHandles;
 import viewport_scheme : axisColor;
 import eventlog : queryMouse;
@@ -77,7 +77,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
 import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
 import command_history : PreparedHistoryKind;
@@ -89,7 +89,7 @@ import tools.create.create_common : WorkplaneFrame,
                               viewPrincipalAxis, transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding, baseDragPoint,
                               workplaneCursorPlaneHit, moverDrag, snapMoverCentre, heightDragNormal;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap, SnapOverlayOwner;
 

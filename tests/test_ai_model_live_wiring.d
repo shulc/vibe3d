@@ -9,9 +9,9 @@
 // is the composition of `AiModelAdapter.decide` + the today's-advisor fallthrough
 // through the real handle gate.
 
-import ai.advisor : AiAdvisor;
-import ai.debug_trace : clearLatestHandleDebugTrace, latestHandleDebugTrace;
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
+import vibe3d.editing.interaction.data.ai.advisor : AiAdvisor;
+import vibe3d.editing.interaction.data.ai.debug_trace : clearLatestHandleDebugTrace, latestHandleDebugTrace;
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiInteractionPhase, AiIntent;
 import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelBackend, AiModelBackendPrediction,
@@ -19,7 +19,7 @@ import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
 import ai.onnx_backend : OnnxModelBackend;
 import handler : Handler, HandleState, ToolHandles,
     setHandleAiAdvisor, setHandleDecisionProvider;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 
 void main() {}
 

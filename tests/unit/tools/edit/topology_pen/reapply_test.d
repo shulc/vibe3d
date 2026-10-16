@@ -66,7 +66,7 @@ unittest {
 // press image and pairing are produced before the panel writes its value.
 unittest {
     import mesh : Mesh;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import operator : VectorStack;
     import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
     import toolpipe.stages.symmetry : SymmetryStage;

@@ -467,7 +467,7 @@ unittest {
 // call sites: it fires the moment somebody removes a batch, or moves a feed
 // to a point where nothing has been published.
 private void feedBus(ref Mesh cage) {
-    import mesh_dirty : noteMeshChange;
+    import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
     assert(cage.undeliveredChanges_ != 0,
         "RIG: the change accumulator is EMPTY at a feed — either the caller "
       ~ "dropped its `beginDeliveryBatchGlobal` (so the publisher's own "

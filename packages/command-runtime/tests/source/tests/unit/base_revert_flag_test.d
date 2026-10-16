@@ -34,7 +34,7 @@ import std.format : format;
 
 import command;
 import command_history;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh     : Mesh;
 import view     : View;
 

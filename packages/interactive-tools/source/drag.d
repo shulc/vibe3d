@@ -8,7 +8,7 @@ version (unittest) {
 
 import std.math : sqrt, isNaN, abs;
 import math;
-import spatial : Orientation, Viewport, eyeVectorAt, lockedViewAxis, projectToWindowFull, screenPointToRay, viewPixelScale;
+import vibe3d.util.spatial.spatial : Orientation, Viewport, eyeVectorAt, lockedViewAxis, projectToWindowFull, screenPointToRay, viewPixelScale;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
 import toolpipe.packets : GesturePacket, GestureTrack;
 public import toolpipe.packets : ComponentGuide;

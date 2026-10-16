@@ -2,8 +2,8 @@ module handles.shapes;
 
 import handles.gl_util;
 import math;
-import spatial : Viewport, isOrtho, lockedViewAxis, projectToWindowFull;
-import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
+import vibe3d.util.spatial.spatial : Viewport, isOrtho, lockedViewAxis, projectToWindowFull;
+import vibe3d.util.profiling.perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import shader;
 import viewport_scheme;
 import bindbc.sdl;
@@ -14,7 +14,7 @@ import std.math : sin, cos, sqrt, PI, abs;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
-import ai.interaction : AiIntent;
+import vibe3d.editing.interaction.data.ai.interaction : AiIntent;
 
 // ---------------------------------------------------------------------------
 // HandleState — the ARBITRATION state (which handle won the hit test, plus the

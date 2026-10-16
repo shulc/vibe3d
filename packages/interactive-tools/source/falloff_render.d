@@ -3,7 +3,7 @@ module falloff_render;
 import std.math : sin, cos, sqrt, PI;
 
 import math : Vec3;
-import spatial : Viewport, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
 import toolpipe.packets : FalloffPacket, FalloffType, LassoStyle;
 import falloff : applyShape;
 

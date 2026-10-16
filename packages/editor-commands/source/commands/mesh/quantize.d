@@ -3,12 +3,12 @@ module commands.mesh.quantize;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math : Vec3;
-import spatial : Viewport, AimViewport, aimSpace;
+import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace;
 import document : primaryModelSpace;
-import params : Param;
-import change_bus : MeshEditScope;
+import vibe3d.editing.params.params : Param;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
 import commands.mesh.vertex_position_result : VertexPositionResult,
     VertexPositionResultBuilder;

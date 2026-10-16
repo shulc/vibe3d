@@ -1,10 +1,10 @@
 module view;
 
 import math;
-import spatial : Orientation, Viewport, isOrtho, viewMatrixFrom;
+import vibe3d.util.spatial.spatial : Orientation, Viewport, isOrtho, viewMatrixFrom;
 import std.math : sqrt, tan, PI, isFinite;
 import std.json : JSONValue, JSONType;
-import trackball : TrackballOption, resolveTrackball, trackballRadius,
+import vibe3d.util.spatial.trackball : TrackballOption, resolveTrackball, trackballRadius,
                    trackballVector, trackballStep, trackballMouseSpeed,
                    SpinCurve, spinAngle, spinEnded, activeSpinCurve;
 
@@ -68,7 +68,7 @@ bool presetBasis(ViewPreset p, out Vec3 right, out Vec3 up) @safe pure nothrow @
 /// erased by a call that forgets to state it.
 string orientationToJson(Orientation o) {
     import std.format : format;
-    import json_num   : jsonNum;
+    import vibe3d.util.json_number.json_num   : jsonNum;
     return format("[%s,%s,%s,%s,%s,%s,%s,%s,%s]",
                   jsonNum(o.m[0], "%.9g"), jsonNum(o.m[1], "%.9g"),
                   jsonNum(o.m[2], "%.9g"), jsonNum(o.m[3], "%.9g"),
@@ -706,7 +706,7 @@ class View {
     /// precision, so every existing reader is unaffected.
     string toJsonWith(Vec3 f, float d, Orientation o) const {
         import std.format : format;
-        import json_num   : jsonNum;
+        import vibe3d.util.json_number.json_num   : jsonNum;
         Viewport vp = viewportWith(f, d, o);
         float a, e, r;
         o.toAngles(a, e, r);

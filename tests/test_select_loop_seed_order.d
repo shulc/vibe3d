@@ -35,7 +35,7 @@
 
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import commands.select.loop : SelectLoop;
 
 import std.algorithm : sort, canFind;

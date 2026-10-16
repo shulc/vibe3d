@@ -15,12 +15,14 @@
   ],
   "dflags": [],
   "dependencies": {
-    "vibe3d:math": {"path": "../../.."},
+    "vibe3d:math": {
+      "path": "../../.."
+    },
     "vibe3d-mesh": {
       "path": "../../mesh"
     },
-    "vibe3d-mesh-contracts": {
-      "path": "../../mesh-contracts"
+    "vibe3d:mesh-contracts": {
+      "path": "../../.."
     }
   },
   "toolchainRequirements": {
@@ -33,7 +35,7 @@
       "subConfigurations": {
         "vibe3d:math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
-        "vibe3d-mesh-contracts": "isolated-tests"
+        "vibe3d:mesh-contracts": "isolated-tests"
       }
     }
   ],

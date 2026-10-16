@@ -2,7 +2,7 @@ module ui.viewport_render_plan_test;
 
 import display_state : DrawPlan;
 import viewport_overlay_mode : OverlayMode;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import operator : VectorStack;
 import shader : Shader;
 import tool : Tool;

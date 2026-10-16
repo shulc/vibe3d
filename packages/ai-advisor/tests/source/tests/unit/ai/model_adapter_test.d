@@ -4,8 +4,8 @@
 module tests.unit.ai.model_adapter_test;
 
 import std.math : isFinite;
-import ai.advisor : AiAdvisor;
-import ai.interaction : AiAdvisorDecision, AiCandidate,
+import vibe3d.editing.interaction.data.ai.advisor : AiAdvisor;
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate,
     AiInteractionContext, AiIntent;
 import ai.model_adapter;
 

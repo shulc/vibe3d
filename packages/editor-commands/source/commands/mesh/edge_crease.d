@@ -4,8 +4,8 @@ import mesh_edit_replay : apply, revert;
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 
 // ---------------------------------------------------------------------------

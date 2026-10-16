@@ -3,7 +3,7 @@ module commands.snap.toggle;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 
 import toolpipe.stages.snap    : heldDragGuideCount, liveSnapStage;
 

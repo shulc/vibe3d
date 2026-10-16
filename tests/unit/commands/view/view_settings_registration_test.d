@@ -15,10 +15,10 @@ import command_args : bindArgs;
 import commands.mesh.select : MeshSelect;
 import copilot_command_registration : registerCopilotCommands;
 import copilot_panel : CopilotPanel;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import trackball : TrackballOption;
+import vibe3d.util.spatial.trackball : TrackballOption;
 import view_settings_registration : registerViewSettingsCommands;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),

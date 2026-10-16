@@ -9,7 +9,7 @@ import std.process : environment, Pid, spawnProcess, tryWait, kill, wait;
 import std.stdio   : File, stdin;
 import core.time   : MonoTime, msecs, seconds;
 import core.thread : Thread;
-import log : logWarn;
+import vibe3d.util.log.log : logWarn;
 import ai3d.stage_artifact : normalizeLocalWorkerUrl;
 import std.file : tempDir, rmdirRecurse;
 import std.random : uniform;

@@ -29,7 +29,7 @@ import std.json   : parseJSON, JSONValue;
 
 import mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
 import view       : View;
-import editmode   : EditMode;
+import vibe3d.editing.contracts.editmode   : EditMode;
 import snapshot   : MeshSnapshot;
 import uv_relax   : uvRelax;
 import commands.mesh.uv_relax : UvRelax;
@@ -108,7 +108,7 @@ private Mesh make3x3WithUv(out size_t[4] centerLoops) {
 
 // Set int param `name` on any command.
 private void setIntParam(T)(T cmd, string name, int value) {
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params())
         if (p.name == name) { *p.iptr = value; return; }
     assert(false, "int param not found: " ~ name);
@@ -116,7 +116,7 @@ private void setIntParam(T)(T cmd, string name, int value) {
 
 // Set float param `name` on any command.
 private void setFloatParam(T)(T cmd, string name, float value) {
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params())
         if (p.name == name) { *p.fptr = value; return; }
     assert(false, "float param not found: " ~ name);

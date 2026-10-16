@@ -3,7 +3,7 @@ module commands.test_undo_flags;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 
 // ---------------------------------------------------------------------------
 // Test-automation-only commands exercising the explicit undoability override

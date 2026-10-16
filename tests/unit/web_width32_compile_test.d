@@ -73,9 +73,13 @@ case " $flags " in *" -version=web "*) ;; *)
 esac
 mapfile -t files < <(dub describe --config=web --data=source-files --data-list \
     2>>"$2" | sed '/^$/d' | grep '\.d$')
-for owner in packages/forms-model packages/editor-ui packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/alignment-ops packages/command-runtime packages/application-core packages/creation-ops packages/display-policy packages/edit-contracts packages/input-events packages/interaction-query packages/interchange packages/mesh-change packages/mesh-contracts packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-ops packages/selection-model packages/scene-query packages/editor-commands packages/interactive-tools packages/viewport-host packages/interaction-data packages/mesh-snapshot packages/mesh-topology packages/mesh packages/pipe-evaluation packages/profiling packages/spatial packages/subpatch-preview packages/tool-state packages/transform-ops packages/viewport-gpu util/log util/parallel util/plane-bytes util/screen-buckets packages/pipe-contracts packages/mesh-preview util/json-number; do
+for owner in packages/forms-model packages/editor-ui packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/alignment-ops packages/command-runtime packages/application-core packages/creation-ops packages/display-policy packages/input-events packages/interaction-query packages/interchange packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-ops packages/selection-model packages/scene-query packages/editor-commands packages/interactive-tools packages/viewport-host packages/mesh-snapshot packages/mesh-topology packages/mesh packages/pipe-evaluation packages/subpatch-preview packages/tool-state packages/transform-ops packages/viewport-gpu packages/pipe-contracts packages/mesh-preview ; do
     mapfile -t package_files < <(dub describe --root="$owner" --config=web \
         --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
+    files+=("${package_files[@]}")
+done
+for selected in :edit-contracts :interaction-data :json-number :log :mesh-contracts :parallel :param-schema :plane-bytes :profiling :screen-buckets :spatial :mesh-change; do
+    mapfile -t package_files < <(dub describe "$selected" --config=web --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
     files+=("${package_files[@]}")
 done
 # Math is a root-registered subpackage; the child recipe is not an independent root.
@@ -95,13 +99,13 @@ SH";
                inventory.status, inventory.output));
     string[][string] importsByModule;
     string[string] sourcePathByModule;
-    const productionPrefixes = [buildPath(repoRoot, "packages/camera-model/source") ~ "/", buildPath(repoRoot, "packages/document-channels/source") ~ "/", buildPath(repoRoot, "packages/image-codec/source") ~ "/", buildPath(repoRoot, "packages/document-io/source") ~ "/", buildPath(repoRoot, "source") ~ "/", buildPath(repoRoot, "packages/alignment-ops/source") ~ "/", buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source") ~ "/", buildPath(repoRoot, "packages/creation-ops/source") ~ "/", buildPath(repoRoot, "packages/display-policy/source") ~ "/", buildPath(repoRoot, "packages/edit-contracts/source") ~ "/", buildPath(repoRoot, "packages/input-events/source") ~ "/", buildPath(repoRoot, "packages/interaction-query/source") ~ "/", buildPath(repoRoot, "packages/interchange/source") ~ "/", buildPath(repoRoot, "packages/mesh-change/source") ~ "/", buildPath(repoRoot, "packages/mesh-contracts/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-log/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-replay/source") ~ "/", buildPath(repoRoot, "packages/mesh-ops/source") ~ "/", buildPath(repoRoot, "packages/mesh-snapshot/source") ~ "/", buildPath(repoRoot, "packages/mesh-topology/source") ~ "/", buildPath(repoRoot, "packages/mesh/source") ~ "/", buildPath(repoRoot, "packages/pipe-evaluation/source") ~ "/", buildPath(repoRoot, "packages/profiling/source") ~ "/", buildPath(repoRoot, "packages/spatial/source") ~ "/", buildPath(repoRoot, "packages/subpatch-preview/source") ~ "/", buildPath(repoRoot, "packages/tool-state/source") ~ "/", buildPath(repoRoot, "packages/transform-ops/source") ~ "/", buildPath(repoRoot, "packages/viewport-gpu/source") ~ "/", buildPath(repoRoot, "util/log/source") ~ "/", buildPath(repoRoot, "libraries/util/math/source/vibe3d/util/math") ~ "/", buildPath(repoRoot, "util/parallel/source") ~ "/", buildPath(repoRoot, "util/plane-bytes/source") ~ "/", buildPath(repoRoot, "util/screen-buckets/source") ~ "/", buildPath(repoRoot, "packages/pipe-contracts/source") ~ "/", buildPath(repoRoot, "packages/mesh-preview/source") ~ "/", buildPath(repoRoot, "util/json-number/source") ~ "/",
+    const productionPrefixes = [buildPath(repoRoot, "packages/camera-model/source") ~ "/", buildPath(repoRoot, "packages/document-channels/source") ~ "/", buildPath(repoRoot, "packages/image-codec/source") ~ "/", buildPath(repoRoot, "packages/document-io/source") ~ "/", buildPath(repoRoot, "source") ~ "/", buildPath(repoRoot, "packages/alignment-ops/source") ~ "/", buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "libraries/editing/params/source"), buildPath(repoRoot, "packages/pipe-runtime/source") ~ "/", buildPath(repoRoot, "packages/creation-ops/source") ~ "/", buildPath(repoRoot, "packages/display-policy/source") ~ "/", buildPath(repoRoot, "libraries/editing/contracts/source") ~ "/", buildPath(repoRoot, "packages/input-events/source") ~ "/", buildPath(repoRoot, "packages/interaction-query/source") ~ "/", buildPath(repoRoot, "packages/interchange/source") ~ "/", buildPath(repoRoot, "libraries/mesh/change/source") ~ "/", buildPath(repoRoot, "libraries/mesh/contracts/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-log/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-replay/source") ~ "/", buildPath(repoRoot, "packages/mesh-ops/source") ~ "/", buildPath(repoRoot, "packages/mesh-snapshot/source") ~ "/", buildPath(repoRoot, "packages/mesh-topology/source") ~ "/", buildPath(repoRoot, "packages/mesh/source") ~ "/", buildPath(repoRoot, "packages/pipe-evaluation/source") ~ "/", buildPath(repoRoot, "libraries/util/profiling/source") ~ "/", buildPath(repoRoot, "libraries/util/spatial/source") ~ "/", buildPath(repoRoot, "packages/subpatch-preview/source") ~ "/", buildPath(repoRoot, "packages/tool-state/source") ~ "/", buildPath(repoRoot, "packages/transform-ops/source") ~ "/", buildPath(repoRoot, "packages/viewport-gpu/source") ~ "/", buildPath(repoRoot, "libraries/util/log/source") ~ "/", buildPath(repoRoot, "libraries/util/math/source/vibe3d/util/math") ~ "/", buildPath(repoRoot, "libraries/util/parallel/source") ~ "/", buildPath(repoRoot, "libraries/util/plane-bytes/source") ~ "/", buildPath(repoRoot, "libraries/util/screen-buckets/source") ~ "/", buildPath(repoRoot, "packages/pipe-contracts/source") ~ "/", buildPath(repoRoot, "packages/mesh-preview/source") ~ "/", buildPath(repoRoot, "libraries/util/json-number/source") ~ "/",
         buildPath(repoRoot, "packages/selection-model/source"),
         buildPath(repoRoot, "packages/scene-query/source"),
         buildPath(repoRoot, "packages/editor-commands/source"),
         buildPath(repoRoot, "packages/interactive-tools/source"),
         buildPath(repoRoot, "packages/viewport-host/source"),
-        buildPath(repoRoot, "packages/interaction-data/source"),
+        buildPath(repoRoot, "libraries/editing/interaction/data/source"),
         buildPath(repoRoot, "packages/ai-advisor/source") ~ "/",
         buildPath(repoRoot, "packages/ai3d-runtime/source") ~ "/",
         buildPath(repoRoot, "packages/document-actions/source") ~ "/",
@@ -173,6 +177,37 @@ SH";
                 ++mathTranslations;
             }
     assert(mathTranslations == 5, "Wave19 web baseline must translate five original math identities");
+    size_t d1Translations;
+    foreach (ref name; expectedCurrentModules)
+        foreach (pair; [
+        ["editmode", "vibe3d.editing.contracts.editmode"],
+        ["prepared_tool_effect", "vibe3d.editing.contracts.prepared_tool_effect"],
+        ["seltype", "vibe3d.editing.contracts.seltype"],
+        ["tool_policy_values", "vibe3d.editing.contracts.tool_policy_values"],
+        ["ai.advisor", "vibe3d.editing.interaction.data.ai.advisor"],
+        ["ai.debug_trace", "vibe3d.editing.interaction.data.ai.debug_trace"],
+        ["ai.interaction", "vibe3d.editing.interaction.data.ai.interaction"],
+        ["change_bus", "vibe3d.mesh.change.change_bus"],
+        ["mesh_dirty", "vibe3d.mesh.change.mesh_dirty"],
+        ["mesh_corner_maps", "vibe3d.mesh.contracts.mesh_corner_maps"],
+        ["mesh_plane_types", "vibe3d.mesh.contracts.mesh_plane_types"],
+        ["mesh_scope", "vibe3d.mesh.contracts.mesh_scope"],
+        ["mesh_types", "vibe3d.mesh.contracts.mesh_types"],
+        ["argstring", "vibe3d.editing.params.argstring"],
+        ["params", "vibe3d.editing.params.params"],
+        ["perf_probe", "vibe3d.util.profiling.perf_probe"],
+        ["item_xform", "vibe3d.util.spatial.item_xform"],
+        ["spatial", "vibe3d.util.spatial.spatial"],
+        ["symmetry_plane", "vibe3d.util.spatial.symmetry_plane"],
+        ["trackball", "vibe3d.util.spatial.trackball"],
+        ["workplane_basis", "vibe3d.util.spatial.workplane_basis"],
+        ["json_num", "vibe3d.util.json_number.json_num"],
+        ["log", "vibe3d.util.log.log"],
+        ["tsan_annotate", "vibe3d.util.parallel.tsan_annotate"],
+        ["plane_bytes", "vibe3d.util.plane_bytes.plane_bytes"],
+        ["screen_buckets", "vibe3d.util.screen_buckets.screen_buckets"]])
+            if (name == pair[0]) { name = pair[1]; ++d1Translations; }
+    assert(d1Translations == 26, "Wave19 D1 web baseline translates 26 original real definitions");
     expectedCurrentModules ~= currentOnlyModules;
     string[] added, removed;
     foreach (name; selectedModules) if (!expectedCurrentModules.canFind(name)) added ~= name;

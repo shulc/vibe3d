@@ -10,9 +10,9 @@ import tool;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import spatial : Viewport, screenPointToLocalRay;
-import change_bus : MeshEditScope;
-import params : Param;
+import vibe3d.util.spatial.spatial : Viewport, screenPointToLocalRay;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
+import vibe3d.editing.params.params : Param;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
@@ -21,7 +21,7 @@ import hover_state : g_hoveredFace, hoverAtPress;
 import eventlog : queryMouse;
 import document : Layer, primaryModelSpace;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
     PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tack_activation : PreparedTackActivationOwner;
 import mesh_gpu : GpuCreateOwner, GpuResourceOwner;

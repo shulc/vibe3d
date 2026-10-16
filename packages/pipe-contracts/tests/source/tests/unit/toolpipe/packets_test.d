@@ -4,10 +4,10 @@
 module tests.unit.toolpipe.packets_test;
 
 import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import mesh : Mesh;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.packets;
 
 // The default `selType` is `Vertex`, not `Item`. This is the R4 mitigation

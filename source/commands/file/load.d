@@ -6,8 +6,8 @@ import std.uni  : toLower;
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param, wireArgs;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param, wireArgs;
 import document : Document, Layer;
 import io.lwo_import    : sceneFromLwo;
 import io.scene_import  : importViaAssimp;
@@ -19,7 +19,7 @@ import io.doc_state : setCurrentDocPath, requestDocRebaseline;
 import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
 import snapshot : MeshSnapshot;
-import change_bus : MeshChangeAll, noteLayerChange, LayerChangeAll;
+import vibe3d.mesh.change.change_bus : MeshChangeAll, noteLayerChange, LayerChangeAll;
 
 /// How the load dialog is framed (asset-I/O Phase 6).
 ///   open         — File → Open: full "All supported" + native-primary

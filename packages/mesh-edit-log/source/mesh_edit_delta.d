@@ -1,9 +1,9 @@
 module mesh_edit_delta;
-public import mesh_scope : MeshEditScope, DisplayRefreshMask;
-import change_bus : changeBus;
+public import vibe3d.mesh.contracts.mesh_scope : MeshEditScope, DisplayRefreshMask;
+import vibe3d.mesh.change.change_bus : changeBus;
 import math : Vec3;
-import mesh_types;
-import mesh_plane_types : FaceReindexRecord, kFacePlanes, kFacePlaneEntryField;
+import vibe3d.mesh.contracts.mesh_types;
+import vibe3d.mesh.contracts.mesh_plane_types : FaceReindexRecord, kFacePlanes, kFacePlaneEntryField;
 
 // ---------------------------------------------------------------------------
 // THE `VIBE3D_UNDO_TRACKER` ESCAPE HATCH LIVED HERE AND IS GONE (task 1903
@@ -623,7 +623,7 @@ struct MeshEditDelta {
     /// `@nogc` is deliberate and not decoration: a measuring device that
     /// allocates perturbs the GC readout printed beside its own number.
     size_t byteSize() const pure nothrow @safe @nogc {
-        import plane_bytes : planeBytes;
+        import vibe3d.util.plane_bytes.plane_bytes : planeBytes;
         size_t n = 0;
         foreach (ref e; log) {
             // Rule 5: the entry's own struct bytes, once. `kind`, `selDomain`

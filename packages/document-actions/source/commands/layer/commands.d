@@ -26,13 +26,13 @@ module commands.layer.commands;
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param, paramToJson, injectParamsInto, wireArgs;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param, paramToJson, injectParamsInto, wireArgs;
 import document : Document, Layer, ItemKind, ItemXform, kindInfo, LinkState,
                   ImageData, ImagePlaneData, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
 import layer_params : LayerPropsProvider;
-import seltype : SelMode, selModeFromToken;
-import change_bus : MeshChangeAll, noteLayerChange, LayerChange,
+import vibe3d.editing.contracts.seltype : SelMode, selModeFromToken;
+import vibe3d.mesh.change.change_bus : MeshChangeAll, noteLayerChange, LayerChange,
                     noteItemSelectionChange;
 import snapshot : MeshSnapshot, SelectionSnapshot;
 
@@ -1451,7 +1451,7 @@ final class LayerAttr : LayerCommandBase {
         // write landed as typed" from "the write was repaired", and nothing
         // downstream can re-derive it after the fact.
         if (prov.sanitizeXform(beforeXform)) {
-            import log       : logWarnOnce;
+            import vibe3d.util.log.log       : logWarnOnce;
             import std.conv  : to;
             immutable string key = "layer.attr.clamp:" ~ target_.to!string
                                  ~ ":" ~ attrName_;
@@ -1493,7 +1493,7 @@ final class LayerAttr : LayerCommandBase {
             pj2[attrName_] = attrValue_;
             injectParamsInto(ps2, pj2);
             if (prov2.sanitizeXform(before2)) {
-                import log      : logWarnOnce;
+                import vibe3d.util.log.log      : logWarnOnce;
                 import std.conv : to;
                 logWarnOnce("layer",
                     "layer.attr.clamp:" ~ targets_[ti].to!string ~ ":" ~ attrName_,

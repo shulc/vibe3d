@@ -19,13 +19,13 @@ import mesh_edit_replay : apply, revert;
 import std.conv   : to;
 import std.format : format;
 
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 import command;
 import mesh;
 import mesh_ops.extrude;
 import math    : Vec3;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import mesh_edit_delta : MeshEditDelta, MeshOpEntry;
 
 import tests.unit.fixtures : makeTaggedGridBent, dumpMeshPlanes,

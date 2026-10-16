@@ -53,8 +53,8 @@ import mesh          : Mesh, FaceIdx;
 // in the tree two candidates for one function (task 4066).
 import mesh_topo     : edgeKey;
 import mesh_planes   : rewriteFaces, FaceSource;
-import mesh_corner_maps : CornerDrop, PolyVertexBlend;
-import mesh_scope  : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_corner_maps : CornerDrop, PolyVertexBlend;
+import vibe3d.mesh.contracts.mesh_scope  : MeshEditScope;
 import math          : Vec3;
 
 // -----------------------------------------------------------------------

@@ -42,7 +42,7 @@ module tests.unit.mesh_ops.revolve_seam_test;
 import mesh;
 import math;
 import mesh_ops.revolve;
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 import std.format : format;
 import std.conv : to;
 

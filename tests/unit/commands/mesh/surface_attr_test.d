@@ -6,7 +6,7 @@ module tests.unit.commands.mesh.surface_attr_test;
 
 import std.format : format;
 
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math     : Vec3;
 import mesh     : Mesh, Surface, kSurfaceSlots;
 import view     : View;

@@ -1,7 +1,7 @@
 module toolpipe.stage;
 
-import params : Param, ParamProvider, parseInto, stringifyParam;
-import tool_policy_values : Rollover;
+import vibe3d.editing.params.params : Param, ParamProvider, parseInto, stringifyParam;
+import vibe3d.editing.contracts.tool_policy_values : Rollover;
 
 // ---------------------------------------------------------------------------
 // Tool pipe task codes.

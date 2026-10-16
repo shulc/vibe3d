@@ -12,7 +12,7 @@ import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import command : Command, g_testMode;
 import command_history : RecordMode;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh;
 import view : View;
 

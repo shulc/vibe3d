@@ -20,12 +20,12 @@ module ui.viewport_render;
 // module -- which is why the list is short.
 
 import math;
-import spatial : ModelSpace, Orientation, Viewport, isOrtho;                 // Vec3, Viewport, ModelSpace, identityMatrix, matMul4
+import vibe3d.util.spatial.spatial : ModelSpace, Orientation, Viewport, isOrtho;                 // Vec3, Viewport, ModelSpace, identityMatrix, matMul4
 import bg_gpu_cache          : BgGpuDrawCache;
 import mesh;                 // Mesh, MeshStructKey, MeshTopoKey
 import mesh_ops.loop_slice   : loopSliceRingEdges;
-import editmode;             // EditMode
-import seltype;              // SelType, viewportPickType
+import vibe3d.editing.contracts.editmode;             // EditMode
+import vibe3d.editing.contracts.seltype;              // SelType, viewportPickType
 import mesh_gpu              : BaseDots, BaseWire, FacePass, GpuMesh, OccludedPass;
 import retopology_line_shade : lineShade;
 import retopology_dot_cull  : cullEyeOf, DotCullKey, DotList, visibleDots;
@@ -36,7 +36,7 @@ import document              : Document, Layer, kindInfo;
 import viewport              : Viewport3D;
 import viewport_overlay_mode : OverlayMode;
 import display_state         : DrawPlan, SurfaceShading;
-import perf_probe            : g_fc, g_perf, DrawPass, Cat;
+import vibe3d.util.profiling.perf_probe            : g_fc, g_perf, DrawPass, Cat;
 import gpu_pass_timer        : GpuPassTimer, GpuSeg, resolveGpuTimingArmed,
                                 g_gpuTimerPerfMode;
 import tool                  : Tool, rolloverDraws;
@@ -331,7 +331,7 @@ private:
     const(DotList)* dotCullFor(Viewport3D v, ref const Mesh mesh,
                                const ref float[16] model, const ref Viewport vp,
                                out ulong listId) {
-        import mesh_dirty : g_displayEpochs;
+        import vibe3d.mesh.change.mesh_dirty : g_displayEpochs;
         import morph_target : displayVertices;
         immutable DotCullId id = DotCullId(cast(size_t)cast(void*)v,
                                            cast(size_t)&mesh);
@@ -1391,7 +1391,7 @@ public:
     // whatever geometry type was last used (that is what makes 1/2/3 restore
     // it), so an implementation gated on it would light items in Vertices mode.
     {
-        import seltype          : SelType;
+        import vibe3d.editing.contracts.seltype          : SelType;
         import document         : kindInfo;
         import viewport_scheme  : itemHighlight, itemHighlightColor, ItemHighlight;
         import image_plane      : resolvePlacementFor;

@@ -13,11 +13,11 @@ module unit.bevel_cold_arm_param_image_test;
 // ---------------------------------------------------------------------------
 
 import document : Layer;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedPolyBevelParamKind, PreparedEdgeBevelParamKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedPolyBevelParamKind, PreparedEdgeBevelParamKind,
                               PreparedPolyExtrudeParamKind;
 import record_observer_hub : RecordObserverHub;
 import shader : LitShader;

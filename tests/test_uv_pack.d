@@ -33,7 +33,7 @@ import std.net.curl : post;
 import mesh        : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
 import math        : Vec3;
 import view        : View;
-import editmode    : EditMode;
+import vibe3d.editing.contracts.editmode    : EditMode;
 import uv_island   : UvBBox, computeUvIslands, loopsBBox, kUvDegenEps;
 import uv_transform : UvAffine, applyUvAffine;
 import commands.mesh.uv_project : UvProject;

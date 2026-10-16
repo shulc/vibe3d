@@ -2709,8 +2709,69 @@ private immutable Wave15FragmentPin[] wave15FragmentPins = [
 
 ];
 
-// Task 20263011: only the approved math pilot coordinates are admitted here.
-// Historical move/inverse rows below keep their original logical inputs.
+// Task 20263013: finite math + D1 rows from the frozen Wave19 map. These
+// coordinates compose with the original historical move/hash inverses below.
+private struct Wave19Owner { string name, oldRoot, newRoot; }
+private immutable Wave19Owner[] wave19Owners = [
+    Wave19Owner("edit-contracts", "packages/edit-contracts", "libraries/editing/contracts"),
+    Wave19Owner("interaction-data", "packages/interaction-data", "libraries/editing/interaction/data"),
+    Wave19Owner("json-number", "util/json-number", "libraries/util/json-number"),
+    Wave19Owner("log", "util/log", "libraries/util/log"),
+    Wave19Owner("math", "util/math", "libraries/util/math"),
+    Wave19Owner("mesh-change", "packages/mesh-change", "libraries/mesh/change"),
+    Wave19Owner("mesh-contracts", "packages/mesh-contracts", "libraries/mesh/contracts"),
+    Wave19Owner("parallel", "util/parallel", "libraries/util/parallel"),
+    Wave19Owner("param-schema", "packages/param-schema", "libraries/editing/params"),
+    Wave19Owner("plane-bytes", "util/plane-bytes", "libraries/util/plane-bytes"),
+    Wave19Owner("profiling", "packages/profiling", "libraries/util/profiling"),
+    Wave19Owner("screen-buckets", "util/screen-buckets", "libraries/util/screen-buckets"),
+    Wave19Owner("spatial", "packages/spatial", "libraries/util/spatial"),
+];
+private struct Wave19Module { string owner, oldPath, newPath, oldModule, newModule; }
+private immutable Wave19Module[] wave19Modules = [
+    Wave19Module("edit-contracts", "packages/edit-contracts/source/editmode.d", "libraries/editing/contracts/source/vibe3d/editing/contracts/editmode.d", "editmode", "vibe3d.editing.contracts.editmode"),
+    Wave19Module("edit-contracts", "packages/edit-contracts/source/prepared_tool_effect.d", "libraries/editing/contracts/source/vibe3d/editing/contracts/prepared_tool_effect.d", "prepared_tool_effect", "vibe3d.editing.contracts.prepared_tool_effect"),
+    Wave19Module("edit-contracts", "packages/edit-contracts/source/seltype.d", "libraries/editing/contracts/source/vibe3d/editing/contracts/seltype.d", "seltype", "vibe3d.editing.contracts.seltype"),
+    Wave19Module("edit-contracts", "packages/edit-contracts/source/tool_policy_values.d", "libraries/editing/contracts/source/vibe3d/editing/contracts/tool_policy_values.d", "tool_policy_values", "vibe3d.editing.contracts.tool_policy_values"),
+    Wave19Module("edit-contracts", "packages/edit-contracts/tests/source/tests/unit/seltype_test.d", "libraries/editing/contracts/tests/source/vibe3d/editing/contracts/tests/unit/seltype_test.d", "tests.unit.seltype_test", "vibe3d.editing.contracts.tests.unit.seltype_test"),
+    Wave19Module("interaction-data", "packages/interaction-data/source/ai/advisor.d", "libraries/editing/interaction/data/source/vibe3d/editing/interaction/data/ai/advisor.d", "ai.advisor", "vibe3d.editing.interaction.data.ai.advisor"),
+    Wave19Module("interaction-data", "packages/interaction-data/source/ai/debug_trace.d", "libraries/editing/interaction/data/source/vibe3d/editing/interaction/data/ai/debug_trace.d", "ai.debug_trace", "vibe3d.editing.interaction.data.ai.debug_trace"),
+    Wave19Module("interaction-data", "packages/interaction-data/source/ai/interaction.d", "libraries/editing/interaction/data/source/vibe3d/editing/interaction/data/ai/interaction.d", "ai.interaction", "vibe3d.editing.interaction.data.ai.interaction"),
+    Wave19Module("interaction-data", "packages/interaction-data/tests/source/tests/unit/ai/advisor_test.d", "libraries/editing/interaction/data/tests/source/vibe3d/editing/interaction/data/tests/unit/ai/advisor_test.d", "tests.unit.ai.advisor_test", "vibe3d.editing.interaction.data.tests.unit.ai.advisor_test"),
+    Wave19Module("interaction-data", "packages/interaction-data/tests/source/tests/unit/ai/debug_trace_test.d", "libraries/editing/interaction/data/tests/source/vibe3d/editing/interaction/data/tests/unit/ai/debug_trace_test.d", "tests.unit.ai.debug_trace_test", "vibe3d.editing.interaction.data.tests.unit.ai.debug_trace_test"),
+    Wave19Module("interaction-data", "packages/interaction-data/tests/source/tests/unit/ai/interaction_test.d", "libraries/editing/interaction/data/tests/source/vibe3d/editing/interaction/data/tests/unit/ai/interaction_test.d", "tests.unit.ai.interaction_test", "vibe3d.editing.interaction.data.tests.unit.ai.interaction_test"),
+    Wave19Module("mesh-change", "packages/mesh-change/source/change_bus.d", "libraries/mesh/change/source/vibe3d/mesh/change/change_bus.d", "change_bus", "vibe3d.mesh.change.change_bus"),
+    Wave19Module("mesh-change", "packages/mesh-change/source/mesh_dirty.d", "libraries/mesh/change/source/vibe3d/mesh/change/mesh_dirty.d", "mesh_dirty", "vibe3d.mesh.change.mesh_dirty"),
+    Wave19Module("mesh-contracts", "packages/mesh-contracts/source/mesh_corner_maps.d", "libraries/mesh/contracts/source/vibe3d/mesh/contracts/mesh_corner_maps.d", "mesh_corner_maps", "vibe3d.mesh.contracts.mesh_corner_maps"),
+    Wave19Module("mesh-contracts", "packages/mesh-contracts/source/mesh_plane_types.d", "libraries/mesh/contracts/source/vibe3d/mesh/contracts/mesh_plane_types.d", "mesh_plane_types", "vibe3d.mesh.contracts.mesh_plane_types"),
+    Wave19Module("mesh-contracts", "packages/mesh-contracts/source/mesh_scope.d", "libraries/mesh/contracts/source/vibe3d/mesh/contracts/mesh_scope.d", "mesh_scope", "vibe3d.mesh.contracts.mesh_scope"),
+    Wave19Module("mesh-contracts", "packages/mesh-contracts/source/mesh_types.d", "libraries/mesh/contracts/source/vibe3d/mesh/contracts/mesh_types.d", "mesh_types", "vibe3d.mesh.contracts.mesh_types"),
+    Wave19Module("mesh-contracts", "packages/mesh-contracts/tests/source/tests/unit/mesh_plane_types_test.d", "libraries/mesh/contracts/tests/source/vibe3d/mesh/contracts/tests/unit/mesh_plane_types_test.d", "tests.unit.mesh_plane_types_test", "vibe3d.mesh.contracts.tests.unit.mesh_plane_types_test"),
+    Wave19Module("param-schema", "packages/param-schema/source/argstring.d", "libraries/editing/params/source/vibe3d/editing/params/argstring.d", "argstring", "vibe3d.editing.params.argstring"),
+    Wave19Module("param-schema", "packages/param-schema/source/params.d", "libraries/editing/params/source/vibe3d/editing/params/params.d", "params", "vibe3d.editing.params.params"),
+    Wave19Module("param-schema", "packages/param-schema/tests/source/tests/unit/argstring_test.d", "libraries/editing/params/tests/source/vibe3d/editing/params/tests/unit/argstring_test.d", "tests.unit.argstring_test", "vibe3d.editing.params.tests.unit.argstring_test"),
+    Wave19Module("param-schema", "packages/param-schema/tests/source/tests/unit/param_cast_overflow_test.d", "libraries/editing/params/tests/source/vibe3d/editing/params/tests/unit/param_cast_overflow_test.d", "tests.unit.param_cast_overflow_test", "vibe3d.editing.params.tests.unit.param_cast_overflow_test"),
+    Wave19Module("param-schema", "packages/param-schema/tests/source/tests/unit/params_test.d", "libraries/editing/params/tests/source/vibe3d/editing/params/tests/unit/params_test.d", "tests.unit.params_test", "vibe3d.editing.params.tests.unit.params_test"),
+    Wave19Module("profiling", "packages/profiling/source/perf_probe.d", "libraries/util/profiling/source/vibe3d/util/profiling/perf_probe.d", "perf_probe", "vibe3d.util.profiling.perf_probe"),
+    Wave19Module("spatial", "packages/spatial/source/item_xform.d", "libraries/util/spatial/source/vibe3d/util/spatial/item_xform.d", "item_xform", "vibe3d.util.spatial.item_xform"),
+    Wave19Module("spatial", "packages/spatial/source/spatial.d", "libraries/util/spatial/source/vibe3d/util/spatial/spatial.d", "spatial", "vibe3d.util.spatial.spatial"),
+    Wave19Module("spatial", "packages/spatial/source/symmetry_plane.d", "libraries/util/spatial/source/vibe3d/util/spatial/symmetry_plane.d", "symmetry_plane", "vibe3d.util.spatial.symmetry_plane"),
+    Wave19Module("spatial", "packages/spatial/source/trackball.d", "libraries/util/spatial/source/vibe3d/util/spatial/trackball.d", "trackball", "vibe3d.util.spatial.trackball"),
+    Wave19Module("spatial", "packages/spatial/source/workplane_basis.d", "libraries/util/spatial/source/vibe3d/util/spatial/workplane_basis.d", "workplane_basis", "vibe3d.util.spatial.workplane_basis"),
+    Wave19Module("spatial", "packages/spatial/tests/source/tests/unit/spatial_test.d", "libraries/util/spatial/tests/source/vibe3d/util/spatial/tests/unit/spatial_test.d", "tests.unit.spatial_test", "vibe3d.util.spatial.tests.unit.spatial_test"),
+    Wave19Module("json-number", "util/json-number/source/json_num.d", "libraries/util/json-number/source/vibe3d/util/json_number/json_num.d", "json_num", "vibe3d.util.json_number.json_num"),
+    Wave19Module("json-number", "util/json-number/tests/source/tests/unit/json_num_test.d", "libraries/util/json-number/tests/source/vibe3d/util/json_number/tests/unit/json_num_test.d", "tests.unit.json_num_test", "vibe3d.util.json_number.tests.unit.json_num_test"),
+    Wave19Module("log", "util/log/source/log.d", "libraries/util/log/source/vibe3d/util/log/log.d", "log", "vibe3d.util.log.log"),
+    Wave19Module("math", "util/math/source/math.d", "libraries/util/math/source/vibe3d/util/math/math.d", "math", "vibe3d.util.math.math"),
+    Wave19Module("math", "util/math/source/math_geometry.d", "libraries/util/math/source/vibe3d/util/math/math_geometry.d", "math_geometry", "vibe3d.util.math.math_geometry"),
+    Wave19Module("math", "util/math/source/math_matrix.d", "libraries/util/math/source/vibe3d/util/math/math_matrix.d", "math_matrix", "vibe3d.util.math.math_matrix"),
+    Wave19Module("math", "util/math/source/math_quaternion.d", "libraries/util/math/source/vibe3d/util/math/math_quaternion.d", "math_quaternion", "vibe3d.util.math.math_quaternion"),
+    Wave19Module("math", "util/math/source/math_vector.d", "libraries/util/math/source/vibe3d/util/math/math_vector.d", "math_vector", "vibe3d.util.math.math_vector"),
+    Wave19Module("math", "util/math/tests/source/tests/unit/math_test.d", "libraries/util/math/tests/source/vibe3d/util/math/tests/unit/math_test.d", "tests.unit.math_test", "vibe3d.util.math.tests.unit.math_test"),
+    Wave19Module("parallel", "util/parallel/source/tsan_annotate.d", "libraries/util/parallel/source/vibe3d/util/parallel/tsan_annotate.d", "tsan_annotate", "vibe3d.util.parallel.tsan_annotate"),
+    Wave19Module("plane-bytes", "util/plane-bytes/source/plane_bytes.d", "libraries/util/plane-bytes/source/vibe3d/util/plane_bytes/plane_bytes.d", "plane_bytes", "vibe3d.util.plane_bytes.plane_bytes"),
+    Wave19Module("screen-buckets", "util/screen-buckets/source/screen_buckets.d", "libraries/util/screen-buckets/source/vibe3d/util/screen_buckets/screen_buckets.d", "screen_buckets", "vibe3d.util.screen_buckets.screen_buckets"),
+];
 public enum wave19MathOldRoot = "util/math";
 public enum wave19MathNewRoot = "libraries/util/math";
 private enum wave19MathModules = ["math", "math_geometry", "math_matrix",
@@ -2722,57 +2783,96 @@ private string mathRelative(string name, bool moved) {
         ~ name.replace(".", "/") ~ ".d";
 }
 
-// This is a selected owner state, never a per-file fallback to an old shim.
-public bool wave19MathMoved(string root) {
+// Select the complete real owner. Optional facade/shim files are outside this
+// roster and can never stand in for a missing original definition or carrier.
+private bool wave19OwnerMoved(string root, const Wave19Owner owner) {
     import std.file : exists, isFile, readText;
     import std.json : parseJSON;
-    const oldRecipe = buildPath(root, wave19MathOldRoot, "dub.json");
-    const newRecipe = buildPath(root, wave19MathNewRoot, "dub.json");
+    const base = wave15Normalize(root);
+    const oldRecipe = buildPath(base, owner.oldRoot, "dub.json");
+    const newRecipe = buildPath(base, owner.newRoot, "dub.json");
     const oldPresent = exists(oldRecipe), newPresent = exists(newRecipe);
-    assert(oldPresent != newPresent, "Wave19 math requires exactly one owner recipe");
+    assert(oldPresent != newPresent, "Wave19 requires exactly one owner recipe: " ~ owner.name);
     const moved = newPresent;
-    const selected = moved ? wave19MathNewRoot : wave19MathOldRoot;
-    const rejected = moved ? wave19MathOldRoot : wave19MathNewRoot;
     assert(parseJSON(readText(moved ? newRecipe : oldRecipe))["name"].str
-        == (moved ? "math" : "vibe3d-math"), "Wave19 math selected recipe identity");
-    foreach (name; wave19MathModules) {
-        const physical = buildPath(root, selected, mathRelative(name, moved));
-        assert(exists(physical) && isFile(physical), "Wave19 math missing real source: " ~ physical);
-        assert(!exists(buildPath(root, rejected, mathRelative(name, !moved))),
-            "Wave19 math duplicate real source: " ~ name);
-        const expected = moved ? "vibe3d.util.math." ~ name : name;
+        == (moved ? owner.name : "vibe3d-" ~ owner.name),
+        "Wave19 selected recipe identity: " ~ owner.name);
+    size_t population;
+    foreach (row; wave19Modules) {
+        if (row.owner != owner.name) continue;
+        ++population;
+        const physical = buildPath(base, moved ? row.newPath : row.oldPath);
+        assert(exists(physical) && isFile(physical), "Wave19 missing real source: " ~ physical);
+        assert(!exists(buildPath(base, moved ? row.oldPath : row.newPath)),
+            "Wave19 duplicate real source: " ~ row.oldPath);
+        const expected = moved ? row.newModule : row.oldModule;
         auto declarations = matchAll(blankNonCode(readText(physical)),
             regex(`\bmodule\s+([A-Za-z_][A-Za-z_0-9.]*)\s*;`));
         size_t count;
         foreach (declaration; declarations) {
-            assert(declaration[1] == expected, "Wave19 math real module identity: " ~ name);
+            assert(declaration[1] == expected, "Wave19 real module identity: " ~ row.oldPath);
             ++count;
         }
-        assert(count == 1, "Wave19 math requires one real module declaration: " ~ name);
+        assert(count == 1, "Wave19 requires one real module declaration: " ~ row.oldPath);
     }
+    assert(population != 0, "Wave19 selected owner must have original real inputs: " ~ owner.name);
     return moved;
 }
 
-// Explicit coordinate translation for direct std.file readers. Only the two
-// original math scan roots and the six frozen real file rows are translatable.
-public string wave19MathPhysicalPath(string path, string root = repoRoot) {
+public bool wave19OwnerMoved(string root, string name) {
+    foreach (owner; wave19Owners)
+        if (owner.name == name) return wave19OwnerMoved(root, owner);
+    assert(0, "Wave19 owner is outside the finite math+D1 cut: " ~ name);
+}
+
+public string wave19OwnerRoot(string root, string name) {
+    foreach (owner; wave19Owners)
+        if (owner.name == name)
+            return buildPath(wave15Normalize(root), wave19OwnerMoved(root, owner) ? owner.newRoot : owner.oldRoot);
+    assert(0, "Wave19 owner is outside the finite math+D1 cut: " ~ name);
+}
+
+public bool wave19MathMoved(string root) {
+    foreach (owner; wave19Owners)
+        if (owner.name == "math") return wave19OwnerMoved(root, owner);
+    assert(0, "Wave19 math owner row is required");
+}
+
+// Only frozen real files and their original scan roots are coordinates. Reject
+// missing/mixed owner states before returning a selected physical input.
+public string wave19PhysicalPath(string path, string root = repoRoot) {
     const normal = wave15Normalize(path), base = wave15Normalize(root);
-    foreach (suffix; ["", "/source", "/tests", "/tests/source"])
-        if (normal == buildPath(base, wave19MathOldRoot) ~ suffix)
-            return buildPath(base, wave19MathMoved(root) ? wave19MathNewRoot : wave19MathOldRoot) ~ suffix;
-    foreach (name; wave19MathModules)
-        if (normal == buildPath(base, wave19MathOldRoot, mathRelative(name, false)))
-            return buildPath(base, wave19MathMoved(root) ? wave19MathNewRoot : wave19MathOldRoot,
-                mathRelative(name, wave19MathMoved(root)));
+    foreach (owner; wave19Owners) {
+        foreach (suffix; ["", "/source", "/tests", "/tests/source"])
+            if (normal == buildPath(base, owner.oldRoot) ~ suffix)
+                return buildPath(base, wave19OwnerMoved(base, owner) ? owner.newRoot : owner.oldRoot) ~ suffix;
+        foreach (row; wave19Modules) {
+            if (row.owner != owner.name) continue;
+            if (normal == buildPath(base, row.oldPath) || normal == buildPath(base, row.newPath))
+                return buildPath(base, wave19OwnerMoved(base, owner) ? row.newPath : row.oldPath);
+        }
+    }
     return normal;
 }
 
-public string wave19MathLogicalPath(string path, string root = repoRoot) {
+public string wave19LogicalPath(string path, string root = repoRoot) {
     const normal = wave15Normalize(path), base = wave15Normalize(root);
-    foreach (name; wave19MathModules)
-        if (normal == buildPath(base, wave19MathNewRoot, mathRelative(name, true)))
-            return buildPath(base, wave19MathOldRoot, mathRelative(name, false));
+    foreach (row; wave19Modules)
+        if (normal == buildPath(base, row.newPath)) return buildPath(base, row.oldPath);
+    foreach (owner; wave19Owners)
+        foreach (suffix; ["", "/source", "/tests", "/tests/source"])
+            if (normal == buildPath(base, owner.newRoot) ~ suffix)
+                return buildPath(base, owner.oldRoot) ~ suffix;
     return normal;
+}
+
+// Existing direct-reader entry points retain their math contract while the
+// shared bridge now also admits the twelve approved D1 owners.
+public string wave19MathPhysicalPath(string path, string root = repoRoot) {
+    return wave19PhysicalPath(path, root);
+}
+public string wave19MathLogicalPath(string path, string root = repoRoot) {
+    return wave19LogicalPath(path, root);
 }
 
 // Only module/import token spans may be inverted. Strings, comments and body
@@ -2783,10 +2883,12 @@ private string wave19MathLogicalText(string source) {
     Edit[] edits;
     foreach (statement; matchAll(code, regex(`\b(?:module|import)\s+[A-Za-z_][^;{}]*;`))) {
         foreach (token; matchAll(statement[0], regex(`[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*`))) {
-            foreach (name; wave19MathModules) {
-                if (token[0] != "vibe3d.util.math." ~ name) continue;
+            foreach (row; wave19Modules) {
+                if (token[0] != row.newModule) continue;
                 const offset = statement.pre.length + token.pre.length;
-                edits ~= Edit(offset, offset + token[0].length, name);
+                auto binding = matchFirst(token.pre, regex("\\b" ~ row.oldModule.replace(".", "\\.") ~ `\s*=\s*$`));
+                const begin = binding.empty ? offset : statement.pre.length + binding.pre.length;
+                edits ~= Edit(begin, offset + token[0].length, row.oldModule);
             }
         }
     }
@@ -2797,6 +2899,13 @@ private string wave19MathLogicalText(string source) {
         offset = edit.end;
     }
     return text ~ source[offset .. $];
+}
+
+// Raw current D input, before historical body reconstruction. This also
+// preserves historical import bytes in unmoved consumers and fragment carriers.
+private string wave19ReadCurrent(string path) {
+    import std.file : readText;
+    return wave19MathLogicalText(readText(wave19PhysicalPath(wave19LogicalPath(path))));
 }
 
 private bool wave15MoveRowIntact(const Wave15Move pin) {
@@ -2860,7 +2969,7 @@ public string wave15PhysicalPath(string path) {
         string root;
         if (wave15Match(normal, move.oldPath, root)) {
             if (exists(normal)) return normal;
-            return buildPath(root, move.newPath);
+            return wave19PhysicalPath(buildPath(root, move.newPath));
         }
     }
     return normal;
@@ -2874,7 +2983,7 @@ public bool wave15Exists(string path) {
     foreach (move; wave15Moves) {
         string root;
         if (wave15Match(normal, move.oldPath, root)
-                && exists(buildPath(root, move.newPath))) return true;
+                && exists(wave19PhysicalPath(buildPath(root, move.newPath)))) return true;
         size_t prefix = move.oldPath.length;
         while (prefix) {
             import std.path : dirName;
@@ -2882,7 +2991,7 @@ public bool wave15Exists(string path) {
             if (directory == "." || directory.length >= prefix) break;
             prefix = directory.length;
             if (wave15Match(normal, directory, root)
-                    && exists(buildPath(root, move.newPath))) return true;
+                    && exists(wave19PhysicalPath(buildPath(root, move.newPath)))) return true;
         }
     }
     return false;
@@ -3095,7 +3204,8 @@ private string wave15RestoreSource(string origin, string text, string root) {
     foreach (fragment; wave15Fragments[$ - 3 .. $]) {
         if (fragment.origin != origin) continue;
         const carrier = buildPath(root, fragment.destination);
-        const raw = exists(carrier) ? readText(carrier) : "";
+        const physical = wave19PhysicalPath(carrier);
+        const raw = exists(physical) ? wave19ReadCurrent(physical) : "";
         if (origin == "source/ui/availability.d") {
             const valid = raw.length == 4074 && sha256Of(raw).toHexString.toLower ==
                 "de05d3d31226b4e0a0f1dea8248dbea3278c5a6f6eedc4698f7dc5520da617ad";
@@ -3180,9 +3290,9 @@ public string wave15ReadText(string path) {
     foreach (move; wave15Moves) {
         string root;
         if (!wave15Match(normal, move.oldPath, root)) continue;
-        const destination = buildPath(root, move.newPath);
+        const destination = wave19PhysicalPath(buildPath(root, move.newPath));
         const oldPresent = exists(normal), newPresent = exists(destination);
-        auto text = readText(oldPresent ? normal : destination);
+        auto text = wave19ReadCurrent(oldPresent ? normal : destination);
         if (!oldPresent) {
             text = wave15WithoutCarrierImports(text);
             if (move.oldPath == "source/drag.d") {
@@ -3241,14 +3351,15 @@ public string wave15ReadText(string path) {
             if (oldPresent) original = wave15FragmentText(text, fragment, matches);
             else {
                 const carrier = buildPath(root, fragment.destination);
-                if (exists(carrier)) original = wave15FragmentText(readText(carrier), fragment, matches);
+                const physicalCarrier = wave19PhysicalPath(carrier);
+                if (exists(physicalCarrier)) original = wave15FragmentText(wave19ReadCurrent(physicalCarrier), fragment, matches);
                 if (fragment.destination != move.newPath) text ~= "\n" ~ original;
             }
             wave15RecordInput(normal ~ ":" ~ fragment.id, matches == 1);
         }
         return text;
     }
-    auto text = wave19MathLogicalText(readText(wave19MathPhysicalPath(normal)));
+    auto text = wave19ReadCurrent(normal);
     foreach (origin; ["source/app.d", "source/editor_app.d"]) {
         string root;
         if (wave15Match(normal, origin, root)) text = wave15RestoreSource(origin, text, root);
@@ -3276,21 +3387,31 @@ public Wave15Entry[] wave15DirEntries(string directory, string pattern,
     import std.file : dirEntries, exists, isFile, isDir, getSize;
     import std.path : baseName, dirName, globMatch, relativePath;
     import std.algorithm : startsWith, canFind;
-    const normal = wave15Normalize(directory);
-    Wave15Entry[] result;
     const base = wave15Normalize(mathRoot);
-    const physicalDirectory = wave19MathPhysicalPath(directory, base);
-    if (physicalDirectory != normal) {
-        foreach (name; wave19MathModules) {
-            const logical = buildPath(base, wave19MathOldRoot, mathRelative(name, false));
+    const normal = wave19LogicalPath(directory, base);
+    Wave15Entry[] result;
+    // Project the real originals into their old logical layout; transitional
+    // inputs are never directory members. Historical destinations below keep
+    // their original single ownership through wave15Moves.
+    foreach (owner; wave19Owners) {
+        const oldRoot = buildPath(base, owner.oldRoot);
+        if (normal != oldRoot && !normal.startsWith(oldRoot ~ "/")
+                && !oldRoot.startsWith(normal ~ "/")) continue;
+        if (!wave19OwnerMoved(base, owner)) continue;
+        foreach (row; wave19Modules) {
+            if (row.owner != owner.name) continue;
+            const logical = buildPath(base, row.oldPath);
             if (!logical.startsWith(normal ~ "/")) continue;
+            bool historicalDestination;
+            if (base == wave15Normalize(repoRoot)) foreach (move; wave15Moves)
+                if (row.oldPath == move.newPath) { historicalDestination = true; break; }
+            if (historicalDestination) continue;
             const relative = relativePath(logical, normal);
             if (span == SpanMode.shallow && relative.canFind("/")) continue;
             if (!globMatch(baseName(logical), pattern)) continue;
-            const physical = wave19MathPhysicalPath(logical, base);
-            result ~= Wave15Entry(buildPath(directory, relative), true, false, getSize(physical));
+            const physical = wave19PhysicalPath(logical, base);
+            result ~= Wave15Entry(logical, true, false, getSize(physical));
         }
-        return result;
     }
     foreach (pin; wave15MovePins) {
         string root;
@@ -3305,11 +3426,11 @@ public Wave15Entry[] wave15DirEntries(string directory, string pattern,
             if (span == SpanMode.shallow && relative.canFind("/")) break;
             if (!globMatch(baseName(logical), pattern)) break;
             wave15RecordInput(logical ~ ":directory-admission", wave15MoveRowIntact(pin)
-                && (exists(logical) != exists(buildPath(root, pin.newPath))));
+                && (exists(logical) != exists(wave19PhysicalPath(buildPath(root, pin.newPath)))));
             break;
         }
     }
-    if (exists(normal)) foreach (entry; dirEntries(directory, pattern, span, followSymlink)) {
+    if (exists(normal)) foreach (entry; dirEntries(normal, pattern, span, followSymlink)) {
         bool movedDestination;
         foreach (move; wave15Moves) {
             string root;
@@ -3330,7 +3451,7 @@ public Wave15Entry[] wave15DirEntries(string directory, string pattern,
             const relative = relativePath(logical, normal);
             if (span == SpanMode.shallow && relative.canFind("/")) break;
             if (!globMatch(baseName(logical), pattern)) break;
-            const physical = buildPath(root, move.newPath);
+            const physical = wave19PhysicalPath(buildPath(root, move.newPath));
             if (exists(physical))
                 result ~= Wave15Entry(buildPath(directory, relative), isFile(physical), isDir(physical), isFile(physical) ? getSize(physical) : 0);
             break;
@@ -3353,7 +3474,7 @@ unittest { // approved stat header: whole physical input and whole original body
     const root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     enum origin = "tests/unit/ui/stat_rows_test.d";
     enum header = "module tests.unit.ui.stat_rows_test;\n\n";
-    const physical = readText(buildPath(root,
+    const physical = wave19ReadCurrent(buildPath(root,
         "packages/editor-ui/tests/source/tests/unit/ui/stat_rows_test.d"));
     assert(physical.length == 42593 && physical[407 .. 445] == header,
         "stat header physical whole-unit control");
@@ -3489,4 +3610,133 @@ unittest { // Wave19 math: real selected inputs, exact coordinates and span-only
     const actualSources = wave15DirEntries(buildPath(repoRoot, "util/math/source"), "*.d", SpanMode.depth);
     assert(actualSources.length == 5,
         "Wave19 math original logical source population five, actual=" ~ actualSources.length.to!string);
+}
+
+unittest { // Wave19 D1: frozen real-row bijection and each complete selected owner.
+    assert(wave19MathLogicalText("static import spatial = vibe3d.util.spatial.spatial;")
+        == "static import spatial;", "Wave19 preserves original static module binding in import span");
+    import std.file : mkdirRecurse, write, remove, rmdirRecurse, tempDir;
+    import std.process : thisProcessID;
+    import std.digest.sha : sha256Of;
+    import std.digest : toHexString;
+    import std.string : toLower;
+    static import std.file;
+    assert(wave19Owners.length == 13 && wave19Modules.length == 42,
+        "Wave19 math+D1 original owners13 / real rows42, excluding transitions");
+    string frozen;
+    foreach (i, row; wave19Modules) {
+        frozen ~= row.owner ~ "\t" ~ row.oldPath ~ "\t" ~ row.newPath ~ "\t"
+            ~ row.oldModule ~ "\t" ~ row.newModule ~ "\n";
+        foreach (other; wave19Modules[i + 1 .. $])
+            assert(row.oldPath != other.oldPath && row.newPath != other.newPath
+                && row.oldModule != other.oldModule && row.newModule != other.newModule,
+                "Wave19 frozen real source/module coordinates must be bijective");
+    }
+    assert(sha256Of(frozen).toHexString.toLower ==
+        "2a597ee58b2ad2a542d55a18df54de7e8c6df313a4a18304e53a85e03260551b",
+        "Wave19 exact frozen math+D1 real rows, including every owner/carrier");
+    enum ownerPopulations = [5, 6, 2, 1, 6, 2, 5, 1, 5, 1, 1, 1, 6];
+    const scratch = buildPath(tempDir(), "wave19-d1-reader-" ~ thisProcessID.to!string);
+    mkdirRecurse(scratch);
+    scope(exit) rmdirRecurse(scratch);
+    void put(string relative, string bytes) {
+        const path = buildPath(scratch, relative);
+        mkdirRecurse(dirName(path));
+        write(path, bytes);
+    }
+    foreach (index, owner; wave19Owners) {
+        const oldRecipe = buildPath(owner.oldRoot, "dub.json");
+        const newRecipe = buildPath(owner.newRoot, "dub.json");
+        size_t population;
+        foreach (row; wave19Modules) {
+            if (row.owner != owner.name) continue;
+            ++population;
+            assert(row.oldPath.canFind(owner.oldRoot ~ "/")
+                && row.newPath.canFind(owner.newRoot ~ "/"),
+                "Wave19 exact owner coordinate roots: " ~ owner.name);
+            put(row.oldPath, "module " ~ row.oldModule ~ ";\n");
+        }
+        assert(population == ownerPopulations[index],
+            "Wave19 frozen per-owner real population: " ~ owner.name);
+        put(oldRecipe, `{"name":"vibe3d-` ~ owner.name ~ `"}`);
+        assert(!wave19OwnerMoved(scratch ~ "/.", owner.name)
+            && wave19OwnerRoot(scratch ~ "/.", owner.name) == buildPath(scratch, owner.oldRoot),
+            "Wave19 each old owner selects normalized real inputs: " ~ owner.name);
+        foreach (row; wave19Modules) {
+            if (row.owner != owner.name) continue;
+            const logical = buildPath(scratch, row.oldPath);
+            assert(wave19PhysicalPath(logical, scratch ~ "/.") == logical,
+                "Wave19 each old real file remains selected: " ~ row.oldPath);
+            remove(logical);
+            put(row.newPath, "module " ~ row.newModule ~ ";\n");
+        }
+        remove(buildPath(scratch, oldRecipe));
+        put(newRecipe, `{"name":"` ~ owner.name ~ `"}`);
+        assert(wave19OwnerMoved(scratch ~ "/.", owner.name)
+            && wave19OwnerRoot(scratch ~ "/.", owner.name) == buildPath(scratch, owner.newRoot),
+            "Wave19 each moved owner selects normalized real inputs: " ~ owner.name);
+        foreach (row; wave19Modules) {
+            if (row.owner != owner.name) continue;
+            const logical = buildPath(scratch, row.oldPath);
+            const physical = buildPath(scratch, row.newPath);
+            assert(wave19PhysicalPath(logical, scratch ~ "/.") == physical
+                && wave19PhysicalPath(physical, scratch ~ "/.") == physical
+                && wave19LogicalPath(physical, scratch ~ "/.") == logical,
+                "Wave19 each real coordinate round trip: " ~ row.oldPath);
+            const foreign = buildPath(scratch, "foreign", row.oldPath);
+            assert(wave19PhysicalPath(foreign, scratch) == foreign,
+                "Wave19 foreign owner prefix is never a coordinate: " ~ row.oldPath);
+            enum body = "// original body comment\nenum protocol = \"vibe3d.util.log.log\";\n"
+                ~ "void body() { vibe3d.util.log.log.writeln(); }\n";
+            const renamed = "module " ~ row.newModule ~ ";\npublic import A = "
+                ~ row.newModule ~ ";\n" ~ body;
+            const original = "module " ~ row.oldModule ~ ";\npublic import A = "
+                ~ row.oldModule ~ ";\n" ~ body;
+            assert(wave19MathLogicalText(renamed) == original
+                && wave19MathLogicalText(renamed.replace("body()", "changed()")) != original,
+                "Wave19 each module/import token inverse preserves body bytes: " ~ row.oldPath);
+            // Omit every real row in turn; an old-import shim remains present.
+            const shim = buildPath(owner.newRoot, "source", row.oldModule.replace(".", "/") ~ ".d");
+            put(shim, "module " ~ row.oldModule ~ "; public import " ~ row.newModule ~ ";\n");
+            remove(physical);
+            assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
+            put(row.newPath, "module wrong;\n");
+            assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
+            put(row.newPath, "// no module declaration\n");
+            assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
+            put(row.newPath, "module " ~ row.newModule ~ "; module " ~ row.newModule ~ ";\n");
+            assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
+            put(row.newPath, "module " ~ row.newModule ~ ";\n");
+            put(row.oldPath, "module " ~ row.oldModule ~ ";\n");
+            assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
+            remove(logical);
+        }
+        foreach (suffix; ["", "/source", "/tests", "/tests/source"])
+            assert(wave19PhysicalPath(buildPath(scratch, owner.oldRoot) ~ suffix, scratch ~ "/.")
+                == buildPath(scratch, owner.newRoot) ~ suffix,
+                "Wave19 each direct scan root translated: " ~ owner.name ~ suffix);
+        assert(wave15DirEntries(buildPath(scratch, owner.oldRoot), "*.d", SpanMode.depth, true, scratch ~ "/.").length
+            == ownerPopulations[index],
+            "Wave19 each logical owner walk excludes transitional shims: " ~ owner.name);
+        put(oldRecipe, `{"name":"vibe3d-` ~ owner.name ~ `"}`);
+        assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
+        remove(buildPath(scratch, oldRecipe));
+        remove(buildPath(scratch, newRecipe));
+        assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
+        put(newRecipe, `{"name":"vibe3d-` ~ owner.name ~ `"}`);
+        assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
+        put(newRecipe, `{"name":"` ~ owner.name ~ `"}`);
+        assert(wave19OwnerMoved(scratch, owner.name), "Wave19 each restored owner positive: " ~ owner.name);
+        // Exercise every selected actual root/carrier, independent of the scratch fixture.
+        foreach (row; wave19Modules) {
+            if (row.owner != owner.name) continue;
+            const logical = buildPath(repoRoot, row.oldPath);
+            const physical = wave19PhysicalPath(logical);
+            assert(wave19LogicalPath(physical) == logical
+                && wave19MathLogicalText(std.file.readText(physical)).canFind("module " ~ row.oldModule ~ ";"),
+                "Wave19 actual selected real source/carrier reaches original module: " ~ row.oldPath);
+        }
+    }
+    assertThrown!AssertError(wave19OwnerMoved(scratch, "unselected-owner"));
+    assertThrown!AssertError(wave19OwnerRoot(scratch, "unselected-owner"));
 }

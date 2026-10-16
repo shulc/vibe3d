@@ -21,7 +21,7 @@ module io.browser_pick_resume;
 
 import command : Command;
 import command_history : RecordMode;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import io.formats : FilterSpec;
 import mesh : Mesh;
 import ui.discard_guard : UiRunOutcome;

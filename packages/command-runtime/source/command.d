@@ -3,10 +3,10 @@ import mesh_edit_replay : apply, revert;
 
 import mesh;
 import view;
-import editmode;
-import seltype : SelType, geometrySelType;
-import spatial : Viewport;
-import params : Param, ParamHints;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype : SelType, geometrySelType;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.params.params : Param, ParamHints;
 import mesh_edit_delta : MeshEditScope;
 import std.json : JSONValue;
 

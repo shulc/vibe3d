@@ -33,7 +33,7 @@ import std.conv : to;
 
 import mesh     : Mesh;
 import view     : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import document : Document, ItemKind;
 import commands.layer.commands : LayerAdd;
 

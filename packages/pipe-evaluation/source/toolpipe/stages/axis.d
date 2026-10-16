@@ -4,10 +4,10 @@ import std.format : format;
 import std.math   : abs, sqrt, isFinite;
 
 import math : Vec3, cross, dot, normalize, frameMatrix, frameMatrixInverse, applyAffine;
-import spatial : Viewport, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
 import mesh    : Mesh;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAxis, ToolSwitchTransient,
                            PresetClaimable;
 // pipeline imports moved to packet-only — Phase 6 cleanup
@@ -15,7 +15,7 @@ import toolpipe.packets  : AxisPacket, ActionCenterPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath, installPreparedStatePath;
 import document          : Layer;
-import params            : IntEnumEntry, wireTagForValue, valueForWireTag,
+import vibe3d.editing.params.params            : IntEnumEntry, wireTagForValue, valueForWireTag,
                            tableCoversEnumOf;
 
 // ---------------------------------------------------------------------------

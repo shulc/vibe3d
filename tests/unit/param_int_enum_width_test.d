@@ -3,7 +3,7 @@
 // FalloffStage schema instead of rebuilding the pointer arithmetic in a test.
 module tests.unit.param_int_enum_width_test;
 
-import params : IntEnumEntry, Param, stringifyParam;
+import vibe3d.editing.params.params : IntEnumEntry, Param, stringifyParam;
 import std.array : join;
 import std.format : format;
 import toolpipe.packets : ElementConnect, ElementMode, FalloffType, LassoStyle;

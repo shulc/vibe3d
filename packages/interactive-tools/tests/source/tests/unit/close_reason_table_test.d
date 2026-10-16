@@ -23,7 +23,7 @@ import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import edit_session : EditSession;
 import held_gesture_buttons : g_heldGestureButtons;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import tool : CommandClose, Tool, ToolSessionPolicy;
 import tool_activation_ownership;
 import view : View;

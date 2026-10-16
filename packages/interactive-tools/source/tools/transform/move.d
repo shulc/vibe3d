@@ -18,10 +18,10 @@ import handler;
 import viewport_scheme : schemeColor, SchemeColor;
 import mesh;
 import mesh_gpu : GpuMesh;
-import editmode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype : SelType;
 import math;
-import spatial : ModelSpace, Viewport, projectToWindowFull;
+import vibe3d.util.spatial.spatial : ModelSpace, Viewport, projectToWindowFull;
 import shader;
 
 import ImGui = d_imgui;
@@ -39,7 +39,7 @@ import snap_render : publishLastSnap, clearLastSnap;
 // uses.
 import document : primaryModelSpace;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect :
+import vibe3d.editing.contracts.prepared_tool_effect :
     PreparedTransformProductEffect, PreparedTransformProductKind,
     PreparedMoveUpdateEffect, PreparedMoveUpdateKind;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;

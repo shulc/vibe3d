@@ -474,7 +474,7 @@ unittest {
 unittest {
     import command_args : bindArgs;
     import commands.viewport.display : ViewportDisplayStyle;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import mesh : makeCube;
     import std.format : format;
     import viewport : ViewportManager;
@@ -619,7 +619,7 @@ unittest {
     import command : g_testMode;
     import command_args : bindArgs;
     import commands.viewport.display : ViewportCompositeTestGain, kCompositeTestGainMax;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import mesh : makeCube;
     import viewport : ViewportManager;
     immutable bool prior = g_testMode;

@@ -4,7 +4,7 @@ import core.atomic : atomicOp;
 import math : Vec3;
 import tools.transform.move : MoveTool, PreparedMoveUpdateImage,
                               PreparedMoveUpdateBranch;
-import prepared_tool_effect : PreparedMoveUpdateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedMoveUpdateKind;
 
 struct PreparedMoveUpdateToken {
     @disable this(this);

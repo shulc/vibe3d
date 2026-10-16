@@ -11,9 +11,9 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.extrude;
 import math;
-import spatial : Viewport;
-import editmode : EditMode;
-import params : Param;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
 import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta, gesturePrevPixel;
@@ -26,17 +26,17 @@ import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_smooth_shift_activation : PreparedSmoothShiftActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
-import prepared_tool_effect : PreparedSmoothShiftParamEffect,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSmoothShiftParamEffect,
     PreparedSmoothShiftParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;

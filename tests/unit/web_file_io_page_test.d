@@ -20,7 +20,7 @@ import command : Command;
 import command_history : RecordMode;
 import commands.file.load : FileLoad;
 import document : Document;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import io.browser_pick_resume;
 import io.formats : FilterSpec;
 import mesh : makeCube;

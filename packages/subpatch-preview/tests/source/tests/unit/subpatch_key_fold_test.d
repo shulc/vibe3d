@@ -3,7 +3,7 @@ module tests.unit.subpatch_key_fold_test;
 import core.internal.hash : hashOf;
 import math : Vec3;
 import mesh : Mesh;
-import mesh_dirty : foldSubpatchKeyMember;
+import vibe3d.mesh.change.mesh_dirty : foldSubpatchKeyMember;
 import std.format : format;
 import subpatch_osd : computeSubpatchTopologyKey;
 import subpatch_preview : computeReusablePreviewKey;

@@ -49,7 +49,7 @@ import document     : Layer, ItemKind;
 import forms        : Form, Row;
 import forms_render : FormsPanel, textInputPresentation;
 import layer_params : LayerPropsProvider;
-import params       : kMixedPlaceholder;
+import vibe3d.editing.params.params       : kMixedPlaceholder;
 import tests.unit.ui.headless_panel : openPanel;
 
 /// A mesh layer at a given x, with a name.

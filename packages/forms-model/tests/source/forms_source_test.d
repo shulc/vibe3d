@@ -1,8 +1,8 @@
 module forms_source_test;
 
 import forms;
-import params : Param, ParamHints, choicesOf, fmtFloatWire;
-import argstring : parseArgstring;
+import vibe3d.editing.params.params : Param, ParamHints, choicesOf, fmtFloatWire;
+import vibe3d.editing.params.argstring : parseArgstring;
 import command_args : positionalArgs;
 import std.json : JSONValue, JSONType;
 import std.string : strip, splitLines;
@@ -152,7 +152,7 @@ version (unittest)
                                         ref float ty, ref int seg,
                                         ref string mode, ref float dist)
     {
-        import params : IntEnumEntry;
+        import vibe3d.editing.params.params : IntEnumEntry;
         return [
             Param.bool_  ("T",  "Translate",   &flagT, true),
             Param.float_ ("TX", "Translate X", &tx, 0.0f),
@@ -258,7 +258,7 @@ version (unittest)
         // _fmtFloat are thin delegates) — this exercises the real
         // cross-module dependency rather than the hand-synced literals in
         // the test just above (which stays as-is per task 0409's contract).
-        import argstring : serializeParams;
+        import vibe3d.editing.params.argstring : serializeParams;
         immutable float[] vals = [0.0f, 1.0f, -1.0f, 0.5f, 1e-7f, -3.25f,
                                    1e20f, 123456.789f, 0.1f];
         foreach (v; vals) {

@@ -17,10 +17,10 @@ import std.json : JSONValue, JSONType, parseJSON;
 
 import command;
 import command_args;
-import params   : Param;
+import vibe3d.editing.params.params   : Param;
 import mesh     : Mesh;
 import view     : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 
 // A command whose whole content is its schema. Four slots of four different
 // kinds, in a declared order, so "binds in declaration order" is a claim the
@@ -225,7 +225,7 @@ unittest { // the payload helpers and the binder agree on the wire key
 
 
 unittest { // Presence belongs to a successful supplied write, including [].
-    import params : injectParamsInto, injectParamsTolerant;
+    import vibe3d.editing.params.params : injectParamsInto, injectParamsTolerant;
     auto omitted = new TailCmd();
     bindArgs(omitted, `{"_positional":["vertex","set"]}`);
     assert(omitted.typePresent && omitted.actionPresent && !omitted.indicesPresent,
@@ -264,7 +264,7 @@ unittest { // Presence belongs to a successful supplied write, including [].
 
 
 unittest { // Each tolerant numeric shape skips both its write and presence marker.
-    import params : injectParamsTolerant;
+    import vibe3d.editing.params.params : injectParamsTolerant;
     import math : Vec3;
     float scalar = 4;
     Vec3 vector = Vec3(1,2,3);

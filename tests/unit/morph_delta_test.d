@@ -55,9 +55,9 @@ import std.json   : parseJSON, JSONValue;
 
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math       : Vec3;
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 import http_json  : meshPlanesJson, PlaneDumpMeta;
 import mesh_edit_delta : MeshOpEntry;
 import mesh_morph : morphApply;

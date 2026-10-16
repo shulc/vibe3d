@@ -45,8 +45,8 @@ import std.conv;
 import std.json : JSONValue, JSONType;
 import command_args : positionalPayload, firstPositionalString;
 
-import log : logInfo, logWarn, logError;
-import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
+import vibe3d.util.log.log : logInfo, logWarn, logError;
+import vibe3d.util.profiling.perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -57,7 +57,7 @@ import imgui_impl_opengl3;
 import eventlog;
 import pipe_gizmo_host : PipeGizmoHost;
 import tool;
-import seltype;
+import vibe3d.editing.contracts.seltype;
 import toolpipe.packets : SubjectPacket;
 import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
@@ -249,17 +249,17 @@ import buttonset;
 import ui.panel_chrome : pushPanelChromeStyle, popPanelChromeStyle, publishPanelZone;
 import ui.button_face : kButtonBarPadding, styledButtonPalette,
     drawButtonOutlineRect, drawRaisedBevelRect, drawEngravedLabel;
-import ai.debug_trace : latestHandleDebugTraceJson;
+import vibe3d.editing.interaction.data.ai.debug_trace : latestHandleDebugTraceJson;
 import ai.element_candidates : publishElementCandidates,
     collectElementCandidates, resolveElementCandidateDecision;
-import ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
     AiInteractionPhase, AiIntent;
 import ai.interaction_log : AiInteractionLogRecord, makeAiInteractionLogRecord;
 import ai.interaction_log_writer : AiInteractionLogWriter, defaultLiveSource;
 import ai.exploration : AiExplorationController, buildCandidateKey,
     defaultExploreSource, OptionalGrab, Resolution, ResolutionKind;
 import ai.state      : EditorAiState;
-import ai.advisor    : AiAdvisor;
+import vibe3d.editing.interaction.data.ai.advisor    : AiAdvisor;
 import ai.copilot_gate : kCopilotEnabled;
 import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelStatus, AiModelFallbackMode,
@@ -1526,7 +1526,7 @@ void drawStatusBar(StatusPanelRole app, ActionMenuRoles menu) {
         // and (b) the "active" highlight, by parsing
         // `select.typeFrom <vertex|edge|polygon>` and matching
         // against the live editMode.
-        import argstring : parseArgstring;
+        import vibe3d.editing.params.argstring : parseArgstring;
         enum float btnW         = 85.0f;
         enum float interGroupGap = 8.0f;
         bool firstButton = true;
@@ -1638,7 +1638,7 @@ void drawStatusBar(StatusPanelRole app, ActionMenuRoles menu) {
                 if (btn.checked.present) {
                     on = popupItemChecked(btn.checked);
                 } else {
-                    import seltype : currentSelType, SelType;
+                    import vibe3d.editing.contracts.seltype : currentSelType, SelType;
                     const curType = currentSelType(selTypeOrder);
                     on = (editModeId == "vertices" && curType == SelType.Vertex)
                       || (editModeId == "edges"    && curType == SelType.Edge)

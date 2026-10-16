@@ -5,9 +5,9 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math    : Vec3;
-import params  : Param;
+import vibe3d.editing.params.params  : Param;
 import mesh_edit_delta : MeshEditScope, MeshEditDelta, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 

@@ -33,7 +33,7 @@ module tests.unit.primary_memo_order_test;
 unittest {
     import commands.layer.commands : LayerReorder;
     import document;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import tests.unit.primary_memo_fixture : layeredDocument, setIntParam;
     import view : View;
 

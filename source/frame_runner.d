@@ -6,15 +6,15 @@ import bindbc.opengl : GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT,
 import bindbc.sdl : SDL_Delay, SDL_GL_SwapWindow, SDL_Window;
 import document : Document;
 import edit_session : EditSession;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import viewport_overlay_mode : OverlayMode;
 import snap_render : drawSnapOverlay, g_lastSnap;
 import eventlog : queryMouse;
 import input_frame_state : InputFrameState;
 import ImGui = d_imgui;
 import imgui_impl_opengl3 : ImGui_ImplOpenGL3_RenderDrawData;
-import spatial : Viewport;
-import perf_probe : g_fc, g_frames, Phase;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.util.profiling.perf_probe : g_fc, g_frames, Phase;
 import tool : Tool;
 import ui.viewport_render : ViewportSceneRenderer, SceneInputs,
     SceneViewInputs, SceneDisplayInputs, SceneGpuInputs, ToolOverlayInputs;

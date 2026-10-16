@@ -7,7 +7,7 @@ import std.algorithm.iteration : map;
 import std.array : array;
 import mesh;
 import math;
-import change_bus : MeshChangeAll;
+import vibe3d.mesh.change.change_bus : MeshChangeAll;
 import snapshot;
 
 unittest { // S3 — code review, task 0613: a snapshot restore must not

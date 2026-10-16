@@ -35,7 +35,7 @@ import std.format    : format;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math : Vec3;
 import selection_product : repointToEdgeKeys;
 import commands.mesh.spin_edge : MeshSpinEdge;

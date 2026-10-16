@@ -1,6 +1,6 @@
 module tool_activation_ownership;
 
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 
 // TASK 4053 — the single ownership table for tool-activation transitions.
 //

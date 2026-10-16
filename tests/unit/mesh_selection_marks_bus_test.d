@@ -24,7 +24,7 @@ module tests.unit.mesh_selection_marks_bus_test;
 import mesh;
 import math : Vec3;
 import mesh_edit_delta : MeshEditScope;
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 import tests.unit.mesh_by_value_gate;
 
 // The seam's compile-time gate: nothing in this module may take a `Mesh` by
@@ -34,7 +34,7 @@ private void byValueGateAnchor() {}
 mixin MeshByValueGate!(__traits(parent, byValueGateAnchor));
 
 unittest { // noteSelectionChange / marks-setter accumulation (change-bus Stage 5)
-    import change_bus : SelDomain;
+    import vibe3d.mesh.change.change_bus : SelDomain;
     import mesh_edit_delta : MeshEditScope;
 
     // Single setters accumulate Marks + the matching domain bit, and stay

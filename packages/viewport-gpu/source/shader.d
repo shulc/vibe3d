@@ -6,7 +6,7 @@ import std.string : toStringz;
 
 import view;
 import math;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
 import mesh : Surface, MarkView, kSurfaceSlots;
 import mesh_gpu : GpuMesh, FacePass;
 version (web) {

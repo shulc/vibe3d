@@ -2,7 +2,7 @@ module tests.unit.commands.layer.commands_source_public_test;
 
 import document : Document, Layer, ItemKind;
 import commands.layer.commands : layerDeleteButtonState;
-import seltype : SelMode;
+import vibe3d.editing.contracts.seltype : SelMode;
 
 unittest {
     import mesh : makeCube;

@@ -9,7 +9,7 @@ import bindbc.sdl;
 import tool;
 import mesh;
 import math;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import handler : BoxHandler, gizmoSize, ToolHandles;
 import viewport_scheme : schemeColor, SchemeColor;
 import eventlog : queryMouse;
@@ -19,7 +19,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import toolpipe.packets : SnapType;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import snap : SnapResult;
 import std.math : abs;
 import tools.create.pen;
@@ -142,7 +142,7 @@ unittest {
 // shift-haul reset and the user-set marker read), merge on included.
 unittest {
     import mesh_gpu : GpuMesh;
-    import params : isUserSet;
+    import vibe3d.editing.params.params : isUserSet;
     import std.format : format;
     Mesh m; GpuMesh g;
     auto pen = new PenTool(() => &m, &g, LitShader.init);
@@ -183,7 +183,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 }
 
 version (PerfProbe) unittest {
-    import perf_probe : g_perf;
+    import vibe3d.util.profiling.perf_probe : g_perf;
     import std.conv : to;
     import std.format : format;
     import std.json : parseJSON;

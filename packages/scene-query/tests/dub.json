@@ -143,8 +143,8 @@
       "version": "e1a8f41501f94a28dbac99efbea850ed098fa728",
       "repository": "git+https://github.com/shulc/D-BVH.git"
     },
-    "vibe3d-edit-contracts": {
-      "path": "../../edit-contracts"
+    "vibe3d:edit-contracts": {
+      "path": "../../.."
     },
     "vibe3d-interaction-query": {
       "path": "../../interaction-query"
@@ -164,16 +164,18 @@
     "vibe3d-pipe-runtime": {
       "path": "../../pipe-runtime"
     },
-    "vibe3d-profiling": {
-      "path": "../../profiling"
+    "vibe3d:profiling": {
+      "path": "../../.."
     },
-    "vibe3d-spatial": {
-      "path": "../../spatial"
+    "vibe3d:spatial": {
+      "path": "../../.."
     },
     "vibe3d-viewport-gpu": {
       "path": "../../viewport-gpu"
     },
-    "vibe3d:math": {"path": "../../.."}
+    "vibe3d:math": {
+      "path": "../../.."
+    }
   },
   "importPaths": [
     "../source",
@@ -183,15 +185,15 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-edit-contracts": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d-interaction-query": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
         "vibe3d-mesh-preview": "isolated-tests",
         "vibe3d-pipe-contracts": "isolated-tests",
         "vibe3d-pipe-evaluation": "isolated-tests",
         "vibe3d-pipe-runtime": "isolated-tests",
-        "vibe3d-profiling": "isolated-tests",
-        "vibe3d-spatial": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
         "vibe3d-viewport-gpu": "isolated-tests",
         "vibe3d:math": "isolated-tests"
       }

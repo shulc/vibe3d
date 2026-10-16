@@ -3,7 +3,7 @@ module tests.unit.ui.guard_modal_state_test;
 import editor_app : makeGuardModalRole;
 import command : Command, g_testMode;
 import command_history : RecordMode;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import mesh : Mesh;

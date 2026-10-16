@@ -11,7 +11,7 @@ import command_history : CommandHistory, RecordMode;
 import commands.tool.attr : ToolAttrCommand;
 import commands.tool.host : ToolHost;
 import edit_session : EditSession;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import http_command_adapter : AutomationResetContext, AutomationResetHook,
@@ -19,8 +19,8 @@ import http_command_adapter : AutomationResetContext, AutomationResetHook,
 import http_providers : HistoryHttpAdapter;
 import http_server : BridgeResultKind, HttpServer;
 import mesh : Mesh, makeCube;
-import params : Param, wireArgs;
-import perf_probe : g_commandGc;
+import vibe3d.editing.params.params : Param, wireArgs;
+import vibe3d.util.profiling.perf_probe : g_commandGc;
 import pipe_gizmo_host : PipeGizmoHost;
 import registry : Registry;
 import step_trace : StepTrace;

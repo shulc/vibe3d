@@ -17,12 +17,12 @@ struct PreparedRotateActivationImage {
 import handler;
 import mesh;
 import mesh_gpu : GpuMesh;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import document : Layer;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import tool : Tool;
 import math;
-import spatial : Viewport, projectToWindowFull, screenPointToRay;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, screenPointToRay;
 import shader;
 import toolpipe.packets : FalloffPacket;
 
@@ -36,9 +36,9 @@ import tools.transform.arcball : ARCBALL_RADIUS_PX, arcballRotation,
 import snap : SnapResult;
 import snap_render : clearLastSnap;
 import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect :
+import vibe3d.editing.contracts.prepared_tool_effect :
     PreparedTransformProductEffect, PreparedTransformProductKind,
     PreparedRotateUpdateEffect, PreparedRotateUpdateKind;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;

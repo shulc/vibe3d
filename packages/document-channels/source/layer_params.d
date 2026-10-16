@@ -1,9 +1,9 @@
 module layer_params;
 
-import params   : Param, ParamProvider, MixedValueProvider, paramToJson;
+import vibe3d.editing.params.params   : Param, ParamProvider, MixedValueProvider, paramToJson;
 import document : Layer, Document, kindInfo, ItemKind, ItemXform,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG, sanitizeItemXform;
-import seltype  : SelType;
+import vibe3d.editing.contracts.seltype  : SelType;
 
 // ---------------------------------------------------------------------------
 // LayerPropsProvider — exposes a layer's editable properties as registered

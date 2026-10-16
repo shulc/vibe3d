@@ -5,7 +5,7 @@ import mesh;
 import mesh_ops.select_loop : selectLoopEdges, selectLoopVertices,
                               selectLoopFaces;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : SelectionSnapshot;
 
 class SelectLoop : Command {

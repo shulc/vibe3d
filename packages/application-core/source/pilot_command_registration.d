@@ -9,8 +9,8 @@ import commands.select.drop : SelectDropCommand;
 import commands.select.invert : SelectInvert;
 import commands.history.undo : HistoryUndo;
 import commands.history.redo : HistoryRedo;
-import editmode : EditMode;
-import spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.util.spatial.spatial : Viewport;
 import mesh : Mesh;
 import view : View;
 

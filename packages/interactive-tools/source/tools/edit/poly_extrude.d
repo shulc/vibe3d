@@ -13,9 +13,9 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.extrude;
 import math;
-import spatial : ModelSpace, Viewport;
-import editmode : EditMode;
-import params : Param;
+import vibe3d.util.spatial.spatial : ModelSpace, Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
 import handler : Arrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import drag : PreparedPlaneDrag, automaticPlanePressHit, preparePlaneDrag,
@@ -32,15 +32,15 @@ import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_extrude_activation : PreparedPolyExtrudeActivationOwner;
 import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
-import prepared_tool_effect : PreparedPolyExtrudeParamEffect,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedPolyExtrudeParamEffect,
     PreparedPolyExtrudeParamKind;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;

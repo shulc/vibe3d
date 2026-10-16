@@ -31,7 +31,7 @@ module ui.availability;
 // ---------------------------------------------------------------------------
 
 import buttonset : Action, ActionKind, Button;
-import editmode  : EditMode;
+import vibe3d.editing.contracts.editmode  : EditMode;
 import registry  : Registry;
 
 // ---------------------------------------------------------------------------

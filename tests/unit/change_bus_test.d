@@ -4,8 +4,8 @@
 module tests.unit.change_bus_test;
 
 public import mesh_edit_delta : MeshEditScope;
-import seltype : SelType;
-import change_bus;
+import vibe3d.editing.contracts.seltype : SelType;
+import vibe3d.mesh.change.change_bus;
 
 // TASK 1906 STAGE 3 — WHICH CHANNEL A BLOCK DRIVES CHANGED, AND THE BLOCKS WERE
 // RE-READ RATHER THAN PATCHED. `ChangeBus.flush` no longer carries the mesh

@@ -3,12 +3,12 @@ module commands.viewport.display;
 import command;
 import commands.viewport.command_base : ViewportCommand;
 import mesh;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import view;
 import viewport      : ViewportManager, Viewport3D;
 import display_state : BackdropStyle, CavityMode, DisplayStyle, MAX_CAVITY_SAMPLES,
     ViewportDisplay, WireOverlay;
-import params : Param, wireArgs;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 // TASK 4062 — the three commands below each declare their two arguments
 // (`value`, then the `viewport` cell selector) and let `command_args.bindArgs`

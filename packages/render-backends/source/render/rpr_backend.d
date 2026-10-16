@@ -372,7 +372,7 @@ class RPRBackend : RenderBackend
         if (firstSt && wantNonCpu) {
             // Recoverable: retry on CPU and log so the user knows the
             // dropdown choice didn't survive.
-            import log        : logWarn;
+            import vibe3d.util.log.log        : logWarn;
             import std.format : format;
             try {
                 logWarn("render", format(

@@ -36,7 +36,7 @@ import mesh;
 import math            : Vec3;
 import mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
 import snapshot        : MeshSnapshot;
-import plane_bytes     : planeBytes;
+import vibe3d.util.plane_bytes.plane_bytes     : planeBytes;
 
 import tests.unit.fixtures : makeTaggedGridFull;
 

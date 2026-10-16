@@ -9,7 +9,7 @@ import std.math : fabs, sqrt;
 import math : Vec3;
 import mesh : Mesh, SubpatchTrace, edgeKey, makeCube, MapKind;
 import osd.c;
-import perf_probe : g_perf, Cat, g_fc, DrawPass;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc, DrawPass;
 import subpatch_osd;
 
 // ---------------------------------------------------------------------------
@@ -244,9 +244,9 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import subpatch_preview : SubpatchPreview;
-    import change_bus : MeshEditScope;
+    import vibe3d.mesh.change.change_bus : MeshEditScope;
 
-    import mesh_dirty : noteMeshChange;
+    import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
 
     Mesh cage = makeCube();
     cage.resizeSubpatch();
@@ -783,7 +783,7 @@ unittest {
     import std.conv : to;
     import std.math : fabs;
 
-    import mesh_dirty : g_geomEpochs;
+    import vibe3d.mesh.change.mesh_dirty : g_geomEpochs;
 
     static Mesh* subpatchedCube(float dx) {
         // HEAP, not a stack local, and that is stage 2c's lesson rather than
@@ -879,8 +879,8 @@ unittest {
 unittest {
     import mesh       : Mesh, makeCube;
     import subpatch_preview : SubpatchPreview;
-    import mesh_dirty : noteMeshChange;
-    import change_bus : MeshEditScope, changeBus;
+    import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
+    import vibe3d.mesh.change.change_bus : MeshEditScope, changeBus;
     import std.conv   : to;
 
     // HEAP, for the reason the block above states: the epoch table is keyed by

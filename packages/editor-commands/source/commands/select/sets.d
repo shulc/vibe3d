@@ -3,11 +3,11 @@ module commands.select.sets;
 import command;
 import mesh;
 import view;
-import editmode;
-import params   : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params   : Param;
 import snapshot : MeshSnapshot, SelectionSnapshot;
 import mesh_edit_delta : MeshEditScope;
-import seltype  : SelType;
+import vibe3d.editing.contracts.seltype  : SelType;
 import document : Document, Layer;
 import mesh_selsets;
 

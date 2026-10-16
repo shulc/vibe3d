@@ -2,7 +2,7 @@ module commands.viewport.fit;
 
 import command;
 import mesh;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import view;
 import document : Document;
 

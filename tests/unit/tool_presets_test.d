@@ -8,7 +8,7 @@ import std.json : JSONValue;
 import registry         : Registry;
 import tool             : Tool, ToolFlag;
 import toolpipe.pipeline : g_pipeCtx;
-import params : Param, ParamProvider, injectParamsInto, parseInto;
+import vibe3d.editing.params.params : Param, ParamProvider, injectParamsInto, parseInto;
 import prefs  : g_prefs, Prefs;
 import tool_presets;
 

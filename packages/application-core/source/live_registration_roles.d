@@ -1,9 +1,9 @@
 module live_registration_roles;
 
 import document : Document;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh;
-import seltype : SelType, currentSelType;
+import vibe3d.editing.contracts.seltype : SelType, currentSelType;
 import session_owner : Session;
 import view : View;
 

@@ -3,7 +3,7 @@ module tests.unit.commands.layer.xform_edit_source_public_test;
 import commands.layer.xform_edit;
 import mesh : Mesh;
 import view : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import document : Layer, ItemXform;
 
 version (unittest) {

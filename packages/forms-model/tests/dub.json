@@ -142,8 +142,8 @@
     "vibe3d-command-runtime": {
       "path": "../../../packages/command-runtime"
     },
-    "vibe3d-param-schema": {
-      "path": "../../../packages/param-schema"
+    "vibe3d:param-schema": {
+      "path": "../../.."
     },
     "dyaml": {
       "version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
@@ -160,7 +160,7 @@
       "name": "algorithm",
       "subConfigurations": {
         "vibe3d-command-runtime": "isolated-tests",
-        "vibe3d-param-schema": "isolated-tests"
+        "vibe3d:param-schema": "isolated-tests"
       }
     }
   ],

@@ -4,7 +4,7 @@
 module tests.unit.tools.alignment.align_kernels_test;
 
 import mesh     : Mesh;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math     : Vec3, dot, cross;
 import std.math : sqrt, cos, sin, PI, abs;
 import std.algorithm : sort;

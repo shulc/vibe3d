@@ -30,7 +30,7 @@ import std.format : format;
 import mesh;
 import math : Vec3;
 import mesh_edit_delta;
-import change_bus : changeBus, SelDomain;
+import vibe3d.mesh.change.change_bus : changeBus, SelDomain;
 
 private string flagNames(uint f) {
     string s;

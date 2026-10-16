@@ -16,7 +16,7 @@ module tests.unit.primary_memo_select_test;
 // --- cell (a): selectItem replaces the current selection --------------------
 unittest {
     import document;
-    import seltype : SelMode;
+    import vibe3d.editing.contracts.seltype : SelMode;
     import tests.unit.primary_memo_fixture : layeredDocument;
 
     auto doc = layeredDocument(4);
@@ -37,7 +37,7 @@ unittest {
 // --- cell (b): setPrimary re-seats at the FRONT -----------------------------
 unittest {
     import document;
-    import seltype : SelMode;
+    import vibe3d.editing.contracts.seltype : SelMode;
     import tests.unit.primary_memo_fixture : layeredDocument;
 
     auto doc = layeredDocument(4);

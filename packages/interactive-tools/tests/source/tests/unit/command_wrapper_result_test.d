@@ -1,9 +1,9 @@
 module tests.unit.command_wrapper_result_test;
 
-import change_bus : changeBus;
+import vibe3d.mesh.change.change_bus : changeBus;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh, makeCube;
 import tools.common.command_wrapper : XfrmQuantizeTool;
 import view : View;

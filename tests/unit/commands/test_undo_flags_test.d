@@ -6,7 +6,7 @@ module tests.unit.commands.test_undo_flags_test;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import commands.test_undo_flags;
 
 unittest {

@@ -8,7 +8,7 @@ version (unittest) {
 version (unittest) import snap_render_source_helpers : t0619Matrix, t0619Viewport, t0619Mesh, t0619DrawnPx, t0619IdentityPx, t0619Dist, t0619Xf, t0619PxUnder, t0619BgMeshA, t0619BgMeshB, t0619InstallPrimary;
 
 import math : Vec3;
-import spatial : Viewport, projectToWindowFull, ModelSpace, AimViewport, aimSpace;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, ModelSpace, AimViewport, aimSpace;
 import mesh : Mesh;
 import snap : SnapResult, snapSource, snapSourceSpace;
 import document : primaryModelSpace;

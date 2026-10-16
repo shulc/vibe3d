@@ -6,10 +6,10 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import mesh_ops.cut;
 import view;
-import editmode;
-import params : Param;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param;
 import math : Vec3;
-import spatial : cameraPlaneFromScreenLine;
+import vibe3d.util.spatial.spatial : cameraPlaneFromScreenLine;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 

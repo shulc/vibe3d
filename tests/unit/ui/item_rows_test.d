@@ -5,7 +5,7 @@ module tests.unit.ui.item_rows_test;
 
 import document : Document, Layer, ItemKind, kindInfo;
 import mesh     : makeCube;
-import seltype  : SelMode;
+import vibe3d.editing.contracts.seltype  : SelMode;
 import ui.item_rows;
 
 // ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ unittest {
 //     row.
 // ---------------------------------------------------------------------------
 unittest {
-    import seltype : SelMode;
+    import vibe3d.editing.contracts.seltype : SelMode;
     import std.conv : to;
     auto f = makeItemFixture();
     ItemRow[] rows;
@@ -281,7 +281,7 @@ unittest {
 // "already current" and swallowed the click that would have selected it back.
 // ---------------------------------------------------------------------------
 unittest {
-    import seltype : SelMode;
+    import vibe3d.editing.contracts.seltype : SelMode;
     auto f = makeItemFixture();
     ItemRow[] rows;
 
@@ -326,7 +326,7 @@ unittest {
 // the plane too; one that greyed nothing reads 0.
 // ---------------------------------------------------------------------------
 unittest {
-    import seltype : SelMode;
+    import vibe3d.editing.contracts.seltype : SelMode;
     auto f = makeItemFixture();
     ItemRow[] rows;
 
@@ -511,7 +511,7 @@ unittest {
     import commands.layer.commands       : LayerAdd;
     import commands.image_plane.commands : ImagePlaneAdd;
     import view     : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
 
     auto f = makeItemFixture();
     auto v = new View(0, 0, 800, 600);

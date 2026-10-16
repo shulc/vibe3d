@@ -27,7 +27,7 @@ import std.path       : buildPath;
 // Pull in the exploration module so its own unittests are triggered by -i.
 import ai.exploration;
 import ai.interaction_log;
-import ai.interaction;
+import vibe3d.editing.interaction.data.ai.interaction;
 import ai.training_dataset;
 // Pull in command_history so its Phase-0 unittests run too.
 import command_history;
@@ -204,7 +204,7 @@ unittest { // step on idle controller returns None immediately
 }
 
 unittest { // GOLD Emit record has correct appliedWinnerId + labeled by exporter
-    import ai.interaction : AiCandidateKind, AiInteractionContext,
+    import vibe3d.editing.interaction.data.ai.interaction : AiCandidateKind, AiInteractionContext,
         AiAdvisorDecision;
 
     // Build minimal record with 3 candidates.

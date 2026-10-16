@@ -284,7 +284,7 @@ unittest { // production legacy schemas cannot produce a mixed-source batch
 }
 
 unittest { // a production activation-only widget still closes at the slot boundary
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     import property_panel : PropertyPanel;
     import tests.unit.ui.headless_panel : openPanel;
     import toolpipe.stages.actcenter : ActionCenterStage;
@@ -377,7 +377,7 @@ unittest {
 // arguments the panel actually sends.  These stands submit the shipped
 // PropertyPanel body inside a real ImGui frame and drive its widgets through
 // the same input queue a platform backend fills.
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import std.conv : to;
 
 private final class PanelProbeTool : Tool, LiveEvalClient,

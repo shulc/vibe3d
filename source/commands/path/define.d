@@ -3,8 +3,8 @@ module commands.path.define;
 import command;
 import mesh;
 import view;
-import editmode;
-import params : Param, wireArgs;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param, wireArgs;
 
 import toolpipe.pipeline    : g_pipeCtx;
 import toolpipe.stages.path : PathStage;

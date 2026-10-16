@@ -2,7 +2,7 @@ module retopology_dot_cull;
 
 import math : Vec3, cross, dot, faceNormalFirst3, matrixMirrorsWinding;
 import mesh : Mesh, MeshKey, MeshTermTopology;
-import mesh_dirty : MeshDirtyKey, MeshTermGeomEpoch;
+import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, MeshTermGeomEpoch;
 import camera_stamp : CameraStamp;
 
 // The base-dot cull of the retopology display (task 8600, plan §10.5): a

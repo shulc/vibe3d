@@ -43,9 +43,9 @@ import mesh     : Mesh, MeshMap, MapDomain, MeshEditBatch, kUvMapName,
                   MAX_MESH_MAPS;
 import math     : Vec3;
 import view     : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh_edit_delta : MeshEditScope;
-import params   : Param;
+import vibe3d.editing.params.params   : Param;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit;
 import uv_project : UvProjMode, UvProjAxis, projectUv;

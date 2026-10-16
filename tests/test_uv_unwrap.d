@@ -34,7 +34,7 @@ import std.algorithm : canFind;
 import mesh          : Mesh, MeshMap, MapDomain, kUvMapName, makeCube;
 import math          : Vec3;
 import view          : View;
-import editmode      : EditMode;
+import vibe3d.editing.contracts.editmode      : EditMode;
 import snapshot      : MeshSnapshot;
 import uv_project    : UvProjMode, UvProjAxis, projectUv;
 import uv_unwrap     : uvUnwrap, uvDirichletEnergy, uvAngularDistortion;
@@ -108,7 +108,7 @@ private float[] seedUV(const ref Mesh m) {
 
 // Set an int param on a command.
 private void setIntParam(T)(T cmd, string pname, int value) {
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params())
         if (p.name == pname) { *p.iptr = value; return; }
     assert(false, "int param not found: " ~ pname);
@@ -116,7 +116,7 @@ private void setIntParam(T)(T cmd, string pname, int value) {
 
 // Set a string (enum) param on a command.
 private void setEnumParam(T)(T cmd, string pname, string value) {
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     foreach (ref p; cmd.params())
         if (p.name == pname) { *p.sptr = value; return; }
     assert(false, "enum param not found: " ~ pname);

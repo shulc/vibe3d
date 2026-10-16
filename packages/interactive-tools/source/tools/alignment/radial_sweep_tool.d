@@ -13,9 +13,9 @@ import mesh;
 import mesh_gpu : GpuMesh;
 import mesh_ops.revolve;
 import math;
-import spatial : Viewport;
-import editmode : EditMode;
-import params : Param, IntEnumEntry;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param, IntEnumEntry;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import tools.common.session_mesh_key : SessionMeshKey;
@@ -27,11 +27,11 @@ import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, gesturePrevPixel
 import eventlog : queryMouse;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_radial_sweep_transition : PreparedRadialSweepTransitionOwner;
-import prepared_tool_effect : PreparedRadialSweepEffect, PreparedRadialSweepKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedRadialSweepEffect, PreparedRadialSweepKind;
 import mesh_gpu : GpuUploadOwner, GpuResourceOwner, GpuCreateUploadOwner;
 import prepared_selection_profile : PreparedSelectionProfileOwner;
 import document : Layer;
-import change_bus : MeshEditScope;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import command_history : PreparedHistoryKind;
 

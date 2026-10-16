@@ -27,12 +27,12 @@ struct PreparedScaleEmbeddedDeactivateImage {
 import handler;
 import mesh;
 import mesh_gpu : GpuMesh;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import document : Layer;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import tool : Tool;
 import math;
-import spatial : Viewport, isOrtho, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, isOrtho, projectToWindowFull;
 import shader;
 import toolpipe.packets : FalloffPacket;
 
@@ -45,9 +45,9 @@ import drag : screenAxisFraction;
 import snap : SnapResult;
 import snap_render : clearLastSnap;
 import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect :
+import vibe3d.editing.contracts.prepared_tool_effect :
     PreparedTransformProductEffect, PreparedTransformProductKind,
     PreparedScaleUpdateEffect, PreparedScaleUpdateKind;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
@@ -758,7 +758,7 @@ public:
                                out int hIdx, out int vIdx)
     {
         import tools.transform.xform_kernels : pickScalePlaneAxes;
-        import spatial : isOrtho;
+        import vibe3d.util.spatial.spatial : isOrtho;
         Vec3 bX, bY, bZ;
         currentBasis(bX, bY, bZ, vts);
         immutable Vec3 camRight = Vec3(cachedVp.view[0], cachedVp.view[4],

@@ -11,7 +11,7 @@ import tools.edit.topology_pen.tool : TopologyPenTool,
 
 unittest {
     import command_history : CommandHistory;
-    import prepared_tool_effect : PreparedDeactivateKind;
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
 
     auto savedPipe = g_pipeCtx; scope(exit) g_pipeCtx = savedPipe;

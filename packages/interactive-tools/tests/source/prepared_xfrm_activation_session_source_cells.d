@@ -13,7 +13,7 @@ import prepared_transform_product_activation :
 
 unittest {
     import command_history : CommandHistory;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import math : Vec3;
     import mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;

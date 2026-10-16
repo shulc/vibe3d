@@ -84,7 +84,7 @@ import std.json   : JSONValue, parseJSON;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import math      : Vec3;
 import http_json : meshPlanesJson, PlaneDumpMeta;
 
@@ -615,7 +615,7 @@ unittest
 {
     import tests.unit.fixtures : makeTaggedGridFull, dumpMeshPlanes,
                                  diffMeshPlanes;
-    import change_bus          : changeBus;
+    import vibe3d.mesh.change.change_bus          : changeBus;
 
     auto m = new Mesh;
     *m = makeTaggedGridFull(3);          // the CLEAN stand — nothing to clean

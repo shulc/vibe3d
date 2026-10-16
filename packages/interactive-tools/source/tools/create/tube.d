@@ -6,13 +6,13 @@ import operator : VectorStack;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import shader : LitShader;
 import tools.create.primitive_create_tool : PrimitiveCreateTool;
 import tools.create.create_common :
                                     screenToPlacementLocal, snapLocalHit,
                                     workplaneCursorPlaneHit;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import snap_render : publishLastSnap;
 
 import std.math : sin, cos, PI, abs, sqrt;
@@ -222,7 +222,7 @@ public:
     override string name() const { return "Tube"; }
 
     override Param[] params() {
-        import params : IntEnumEntry;
+        import vibe3d.editing.params.params : IntEnumEntry;
         return [
             Param.float_("cenX",        "Position X",    &params_.cenX,        0.0f),
             Param.float_("cenY",        "Position Y",    &params_.cenY,        0.0f),

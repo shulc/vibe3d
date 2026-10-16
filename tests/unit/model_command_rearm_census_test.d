@@ -14,7 +14,7 @@ import command : CmdFlags, Command;
 import command_history : CommandHistory, RecordMode;
 import command_executor : CommandExecutor;
 import edit_session : commandMeetsTool;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import registry : Registry;
 import std.algorithm : canFind, count;
 import std.conv : to;

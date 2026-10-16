@@ -22,7 +22,7 @@ import std.file : write, setAttributes;
 import std.conv : octal;
 import remesh.remesh_job;
 
-import mesh_dirty : MeshTermGeomEpoch, noteMeshChange;
+import vibe3d.mesh.change.mesh_dirty : MeshTermGeomEpoch, noteMeshChange;
 import remesh.remesh_job : tryRemove;
 
 
@@ -35,7 +35,7 @@ unittest {
     import std.conv : octal;
     import core.thread : Thread;
     import core.time : Duration, msecs, seconds;
-    import change_bus : MeshEditScope;
+    import vibe3d.mesh.change.change_bus : MeshEditScope;
 
     Mesh cube() {
         Mesh m = Mesh.init;

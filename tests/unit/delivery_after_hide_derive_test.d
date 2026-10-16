@@ -75,8 +75,8 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
-import change_bus : changeBus, MeshEditScope;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.mesh.change.change_bus : changeBus, MeshEditScope;
 
 // --- The probe listener's recording state ---------------------------------
 // Module scope, and armed explicitly, because v1 has no unsubscribe: the

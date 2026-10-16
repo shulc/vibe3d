@@ -12,7 +12,7 @@ import ai.interaction_log_writer;
 unittest {
     import std.file : exists, tempDir, remove;
     import std.path : buildPath;
-    import ai.interaction : AiInteractionContext;
+    import vibe3d.editing.interaction.data.ai.interaction : AiInteractionContext;
     import ai.interaction_log : makeAiInteractionLogRecord;
 
     auto missing = buildPath(tempDir(), "vibe3d_ai_log_should_not_exist.jsonl");
@@ -38,7 +38,7 @@ unittest {
     import std.file : tempDir, readText, remove, exists;
     import std.path : buildPath;
     import std.string : startsWith, strip;
-    import ai.interaction : AiInteractionContext;
+    import vibe3d.editing.interaction.data.ai.interaction : AiInteractionContext;
     import ai.interaction_log : makeAiInteractionLogRecord,
         parseAiInteractionLogLine;
 

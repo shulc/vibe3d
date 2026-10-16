@@ -19,7 +19,7 @@ import imgui_impl_sdl2 : ImGui_ImplSDL2_Init, ImGui_ImplSDL2_NewFrame,
     ImGui_ImplSDL2_Shutdown;
 import input_frame_state : InputFrameState;
 import ImGui = d_imgui;
-import perf_probe : DrawPass, g_fc, g_frames;
+import vibe3d.util.profiling.perf_probe : DrawPass, g_fc, g_frames;
 import std.conv : to;
 import std.format : format;
 import std.process : environment;

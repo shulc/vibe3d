@@ -5,8 +5,8 @@ import prepared_record_context : PreparedToolParamDoorClient,
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
-import prepared_tool_effect : PreparedArrayParamEffect, PreparedArrayParamKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedArrayParamEffect, PreparedArrayParamKind;
 import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
 import mesh_gpu : GpuUploadOwner;
@@ -21,18 +21,18 @@ import command : Command;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import spatial : Viewport;
-import editmode : EditMode;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
 import drag : HandleDrag, DragFrame, DragKind, automaticPlanePressHit;
 import viewgrid : vectorSnap, viewVectorQuantum;
 import overlay_space : OverlaySpace;
-import params : Param, IntEnumEntry;
+import vibe3d.editing.params.params : Param, IntEnumEntry;
 import shader : Shader;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import core.stdc.string : memcmp;
 
 

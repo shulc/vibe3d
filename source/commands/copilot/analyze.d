@@ -6,7 +6,7 @@ version (WithAI):
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import copilot_panel : CopilotPanel;
 import ai.analysis    : analyzeMesh;
 

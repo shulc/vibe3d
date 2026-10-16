@@ -8,13 +8,13 @@ import std.file   : exists, read, write, mkdirRecurse, copy;
 import std.path   : buildPath, absolutePath;
 import std.process : environment;
 import std.format : format;
-import log            : logWarn;
+import vibe3d.util.log.log            : logWarn;
 import viewport       : LayoutPreset;
 import display_state  : DisplayStyle, WireOverlay;
 import coord_rounding : CoordinateRounding, kCoordRoundingDefault,
                         kFixedIncrementDefault, coordRoundingName,
                         parseCoordRounding;
-import trackball      : kTrackballDefault, kTrackballSpeedDefault,
+import vibe3d.util.spatial.trackball      : kTrackballDefault, kTrackballSpeedDefault,
                         clampTrackballSpeed, kSpinSwingDefault;
 import std.file : tempDir, rmdirRecurse, mkdirRecurse;
 import std.path : buildPath;

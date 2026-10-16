@@ -2,7 +2,7 @@ module tests.unit.viewgrid_regression_test;
 
 import viewgrid;
 import math : Vec3;
-import spatial : Viewport, isOrtho;
+import vibe3d.util.spatial.spatial : Viewport, isOrtho;
 import std.math : fabs;
 
 

@@ -51,7 +51,7 @@ unittest {
     import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
     import command : Command, CompareResult, RunMergeable;
     import view : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
 
     Mesh m = rig();
     m.addMeshMapOfKind(MapKind.morphRelative, "mm");
@@ -97,7 +97,7 @@ unittest { // compareOp must compare the MAP NAME
     import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
     import command : CompareResult;
     import view : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
 
     Mesh m = rig();
     m.addMeshMapOfKind(MapKind.morphRelative, "a");
@@ -119,7 +119,7 @@ unittest { // mergeRunTail: first-touch BEFORE, latest AFTER, union by vertex
     import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
     import command : Command;
     import view : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
 
     Mesh m = rig();
     m.addMeshMapOfKind(MapKind.morphRelative, "mm");

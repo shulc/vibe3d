@@ -6,12 +6,12 @@ import tools.alignment.radial_array_tool : RadialArrayTool,
     RadialArrayTransitionImage, PreparedRadialArrayTransitionKind;
 import core.atomic : atomicOp;
 import document : Layer;
-import prepared_tool_effect : PreparedRadialArrayKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedRadialArrayKind;
 
 unittest {
     import mesh : makeCube;
     import mesh_gpu : GpuMesh;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import shader : LitShader;
     Mesh source = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto tool = new RadialArrayTool(() => &source, &gpu, &mode, LitShader.init);

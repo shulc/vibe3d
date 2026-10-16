@@ -8,7 +8,7 @@ import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           SubjectPacket;
 import operator         : Operator, Task, VectorStack, PacketKind;
 import popup_state      : setStatePath;
-import params           : Param, IntEnumEntry, wireTagForValue;
+import vibe3d.editing.params.params           : Param, IntEnumEntry, wireTagForValue;
 import bvh_pick         : BvhPick, SurfaceHit;
 import constraint        : BackgroundSource;
 import toolpipe.stages.constrain;

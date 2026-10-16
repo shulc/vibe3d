@@ -151,9 +151,9 @@ module mesh_planes;
 // ---------------------------------------------------------------------------
 
 import mesh : Mesh, PolyVertexBlend, PolyVertexGen;
-import mesh_types : FaceIdx;
+import vibe3d.mesh.contracts.mesh_types : FaceIdx;
 import mesh_edit_delta : MeshOpEntry;
-public import mesh_plane_types;
+public import vibe3d.mesh.contracts.mesh_plane_types;
 import mesh_topo : edgeKey;
 import math : Vec3;
 import std.format : format;

@@ -4,7 +4,7 @@ module tests.unit.topology_r_history_probe_test;
 
 import command_history : CommandHistory, HistoryFlags;
 import commands.mesh.session_edit : MeshSessionEdit;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
 import mesh : Mesh, makeCube;
 import snapshot : MeshSnapshot;

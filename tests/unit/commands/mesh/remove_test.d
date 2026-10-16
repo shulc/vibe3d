@@ -8,7 +8,7 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import snapshot : MeshSnapshot, SelectionSnapshot;
 // `undoTrackerEnabled` left this list at task 1903 stage L3-b, with the fork
 // it named: `mesh.delete` and `mesh.remove` are unconditionally on the delta

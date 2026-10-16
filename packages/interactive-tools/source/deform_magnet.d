@@ -2,7 +2,7 @@ module deform_magnet;
 
 import mesh : Mesh;
 import math : Vec3;
-import spatial : Viewport, AimViewport, aimSpace, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace, ModelSpace;
 import falloff : evaluateFalloff;
 import toolpipe.packets : FalloffPacket;
 

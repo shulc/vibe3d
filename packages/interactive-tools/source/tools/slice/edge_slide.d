@@ -3,7 +3,7 @@ module tools.slice.edge_slide;
 import mesh : Mesh;
 import mesh_gpu : GpuMesh;
 import view    : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import tools.common.command_wrapper : CommandWrapperTool;
 import tool : ToolSessionPolicy, CommandClose;
 import commands.mesh.edge_slide : MeshEdgeSlide;

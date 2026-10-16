@@ -24,7 +24,7 @@ import mesh_edit_replay : apply, revert;
 
 import mesh;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta;
-import change_bus      : changeBus;
+import vibe3d.mesh.change.change_bus      : changeBus;
 import math            : Vec3;
 import std.format      : format;
 

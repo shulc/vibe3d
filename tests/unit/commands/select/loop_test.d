@@ -6,7 +6,7 @@ module tests.unit.commands.select.loop_test;
 import mesh;
 import math : Vec3;
 import view;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import commands.select.loop : SelectLoop;
 
 // ---------------------------------------------------------------------------

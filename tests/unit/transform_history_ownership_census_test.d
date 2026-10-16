@@ -18,7 +18,7 @@ import mesh_gpu : GpuMesh;
 import pipe_gizmo_host : PipeGizmoHost;
 import registration : buildRegisteredXfrmTransformForOwnershipTest;
 import registry : Registry;
-import seltype : SelMode;
+import vibe3d.editing.contracts.seltype : SelMode;
 import session_owner : Session;
 import operator : VectorStack;
 import std.conv : to;

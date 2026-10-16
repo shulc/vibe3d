@@ -70,7 +70,7 @@ import std.format : format;
 import std.conv   : to;
 
 import mesh     : makeCube;
-import seltype  : SelMode;
+import vibe3d.editing.contracts.seltype  : SelMode;
 import document : Document, Layer, ItemKind, LayerRole;
 import ui.item_rows : ItemRow, RowRole, RowLook, itemRowsInto, lookOf;
 

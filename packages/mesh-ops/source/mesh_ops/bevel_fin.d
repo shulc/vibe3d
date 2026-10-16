@@ -5,7 +5,7 @@ module mesh_ops.bevel_fin;
 import mesh;
 import math;
 import std.array : uninitializedArray;
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 
 // ---------------------------------------------------------------------------
 // The two NON-MANIFOLD fin-bundle spine kernels

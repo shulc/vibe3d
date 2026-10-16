@@ -14,10 +14,10 @@ import document : Document, Layer, ItemXform, sanitizeItemXform,
                   ItemKind, ImageData, ImagePlaneData,
                   kindInfo, kindFromToken, tokenOf;
 import layer_params : LayerPropsProvider;
-import params   : Param, paramToJson, injectParamsInto;
+import vibe3d.editing.params.params   : Param, paramToJson, injectParamsInto;
 import io.image_path : storePathFor, resolveStoredPath, refreshImageMeta;
-import seltype  : SelMode;
-import log : logWarn, logInfo;
+import vibe3d.editing.contracts.seltype  : SelMode;
+import vibe3d.util.log.log : logWarn, logInfo;
 import std.file       : tempDir, mkdirRecurse, rmdirRecurse, readText;
 import std.path       : buildPath, dirName, buildNormalizedPath;
 import io.image_path  : writeTestBmp;

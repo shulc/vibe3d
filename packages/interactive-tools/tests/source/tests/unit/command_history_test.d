@@ -5,17 +5,17 @@ module tests.unit.command_history_test;
 
 import command;
 import command : CmdFlags;
-import argstring : serializeParams, serializeCommandLine;
-import perf_probe : g_perf, Cat;
+import vibe3d.editing.params.argstring : serializeParams, serializeCommandLine;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import mesh    : Mesh;
 import view    : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh     : Mesh;
 import view     : View;
 import std.stdio : writeln;
 import command_history;
 
-static import tool, tool_policy_values, commands.tool.lifecycle, history_lifecycle_contract;
+static import tool, tool_policy_values = vibe3d.editing.contracts.tool_policy_values, commands.tool.lifecycle, history_lifecycle_contract;
 static assert(is(tool.AttrImage == tool_policy_values.AttrImage));
 static assert(is(tool.StepOrigin == tool_policy_values.StepOrigin));
 static assert(is(tool.Rollover == tool_policy_values.Rollover));
@@ -30,7 +30,7 @@ static assert(is(commands.tool.lifecycle.ToolArmLifecyclePolicy ==
 unittest {
     import mesh : Mesh, makeCube;
     import view : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import commands.tool.lifecycle : ToolActivationCommand;
 
     Mesh m = makeCube();
@@ -88,7 +88,7 @@ version (unittest) {
     private final class _RefireGateCmd : Command {
         import mesh     : Mesh;
         import view     : View;
-        import editmode : EditMode;
+        import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh  _mesh;
         private View  _view = new View(0, 0, 1, 1);
         private CmdFlags _flags;
@@ -196,7 +196,7 @@ version (unittest) {
     private final class _SessionRowCmd : Command {
         import mesh     : Mesh;
         import view     : View;
-        import editmode : EditMode;
+        import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh _mesh;
         private View _view = new View(0, 0, 1, 1);
         this(ulong token, bool revertible = true, bool mergeable = false) {
@@ -221,7 +221,7 @@ version (unittest) {
 unittest { // task 9508 (findings_K-RD rule 2): one undo of a session-reverting drop row
     import mesh : Mesh, makeCube;
     import view : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import commands.tool.lifecycle : ToolActivationCommand;
     Mesh m = makeCube();
     View v = new View(0, 0, 800, 600);
@@ -324,7 +324,7 @@ unittest {
     import commands.mesh.session_edit : MeshSessionEdit;
     import mesh : Mesh, makeCube;
     import view : View;
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     import snapshot : MeshSnapshot;
     Mesh m = makeCube();
     View v = new View(0, 0, 800, 600);

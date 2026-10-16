@@ -9,7 +9,7 @@ import nfde;
 import command;
 import mesh;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import document : Document;
 import io.scene_ir : flattenDocument;
 import io.lwo_export : exportLwoDocument;

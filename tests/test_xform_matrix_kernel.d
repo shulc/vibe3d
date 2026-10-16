@@ -25,7 +25,7 @@ import std.stdio;
 import std.math : PI, fabs, sqrt;
 
 import math : Vec3, identityMatrix, translationMatrix, pivotRotationMatrix, pivotScaleMatrixBasis, normalize, lookAt, perspectiveMatrix;
-import spatial : Viewport, AimViewport, aimSpace, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace, ModelSpace;
 import mesh : Mesh;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform.transform : TransformTool;

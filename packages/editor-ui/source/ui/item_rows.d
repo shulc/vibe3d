@@ -565,7 +565,7 @@ immutable AddItemChoice[] kAddItemChoices = [
 
 version (unittest) {
     import mesh     : makeCube;
-    import seltype  : SelMode;
+    import vibe3d.editing.contracts.seltype  : SelMode;
 
     struct ItemFixture {
         Document doc;

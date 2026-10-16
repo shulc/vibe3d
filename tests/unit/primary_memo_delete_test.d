@@ -18,8 +18,8 @@ module tests.unit.primary_memo_delete_test;
 unittest {
     import commands.layer.commands : LayerDelete;
     import document;
-    import editmode : EditMode;
-    import seltype  : SelMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
+    import vibe3d.editing.contracts.seltype  : SelMode;
     import tests.unit.primary_memo_fixture : layeredDocument;
     import view : View;
 

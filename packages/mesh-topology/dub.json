@@ -141,8 +141,8 @@
     }
   },
   "dependencies": {
-    "vibe3d-log": {
-      "path": "../../util/log"
+    "vibe3d:log": {
+      "path": "../.."
     }
   },
   "configurations": [
@@ -152,14 +152,14 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-log": "modeling"
+        "vibe3d:log": "modeling"
       }
     },
     {
       "name": "modeling-noai",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-log": "modeling-noai"
+        "vibe3d:log": "modeling-noai"
       }
     },
     {
@@ -169,7 +169,7 @@
         "WithRender"
       ],
       "subConfigurations": {
-        "vibe3d-log": "with-render"
+        "vibe3d:log": "with-render"
       }
     },
     {
@@ -178,7 +178,7 @@
         "web"
       ],
       "subConfigurations": {
-        "vibe3d-log": "web"
+        "vibe3d:log": "web"
       }
     },
     {
@@ -186,7 +186,7 @@
       "versions": [],
       "targetType": "sourceLibrary",
       "subConfigurations": {
-        "vibe3d-log": "root-tests"
+        "vibe3d:log": "root-tests"
       }
     },
     {
@@ -194,7 +194,7 @@
       "versions": [],
       "targetType": "sourceLibrary",
       "subConfigurations": {
-        "vibe3d-log": "isolated-tests"
+        "vibe3d:log": "isolated-tests"
       }
     }
   ]

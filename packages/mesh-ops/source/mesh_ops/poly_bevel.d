@@ -5,7 +5,7 @@ import mesh;
 import math;
 import std.math  : sqrt;
 import std.array : uninitializedArray;
-import mesh_scope : MeshEditScope;
+import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 
 // ---------------------------------------------------------------------------
 // The POLYGON bevel family — poly.bevel (`bevelFacesByMask`), the inset

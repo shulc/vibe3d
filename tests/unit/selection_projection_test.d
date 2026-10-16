@@ -8,12 +8,12 @@ import core.memory : GC;
 import core.thread : Thread;
 import core.time : MonoTime, msecs, seconds;
 import document : Document, Layer, beginPreparedLayerRead;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import http_server : HttpServer, InProcessHttpTransport;
 import mesh : makeCube;
 import selection_projection : SelectionProjectionInput,
     SelectionProjectionReadModel, encodeSelectionProjection;
-import seltype : SelMode, SelType, SelTypeOrder;
+import vibe3d.editing.contracts.seltype : SelMode, SelType, SelTypeOrder;
 import std.algorithm : canFind;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;

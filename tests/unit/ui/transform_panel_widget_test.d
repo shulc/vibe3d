@@ -24,8 +24,8 @@ import std.math : fabs;
 
 import mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 
 import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;

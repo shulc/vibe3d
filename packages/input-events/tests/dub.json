@@ -144,8 +144,8 @@
       "version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
       "repository": "git+https://github.com/shulc/D-YAML.git"
     },
-    "vibe3d-log": {
-      "path": "../../../util/log"
+    "vibe3d:log": {
+      "path": "../../.."
     }
   },
   "versions": [
@@ -159,7 +159,7 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-log": "isolated-tests"
+        "vibe3d:log": "isolated-tests"
       }
     }
   ],

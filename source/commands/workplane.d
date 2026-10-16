@@ -7,8 +7,8 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh    : Mesh;
 import view;
-import editmode : EditMode;
-import params : Param, wireArgs;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param, wireArgs;
 import math     : Vec3, dot, cross, normalize;
 
 import toolpipe.pipeline : g_pipeCtx;

@@ -1,6 +1,6 @@
 module history_lifecycle_contract;
 
-import tool_policy_values : DropUndoPolicy;
+import vibe3d.editing.contracts.tool_policy_values : DropUndoPolicy;
 
 interface ToolArmLifecyclePolicy {
     string armedId() const;

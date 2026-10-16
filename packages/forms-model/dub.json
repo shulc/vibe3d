@@ -144,8 +144,8 @@
     "vibe3d-command-runtime": {
       "path": "../../packages/command-runtime"
     },
-    "vibe3d-param-schema": {
-      "path": "../../packages/param-schema"
+    "vibe3d:param-schema": {
+      "path": "../.."
     },
     "dyaml": {
       "version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
@@ -161,7 +161,7 @@
       ],
       "subConfigurations": {
         "vibe3d-command-runtime": "modeling",
-        "vibe3d-param-schema": "modeling"
+        "vibe3d:param-schema": "modeling"
       }
     },
     {
@@ -169,7 +169,7 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-command-runtime": "modeling-noai",
-        "vibe3d-param-schema": "modeling-noai"
+        "vibe3d:param-schema": "modeling-noai"
       }
     },
     {
@@ -180,7 +180,7 @@
       ],
       "subConfigurations": {
         "vibe3d-command-runtime": "with-render",
-        "vibe3d-param-schema": "with-render"
+        "vibe3d:param-schema": "with-render"
       }
     },
     {
@@ -190,7 +190,7 @@
       ],
       "subConfigurations": {
         "vibe3d-command-runtime": "web",
-        "vibe3d-param-schema": "web"
+        "vibe3d:param-schema": "web"
       }
     },
     {
@@ -200,7 +200,7 @@
       ],
       "subConfigurations": {
         "vibe3d-command-runtime": "root-tests",
-        "vibe3d-param-schema": "root-tests"
+        "vibe3d:param-schema": "root-tests"
       },
       "targetType": "sourceLibrary"
     },
@@ -209,7 +209,7 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-command-runtime": "isolated-tests",
-        "vibe3d-param-schema": "isolated-tests"
+        "vibe3d:param-schema": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

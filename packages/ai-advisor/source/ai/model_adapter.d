@@ -2,8 +2,8 @@ module ai.model_adapter;
 
 import std.math : isFinite;
 
-import ai.advisor : AiAdvisor;
-import ai.interaction : AiAdvisorDecision, AiCandidate,
+import vibe3d.editing.interaction.data.ai.advisor : AiAdvisor;
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate,
     AiInteractionContext, AiIntent;
 
 enum float aiModelAdapterMinConfidence = 0.75f;

@@ -93,9 +93,9 @@ import eventlog             : EventLogger, setOverrideMouse, noteEventStamp;
 import toolpipe.packets     : SubjectPacket, GesturePacket, GestureTrack;
 import operator             : VectorStack;
 import shortcuts            : canonFromEvent, resolveBinding, BindingKind;
-import seltype              : SelType, currentSelType, selTypeToken,
+import vibe3d.editing.contracts.seltype              : SelType, currentSelType, selTypeToken,
                               viewportPickType;
-import editmode             : EditMode;
+import vibe3d.editing.contracts.editmode             : EditMode;
 import viewport             : Viewport3D, ViewportManager;
 // Task 0781 step 2c -- what the MOTION handler reaches beyond the two
 // keyboard ones: `DragMode` (the cluster's enum, above), `GestureTrack`/
@@ -103,12 +103,12 @@ import viewport             : Viewport3D, ViewportManager;
 // replay-time cursor override), `Viewport`/`Vec3` (the camera-drag math)
 // and `ImVec2` (the lasso trail's element type).
 import math : Vec3, pointInPolygon2D, frontFacingLocal;
-import spatial : Viewport, ModelSpace, projectionSpace, projectToWindow;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectionSpace, projectToWindow;
 import d_imgui.imgui_h      : ImVec2;
 import pie_state            : g_pie, closePie, PieKeyUp, pieKeyUpEffect;
 import pie_geometry         : PIE_SLOTS, pieHoverAt;
 import handles.gizmo_metrics : stepGizmoHandleScale;
-import log                  : logInfo;
+import vibe3d.util.log.log                  : logInfo;
 // Task 0781 step 2d -- what the PRESS/RELEASE pair reaches beyond the three
 // handlers already here. `ImGui` is the focus drop on a viewport click;
 // `View` is `tbSpinCam`'s type; `snapshot`/`selection_edit`/`loop`/`connect`
@@ -128,7 +128,7 @@ import commands.select.connect : SelectConnect;
 import ai.element_candidates : collectElementCandidates,
                                resolveElementCandidateDecision,
                                publishElementCandidates;
-import ai.interaction       : AiInteractionContext, AiInteractionPhase, AiIntent;
+import vibe3d.editing.interaction.data.ai.interaction       : AiInteractionContext, AiInteractionPhase, AiIntent;
 import ai.interaction_log   : makeAiInteractionLogRecord;
 // Task 0781 step 2e -- what the DISPATCHER and the three picker bodies reach
 // beyond the six handlers `processEvent` calls. `imgui_event_gate` is the ONE
@@ -277,7 +277,7 @@ struct InputRouter {
     // reason the drop was silent. `bindArgs` is the one place that decides what
     // an unclaimed argument means.
     bool runCommandWithArgs(string commandId, string argstr) {
-        import argstring    : parseArgstring;
+        import vibe3d.editing.params.argstring    : parseArgstring;
         import command_args : bindArgs;
         auto cmd = app.reg.makeCommand(commandId);
         if (cmd is null) return false;

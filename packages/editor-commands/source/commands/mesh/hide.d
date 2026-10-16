@@ -4,9 +4,9 @@ import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
-import editmode;
-import seltype : SelType, isGeometryType, geometryEditMode;
-import change_bus : MeshEditScope, SelDomain;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype : SelType, isGeometryType, geometryEditMode;
+import vibe3d.mesh.change.change_bus : MeshEditScope, SelDomain;
 
 // doc/hide_geometry_plan.md Stage 2 (§1.2/§5) — mesh.hide / mesh.hideUnselected
 // / mesh.hideInvert / mesh.unhideAll. Modeled on commands/mesh/subpatch_toggle.d.

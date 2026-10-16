@@ -9,10 +9,10 @@ module tools.create.pen_geometry;
 
 import toolpipe.guide : SnapPurpose;
 import math : Vec3, closestPointOnLineToRay, cross, dot, faceNormalFirst3, normalize;
-import spatial : Viewport, eyeVectorAt, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, eyeVectorAt, projectToWindowFull;
 import mesh : Mesh;
 import std.math : abs;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import symmetry : mirrorPosition;
 import toolpipe.guide : SnapGuide;
 import toolpipe.packets : SnapPacket, SnapType, SymmetryPacket;

@@ -4,7 +4,7 @@
 module tests.unit.tools.create.create_common_test;
 
 import math : Vec3, dot, matrixMirrorsWinding, rayPlaneIntersect;
-import spatial : Viewport, isOrtho, screenPointToRay;
+import vibe3d.util.spatial.spatial : Viewport, isOrtho, screenPointToRay;
 import std.math : abs, cos, sin;
 import toolpipe.pipeline       : g_pipeCtx;
 import toolpipe.packets        : SubjectPacket, WorkplanePacket, SnapPacket;
@@ -12,14 +12,14 @@ import toolpipe.stage          : TaskCode;
 import toolpipe.stages.workplane : WorkplaneStage;
 import operator                : VectorStack;
 import mesh : Mesh;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import snap : SnapResult, snapCursor;
 import snap_render : publishLastSnap, clearLastSnap;
 import document : primaryModelSpace;
 import tools.create.create_common;
 
 unittest {
-    import spatial : Viewport;
+    import vibe3d.util.spatial.spatial : Viewport;
 
     // Helper: build a Viewport whose view matrix has given column-major
     // elements. Only elements [2], [6], [10] (the forward-vector components)
@@ -129,7 +129,7 @@ unittest {
 unittest { // perspective is untouched: the ray still leaves the eye
     import std.math : abs;
     import math : perspectiveMatrix;
-import spatial : screenRay;
+import vibe3d.util.spatial.spatial : screenRay;
 
     Viewport vp;
     vp.width = 640; vp.height = 480;

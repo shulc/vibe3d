@@ -2,11 +2,11 @@ module command_history;
 
 import command;
 import command : CmdFlags;
-import argstring : serializeParams, serializeCommandLine;
-import params : Param;
+import vibe3d.editing.params.argstring : serializeParams, serializeCommandLine;
+import vibe3d.editing.params.params : Param;
 // Byte-neutral in the default build (perf_probe.g_perf.count is a no-op
 // inline stub without version(PerfProbe) — task 0200's undoApply counter).
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import core.atomic : atomicOp;
 import record_observer_hub : RecordObserverHub, PreparedRecordObserverImage;
 
@@ -144,7 +144,7 @@ final class DropPressMarkerCommand : Command {
     private string pressName_;
     this(ulong token, string pressName) {
         import view : View;
-        import editmode : EditMode;
+        import vibe3d.editing.contracts.editmode : EditMode;
         View emptyView;
         super(null, emptyView, EditMode.Vertices);
         markSession(token);
@@ -1971,7 +1971,7 @@ final class CommandHistory {
         scope(exit) if (!generationDone) ++_generation;
         import history_lifecycle_contract : ToolArmLifecyclePolicy;
         import commands.mesh.session_edit : MeshSessionEdit;
-        import tool_policy_values : DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
+        import vibe3d.editing.contracts.tool_policy_values : DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
         auto lifecycle = cast(ToolArmLifecyclePolicy) undoStack[$ - 1].cmd;
         const dropping = lifecycle !is null && lifecycle.dropRow();
         const markerUndo = (undoStack[$ - 1].flags & HistoryFlags.PressMarker) != 0;
@@ -2389,7 +2389,7 @@ version (unittest) {
     private final class _EpochTestCmd : Command {
         import mesh    : Mesh;
         import view    : View;
-        import editmode : EditMode;
+        import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh  _mesh;
         private View  _view = new View(0, 0, 1, 1);
         this() { super(&_mesh, _view, EditMode.Vertices); }
@@ -2400,7 +2400,7 @@ version (unittest) {
     }
 
     private final class _ThrowingParamsCmd : Command {
-        import mesh : Mesh; import view : View; import editmode : EditMode;
+        import mesh : Mesh; import view : View; import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh mesh_; private View view_ = new View(0, 0, 1, 1);
         int paramCalls;
         this() { super(&mesh_, view_, EditMode.Vertices); }
@@ -2417,7 +2417,7 @@ version (unittest) {
     private final class _TrackedCmd : Command {
         import mesh     : Mesh;
         import view     : View;
-        import editmode : EditMode;
+        import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh  _mesh;
         private View  _view = new View(0, 0, 1, 1);
         CmdFlags _flags;
@@ -2473,7 +2473,7 @@ version (unittest) {
     private final class _RunMergeableTestCmd : Command, RunMergeable {
         import mesh    : Mesh;
         import view    : View;
-        import editmode : EditMode;
+        import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh _mesh;
         private View _view = new View(0, 0, 1, 1);
         int before;
@@ -2500,7 +2500,7 @@ version (unittest) {
     private final class _PlainTestCmd : Command {
         import mesh    : Mesh;
         import view    : View;
-        import editmode : EditMode;
+        import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh _mesh;
         private View _view = new View(0, 0, 1, 1);
         this() { super(&_mesh, _view, EditMode.Vertices); }
@@ -2511,7 +2511,7 @@ version (unittest) {
     }
 
     private final class _DecliningRunMergeCmd : Command, RunMergeable {
-        import mesh : Mesh; import view : View; import editmode : EditMode;
+        import mesh : Mesh; import view : View; import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh mesh_; private View view_ = new View(0, 0, 1, 1);
         bool throws_;
         this(bool throws = false) { super(&mesh_, view_, EditMode.Vertices); throws_ = throws; }
@@ -2528,7 +2528,7 @@ version (unittest) {
 
 unittest { // P1.0b.3b real detached consolidation matrix.
     import commands.mesh.vertex_edit : MeshVertexEdit;
-    import mesh : Mesh; import view : View; import editmode : EditMode;
+    import mesh : Mesh; import view : View; import vibe3d.editing.contracts.editmode : EditMode;
     import math : Vec3;
 
     // Single and multi MeshVertexEdit use the production merge primitive.
@@ -2962,7 +2962,7 @@ version(unittest) {
         static class StubModel : Command {
             import mesh     : Mesh;
             import view     : View;
-            import editmode : EditMode;
+            import vibe3d.editing.contracts.editmode : EditMode;
             bool reverted = false;
             bool applied  = false;
             private Mesh  _mesh;
@@ -2983,7 +2983,7 @@ version(unittest) {
         static class StubUi : Command {
             import mesh     : Mesh;
             import view     : View;
-            import editmode : EditMode;
+            import vibe3d.editing.contracts.editmode : EditMode;
             bool reverted = false;
             private Mesh  _mesh;
             private View  _view = new View(0, 0, 1, 1);
@@ -3003,7 +3003,7 @@ version(unittest) {
         static class StubLifecycle : Command {
             import mesh     : Mesh;
             import view     : View;
-            import editmode : EditMode;
+            import vibe3d.editing.contracts.editmode : EditMode;
             bool reverted = false;
             bool applied  = false;
             private Mesh  _mesh;

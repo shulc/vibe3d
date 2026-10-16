@@ -3,15 +3,15 @@ module document;
 import mesh    : Mesh, detachedPreparedMesh, canBeginPreparedMesh,
                  installPreparedMeshImage, beginPreparedShadow,
                  drainPreparedShadowDelivery, PreparedShadowScope;
-import change_bus : PreparedMeshSubjectOwner,
+import vibe3d.mesh.change.change_bus : PreparedMeshSubjectOwner,
                     PreparedDeliverySpec;
-import seltype : SelMode;
+import vibe3d.editing.contracts.seltype : SelMode;
 import document_selection : DocumentSelection;
 // Task 0721: down to ONE name. The other six were the matrix helpers
 // `ItemXform.composedMatrix`/`modelSpace` compose from, and they left with it
 // (`item_xform.d`); `ModelSpace` stays because `primaryModelSpaceResolver` at
 // the bottom of this module is typed on it.
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 
 // Modeling-only document/layer model: no GL, render, or UI imports. Selection,
 // foreground/background, activeIndex, and the edit target are all derived from
@@ -29,7 +29,7 @@ import spatial : ModelSpace;
 // module this one re-exported) and then left ENTIRELY (0771): nothing here
 // re-exports it any more, because nothing here holds one. The image payload
 // classes now take the ordinary leaf-module/re-export shape in `image_data.d`.
-public import item_xform : MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
+public import vibe3d.util.spatial.item_xform : MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
                            ItemXform, sanitizeItemXform;
 public import item_kinds : ItemKind, ItemKindInfo, kindInfo, kindFromToken,
                            tokenOf;
@@ -277,7 +277,7 @@ final class Layer {
         birthId = ++g_nextLayerBirthId;
         preparedSubjectOwner_ = new PreparedMeshSubjectOwner(
             this, cast(size_t)&mesh_, birthId);
-        import mesh_dirty : noteMeshBirth;
+        import vibe3d.mesh.change.mesh_dirty : noteMeshBirth;
         noteMeshBirth(cast(size_t)&mesh_, birthId);
     }
 

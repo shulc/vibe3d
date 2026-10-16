@@ -3,9 +3,9 @@ module evaluated_move_weld;
 import mesh : Mesh, MeshEditBatch;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshOpEntry;
-import change_bus : MeshEditScope;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 import math : Vec3, dot, cross;
-import spatial : Viewport, ModelSpace;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
 import toolpipe.packets : SnapType, SymmetryPacket;
 import symmetry : symmetricWeldPairs, writeMovePositions, mirrorPosition, moveMirrorCenter;
 

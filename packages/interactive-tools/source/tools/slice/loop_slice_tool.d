@@ -11,7 +11,7 @@ import tools.common.session_mesh_key : SessionMeshKey;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import spatial : Viewport, screenPointToRay;
+import vibe3d.util.spatial.spatial : Viewport, screenPointToRay;
 // Task 1054 Phase 4: the band-aware ring preview (`selectionRingPreviewMask`)
 // and the fallback-case scrub rail (`bandFirstRail`) both need to run the
 // SAME `bandWalk` law the kernel commits (`insertEdgeLoopsMulti`'s
@@ -20,8 +20,8 @@ import spatial : Viewport, screenPointToRay;
 // import is not transitive, so this tool needs its own.
 import mesh_ops.loop_slice : MAX_LOOP_SLICE_COUNT, bandWalk, BandCell, loopSliceRingEdges,
     collectEdgeRing, insertEdgeLoopsMulti, kLoopSliceEditScope;
-import editmode : EditMode;
-import params : Param, IntEnumEntry, wireTagForValue;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param, IntEnumEntry, wireTagForValue;
 import hover_state : g_hoveredEdge, hoverAtPress;
 import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
@@ -30,11 +30,11 @@ import snapshot : MeshSnapshot;
 import selection_product : addNewLoopEdgesAndVerts;
 import display_sync : refreshDisplay;
 import document : Layer, primaryModelSpace;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind, PreparedLoopSliceParamEffect,
     PreparedLoopSliceParamKind;
 import prepared_loop_slice_activation : PreparedLoopSliceActivationOwner;

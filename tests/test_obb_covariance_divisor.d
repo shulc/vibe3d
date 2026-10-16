@@ -80,7 +80,7 @@ import std.format : format;
 import std.algorithm : max, min;
 
 import math : Vec3, normalize, dot;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 import mesh     : Mesh;
 import document : ItemXform;
 import toolpipe.obbox : ObbFrame, ObbSource, obbFromPoints;

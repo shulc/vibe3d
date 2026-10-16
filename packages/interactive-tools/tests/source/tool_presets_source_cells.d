@@ -12,7 +12,7 @@ import tools.deform.push : PushTool;
 import tools.deform.smooth_shift_tool : SmoothShiftTool;
 import tools.edit.topology_pen.tool : TopologyPenTool;
 import toolpipe.pipeline : g_pipeCtx;
-import params : Param, ParamProvider, injectParamsInto, parseInto;
+import vibe3d.editing.params.params : Param, ParamProvider, injectParamsInto, parseInto;
 import toolpipe.attr_cache : NodeAttrs, recallNodeAttrs;
 import tool_presets;
 

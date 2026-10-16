@@ -73,7 +73,7 @@ public:
     CommandInvocationResult invokeLine(string id, string paramsJson,
                                        CommandInvocationContext context) {
         import command_args : bindArgs;
-        import perf_probe : Cat, g_perf;
+        import vibe3d.util.profiling.perf_probe : Cat, g_perf;
         import std.json : JSONType, parseJSON;
 
         if (context.origin == CommandOrigin.ui && invokeUi is null)

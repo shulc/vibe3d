@@ -315,7 +315,7 @@ unittest // the signatures the clients rely on (compiler pins)
 {
     import operator : VectorStack;
     import math : Vec3;
-import spatial : Viewport;
+import vibe3d.util.spatial.spatial : Viewport;
     import snap : snapPacketOf;
     import toolpipe.packets : SnapPacket, SnapType;
     import toolpipe.guide : SnapGuide, SnapQueryPolicy;
@@ -336,9 +336,9 @@ import spatial : Viewport;
 unittest // a guide registered on the live stage reaches a create tool's query
 {
     import math : Vec3, lookAt, perspectiveMatrix, identityMatrix;
-import spatial : Viewport, projectToWindowFull;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
     import mesh             : Mesh;
-    import editmode         : EditMode;
+    import vibe3d.editing.contracts.editmode         : EditMode;
     import snap             : invalidateSnapGrids;
     import std.math         : PI, round;
     import toolpipe.guide   : SnapGuide, GuideDrawState, SnapQueryPolicy, SnapPurpose, SnapGuideScope;

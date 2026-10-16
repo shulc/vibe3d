@@ -65,7 +65,7 @@
 module tests.unit.gesture_carrier_interface_test;
 import mesh_edit_replay : apply, revert;
 
-import change_bus      : changeBus;
+import vibe3d.mesh.change.change_bus      : changeBus;
 import command         : Command;
 import command_history : CommandHistory;
 import commands.layer.xform_edit    : LayerXformEdit;
@@ -74,7 +74,7 @@ import commands.mesh.morph_edit     : MeshMorphEdit, MorphEntryEdit;
 import commands.mesh.session_edit   : MeshSessionEdit;
 import commands.mesh.vertex_edit    : MeshVertexEdit;
 import commands.mesh.vertex_new     : MeshVertexNew;
-import editmode        : EditMode;
+import vibe3d.editing.contracts.editmode        : EditMode;
 import math            : Vec3;
 import mesh;
 import mesh_edit_delta : MeshEditScope;

@@ -17,8 +17,8 @@
     "vibe3d-mesh": {
       "path": "../../packages/mesh"
     },
-    "vibe3d-mesh-change": {
-      "path": "../../packages/mesh-change"
+    "vibe3d:mesh-change": {
+      "path": "../.."
     },
     "vibe3d-mesh-edit-log": {
       "path": "../../packages/mesh-edit-log"
@@ -29,15 +29,17 @@
     "vibe3d-mesh-snapshot": {
       "path": "../../packages/mesh-snapshot"
     },
-    "vibe3d-edit-contracts": {
-      "path": "../../packages/edit-contracts"
+    "vibe3d:edit-contracts": {
+      "path": "../.."
     },
     "vibe3d-mesh-topology": {
       "path": "../../packages/mesh-topology"
     },
-    "vibe3d:math": {"path": "../.."},
-    "vibe3d-spatial": {
-      "path": "../../packages/spatial"
+    "vibe3d:math": {
+      "path": "../.."
+    },
+    "vibe3d:spatial": {
+      "path": "../.."
     },
     "vibe3d-pipe-contracts": {
       "path": "../../packages/pipe-contracts"
@@ -51,8 +53,8 @@
     "vibe3d-pipe-runtime": {
       "path": "../../packages/pipe-runtime"
     },
-    "vibe3d-param-schema": {
-      "path": "../../packages/param-schema"
+    "vibe3d:param-schema": {
+      "path": "../.."
     },
     "vibe3d-command-runtime": {
       "path": "../../packages/command-runtime"
@@ -70,22 +72,22 @@
       "name": "core",
       "subConfigurations": {
         "vibe3d-document-model": "isolated-tests",
-        "vibe3d-edit-contracts": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d-pipe-runtime": "isolated-tests",
-        "vibe3d-param-schema": "isolated-tests"
+        "vibe3d:param-schema": "isolated-tests"
       }
     }
   ],
   "subConfigurations": {
     "vibe3d-mesh": "isolated-tests",
-    "vibe3d-mesh-change": "isolated-tests",
+    "vibe3d:mesh-change": "isolated-tests",
     "vibe3d-mesh-edit-log": "isolated-tests",
     "vibe3d-mesh-edit-replay": "isolated-tests",
     "vibe3d-mesh-snapshot": "isolated-tests",
-    "vibe3d-edit-contracts": "isolated-tests",
+    "vibe3d:edit-contracts": "isolated-tests",
     "vibe3d-mesh-topology": "isolated-tests",
     "vibe3d:math": "isolated-tests",
-    "vibe3d-spatial": "isolated-tests",
+    "vibe3d:spatial": "isolated-tests",
     "vibe3d-pipe-contracts": "isolated-tests",
     "vibe3d-mesh-preview": "isolated-tests",
     "vibe3d-command-runtime": "isolated-tests",

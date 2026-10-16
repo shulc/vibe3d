@@ -65,9 +65,9 @@ module ui.channel_rows;
 
 import document     : Document, Layer, ItemKind, kindInfo;
 import layer_params : LayerPropsProvider;
-import params       : Param, ParamProvider;
+import vibe3d.editing.params.params       : Param, ParamProvider;
 import forms        : Form, Row, RowKind, WidgetKind, widgetForKind;
-import seltype      : SelType;
+import vibe3d.editing.contracts.seltype      : SelType;
 import ui.retained_item : ConstItem;
 
 import std.algorithm : startsWith;

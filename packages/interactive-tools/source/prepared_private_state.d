@@ -4,7 +4,7 @@ import core.atomic : atomicOp;
 import tools.create.box : BoxTool, PreparedBoxDeactivateImage;
 import tools.create.pen : PenTool, PreparedPenDeactivateImage,
     PreparedPenParamImage;
-import prepared_tool_effect : PreparedPenParamKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedPenParamKind;
 import tools.create.primitive_create_tool : PrimitiveCreateTool, HandledCreateTool,
     PreparedPrimitiveDeactivateImage;
 import tools.create.sphere : SphereTool;
@@ -344,7 +344,7 @@ version(unittest) unittest {
     import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuCreateOwner;
     import prepared_record_context : PreparedRecordContext;
-    import prepared_tool_effect : PreparedActivateKind;
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind;
     import record_observer_hub : RecordObserverHub;
     Mesh mesh = makeCube(); GpuMesh gpu;
     auto sphere = new SphereTool(() => &mesh, &gpu, null, true);
@@ -468,7 +468,7 @@ version(unittest) unittest {
     auto nullGpu = tube.prepareActivate(nullGpuContext, null);
     assert(!nullGpu.accepted && !nullGpuContext.validate());
 
-    import editmode : EditMode;
+    import vibe3d.editing.contracts.editmode : EditMode;
     EditMode reductionMode = EditMode.Polygons;
     auto reduction = new ReductionTool(() => &mesh, &gpu, &reductionMode, null);
     reduction.seedPreparedActivationForTest(false, true);

@@ -3,7 +3,7 @@ module overlay_space;
 import std.math : sqrt, isNaN;
 
 import math : Vec3;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 import document : primaryModelSpace;
 import tools.create.create_common : axisUnit;
 

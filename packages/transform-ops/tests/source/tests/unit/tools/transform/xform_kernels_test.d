@@ -4,7 +4,7 @@
 module tests.unit.tools.transform.xform_kernels_test;
 
 import math : Vec3, dot, cross, rotateAboutPivot;
-import spatial : Viewport, AimViewport;
+import vibe3d.util.spatial.spatial : Viewport, AimViewport;
 import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
                  matMul4, identityMatrix;
 import mesh    : Mesh;
@@ -12,7 +12,7 @@ import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform.cluster_values : ClusterPivots, ClusterAxes;
-import perf_probe : g_perf, Cat;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import tools.transform.xform_kernels;
 // Task 0719 (T5) — the matrix builder the kernel tests below drive the fold
 // with; the rest of what they need is already in this module's import list.
@@ -264,7 +264,7 @@ unittest {
 
 private AimViewport kernelAim() {
     import math : lookAt, perspectiveMatrix;
-import spatial : aimSpace, ModelSpace;
+import vibe3d.util.spatial.spatial : aimSpace, ModelSpace;
     import std.math : PI;
     Viewport vp;
     vp.view   = lookAt(Vec3(0, 0, 5), Vec3(0, 0, 0), Vec3(0, 1, 0));
@@ -613,7 +613,7 @@ unittest { // ArcRotation (register row 83, capture K-F4, task 9446): exactly on
            // w·angle past any wrap; the kernel uses it for global vertices only.
     import std.math : abs, cos, sin, PI;
     import math : pivotScaleMatrix, matrixFromEulerZYX, normalize;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
     import tools.transform.morph_route : MorphRoute;
     bool near(const float[16] a, const float[16] b) {
         foreach (i; 0 .. 16) if (abs(a[i] - b[i]) > 1e-4f) return false;

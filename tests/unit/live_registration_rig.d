@@ -14,7 +14,7 @@ import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.tool.host : ToolHost, ToolHostReadView;
 import document : Layer;
 import edit_session : EditSession;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import editor_app : EditorApp;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
@@ -28,7 +28,7 @@ import pipe_gizmo_host : PipeGizmoHost;
 import remesh.remesh_job : RemeshJob;
 import registry : Registry;
 import registration : buildRegisteredXfrmTransformForOwnershipTest;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import session_owner : Session;
 import std.json : JSONValue;
 import std.traits : FieldNameTuple;

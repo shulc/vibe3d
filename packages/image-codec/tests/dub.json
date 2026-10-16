@@ -139,8 +139,8 @@
     }
   },
   "dependencies": {
-    "vibe3d-log": {
-      "path": "../../../util/log"
+    "vibe3d:log": {
+      "path": "../../.."
     },
     "d-stb-image": {
       "version": "a66f6917718ea128076a2c5660e37f362a785144",
@@ -155,7 +155,7 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-log": "isolated-tests"
+        "vibe3d:log": "isolated-tests"
       }
     }
   ],

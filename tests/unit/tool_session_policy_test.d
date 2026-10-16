@@ -1670,7 +1670,7 @@ unittest { // (4j)
     auto wave15Inputs = wave15InputStart();
     import tests.unit.census_symbols : blankUnittestBodies;
     import tests.unit.production_tool_policies : productionPolicies;
-    import params : Param;
+    import vibe3d.editing.params.params : Param;
     import tool : capturedTopologyModel;
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");

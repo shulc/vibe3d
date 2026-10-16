@@ -13,13 +13,13 @@ import command_history : CommandHistory, RecordMode;
 import commands.mesh.move_vertex : MeshMoveVertex;
 import document : Document;
 import edit_session : EditSession;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import math : Vec3;
 import mesh : Mesh, g_isDocumentMesh, makeCube;
 import registry : Registry;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import session_owner : Session;
 import tests.unit.census_symbols : blankNonCode;
 import tool : Tool;

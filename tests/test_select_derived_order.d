@@ -32,7 +32,7 @@
 import mesh;
 import math;
 import view;
-import editmode;
+import vibe3d.editing.contracts.editmode;
 import commands.select.connect : SelectConnect;
 import commands.select.fill    : SelectFillHoles, SelectFillInsideLoop;
 import commands.select.less    : SelectLess;

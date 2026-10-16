@@ -10,7 +10,7 @@ static import command;
 import commands.scene.load_mesh : MeshLoadRaw;
 import core.exception : AssertError;
 import document : Layer;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : MapKind, Mesh, SubpatchTrace, makeCube, makeOctahedron;
 import mesh_gpu : GpuMesh;
 import morph_target : clearMorphTarget, morphTargetName, setMorphTarget;
@@ -18,7 +18,7 @@ import prefs : Prefs;
 import scene_file_lifecycle_registration : SceneLifecycleDoors,
     registerSceneFileLifecycleCommands;
 import scene_reset_effects : SceneResetEffects;
-import seltype : SelType;
+import vibe3d.editing.contracts.seltype : SelType;
 import shader : LitShader;
 import std.algorithm : count;
 import std.array : join;

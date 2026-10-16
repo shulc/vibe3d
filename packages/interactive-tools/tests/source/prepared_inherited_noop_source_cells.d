@@ -42,7 +42,7 @@ import tools.create.vertex_place : VertexTool;
 import tools.common.command_wrapper : XfrmJitterTool, XfrmQuantizeTool,
                                       XfrmSmoothTool;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedInheritedNoopEffect,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedInheritedNoopEffect,
                               PreparedInheritedNoopKind, OwnedId;
 
 unittest {

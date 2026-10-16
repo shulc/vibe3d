@@ -6,16 +6,16 @@ import command_history : CommandHistory, RecordMode, HistoryFlags;
 import commands.mesh.triple : MeshTriple;
 import commands.mesh.session_edit : MeshSessionEdit;
 import document : Document;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import mesh : Mesh, makeCube, Surface, MapDomain, g_isDocumentMesh;
 import mesh_planes : kFacePlanes, kVertPlanes, kEdgePlanes;
 import snapshot : MeshSnapshot;
 import mesh_topo : edgeKey;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
-import mesh_dirty : noteMeshChange, g_geomEpochs, g_topoEpochs,
+import vibe3d.mesh.change.mesh_dirty : noteMeshChange, g_geomEpochs, g_topoEpochs,
     MeshDirtyEpochs, allWatchers;
-import change_bus : changeBus, ChangeBus;
-import tool_policy_values : AttrImage, StepOrigin, Rollover, rolloverDraws,
+import vibe3d.mesh.change.change_bus : changeBus, ChangeBus;
+import vibe3d.editing.contracts.tool_policy_values : AttrImage, StepOrigin, Rollover, rolloverDraws,
     DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
 import view : View;
 import std.stdio : writeln;

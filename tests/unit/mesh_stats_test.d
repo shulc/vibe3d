@@ -30,7 +30,7 @@ import mesh;
 import mesh_stats;
 import math : Vec3;
 import view : View;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import command : Command;
 import commands.select.by_stat : SelectByStatVertex, SelectByStatEdge,
                                  SelectByStatPolygon;

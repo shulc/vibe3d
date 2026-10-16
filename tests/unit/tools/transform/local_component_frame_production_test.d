@@ -6,18 +6,18 @@ import std.json : JSONValue, JSONType, parseJSON;
 import std.math : abs;
 import std.format : format;
 import math : Vec3, frameMatrix, frameMatrixInverse;
-import spatial : ModelSpace;
+import vibe3d.util.spatial.spatial : ModelSpace;
 import mesh : Mesh;
 import document : primaryModelSpaceResolver, ItemXform;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import operator : VectorStack;
 import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
 import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
 import tools.transform.xfrm_transform : XfrmTransformTool;
-import params : injectParamsInto;
+import vibe3d.editing.params.params : injectParamsInto;
 
 private double number(JSONValue j) { return j.type == JSONType.integer ? cast(double)j.integer : j.floating; }
 private Vec3 vector(JSONValue j) { return Vec3(cast(float)number(j[0]), cast(float)number(j[1]), cast(float)number(j[2])); }

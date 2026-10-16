@@ -2,8 +2,8 @@ module tools.transform.xfrm_transform;
 import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
 import display_state : DrawPlan;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_tool_effect : PreparedXfrmActivationEffect,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedXfrmActivationEffect,
     PreparedXfrmUpdateEffect, PreparedXfrmUpdateKind;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import prepared_xfrm_refire_state : PreparedXfrmRefireStateImage;
@@ -51,7 +51,7 @@ import mesh_gpu : GpuUploadOwner;
 // falloff snapshot, in the documented xfrm.transform order
 // (`M = T·S·R`).
 
-import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
 private struct XfrmPreparedState {
     bool apply; Vec3 scale; bool consumable;
     @disable this(this);
@@ -98,19 +98,19 @@ import std.json : JSONValue;
 import std.traits : FieldNameTuple, FieldTypeTuple;
 import operator : VectorStack;
 
-import ai.interaction : AiInteractionPhase;
+import vibe3d.editing.interaction.data.ai.interaction : AiInteractionPhase;
 import math : Vec3, translationMatrix, pivotRotationMatrix, pivotScaleMatrixBasis, dot, identityMatrix, matMul4, wrapAboutPivot, wrapAboutPivotStable, eulerZYXFromMatrix, frameMatrix, frameMatrixInverse, normalize;
-import spatial : Pin, Viewport, ModelSpace;
-import editmode : EditMode;
-import seltype : SelType;
+import vibe3d.util.spatial.spatial : Pin, Viewport, ModelSpace;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
 import mesh;
-import mesh_dirty : MeshDirtyKey, g_settledGeomEpochs;
+import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, g_settledGeomEpochs;
 import mesh_gpu : GpuMesh;
 import mesh_ops.connected_mask : connectedComponentMask, edgeCentroid;
 import handler  : ToolHandles, HitRule;
 import eventlog : queryMouse;
 import shader : Shader;
-import params : Param;
+import vibe3d.editing.params.params : Param;
 import tools.transform.transform : TransformTool, VertexEditFactory,
     MorphEditFactory, PreparedTransformActivationImage,
     PreparedTransformEditCloseImage;
@@ -152,12 +152,12 @@ import tools.transform.xform_kernels :
 import command_history : CommandHistory, PreparedHistoryKind, RunCloseMode, RecordedRunBoundaryMode, RunCloseScope;
 import command : Command;
 import commands.mesh.vertex_edit : MeshVertexEdit;
-import change_bus : MeshEditScope;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
 // Task 0614 Phase 3/4 — the item-mode apply path + its undo command.
 import document : Layer, ItemXform;
 import tools.transform.item_xform_kernels : applyGestureToItems;
 import commands.layer.xform_edit : LayerXformEdit, LayerXformTarget;
-import perf_probe : g_perf, Cat, g_frames, Phase;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_frames, Phase;
 import toolpipe.pipeline : g_pipeCtx, Pipeline;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage, FalloffSetSnapshot,
@@ -7138,7 +7138,7 @@ private:
         const bool byVersion =
             (mesh.mutationVersion == lastAppliedGestureMutationVersion);
         if (history !is null) {
-            import change_bus : regradeCensusChecks, regradeCensusArmedChecks,
+            import vibe3d.mesh.change.change_bus : regradeCensusChecks, regradeCensusArmedChecks,
                                 regradeCensusDisagreements;
             const bool byEpoch = (history.undoEpoch() == armedUndoEpoch);
             ++regradeCensusChecks;
@@ -7775,7 +7775,7 @@ unittest { // A detached Xfrm close carries the same ToolSession token.
 }
 
 unittest {
-    import change_bus : changeBus;
+    import vibe3d.mesh.change.change_bus : changeBus;
 
     Mesh owned;
     EditMode mode = EditMode.Vertices;

@@ -82,7 +82,7 @@ public:
     }
 
     void replayHistoryEntry(size_t index) {
-        import argstring : parseArgstring;
+        import vibe3d.editing.params.argstring : parseArgstring;
 
         string line = history.undoEntryCommandLine(index);
         if (line.length == 0) return;

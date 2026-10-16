@@ -11,18 +11,18 @@ import tools.topology_step;
 import mesh;
 import mesh_gpu : GpuMesh;
 import math;
-import spatial : ModelSpace, Viewport, screenPointToRay;
-import params : Param, IntEnumEntry;
+import vibe3d.util.spatial.spatial : ModelSpace, Viewport, screenPointToRay;
+import vibe3d.editing.params.params : Param, IntEnumEntry;
 import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import shader : Shader, LitShader;
 import handler : MoveHandler, ToolHandles, BoxHandler, HandlePart, firstHitPart, gizmoSize, drawWorldSegments;
 import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
-import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
     PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
