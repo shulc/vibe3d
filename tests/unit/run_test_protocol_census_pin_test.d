@@ -100,6 +100,26 @@ import tempfile
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "tools/dspans"))
 import census_contracts
+# Task 20263050: exercise the real fixture builder without running the full
+# compiler-backed scanner again inside the module gate.
+import ast
+import json
+import shutil
+sys.path.insert(0, str(root / "tools"))
+from prepared_writer_census import (scan as scan_writer_graph,
+    canonical as canonical_writer_graph, module_path,
+    REGISTRATION_SOURCE_NAMES as writer_registration_source_names)
+from census_contracts import read_source_text, logical_source_paths
+ROOT = root
+WRITER_MANIFEST = json.loads((root / "tools/prepared_writer_manifest.json").read_text())
+scanner = ast.parse((root / "tools/check_prepared_protocol.py").read_text())
+fixture_functions = {"fail", "writer_keys", "bypass_keys", "validate_writer_graph",
+                     "mutation_rejected"}
+exec(compile(ast.Module(body=[node for node in scanner.body
+    if isinstance(node, ast.FunctionDef) and node.name in fixture_functions],
+    type_ignores=[]), "check_prepared_protocol.py", "exec"))
+if mutation_rejected(lambda fixture: None, ""):
+    raise SystemExit("prepared-protocol complete writer mutation fixture changed its census")
 failures = census_contracts.production_lexer_census(root)
 if failures:
     raise SystemExit("prepared-protocol production lexer census: " + "; ".join(failures))

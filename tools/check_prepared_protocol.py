@@ -1320,6 +1320,12 @@ for row in converted_rows:
 def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=None):
     with tempfile.TemporaryDirectory(prefix="vibe3d-writer-mut-") as td:
         mutant_root = Path(td)
+        # Task 20263050: module identity also reads math's selected recipe.
+        for relative in ("util/math/dub.json", "libraries/util/math/dub.json"):
+            if (ROOT / relative).is_file():
+                destination = mutant_root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / relative, destination)
         for path in logical_source_paths(ROOT / "source/tools", "*.d"):
             destination = mutant_root / path.relative_to(ROOT)
             destination.parent.mkdir(parents=True, exist_ok=True)
