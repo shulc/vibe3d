@@ -4,7 +4,7 @@ module tests.unit.root_test_link_ownership_test;
 // archives and isolated consumers retain their modeling settings.
 unittest {
 
-import tests.unit.census_symbols : readText = wave15ReadText;
+import tests.unit.census_symbols : readText = wave15ReadText, wave19MathMoved;
     import std.json : JSONValue, parseJSON;
     import std.path : buildPath, dirName;
     import std.algorithm : sort, canFind;
@@ -31,22 +31,33 @@ import tests.unit.census_symbols : readText = wave15ReadText;
         foreach (path; paths.array) if (path.str == wanted) ++n;
         return n;
     }
+    const mathMoved = wave19MathMoved(root);
+    string packageId(string owner) { return owner == "math" && mathMoved ? "vibe3d:math" : "vibe3d-" ~ owner; }
     auto desktop = parseJSON(readText(buildPath(root, "dub.json")));
     auto tests = config(desktop, "tests");
     string[] selected, expected;
     foreach (name, value; tests["subConfigurations"].object)
-        if (name.length >= 7 && name[0 .. 7] == "vibe3d-") selected ~= name;
-    foreach (owner; owners) expected ~= "vibe3d-" ~ owner;
+        if ((name.length >= 7 && name[0 .. 7] == "vibe3d-") || name == "vibe3d:math") selected ~= name;
+    foreach (owner; owners) expected ~= packageId(owner);
     selected.sort(); expected.sort();
     foreach (owner; owners)
-        assert(selected.canFind("vibe3d-" ~ owner),
+        assert(selected.canFind(packageId(owner)),
                "root test ownership named selector " ~ owner);
     assert(selected.length == 55 && selected == expected,
            "root test ownership frozen fifty-five selectors");
     foreach (owner; owners) {
-        const packageName = "vibe3d-" ~ owner;
-        const packagePath = (utilOwners.canFind(owner) ? "util/" : "packages/") ~ owner;
-        assert(desktop["dependencies"][packageName]["path"].str == packagePath,
+        const packageName = packageId(owner);
+        const packagePath = owner == "math" && mathMoved ? "libraries/util/math"
+            : (utilOwners.canFind(owner) ? "util/" : "packages/") ~ owner;
+        if (owner == "math" && mathMoved) {
+            size_t registrations;
+            foreach (path; desktop["subPackages"].array)
+                if (path.str == packagePath) ++registrations;
+            assert(registrations == 1 && !("vibe3d-math" in desktop["dependencies"].object),
+                "root test ownership single math subpackage registration");
+            assert(packageName in desktop["dependencies"].object,
+                "root test ownership selected math dependency");
+        } else assert(desktop["dependencies"][packageName]["path"].str == packagePath,
                "root test ownership dependency path " ~ owner);
         assert(tests["subConfigurations"][packageName].str == "root-tests",
                "root test ownership selector " ~ owner);
@@ -58,8 +69,11 @@ import tests.unit.census_symbols : readText = wave15ReadText;
             assert(occurrences(tests[grant], packagePath ~ "/tests/source") == (noCarriers.canFind(owner) ? 0 : 1),
                    "root test ownership explicit carrier grant " ~ owner ~ " " ~ grant);
         auto raw = parseJSON(readText(buildPath(root, packagePath, "dub.json")));
-        assert(raw["name"].str == packageName && raw["targetType"].str == "staticLibrary",
+        assert(raw["name"].str == (owner == "math" && mathMoved ? "math" : packageName) && raw["targetType"].str == "staticLibrary",
                "root test ownership preserves production archive " ~ owner);
+        if (owner == "math" && mathMoved)
+            assert(raw["targetName"].str == "vibe3d-math",
+                "root test ownership math ordinary archive name");
         assert(raw["sourcePaths"].array.length == 1 && raw["sourcePaths"][0].str == "source",
                "root test ownership production source root " ~ owner);
         auto modeling = config(raw, "modeling");
@@ -121,7 +135,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
         source["name"] = JSONValue("modeling");
         if (auto subs = "subConfigurations" in source.object) {
             foreach (name, ref value; subs.object) {
-                if (name.length >= 7 && name[0 .. 7] == "vibe3d-") {
+                if ((name.length >= 7 && name[0 .. 7] == "vibe3d-") || name == "vibe3d:math") {
                     assert(value.str == "root-tests", "root test ownership lower selector " ~ owner);
                     value = modeling["subConfigurations"][name];
                 }

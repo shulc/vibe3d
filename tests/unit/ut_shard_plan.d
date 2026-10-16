@@ -655,8 +655,9 @@ unittest // census: every unittest module that listens on a chosen port is pinne
         "packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d",
 ];
     string[] rawInputs;
+    import tests.unit.census_symbols : wave19MathPhysicalPath;
     foreach (root; censusRoots)
-        foreach (e; dirEntries(buildPath(repoRoot, root), SpanMode.depth)
+        foreach (e; dirEntries(wave19MathPhysicalPath(buildPath(repoRoot, root)), SpanMode.depth)
                     .filter!(e => e.isFile && e.name.extension == ".d"))
         {
             if (e.name == __FILE_FULL_PATH__) continue;

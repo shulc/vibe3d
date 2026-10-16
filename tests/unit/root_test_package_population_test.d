@@ -34,10 +34,18 @@ unittest {
     import std.algorithm : sort, canFind;
     import std.array : array;
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+    import tests.unit.census_symbols : wave19MathMoved;
+    const mathMoved = wave19MathMoved(root);
     string[] expected;
     foreach (line; readText(buildPath(root, "tests/unit/root_test_package_module_roster.txt")).splitLines)
         if (line.strip.length && line.strip[0] != '#') expected ~= line.strip;
     assert(expected.length == 480, "root package ModuleInfo frozen population 480");
+    foreach (moduleName; ["math", "math_geometry", "math_matrix", "math_quaternion", "math_vector"]) {
+        const selected = mathMoved ? "vibe3d.util.math." ~ moduleName : moduleName;
+        const rejected = mathMoved ? moduleName : "vibe3d.util.math." ~ moduleName;
+        assert(expected.canFind(selected) && !expected.canFind(rejected),
+            "root package ModuleInfo selected math identity: " ~ moduleName);
+    }
     auto ordered = expected.dup;
     ordered.sort();
     assert(ordered == expected, "root package ModuleInfo manifest sorted");

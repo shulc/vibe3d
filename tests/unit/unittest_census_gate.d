@@ -521,14 +521,16 @@ struct FileCensus
 FileCensus[] scanWorkingTree(string root)
 {
     auto acc = appender!(FileCensus[]);
+    import tests.unit.census_symbols : wave19MathPhysicalPath, wave19MathLogicalPath;
     foreach (sub; censusRoots)
     {
-        const dir = buildPath(root, sub);
+        const dir = exists(buildPath(root, "dub.json"))
+            ? wave19MathPhysicalPath(buildPath(root, sub), root) : buildPath(root, sub);
         if (!exists(dir) || !isDir(dir)) continue;
         foreach (entry; dirEntries(dir, SpanMode.depth))
         {
             if (!entry.isFile || !entry.name.endsWith(".d")) continue;
-            auto rel = relativePath(entry.name, root);
+            auto rel = relativePath(wave19MathLogicalPath(entry.name, root), root);
             version (Windows) { import std.array : replace; rel = rel.replace("\\", "/"); }
             // Keep the key identical to git's, so the per-file report can pair
             // the two sides even when the tool is pointed at `.`.
@@ -812,7 +814,7 @@ private struct TreeEntry { string oid; string path; }
 /// its names that revision used.
 private TreeEntry[] revEntries(string root, string rev)
 {
-    auto ls = git(root, ["ls-tree", "-r", "-z", rev, "--"] ~ censusRoots.dup);
+    auto ls = git(root, ["ls-tree", "-r", "-z", rev, "--"] ~ censusRoots.dup ~ ["libraries/util/math/source", "libraries/util/math/tests/source"]);
     if (ls.status != 0) return null;
 
     auto acc = appender!(TreeEntry[]);
@@ -833,7 +835,10 @@ private TreeEntry[] revEntries(string root, string rev)
         auto oid = head3[sp + 1 .. $];
 
         if (isLedgerPath(path) || path.endsWith(".d"))
-            acc.put(TreeEntry(oid, path));
+        {
+            import tests.unit.census_symbols : wave19MathLogicalPath;
+            acc.put(TreeEntry(oid, relativePath(wave19MathLogicalPath(buildPath(root, path), root), root)));
+        }
     }
     return acc.data;
 }

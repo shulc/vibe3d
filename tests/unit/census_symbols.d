@@ -2709,6 +2709,96 @@ private immutable Wave15FragmentPin[] wave15FragmentPins = [
 
 ];
 
+// Task 20263011: only the approved math pilot coordinates are admitted here.
+// Historical move/inverse rows below keep their original logical inputs.
+public enum wave19MathOldRoot = "util/math";
+public enum wave19MathNewRoot = "libraries/util/math";
+private enum wave19MathModules = ["math", "math_geometry", "math_matrix",
+    "math_quaternion", "math_vector", "tests.unit.math_test"];
+private string mathRelative(string name, bool moved) {
+    const carrier = name == "tests.unit.math_test";
+    const suffix = carrier ? "tests/source/" : "source/";
+    return suffix ~ (moved ? "vibe3d/util/math/" : "")
+        ~ name.replace(".", "/") ~ ".d";
+}
+
+// This is a selected owner state, never a per-file fallback to an old shim.
+public bool wave19MathMoved(string root) {
+    import std.file : exists, isFile, readText;
+    import std.json : parseJSON;
+    const oldRecipe = buildPath(root, wave19MathOldRoot, "dub.json");
+    const newRecipe = buildPath(root, wave19MathNewRoot, "dub.json");
+    const oldPresent = exists(oldRecipe), newPresent = exists(newRecipe);
+    assert(oldPresent != newPresent, "Wave19 math requires exactly one owner recipe");
+    const moved = newPresent;
+    const selected = moved ? wave19MathNewRoot : wave19MathOldRoot;
+    const rejected = moved ? wave19MathOldRoot : wave19MathNewRoot;
+    assert(parseJSON(readText(moved ? newRecipe : oldRecipe))["name"].str
+        == (moved ? "math" : "vibe3d-math"), "Wave19 math selected recipe identity");
+    foreach (name; wave19MathModules) {
+        const physical = buildPath(root, selected, mathRelative(name, moved));
+        assert(exists(physical) && isFile(physical), "Wave19 math missing real source: " ~ physical);
+        assert(!exists(buildPath(root, rejected, mathRelative(name, !moved))),
+            "Wave19 math duplicate real source: " ~ name);
+        const expected = moved ? "vibe3d.util.math." ~ name : name;
+        const declarations = matchAll(blankNonCode(readText(physical)),
+            regex(`\bmodule\s+([A-Za-z_][A-Za-z_0-9.]*)\s*;`));
+        size_t count;
+        foreach (declaration; declarations) {
+            assert(declaration[1] == expected, "Wave19 math real module identity: " ~ name);
+            ++count;
+        }
+        assert(count == 1, "Wave19 math requires one real module declaration: " ~ name);
+    }
+    return moved;
+}
+
+// Explicit coordinate translation for direct std.file readers. Only the two
+// original math scan roots and the six frozen real file rows are translatable.
+public string wave19MathPhysicalPath(string path, string root = repoRoot) {
+    const normal = wave15Normalize(path), base = wave15Normalize(root);
+    foreach (suffix; ["", "/source", "/tests", "/tests/source"])
+        if (normal == buildPath(base, wave19MathOldRoot) ~ suffix)
+            return buildPath(base, wave19MathMoved(root) ? wave19MathNewRoot : wave19MathOldRoot) ~ suffix;
+    foreach (name; wave19MathModules)
+        if (normal == buildPath(base, wave19MathOldRoot, mathRelative(name, false)))
+            return buildPath(base, wave19MathMoved(root) ? wave19MathNewRoot : wave19MathOldRoot,
+                mathRelative(name, wave19MathMoved(root)));
+    return normal;
+}
+
+public string wave19MathLogicalPath(string path, string root = repoRoot) {
+    const normal = wave15Normalize(path), base = wave15Normalize(root);
+    foreach (name; wave19MathModules)
+        if (normal == buildPath(base, wave19MathNewRoot, mathRelative(name, true)))
+            return buildPath(base, wave19MathOldRoot, mathRelative(name, false));
+    return normal;
+}
+
+// Only module/import token spans may be inverted. Strings, comments and body
+// expressions retain their actual bytes for the original census assertions.
+private string wave19MathLogicalText(string source) {
+    const code = blankNonCode(source);
+    struct Edit { size_t begin, end; string text; }
+    Edit[] edits;
+    foreach (statement; matchAll(code, regex(`\b(?:module|import)\b[^;{}]*;`))) {
+        foreach (token; matchAll(statement[0], regex(`[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*`))) {
+            foreach (name; wave19MathModules) {
+                if (token[0] != "vibe3d.util.math." ~ name) continue;
+                const offset = statement.pre.length + token.pre.length;
+                edits ~= Edit(offset, offset + token[0].length, name);
+            }
+        }
+    }
+    string text;
+    size_t offset;
+    foreach (edit; edits) {
+        text ~= source[offset .. edit.begin] ~ edit.text;
+        offset = edit.end;
+    }
+    return text ~ source[offset .. $];
+}
+
 private bool wave15MoveRowIntact(const Wave15Move pin) {
     size_t rows;
     foreach (move; wave15Moves)
@@ -2754,7 +2844,7 @@ private bool wave15Match(string path, string relative, out string root) {
 }
 
 public string wave15LogicalPath(string path) {
-    const normal = wave15Normalize(path);
+    const normal = wave19MathLogicalPath(path);
     foreach (move; wave15Moves) {
         string root;
         if (wave15Match(normal, move.newPath, root))
@@ -2765,7 +2855,7 @@ public string wave15LogicalPath(string path) {
 
 public string wave15PhysicalPath(string path) {
     import std.file : exists;
-    const normal = wave15Normalize(path);
+    const normal = wave19MathPhysicalPath(wave19MathLogicalPath(path));
     foreach (move; wave15Moves) {
         string root;
         if (wave15Match(normal, move.oldPath, root)) {
@@ -2779,7 +2869,7 @@ public string wave15PhysicalPath(string path) {
 public bool wave15Exists(string path) {
     import std.file : exists;
     import std.algorithm : startsWith;
-    const normal = wave15Normalize(path);
+    const normal = wave19MathPhysicalPath(wave19MathLogicalPath(path));
     if (exists(normal)) return true;
     foreach (move; wave15Moves) {
         string root;
@@ -3158,7 +3248,7 @@ public string wave15ReadText(string path) {
         }
         return text;
     }
-    auto text = readText(normal);
+    auto text = wave19MathLogicalText(readText(wave19MathPhysicalPath(normal)));
     foreach (origin; ["source/app.d", "source/editor_app.d"]) {
         string root;
         if (wave15Match(normal, origin, root)) text = wave15RestoreSource(origin, text, root);
@@ -3188,6 +3278,19 @@ public Wave15Entry[] wave15DirEntries(string directory, string pattern,
     import std.algorithm : startsWith, canFind;
     const normal = wave15Normalize(directory);
     Wave15Entry[] result;
+    const physicalDirectory = wave19MathPhysicalPath(directory);
+    if (physicalDirectory != normal) {
+        foreach (name; wave19MathModules) {
+            const logical = buildPath(repoRoot, wave19MathOldRoot, mathRelative(name, false));
+            if (!logical.startsWith(normal ~ "/")) continue;
+            const relative = relativePath(logical, normal);
+            if (span == SpanMode.shallow && relative.canFind("/")) continue;
+            if (!globMatch(baseName(logical), pattern)) continue;
+            const physical = wave19MathPhysicalPath(logical);
+            result ~= Wave15Entry(buildPath(directory, relative), true, false, getSize(physical));
+        }
+        return result;
+    }
     foreach (pin; wave15MovePins) {
         string root;
         size_t prefix = pin.oldPath.length;
@@ -3276,4 +3379,86 @@ unittest { // approved stat header: whole physical input and whole original body
     assert(wave15ReadText(buildPath(root, "source/imgui_flag_abi.c")) == native
             && wave15InputsIntact(first),
         "ImportC exact compiled-root whole-file owner control");
+}
+
+unittest { // Wave19 math: real selected inputs, exact coordinates and span-only inversion.
+    import std.file : mkdirRecurse, write, remove, rmdirRecurse, tempDir;
+    import std.process : thisProcessID;
+    static import std.file;
+    const scratch = buildPath(tempDir(), "wave19-math-reader-" ~ thisProcessID.to!string);
+    mkdirRecurse(scratch);
+    scope(exit) rmdirRecurse(scratch);
+    void put(string relative, string bytes) {
+        const path = buildPath(scratch, relative);
+        mkdirRecurse(dirName(path));
+        write(path, bytes);
+    }
+    foreach (name; wave19MathModules) {
+        const old = mathRelative(name, false);
+        put(buildPath(wave19MathOldRoot, old),
+            "module " ~ name ~ ";\n");
+    }
+    put("util/math/dub.json", `{"name":"vibe3d-math"}`);
+    assert(!wave19MathMoved(scratch), "Wave19 math old owner positive");
+    const logical = buildPath(scratch, "util/math/source/math_vector.d");
+    assert(wave19MathPhysicalPath(logical, scratch) == logical,
+        "Wave19 math old physical positive");
+    foreach (name; wave19MathModules) {
+        remove(buildPath(scratch, wave19MathOldRoot, mathRelative(name, false)));
+        put(buildPath(wave19MathNewRoot, mathRelative(name, true)),
+            "module vibe3d.util.math." ~ name ~ ";\n");
+    }
+    remove(buildPath(scratch, "util/math/dub.json"));
+    put("libraries/util/math/dub.json", `{"name":"math"}`);
+    assert(wave19MathMoved(scratch), "Wave19 math moved owner positive");
+    const physical = buildPath(scratch,
+        "libraries/util/math/source/vibe3d/util/math/math_vector.d");
+    assert(wave19MathPhysicalPath(logical, scratch) == physical
+        && wave19MathLogicalPath(physical, scratch) == logical,
+        "Wave19 math exact forward and inverse coordinates");
+    assert(wave19MathPhysicalPath(buildPath(scratch, "util/math/source"), scratch)
+        == buildPath(scratch, "libraries/util/math/source"),
+        "Wave19 math direct scan root translation");
+    const foreign = buildPath(scratch, "foreign/util/math/source/math_vector.d");
+    assert(wave19MathPhysicalPath(foreign, scratch) == foreign,
+        "Wave19 math foreign coordinate remains foreign");
+    put("libraries/util/math/source/math_vector.d", "module math_vector; public import vibe3d.util.math.math_vector;");
+    remove(physical);
+    assertThrown!AssertError(wave19MathMoved(scratch)); // shim cannot replace missing real file
+    put("libraries/util/math/source/vibe3d/util/math/math_vector.d", "module wrong;");
+    assertThrown!AssertError(wave19MathMoved(scratch));
+    put("libraries/util/math/source/vibe3d/util/math/math_vector.d", "module vibe3d.util.math.math_vector;");
+    put("util/math/source/math_vector.d", "module math_vector;");
+    assertThrown!AssertError(wave19MathMoved(scratch));
+    remove(logical);
+    put("util/math/dub.json", `{"name":"vibe3d-math"}`);
+    assertThrown!AssertError(wave19MathMoved(scratch));
+    remove(buildPath(scratch, "util/math/dub.json"));
+    put("libraries/util/math/dub.json", `{"name":"vibe3d-math"}`);
+    assertThrown!AssertError(wave19MathMoved(scratch));
+    put("libraries/util/math/dub.json", `{"name":"math"}`);
+    assert(wave19MathMoved(scratch), "Wave19 math restored positive");
+
+    enum renamed = "module vibe3d.util.math.math;\n"
+        ~ "public import V = vibe3d.util.math.math_vector, vibe3d.util.math.math_matrix : Vec3;\n"
+        ~ "// vibe3d.util.math.math_vector\n"
+        ~ "enum text = \"vibe3d.util.math.math_matrix\";\n"
+        ~ "void body() { vibe3d.util.math.math_vector.Vec3 v; }\n";
+    enum original = "module math;\n"
+        ~ "public import V = math_vector, math_matrix : Vec3;\n"
+        ~ "// vibe3d.util.math.math_vector\n"
+        ~ "enum text = \"vibe3d.util.math.math_matrix\";\n"
+        ~ "void body() { vibe3d.util.math.math_vector.Vec3 v; }\n";
+    assert(wave19MathLogicalText(renamed) == original,
+        "Wave19 math inversion limited to declaration and import spans");
+    assert(wave19MathLogicalText(renamed.replace("Vec3 v", "Vec3 changed")) != original,
+        "Wave19 math inversion preserves changed body bytes");
+    foreach (name; wave19MathModules) {
+        const path = buildPath(repoRoot, wave19MathOldRoot, mathRelative(name, false));
+        const raw = std.file.readText(wave15PhysicalPath(path));
+        assert(wave15ReadText(path) == wave19MathLogicalText(raw),
+            "Wave19 math actual selected source reader positive: " ~ name);
+    }
+    assert(wave15DirEntries(buildPath(repoRoot, "util/math/source"), "*.d", SpanMode.depth).length == 5,
+        "Wave19 math original logical source population five");
 }

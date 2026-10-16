@@ -1339,6 +1339,14 @@ bool dubBuild() {
 // and the mismatch is caught by the binary's own mtime being newer than it.
 enum string kBuildStampPath = ".vibe3d.buildstamp";
 
+string mathSourceRoot() {
+    import std.exception : enforce;
+    const oldPresent = exists("util/math/dub.json");
+    const newPresent = exists("libraries/util/math/dub.json");
+    enforce(oldPresent != newPresent, "sourceDigest requires one math recipe root");
+    return newPresent ? "libraries/util/math" : "util/math";
+}
+
 string sourceDigest() {
     import std.digest.crc : CRC64ECMA;
     import std.file : read;
@@ -1378,6 +1386,8 @@ string sourceDigest() {
         "tools/ai3d_worker/vibe3d_ai3d_worker/protocol.py",
         "tools/ai3d_worker/vibe3d_ai3d_worker/server.py",
     ];
+    const mathRoot = mathSourceRoot();
+    files ~= [mathRoot ~ "/dub.json", mathRoot ~ "/tests/dub.json"];
     // `dirEntries` is lazy and stats each entry as it goes, so an editor's
     // temp file (or a `.d` deleted by a concurrent branch switch) mid-walk
     // throws FileException — out of a helper whose whole job is answering
@@ -1387,7 +1397,7 @@ string sourceDigest() {
     try {
         foreach (pattern; ["*.d", "*.c"])
             foreach (scanSourceRoot; ["packages/camera-model/source", "packages/camera-model/tests/source", "packages/document-channels/source", "packages/document-channels/tests/source", "packages/image-codec/source", "packages/image-codec/tests/source", "packages/document-io/source", "packages/document-io/tests/source", "source", "packages/command-runtime/source", "packages/application-core/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "util/json-number/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"])
-            foreach (e; dirEntries(scanSourceRoot, pattern, SpanMode.depth))
+            foreach (e; dirEntries(scanSourceRoot == "util/math/source" ? mathRoot ~ "/source" : scanSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
         foreach (pattern; ["*.d", "*.c"])
             foreach (newTestRoot; ["packages/interactive-tools/tests/source", "packages/viewport-host/tests/source", "packages/interaction-data/tests/source", "packages/ai-advisor/tests/source", "packages/ai3d-runtime/tests/source", "packages/remesh-runtime/tests/source", "packages/document-actions/tests/source"])
