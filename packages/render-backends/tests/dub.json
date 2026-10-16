@@ -145,9 +145,7 @@
     "vibe3d-log": {
       "path": "../../../util/log"
     },
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    },
+    "vibe3d:math": {"path": "../../.."},
     "vibe3d-render-model": {
       "path": "../../../packages/render-model"
     },
@@ -177,7 +175,7 @@
       "subConfigurations": {
         "vibe3d-input-events": "isolated-tests",
         "vibe3d-log": "isolated-tests",
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-render-model": "isolated-tests"
       }
     }

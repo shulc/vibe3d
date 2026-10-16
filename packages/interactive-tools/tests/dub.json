@@ -428,9 +428,7 @@
         "vibe3d-log": {
             "path": "../../../util/log"
         },
-        "vibe3d-math": {
-            "path": "../../../util/math"
-        },
+        "vibe3d:math": {"path": "../../.."},
         "vibe3d-mesh": {
             "path": "../../mesh"
         },
@@ -519,7 +517,7 @@
                 "vibe3d-interaction-data": "isolated-tests",
                 "vibe3d-interaction-query": "isolated-tests",
                 "vibe3d-log": "isolated-tests",
-                "vibe3d-math": "isolated-tests",
+                "vibe3d:math": "isolated-tests",
                 "vibe3d-mesh": "isolated-tests",
                 "vibe3d-mesh-change": "isolated-tests",
                 "vibe3d-mesh-edit-log": "isolated-tests",

@@ -141,9 +141,7 @@
     }
   },
   "dependencies": {
-    "vibe3d-math": {
-      "path": "../../util/math"
-    },
+    "vibe3d:math": {"path": "../.."},
     "vibe3d-spatial": {
       "path": "../spatial"
     },
@@ -158,7 +156,7 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-math": "modeling",
+        "vibe3d:math": "modeling",
         "vibe3d-spatial": "modeling",
         "vibe3d-json-number": "modeling"
       }
@@ -167,7 +165,7 @@
       "name": "modeling-noai",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-math": "modeling-noai",
+        "vibe3d:math": "modeling-noai",
         "vibe3d-spatial": "modeling-noai",
         "vibe3d-json-number": "modeling-noai"
       }
@@ -179,7 +177,7 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-math": "with-render",
+        "vibe3d:math": "with-render",
         "vibe3d-spatial": "with-render",
         "vibe3d-json-number": "with-render"
       }
@@ -190,7 +188,7 @@
         "web"
       ],
       "subConfigurations": {
-        "vibe3d-math": "web",
+        "vibe3d:math": "web",
         "vibe3d-spatial": "web",
         "vibe3d-json-number": "web"
       }
@@ -201,7 +199,7 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-math": "root-tests",
+        "vibe3d:math": "root-tests",
         "vibe3d-spatial": "root-tests",
         "vibe3d-json-number": "root-tests"
       },
@@ -211,7 +209,7 @@
       "name": "isolated-tests",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-spatial": "isolated-tests",
         "vibe3d-json-number": "isolated-tests"
       },

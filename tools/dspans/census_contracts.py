@@ -265,6 +265,84 @@ def _restore_source_text(origin, text, root):
     _source_validity.append(valid)
     return encoded.decode('utf-8') if valid else ''
 
+# Task 20263012: six approved math coordinates, declaration/import spans only.
+# Historical pins below stay immutable; body bytes are never normalized.
+_MATH_COORDINATES = (('util/math/source/math.d',
+  'libraries/util/math/source/vibe3d/util/math/math.d',
+  ((7, 'vibe3d.util.math.math', 'math'),
+   (45, 'vibe3d.util.math.math_vector', 'math_vector'),
+   (89, 'vibe3d.util.math.math_matrix', 'math_matrix'),
+   (133, 'vibe3d.util.math.math_quaternion', 'math_quaternion'),
+   (181, 'vibe3d.util.math.math_geometry', 'math_geometry'))),
+ ('util/math/source/math_geometry.d',
+  'libraries/util/math/source/vibe3d/util/math/math_geometry.d',
+  ((7, 'vibe3d.util.math.math_geometry', 'math_geometry'),
+   (47, 'vibe3d.util.math.math_vector', 'math_vector'),
+   (84, 'vibe3d.util.math.math_quaternion', 'math_quaternion'),
+   (125, 'vibe3d.util.math.math_matrix', 'math_matrix'))),
+ ('util/math/source/math_matrix.d',
+  'libraries/util/math/source/vibe3d/util/math/math_matrix.d',
+  ((7, 'vibe3d.util.math.math_matrix', 'math_matrix'),
+   (45, 'vibe3d.util.math.math_vector', 'math_vector'),
+   (82, 'vibe3d.util.math.math_quaternion', 'math_quaternion'),
+   (123, 'vibe3d.util.math.math_geometry', 'math_geometry'))),
+ ('util/math/source/math_quaternion.d',
+  'libraries/util/math/source/vibe3d/util/math/math_quaternion.d',
+  ((7, 'vibe3d.util.math.math_quaternion', 'math_quaternion'),
+   (49, 'vibe3d.util.math.math_vector', 'math_vector'),
+   (86, 'vibe3d.util.math.math_matrix', 'math_matrix'),
+   (123, 'vibe3d.util.math.math_geometry', 'math_geometry'))),
+ ('util/math/source/math_vector.d',
+  'libraries/util/math/source/vibe3d/util/math/math_vector.d',
+  ((7, 'vibe3d.util.math.math_vector', 'math_vector'),
+   (45, 'vibe3d.util.math.math_quaternion', 'math_quaternion'),
+   (86, 'vibe3d.util.math.math_matrix', 'math_matrix'),
+   (123, 'vibe3d.util.math.math_geometry', 'math_geometry'))),
+ ('util/math/tests/source/tests/unit/math_test.d',
+  'libraries/util/math/tests/source/vibe3d/util/math/tests/unit/math_test.d',
+  ((83, 'vibe3d.util.math.tests.unit.math_test', 'tests.unit.math_test'),
+   (130, 'vibe3d.util.math.math', 'math'))))
+
+
+def _math_moved(root):
+    import json
+    old = root / 'util/math/dub.json'
+    new = root / 'libraries/util/math/dub.json'
+    valid = old.is_file() != new.is_file()
+    _source_validity.append(valid)
+    if not valid:
+        raise ValueError('Wave19 math one selected recipe')
+    moved = new.is_file()
+    if json.loads((new if moved else old).read_text())['name'] != ('math' if moved else 'vibe3d-math'):
+        raise ValueError('Wave19 math selected recipe identity')
+    return moved
+
+
+def _math_coordinate(path, root):
+    if root is None:
+        return None
+    for old, new, spans in _MATH_COORDINATES:
+        if path in (root / old, root / new):
+            moved = _math_moved(root)
+            physical = root / (new if moved else old)
+            valid = physical.is_file() and not (root / (old if moved else new)).exists()
+            _source_validity.append(valid)
+            if not valid:
+                raise ValueError('Wave19 math real source identity: '+old)
+            return physical, spans if moved else ()
+    return None
+
+
+def _math_original(text, spans):
+    for offset, current, original in reversed(spans):
+        valid = text[offset:offset+len(current)] == current
+        _source_validity.append(valid)
+        if not valid:
+            raise ValueError('Wave19 math declaration/import coordinate')
+        text = text[:offset]+original+text[offset+len(current):]
+    return text
+
+
 def _source_root(path, root=None):
     from pathlib import Path
     if root is not None:
@@ -273,6 +351,8 @@ def _source_root(path, root=None):
     # Task 20262780: match the full owner before its trailing source component.
     # Keep lexical copy identity: owner and per-file links may omit one input.
     domains = {Path(owner).parts for owner in PRODUCTION_ROOTS}
+    domains.add(Path('libraries/util/math/source').parts)
+    domains.add(Path('libraries/util/math/tests/source').parts)
     relatives = [relative for pair in _SOURCE_MOVE_PINS for relative in pair]
     relatives += [destination for origin, ident, destination in _SOURCE_FRAGMENT_PINS]
     for relative in relatives:
@@ -290,6 +370,9 @@ def physical_source_path(path, *, root=None):
     from pathlib import Path
     path = Path(path).absolute()
     root = _source_root(path, root)
+    math = _math_coordinate(path, root)
+    if math is not None:
+        return math[0]
     for old, new in SOURCE_MOVES:
         if root is not None and path == root / old:
             return path if path.exists() else root / new
@@ -301,6 +384,15 @@ def logical_source_paths(directory, pattern, *, root=None):
     directory = Path(directory)
     normal = directory.absolute()
     root = _source_root(normal, root)
+    if root is not None and normal in (root / 'util/math/source', root / 'util/math/tests/source'):
+        moved = _math_moved(root)
+        result = []
+        for old, new, spans in _MATH_COORDINATES:
+            logical = root / old
+            if logical.is_relative_to(normal) and logical.match(pattern):
+                _math_coordinate(logical, root)
+                result.append(logical)
+        return result
     result = []
     for old, new in _SOURCE_MOVE_PINS:
         if root is not None:
@@ -375,6 +467,9 @@ def read_source_text(path, *, root=None, **kwargs):
     from pathlib import Path
     path = Path(path).absolute()
     root = _source_root(path, root)
+    math = _math_coordinate(path, root)
+    if math is not None:
+        return _math_original(math[0].read_text(**kwargs), math[1])
     for old, new in _SOURCE_MOVE_PINS:
         if root is not None and path == root / old:
             _source_validity.append((sum(a == old for a, b in SOURCE_MOVES) == 1

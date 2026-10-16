@@ -1,5 +1,8 @@
 {
-  "name": "vibe3d-math",
+  "name": "math",
+  "targetName": "vibe3d-math",
+  "targetPath": ".",
+  "importPaths": ["source"],
   "targetType": "staticLibrary",
   "sourcePaths": [
     "source"

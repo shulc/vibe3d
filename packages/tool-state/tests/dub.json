@@ -16,9 +16,7 @@
     "source/tests/unit/tools/edit/preview_rebuild_test.d"
   ],
   "dependencies": {
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    },
+    "vibe3d:math": {"path": "../../.."},
     "vibe3d-mesh": {
       "path": "../../mesh"
     },
@@ -169,7 +167,7 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
         "vibe3d-mesh-edit-log": "isolated-tests",
         "vibe3d-mesh-snapshot": "isolated-tests"

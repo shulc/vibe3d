@@ -173,9 +173,7 @@
     "vibe3d-viewport-gpu": {
       "path": "../../viewport-gpu"
     },
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    }
+    "vibe3d:math": {"path": "../../.."}
   },
   "importPaths": [
     "../source",
@@ -195,7 +193,7 @@
         "vibe3d-profiling": "isolated-tests",
         "vibe3d-spatial": "isolated-tests",
         "vibe3d-viewport-gpu": "isolated-tests",
-        "vibe3d-math": "isolated-tests"
+        "vibe3d:math": "isolated-tests"
       }
     }
   ],

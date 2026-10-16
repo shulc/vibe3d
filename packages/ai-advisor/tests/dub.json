@@ -174,9 +174,7 @@
         "vibe3d-interaction-data": {
             "path": "../../interaction-data"
         },
-        "vibe3d-math": {
-            "path": "../../../util/math"
-        },
+        "vibe3d:math": {"path": "../../.."},
         "vibe3d-mesh": {
             "path": "../../mesh"
         },
@@ -193,7 +191,7 @@
             "name": "algorithm",
             "subConfigurations": {
                 "vibe3d-interaction-data": "isolated-tests",
-                "vibe3d-math": "isolated-tests",
+                "vibe3d:math": "isolated-tests",
                 "vibe3d-mesh": "isolated-tests",
                 "vibe3d-mesh-ops": "isolated-tests",
                 "vibe3d-pipe-evaluation": "isolated-tests"

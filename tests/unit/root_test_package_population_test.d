@@ -50,9 +50,19 @@ unittest {
     ordered.sort();
     assert(ordered == expected, "root package ModuleInfo manifest sorted");
     size_t[string] occurrences;
+    size_t[string] transitional;
     foreach (info; ModuleInfo) {
         if (info is null || info.name is null) continue;
         if (expected.canFind(info.name)) ++occurrences[info.name];
+        if (mathMoved && ["math", "math_geometry", "math_matrix", "math_quaternion", "math_vector", "vibe3d.util.math"].canFind(info.name)) {
+            ++transitional[info.name];
+            assert(info.unitTest is null, "root math transitional module has no unittest: " ~ info.name);
+        }
+    }
+    if (mathMoved) {
+        assert(transitional.length == 6, "root math transitional population 6");
+        foreach (name; ["math", "math_geometry", "math_matrix", "math_quaternion", "math_vector", "vibe3d.util.math"])
+            assert(transitional.get(name, 0) == 1, "root math transitional exactly once: " ~ name);
     }
     foreach (name; ["eventlog", "held_gesture_buttons", "tool_input", "input_zones", "input_context", "shortcuts"])
         assert(occurrences.get(name, 0) == 1,

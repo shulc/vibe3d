@@ -154,9 +154,7 @@
   ],
   "dflags": [],
   "dependencies": {
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    },
+    "vibe3d:math": {"path": "../../.."},
     "vibe3d-spatial": {
       "path": "../../spatial"
     },
@@ -186,7 +184,7 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-spatial": "isolated-tests",
         "vibe3d-parallel": "isolated-tests",
         "vibe3d-profiling": "isolated-tests",

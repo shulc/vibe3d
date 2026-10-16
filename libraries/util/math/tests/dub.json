@@ -3,12 +3,12 @@
   "targetType": "executable",
   "sourcePaths": [],
   "sourceFiles": [
-    "../source/math.d",
-    "../source/math_geometry.d",
-    "../source/math_matrix.d",
-    "../source/math_quaternion.d",
-    "../source/math_vector.d",
-    "source/tests/unit/math_test.d"
+    "../source/vibe3d/util/math/math.d",
+    "../source/vibe3d/util/math/math_geometry.d",
+    "../source/vibe3d/util/math/math_matrix.d",
+    "../source/vibe3d/util/math/math_quaternion.d",
+    "../source/vibe3d/util/math/math_vector.d",
+    "source/vibe3d/util/math/tests/unit/math_test.d"
   ],
   "importPaths": [
     "../source",

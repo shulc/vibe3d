@@ -68,9 +68,7 @@
     "vibe3d-json-number": {
       "path": "../../../util/json-number"
     },
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    }
+    "vibe3d:math": {"path": "../../.."}
   },
   "toolchainRequirements": {
     "dmd": ">=2.111.0",
@@ -95,7 +93,7 @@
         "vibe3d-pipe-runtime": "isolated-tests",
         "vibe3d-spatial": "isolated-tests",
         "vibe3d-json-number": "isolated-tests",
-        "vibe3d-math": "isolated-tests"
+        "vibe3d:math": "isolated-tests"
       }
     }
   ],

@@ -87,9 +87,7 @@
     "vibe3d-spatial": {
       "path": "../../spatial"
     },
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    }
+    "vibe3d:math": {"path": "../../.."}
   },
   "toolchainRequirements": {
     "dmd": ">=2.111.0",
@@ -113,7 +111,7 @@
         "vibe3d-pipe-runtime": "isolated-tests",
         "vibe3d-profiling": "isolated-tests",
         "vibe3d-spatial": "isolated-tests",
-        "vibe3d-math": "isolated-tests"
+        "vibe3d:math": "isolated-tests"
       }
     }
   ]

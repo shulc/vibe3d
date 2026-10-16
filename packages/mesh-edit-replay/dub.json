@@ -153,9 +153,7 @@
     "vibe3d-mesh-change": {
       "path": "../mesh-change"
     },
-    "vibe3d-math": {
-      "path": "../../util/math"
-    }
+    "vibe3d:math": {"path": "../.."}
   },
   "configurations": [
     {
@@ -168,7 +166,7 @@
         "vibe3d-mesh-edit-log": "modeling",
         "vibe3d-mesh-contracts": "modeling",
         "vibe3d-mesh-change": "modeling",
-        "vibe3d-math": "modeling"
+        "vibe3d:math": "modeling"
       }
     },
     {
@@ -179,7 +177,7 @@
         "vibe3d-mesh-edit-log": "modeling-noai",
         "vibe3d-mesh-contracts": "modeling-noai",
         "vibe3d-mesh-change": "modeling-noai",
-        "vibe3d-math": "modeling-noai"
+        "vibe3d:math": "modeling-noai"
       }
     },
     {
@@ -193,7 +191,7 @@
         "vibe3d-mesh-edit-log": "with-render",
         "vibe3d-mesh-contracts": "with-render",
         "vibe3d-mesh-change": "with-render",
-        "vibe3d-math": "with-render"
+        "vibe3d:math": "with-render"
       }
     },
     {
@@ -206,7 +204,7 @@
         "vibe3d-mesh-edit-log": "web",
         "vibe3d-mesh-contracts": "web",
         "vibe3d-mesh-change": "web",
-        "vibe3d-math": "web"
+        "vibe3d:math": "web"
       }
     },
     {
@@ -218,7 +216,7 @@
         "vibe3d-mesh-edit-log": "root-tests",
         "vibe3d-mesh-contracts": "root-tests",
         "vibe3d-mesh-change": "root-tests",
-        "vibe3d-math": "root-tests"
+        "vibe3d:math": "root-tests"
       }
     },
     {
@@ -230,7 +228,7 @@
         "vibe3d-mesh-edit-log": "isolated-tests",
         "vibe3d-mesh-contracts": "isolated-tests",
         "vibe3d-mesh-change": "isolated-tests",
-        "vibe3d-math": "isolated-tests"
+        "vibe3d:math": "isolated-tests"
       }
     }
   ]

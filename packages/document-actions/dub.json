@@ -174,9 +174,7 @@
         "vibe3d-log": {
             "path": "../../util/log"
         },
-        "vibe3d-math": {
-            "path": "../../util/math"
-        },
+        "vibe3d:math": {"path": "../.."},
         "vibe3d-mesh": {
             "path": "../mesh"
         },
@@ -222,7 +220,7 @@
                 "vibe3d-interactive-tools": "modeling",
                 "vibe3d-interchange": "modeling",
                 "vibe3d-log": "modeling",
-                "vibe3d-math": "modeling",
+                "vibe3d:math": "modeling",
                 "vibe3d-mesh": "modeling",
                 "vibe3d-mesh-change": "modeling",
                 "vibe3d-mesh-ops": "modeling",
@@ -248,7 +246,7 @@
                 "vibe3d-interactive-tools": "modeling-noai",
                 "vibe3d-interchange": "modeling-noai",
                 "vibe3d-log": "modeling-noai",
-                "vibe3d-math": "modeling-noai",
+                "vibe3d:math": "modeling-noai",
                 "vibe3d-mesh": "modeling-noai",
                 "vibe3d-mesh-change": "modeling-noai",
                 "vibe3d-mesh-ops": "modeling-noai",
@@ -277,7 +275,7 @@
                 "vibe3d-interactive-tools": "with-render",
                 "vibe3d-interchange": "with-render",
                 "vibe3d-log": "with-render",
-                "vibe3d-math": "with-render",
+                "vibe3d:math": "with-render",
                 "vibe3d-mesh": "with-render",
                 "vibe3d-mesh-change": "with-render",
                 "vibe3d-mesh-ops": "with-render",
@@ -305,7 +303,7 @@
                 "vibe3d-interactive-tools": "web",
                 "vibe3d-interchange": "web",
                 "vibe3d-log": "web",
-                "vibe3d-math": "web",
+                "vibe3d:math": "web",
                 "vibe3d-mesh": "web",
                 "vibe3d-mesh-change": "web",
                 "vibe3d-mesh-ops": "web",
@@ -334,7 +332,7 @@
                 "vibe3d-interactive-tools": "root-tests",
                 "vibe3d-interchange": "root-tests",
                 "vibe3d-log": "root-tests",
-                "vibe3d-math": "root-tests",
+                "vibe3d:math": "root-tests",
                 "vibe3d-mesh": "root-tests",
                 "vibe3d-mesh-change": "root-tests",
                 "vibe3d-mesh-ops": "root-tests",
@@ -361,7 +359,7 @@
                 "vibe3d-interactive-tools": "isolated-tests",
                 "vibe3d-interchange": "isolated-tests",
                 "vibe3d-log": "isolated-tests",
-                "vibe3d-math": "isolated-tests",
+                "vibe3d:math": "isolated-tests",
                 "vibe3d-mesh": "isolated-tests",
                 "vibe3d-mesh-change": "isolated-tests",
                 "vibe3d-mesh-ops": "isolated-tests",

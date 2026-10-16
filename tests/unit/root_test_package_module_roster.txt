@@ -226,11 +226,6 @@ layer_params
 light_rig
 log
 macro_recorder
-math
-math_geometry
-math_matrix
-math_quaternion
-math_vector
 mesh
 mesh_analysis
 mesh_bbox
@@ -467,6 +462,11 @@ uv_unwrap
 uv_weld
 value_drag
 vertex_normals
+vibe3d.util.math.math
+vibe3d.util.math.math_geometry
+vibe3d.util.math.math_matrix
+vibe3d.util.math.math_quaternion
+vibe3d.util.math.math_vector
 view
 viewgrid
 viewport

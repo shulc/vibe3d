@@ -33,7 +33,7 @@
 // will happily absorb an addition nobody argued for.
 module tests.unit.unittest_source_ceiling_test;
 
-import std.algorithm : sort;
+import std.algorithm : sort, canFind;
 import std.array : appender, join, replace;
 import std.conv : to;
 import std.file : dirEntries, exists, isDir, readText, SpanMode;
@@ -179,6 +179,7 @@ private struct FileCount
 
 private FileCount[] scanSourceTree(string root)
 {
+    import tests.unit.census_symbols : wave19MathPhysicalPath;
     const sourceDir = buildPath(root, "source");
     if (!isDir(sourceDir)) return [];
 
@@ -201,10 +202,15 @@ private FileCount[] scanSourceTree(string root)
         ~ (exists(buildPath(root, "packages/forms-model/source")) ? [buildPath(root, "packages/forms-model/source")] : [])
         ~ (exists(buildPath(root, "packages/editor-ui/source")) ? [buildPath(root, "packages/editor-ui/source")] : []))
 
-    foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth))
+    foreach (entry; dirEntries(wave19MathPhysicalPath(scanSourceRoot, root), SpanMode.depth))
     {
         if (!entry.isFile || !entry.name.endsWith(".d")) continue;
         const text = readText(entry.name);
+        const relative = toLedgerPath(relativePath(entry.name, root));
+        if (["libraries/util/math/source/math.d", "libraries/util/math/source/math_geometry.d", "libraries/util/math/source/math_matrix.d", "libraries/util/math/source/math_quaternion.d", "libraries/util/math/source/math_vector.d", "libraries/util/math/source/vibe3d/util/math/package.d"].canFind(relative)) {
+            assert(scanD(text).blocks == 0 && countVersionUnittest(text) == 0, "Wave19 math transitional source policy remains empty: " ~ relative);
+            continue;
+        }
         found.put(FileCount(toLedgerPath(relativePath(entry.name, root)),
                             cast(size_t) scanD(text).blocks,
                             countVersionUnittest(text)));

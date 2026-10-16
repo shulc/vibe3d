@@ -144,9 +144,7 @@
         }
     },
     "dependencies": {
-        "vibe3d-math": {
-            "path": "../../util/math"
-        },
+        "vibe3d:math": {"path": "../.."},
         "vibe3d-mesh": {
             "path": "../mesh"
         },
@@ -161,7 +159,7 @@
                 "WithAI"
             ],
             "subConfigurations": {
-                "vibe3d-math": "modeling",
+                "vibe3d:math": "modeling",
                 "vibe3d-mesh": "modeling",
                 "vibe3d-mesh-change": "modeling"
             }
@@ -170,7 +168,7 @@
             "name": "modeling-noai",
             "versions": [],
             "subConfigurations": {
-                "vibe3d-math": "modeling-noai",
+                "vibe3d:math": "modeling-noai",
                 "vibe3d-mesh": "modeling-noai",
                 "vibe3d-mesh-change": "modeling-noai"
             }
@@ -182,7 +180,7 @@
                 "WithAI"
             ],
             "subConfigurations": {
-                "vibe3d-math": "with-render",
+                "vibe3d:math": "with-render",
                 "vibe3d-mesh": "with-render",
                 "vibe3d-mesh-change": "with-render"
             }
@@ -193,7 +191,7 @@
                 "web"
             ],
             "subConfigurations": {
-                "vibe3d-math": "web",
+                "vibe3d:math": "web",
                 "vibe3d-mesh": "web",
                 "vibe3d-mesh-change": "web"
             }
@@ -205,7 +203,7 @@
                 "MeshSnapshotFixtures"
             ],
             "subConfigurations": {
-                "vibe3d-math": "root-tests",
+                "vibe3d:math": "root-tests",
                 "vibe3d-mesh": "root-tests",
                 "vibe3d-mesh-change": "root-tests"
             },
@@ -215,7 +213,7 @@
             "name": "isolated-tests",
             "versions": [],
             "subConfigurations": {
-                "vibe3d-math": "isolated-tests",
+                "vibe3d:math": "isolated-tests",
                 "vibe3d-mesh": "isolated-tests",
                 "vibe3d-mesh-change": "isolated-tests"
             },

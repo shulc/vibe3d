@@ -34,6 +34,10 @@ unittest {
             assert(cli.status == 0, "CLI production independent boundary witness: " ~ cli.output);
         }
     }
+    static import mathApi = vibe3d.util.math;
+    static foreach (name; ["Vec3", "Vec4", "vec3Lerp", "normalize", "cross", "dot", "rotateAboutAxis", "rotateAboutPivot", "scaleAlongBasis", "safeNormalize", "identityMatrix", "translationMatrix", "pivotRotationMatrix", "pivotScaleMatrix", "pivotScaleMatrixBasis", "matrixFromEulerZYX", "eulerZYXFromMatrix", "applyAffine", "transformPoint", "matrixMirrorsWinding", "normalMatrix", "frameMatrix", "frameMatrixInverse", "matMul4", "wrapAboutPivot", "wrapAboutPivotStable", "modelMatrix", "mulMV", "lookAt", "perspectiveMatrix", "orthographicMatrix", "Quat", "slerp", "quatFromMatrix", "matrixFromQuat", "faceNormalFirst3", "pointInPolygon2D", "frontFacingLocal", "ringStartCornerSign", "closestOnSegment2D", "closestOnSegment2DSquared", "rayPlaneIntersect", "closestOnSegmentToRay", "perpendicularFrame", "rayTriangleIntersect", "closestPointOnTriangle2D", "triangulatePolygonEarClip", "planeFromLineAndWorkplane", "planeForSlice", "snapAngleToMultiple", "snapLineEndpointToAngle", "closestPointOnSegmentToRay", "closestPointOnLineToRay", "offsetInPlane", "offsetMeetDir", "offsetMeet", "bevelMiterPoint", "bevelArcPoints"])
+        static assert(__traits(hasMember, mathApi, name), "Wave19 math approved facade export: " ~ name);
+    static assert(!__traits(hasMember, mathApi, "isClose"), "Wave19 math fixture import stays hidden");
     auto tests = execute(["python3", buildPath(repoRoot, "tools", "test_standalone_boundary.py")]);
     assert(tests.status == 0, "boundary checker controls: " ~ tests.output);
     auto support = execute(["python3", buildPath(repoRoot, "tools",
@@ -41,6 +45,8 @@ unittest {
     assert(support.status == 0, "support package checker controls: " ~ support.output);
     assert(support.output.lineSplitter.canFind("PKG-SELF-CONTROLS passed=794"),
         "support package checker missing control population");
+    auto math = execute(["python3", buildPath(repoRoot, "tools", "check_package_support_boundary.py"), "--check", "--package", "math", "--compiler", "dmd"]);
+    assert(math.status == 0 && math.output.canFind("PKG-BOUNDARY-VERDICT=GREEN"), "Wave19 math current selected boundary: " ~ math.output);
     assert(support.output.canFind("PKG-BOUNDARY-VERDICT=GREEN"),
         "support package checker missing terminal verdict");
 }

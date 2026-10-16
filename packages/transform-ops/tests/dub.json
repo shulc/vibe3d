@@ -30,9 +30,7 @@
     "vibe3d-interaction-query": {
       "path": "../../interaction-query"
     },
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    },
+    "vibe3d:math": {"path": "../../.."},
     "vibe3d-mesh": {
       "path": "../../mesh"
     },
@@ -196,7 +194,7 @@
       "name": "algorithm",
       "subConfigurations": {
         "vibe3d-interaction-query": "isolated-tests",
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
         "vibe3d-mesh-edit-log": "isolated-tests",
         "vibe3d-profiling": "isolated-tests",

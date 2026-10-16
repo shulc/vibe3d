@@ -153,7 +153,7 @@
         "vibe3d-pipe-contracts": "modeling",
         "vibe3d-mesh": "modeling",
         "vibe3d-mesh-preview": "modeling",
-        "vibe3d-math": "modeling",
+        "vibe3d:math": "modeling",
         "vibe3d-spatial": "modeling",
         "vibe3d-profiling": "modeling",
         "vibe3d-log": "modeling"
@@ -168,7 +168,7 @@
         "vibe3d-pipe-contracts": "modeling-noai",
         "vibe3d-mesh": "modeling-noai",
         "vibe3d-mesh-preview": "modeling-noai",
-        "vibe3d-math": "modeling-noai",
+        "vibe3d:math": "modeling-noai",
         "vibe3d-spatial": "modeling-noai",
         "vibe3d-profiling": "modeling-noai",
         "vibe3d-log": "modeling-noai"
@@ -186,7 +186,7 @@
         "vibe3d-pipe-contracts": "with-render",
         "vibe3d-mesh": "with-render",
         "vibe3d-mesh-preview": "with-render",
-        "vibe3d-math": "with-render",
+        "vibe3d:math": "with-render",
         "vibe3d-spatial": "with-render",
         "vibe3d-profiling": "with-render",
         "vibe3d-log": "with-render"
@@ -203,7 +203,7 @@
         "vibe3d-pipe-contracts": "web",
         "vibe3d-mesh": "web",
         "vibe3d-mesh-preview": "web",
-        "vibe3d-math": "web",
+        "vibe3d:math": "web",
         "vibe3d-spatial": "web",
         "vibe3d-profiling": "web",
         "vibe3d-log": "web"
@@ -221,7 +221,7 @@
         "vibe3d-pipe-contracts": "root-tests",
         "vibe3d-mesh": "root-tests",
         "vibe3d-mesh-preview": "root-tests",
-        "vibe3d-math": "root-tests",
+        "vibe3d:math": "root-tests",
         "vibe3d-spatial": "root-tests",
         "vibe3d-profiling": "root-tests",
         "vibe3d-log": "root-tests"
@@ -237,7 +237,7 @@
         "vibe3d-pipe-contracts": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
         "vibe3d-mesh-preview": "isolated-tests",
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-spatial": "isolated-tests",
         "vibe3d-profiling": "isolated-tests",
         "vibe3d-log": "isolated-tests"
@@ -260,9 +260,7 @@
     "vibe3d-mesh-preview": {
       "path": "../mesh-preview"
     },
-    "vibe3d-math": {
-      "path": "../../util/math"
-    },
+    "vibe3d:math": {"path": "../.."},
     "vibe3d-spatial": {
       "path": "../spatial"
     },

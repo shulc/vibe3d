@@ -213,9 +213,7 @@
     "vibe3d-log": {
       "path": "../../util/log"
     },
-    "vibe3d-math": {
-      "path": "../../util/math"
-    },
+    "vibe3d:math": {"path": "../.."},
     "vibe3d-spatial": {
       "path": "../spatial"
     },
@@ -290,7 +288,7 @@
         "vibe3d-viewport-gpu": "modeling",
         "vibe3d-viewport-host": "modeling",
         "vibe3d-log": "modeling",
-        "vibe3d-math": "modeling",
+        "vibe3d:math": "modeling",
         "vibe3d-spatial": "modeling",
         "vibe3d-interaction-data": "modeling",
         "vibe3d-interaction-query": "modeling",
@@ -337,7 +335,7 @@
         "vibe3d-viewport-gpu": "modeling-noai",
         "vibe3d-viewport-host": "modeling-noai",
         "vibe3d-log": "modeling-noai",
-        "vibe3d-math": "modeling-noai",
+        "vibe3d:math": "modeling-noai",
         "vibe3d-spatial": "modeling-noai",
         "vibe3d-interaction-data": "modeling-noai",
         "vibe3d-interaction-query": "modeling-noai",
@@ -387,7 +385,7 @@
         "vibe3d-viewport-gpu": "with-render",
         "vibe3d-viewport-host": "with-render",
         "vibe3d-log": "with-render",
-        "vibe3d-math": "with-render",
+        "vibe3d:math": "with-render",
         "vibe3d-spatial": "with-render",
         "vibe3d-interaction-data": "with-render",
         "vibe3d-interaction-query": "with-render",
@@ -435,7 +433,7 @@
         "vibe3d-viewport-gpu": "web",
         "vibe3d-viewport-host": "web",
         "vibe3d-log": "web",
-        "vibe3d-math": "web",
+        "vibe3d:math": "web",
         "vibe3d-spatial": "web",
         "vibe3d-interaction-data": "web",
         "vibe3d-interaction-query": "web",
@@ -482,7 +480,7 @@
         "vibe3d-viewport-gpu": "root-tests",
         "vibe3d-viewport-host": "root-tests",
         "vibe3d-log": "root-tests",
-        "vibe3d-math": "root-tests",
+        "vibe3d:math": "root-tests",
         "vibe3d-spatial": "root-tests",
         "vibe3d-interaction-data": "root-tests",
         "vibe3d-interaction-query": "root-tests",
@@ -530,7 +528,7 @@
         "vibe3d-viewport-gpu": "isolated-tests",
         "vibe3d-viewport-host": "isolated-tests",
         "vibe3d-log": "isolated-tests",
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-spatial": "isolated-tests",
         "vibe3d-interaction-data": "isolated-tests",
         "vibe3d-interaction-query": "isolated-tests",

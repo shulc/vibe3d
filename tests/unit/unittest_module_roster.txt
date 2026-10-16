@@ -38,8 +38,6 @@ io.native
 io.scene_import
 io.scene_ir
 log
-math_geometry
-math_quaternion
 mesh
 mesh_corner_maps
 mesh_dirty
@@ -368,7 +366,6 @@ tests.unit.map_delta_census_test
 tests.unit.map_value_delta_test
 tests.unit.mark_view_field_guard_test
 tests.unit.mark_view_test
-tests.unit.math_test
 tests.unit.mesh_analysis_test
 tests.unit.mesh_bbox_test
 tests.unit.mesh_bevel_census_test
@@ -804,3 +801,6 @@ ui.viewport_render_plan_test
 unit.bevel_cold_arm_param_image_test
 unit.prepared_param_update_test
 unit.prepared_tool_transition_test
+vibe3d.util.math.math_geometry
+vibe3d.util.math.math_quaternion
+vibe3d.util.math.tests.unit.math_test

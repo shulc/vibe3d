@@ -15,9 +15,7 @@
   ],
   "dflags": [],
   "dependencies": {
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    },
+    "vibe3d:math": {"path": "../../.."},
     "vibe3d-mesh": {
       "path": "../../mesh"
     },
@@ -33,7 +31,7 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
         "vibe3d-mesh-contracts": "isolated-tests"
       }

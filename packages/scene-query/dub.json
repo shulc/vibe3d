@@ -41,9 +41,7 @@
     "vibe3d-viewport-gpu": {
       "path": "../viewport-gpu"
     },
-    "vibe3d-math": {
-      "path": "../../util/math"
-    }
+    "vibe3d:math": {"path": "../.."}
   },
   "toolchainRequirements": {
     "dmd": ">=2.111.0",
@@ -198,7 +196,7 @@
         "vibe3d-profiling": "modeling",
         "vibe3d-spatial": "modeling",
         "vibe3d-viewport-gpu": "modeling",
-        "vibe3d-math": "modeling"
+        "vibe3d:math": "modeling"
       }
     },
     {
@@ -215,7 +213,7 @@
         "vibe3d-profiling": "modeling-noai",
         "vibe3d-spatial": "modeling-noai",
         "vibe3d-viewport-gpu": "modeling-noai",
-        "vibe3d-math": "modeling-noai"
+        "vibe3d:math": "modeling-noai"
       }
     },
     {
@@ -235,7 +233,7 @@
         "vibe3d-profiling": "with-render",
         "vibe3d-spatial": "with-render",
         "vibe3d-viewport-gpu": "with-render",
-        "vibe3d-math": "with-render"
+        "vibe3d:math": "with-render"
       }
     },
     {
@@ -254,7 +252,7 @@
         "vibe3d-profiling": "web",
         "vibe3d-spatial": "web",
         "vibe3d-viewport-gpu": "web",
-        "vibe3d-math": "web"
+        "vibe3d:math": "web"
       }
     },
     {
@@ -274,7 +272,7 @@
         "vibe3d-profiling": "root-tests",
         "vibe3d-spatial": "root-tests",
         "vibe3d-viewport-gpu": "root-tests",
-        "vibe3d-math": "root-tests"
+        "vibe3d:math": "root-tests"
       },
       "targetType": "sourceLibrary"
     },
@@ -292,7 +290,7 @@
         "vibe3d-profiling": "isolated-tests",
         "vibe3d-spatial": "isolated-tests",
         "vibe3d-viewport-gpu": "isolated-tests",
-        "vibe3d-math": "isolated-tests"
+        "vibe3d:math": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

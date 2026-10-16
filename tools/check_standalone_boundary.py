@@ -26,9 +26,9 @@ CORE_CELLS = ('document-primary', 'invocation-order', 'invocation-outcomes', 'in
 STB_REVISION = 'a66f6917718ea128076a2c5660e37f362a785144'
 # Canonical JSON pins include configuration/build-type grants and platform keys.
 DESCRIPTORS = {
-    'packages/command-runtime': 'a1264dd8918e95d395cc8c99e77eb0bafa8bac420bf77a6ada76b17f545771eb',
+    'packages/command-runtime': '8dfc0d96acc464e36a3e11aa045ed91dad6ce6ae22f430972bc2a31c0bc4dec4',
     'packages/application-core': '456bd7b1818be6f17a87fbd044c1c5ee923ff81baba10208e732ee77b0bc7915',
-    'tests/core': '6b5c47b116117bfffbab856ba4739fff1f2cd21f522e390809d01c194909ba2d',
+    'tests/core': '19f46994b1aebd17cc00ed5f39b9d03a56942f1e5e986367bdf563a56a9f2eaa',
     'tools/cli': '2b13fbc0b4d8b2d3e463947d86bb667377564319ff67d606b1459abd6ef59545',
 }
 HOOKS = ('preGenerateCommands', 'postGenerateCommands', 'preBuildCommands',
@@ -61,9 +61,9 @@ def validate_package_settings(description, root, compiler="dmd"):
     active_list=[p for p in description['packages'] if p.get('active')];active={p['name']:p for p in active_list}
     expected={owner}
     for dependency in manifest.get('dependencies', {}):
-        expected|={'vibe3d-'+x for x in support.closure(dependency.removeprefix('vibe3d-'))}
+        expected|={support.SPECS[x]['name'] for x in support.closure(support.internal_owner(dependency))}
     if owner in ('vibe3d-command-runtime','vibe3d-application-core'):
-        expected|={'vibe3d-'+x for x in support.closure(owner.removeprefix('vibe3d-'))}
+        expected|={support.SPECS[x]['name'] for x in support.closure(support.internal_owner(owner))}
     if 'vibe3d-document-io' in expected: expected.add('d-stb-image')
     require(len(active_list)==len(expected) and set(active)==expected,'resolved package population changed')
     image=Path(active['d-stb-image']['path']).resolve() if 'd-stb-image' in active else None
@@ -78,7 +78,7 @@ def validate_package_settings(description, root, compiler="dmd"):
     for name,package in active.items():
         if name=='d-stb-image':path=image;deps=[]
         else:
-            selected=name.removeprefix('vibe3d-')
+            selected=support.internal_owner(name) if name!=owner else None
             path=root if name==owner else project/support.SPECS[selected]['root']
             raw=json.loads((path/'dub.json').read_text());deps=list(raw.get('dependencies',{}))
         require(Path(package['path']).resolve()==path.resolve(),'resolved package path changed: '+name)
@@ -98,13 +98,13 @@ def validate_package_settings(description, root, compiler="dmd"):
         for n in internal:
             if n=='d-stb-image':expected_sources.append(image/'source/stb_image/c.d')
             elif n==owner:expected_sources+=roots
-            else:expected_sources+=support.production_files(project,n.removeprefix('vibe3d-'))
+            else:expected_sources+=support.production_files(project,support.internal_owner(n))
         actual=[Path(p).resolve() for p in settings.get('sourceFiles',[])]
         require(sorted(actual)==sorted(Path(p).resolve() for p in expected_sources) and len(actual)==len(set(actual)),'resolved sourceFiles changed: '+name)
         imports={str((Path(active[n]['path'])/p).resolve()) for n in seen for p in active[n].get('importPaths',[])}
         actual_imports=[str(Path(p).resolve()) for p in settings.get('importPaths',[])]
         require(set(actual_imports)==imports and len(actual_imports)==len(imports),'resolved importPaths changed: '+name)
-        archives={str(Path(active[n]['path'])/('lib'+n+'.a')) for n in seen-{name} if active[n]['targetType'] in ('staticLibrary','library')}
+        archives={str(Path(active[n]['path'])/(support.archive_name(support.internal_owner(n)) if support.is_internal(n) else 'lib'+n+'.a')) for n in seen-{name} if active[n]['targetType'] in ('staticLibrary','library')}
         require(set(settings.get('linkerFiles',[]))==archives and len(settings.get('linkerFiles',[]))==len(archives),'resolved setting changed: '+name+':linkerFiles')
         expected_flags = ['--singleobj'] if (
             active[name]['configuration'] in ('modeling', 'modeling-noai', 'with-render', 'web') and

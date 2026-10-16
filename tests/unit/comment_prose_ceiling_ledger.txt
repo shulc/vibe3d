@@ -16,6 +16,9 @@ long-comment-runs 258
 files-with-long-runs 142
 
 # Exact per-file task-citation allowances, sorted by path.
+allow libraries/util/math/source/vibe3d/util/math/math_geometry.d 12
+allow libraries/util/math/source/vibe3d/util/math/math_matrix.d 1
+allow libraries/util/math/source/vibe3d/util/math/math_vector.d 1
 allow packages/ai-advisor/source/ai/analysis.d 2
 allow packages/ai-advisor/source/ai/copilot_gate.d 5
 allow packages/ai-advisor/source/ai/exploration.d 1
@@ -478,14 +481,12 @@ allow source/view_settings_registration.d 2
 allow source/viewport_command_registration.d 1
 allow util/json-number/source/json_num.d 1
 allow util/log/source/log.d 1
-allow util/math/source/math_geometry.d 12
-allow util/math/source/math_matrix.d 1
-allow util/math/source/math_vector.d 1
 allow util/parallel/source/tsan_annotate.d 1
 allow util/plane-bytes/source/plane_bytes.d 1
 allow util/screen-buckets/source/screen_buckets.d 1
 
 # Exact per-file counts of comment runs >= 40 lines, sorted by path.
+allow-runs libraries/util/math/source/vibe3d/util/math/math_geometry.d 3
 allow-runs packages/ai-advisor/source/ai/support_loop_candidates.d 1
 allow-runs packages/alignment-ops/source/tools/alignment/align_kernels.d 1
 allow-runs packages/application-core/source/http_json.d 1
@@ -626,5 +627,4 @@ allow-runs source/render/render_mvp.d 1
 allow-runs source/selftest_fault.d 1
 allow-runs source/tsan_preinit.d 1
 allow-runs source/ui/viewport_render.d 1
-allow-runs util/math/source/math_geometry.d 3
 allow-runs util/plane-bytes/source/plane_bytes.d 1

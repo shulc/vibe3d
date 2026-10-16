@@ -35,9 +35,7 @@
     "vibe3d-mesh-topology": {
       "path": "../../packages/mesh-topology"
     },
-    "vibe3d-math": {
-      "path": "../../util/math"
-    },
+    "vibe3d:math": {"path": "../.."},
     "vibe3d-spatial": {
       "path": "../../packages/spatial"
     },
@@ -86,7 +84,7 @@
     "vibe3d-mesh-snapshot": "isolated-tests",
     "vibe3d-edit-contracts": "isolated-tests",
     "vibe3d-mesh-topology": "isolated-tests",
-    "vibe3d-math": "isolated-tests",
+    "vibe3d:math": "isolated-tests",
     "vibe3d-spatial": "isolated-tests",
     "vibe3d-pipe-contracts": "isolated-tests",
     "vibe3d-mesh-preview": "isolated-tests",

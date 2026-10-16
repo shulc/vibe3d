@@ -156,13 +156,11 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-math": "isolated-tests"
+        "vibe3d:math": "isolated-tests"
       }
     }
   ],
   "dependencies": {
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    }
+    "vibe3d:math": {"path": "../../.."}
   }
 }

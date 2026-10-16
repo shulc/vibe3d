@@ -162,9 +162,7 @@
     "vibe3d-mesh-change": {
       "path": "../../mesh-change"
     },
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    }
+    "vibe3d:math": {"path": "../../.."}
   },
   "configurations": [
     {
@@ -174,7 +172,7 @@
         "vibe3d-mesh-edit-log": "isolated-tests",
         "vibe3d-mesh-contracts": "isolated-tests",
         "vibe3d-mesh-change": "isolated-tests",
-        "vibe3d-math": "isolated-tests"
+        "vibe3d:math": "isolated-tests"
       }
     }
   ]

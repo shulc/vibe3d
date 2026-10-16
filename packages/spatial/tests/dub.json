@@ -151,9 +151,7 @@
     }
   },
   "dependencies": {
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    }
+    "vibe3d:math": {"path": "../../.."}
   },
   "dflags": [],
   "configurations": [
@@ -162,6 +160,6 @@
     }
   ],
   "subConfigurations": {
-    "vibe3d-math": "isolated-tests"
+    "vibe3d:math": "isolated-tests"
   }
 }

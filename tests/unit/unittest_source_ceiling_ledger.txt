@@ -20,6 +20,8 @@ version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
 # no file may hold more than its own row.
+block libraries/util/math/source/vibe3d/util/math/math_geometry.d 1
+block libraries/util/math/source/vibe3d/util/math/math_quaternion.d 1
 block packages/ai3d-runtime/source/ai3d/worker_manager.d 1
 block packages/alignment-ops/source/tools/alignment/align_kernels.d 1
 block packages/command-runtime/source/command_history.d 12
@@ -99,8 +101,6 @@ block source/prefs.d 16
 block source/render/render_mvp.d 1
 block source/ui/viewport_render.d 1
 block util/log/source/log.d 4
-block util/math/source/math_geometry.d 1
-block util/math/source/math_quaternion.d 1
 block util/plane-bytes/source/plane_bytes.d 5
 block util/screen-buckets/source/screen_buckets.d 1
 

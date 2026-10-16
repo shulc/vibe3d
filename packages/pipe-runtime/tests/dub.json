@@ -163,7 +163,7 @@
       "subConfigurations": {
         "vibe3d-edit-contracts": "isolated-tests",
         "vibe3d-log": "isolated-tests",
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
         "vibe3d-mesh-preview": "isolated-tests",
         "vibe3d-param-schema": "isolated-tests",
@@ -180,9 +180,7 @@
     "vibe3d-log": {
       "path": "../../../util/log"
     },
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    },
+    "vibe3d:math": {"path": "../../.."},
     "vibe3d-mesh": {
       "path": "../../mesh"
     },

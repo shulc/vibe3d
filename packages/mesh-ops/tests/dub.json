@@ -76,9 +76,7 @@
     "vibe3d-mesh": {
       "path": "../../mesh"
     },
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    },
+    "vibe3d:math": {"path": "../../.."},
     "vibe3d-spatial": {
       "path": "../../spatial"
     },
@@ -107,7 +105,7 @@
       "name": "algorithm",
       "subConfigurations": {
         "vibe3d-mesh": "isolated-tests",
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-spatial": "isolated-tests",
         "vibe3d-mesh-contracts": "isolated-tests",
         "vibe3d-mesh-topology": "isolated-tests",

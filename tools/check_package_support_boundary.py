@@ -1132,10 +1132,10 @@ def require(condition, message):
 SPECS = {'alignment-ops': {'external': {},
                    'lower': ['edit-contracts', 'interaction-query', 'math', 'mesh'],
                    'name': 'vibe3d-alignment-ops',
-                   'ordinaryDigest': 'f4139dfa775143f775926ff32161898a77c2905b58000661c71fcae23cab12e8',
+                   'ordinaryDigest': 'bc619c815bddb5ca8ed7d773aef7d2c81662098291f569381b78c5bcf069a827',
                    'root': 'packages/alignment-ops',
                    'sources': ['source/tools/alignment/align_kernels.d'],
-                   'testDigest': '5e8ce06278a12401275b01581b681e54b4f2eb7c2de9d3e0ff0b1ff51dc397b7',
+                   'testDigest': 'f1ef21f41c31897147a19009bb8c2a865df784b7ae31dacf4c74023734b58379',
                    'testImports': ['source', '../source'],
                    'testLower': ['edit-contracts', 'interaction-query', 'math', 'mesh', 'pipe-runtime'],
                    'testSources': ['../source/tools/alignment/align_kernels.d',
@@ -1162,7 +1162,7 @@ SPECS = {'alignment-ops': {'external': {},
                                   'source/pilot_command_registration.d',
                                   'source/session_owner.d',
                                   'source/standalone_application.d'],
-                      'testDigest': 'aac10d5d49d9e02dd99b3642746c66af6023a7193f312b38aff463758d88a06e',
+                      'testDigest': '227f7bb2052c80e4d8d48472ccf524177d5d33f530688d5a5908f45a393a0359',
                       'testImports': ['source', '../source'],
                       'testLower': ['camera-model',
                                     'command-runtime',
@@ -1194,10 +1194,10 @@ SPECS = {'alignment-ops': {'external': {},
  'camera-model': {'external': {},
                   'lower': ['json-number', 'math', 'spatial'],
                   'name': 'vibe3d-camera-model',
-                  'ordinaryDigest': 'c3de9fe9833505160d6d7fc839c8e6148a8d3fe640b72b5981f6b7e057c8719e',
+                  'ordinaryDigest': 'a208e1de58cd2238cc1a6c76ca0784661eb8cbddcb8ba8fea1d09e2b1892105b',
                   'root': 'packages/camera-model',
                   'sources': ['source/view.d'],
-                  'testDigest': '293b3f5bb99f3f8b00349e6a9f2f244cfafbb72024761235fb55c982b88e5c6b',
+                  'testDigest': 'e202a14fd0f319c9ad42ddf7fb5388d3cc311c2d37f73789eb265533fe7add11',
                   'testImports': ['source', '../source'],
                   'testLower': ['json-number', 'math', 'spatial'],
                   'testSources': ['../source/view.d',
@@ -1221,7 +1221,7 @@ SPECS = {'alignment-ops': {'external': {},
                                'profiling',
                                'spatial'],
                      'name': 'vibe3d-command-runtime',
-                     'ordinaryDigest': 'd20b4e79557d284df5818628f6472bb79df678c66f83afdeaeaf4e48c47cccd0',
+                     'ordinaryDigest': '3a178a5217f7b70dc89c03bcf2ecbc99449a0ec8a77b61e5de94b77b30ff1de8',
                      'root': 'packages/command-runtime',
                      'sources': ['source/command.d',
                                  'source/command_args.d',
@@ -1245,7 +1245,7 @@ SPECS = {'alignment-ops': {'external': {},
                                  'source/history_lifecycle_contract.d',
                                  'source/record_observer_hub.d',
                                  'source/tool_activation_ownership.d'],
-                     'testDigest': 'd1a9c697f2b9110cb07b5279e65c6b53c43f3c232e37a6ab0d9c2fb8671f9762',
+                     'testDigest': '9f9993d7088623dcf9acd94f250d986c426c42cc78fb235e3ae495e0e84299fc',
                      'testImports': ['source', '../source'],
                      'testLower': ['camera-model',
                                    'document-model',
@@ -1303,10 +1303,10 @@ SPECS = {'alignment-ops': {'external': {},
                             'pipe-contracts',
                             'spatial'],
                   'name': 'vibe3d-creation-ops',
-                  'ordinaryDigest': '56c138519b9c094f1d19f80a54ec3c1b1e9ce24038e3e23da8465a02c0f3bb28',
+                  'ordinaryDigest': '95c38e3fbb2b2e25763c311612b643f4459b83d9df7b8e747b1ac41569f9be7f',
                   'root': 'packages/creation-ops',
                   'sources': ['source/tools/create/pen_geometry.d'],
-                  'testDigest': '965f49426f50ff3833a3c3aad030c6563a6774f7e1090b04f31e6e0030aaabed',
+                  'testDigest': 'f3df772bc46c00d4857c00e011d842d5be9e0e5ba14879992759d5635a237f64',
                   'testImports': ['source', '../source'],
                   'testLower': ['edit-contracts',
                                 'interaction-query',
@@ -1320,7 +1320,7 @@ SPECS = {'alignment-ops': {'external': {},
  'display-policy': {'external': {},
                     'lower': ['document-model', 'math', 'mesh', 'mesh-change'],
                     'name': 'vibe3d-display-policy',
-                    'ordinaryDigest': 'd9f8818562b7a91e098bc0aafdaf47c02d031f69a714be2a17d75468576fdb66',
+                    'ordinaryDigest': '1f5326e0e20e6c10f1538f5b58d64c858d876ba4f86c175c5c671fb7bcb36106',
                     'root': 'packages/display-policy',
                     'sources': ['source/camera_stamp.d',
                                 'source/display_state.d',
@@ -1334,7 +1334,7 @@ SPECS = {'alignment-ops': {'external': {},
                                 'source/viewport_probe_sampling.d',
                                 'source/viewport_scheme.d',
                                 'source/weightmap_view.d'],
-                    'testDigest': '5efb9d4fd4a40c89b6d49dae01f3585353e0b5fc50c2b1a78eb766834c5d48b5',
+                    'testDigest': '6aab279a63a0cfae4b0fa4e16fd24f2e6be0528bf6551438b1822b481634d325',
                     'testImports': ['source', '../source'],
                     'testLower': ['document-model', 'math', 'mesh', 'mesh-change'],
                     'testSources': ['../source/camera_stamp.d',
@@ -1365,7 +1365,7 @@ SPECS = {'alignment-ops': {'external': {},
                        'ordinaryDigest': 'a12f11096d8721c0ec4b058ad2bc75818b51e7f003a4f6ccad43a916406d1591',
                        'root': 'packages/document-channels',
                        'sources': ['source/layer_params.d'],
-                       'testDigest': '986e544e5818af7e0cfbce1330e98356470152b890b77c2821bc7e084af7bddf',
+                       'testDigest': 'ec802f7665c9b077a7f339c95bca3f6140ac06dd4a15855de0bf1ea9170169a8',
                        'testImports': ['source', '../source'],
                        'testLower': ['document-model', 'edit-contracts', 'math', 'mesh', 'param-schema'],
                        'testSources': ['../source/layer_params.d',
@@ -1382,10 +1382,10 @@ SPECS = {'alignment-ops': {'external': {},
                            'param-schema',
                            'spatial'],
                  'name': 'vibe3d-document-io',
-                 'ordinaryDigest': '26ff7e3f863457f560b4f5a80af1b2dfeec2092233f73560613562965cc5e759',
+                 'ordinaryDigest': 'edfd9c9cc37b89c599aaa0c94aed3432a321368b6f4dda180973d7a8956b0e1e',
                  'root': 'packages/document-io',
                  'sources': ['source/io/file_model.d', 'source/io/image_path.d', 'source/io/native.d'],
-                 'testDigest': '1d5de6e64e9b75427de8d49b7aeb904ca74b50669717c00eec4db01a7c164318',
+                 'testDigest': '2a2f1ad17d16ef382a675131992b1894b69f6f22a052916d1c210451604cb295',
                  'testImports': ['source', '../source'],
                  'testLower': ['document-channels',
                                'document-model',
@@ -1413,7 +1413,7 @@ SPECS = {'alignment-ops': {'external': {},
                                 'source/edit_target_contract.d',
                                 'source/image_data.d',
                                 'source/item_kinds.d'],
-                    'testDigest': '59cec528d96ddb6d1828b19e84094afa78b7f8d0db2768368fc05ff02e46ad17',
+                    'testDigest': '172d2cda350da310181e5cd16d7c36d222b46198452e9e55c60c2eeed9704261',
                     'testImports': ['source', '../source'],
                     'testLower': ['edit-contracts',
                                   'math',
@@ -1470,7 +1470,7 @@ SPECS = {'alignment-ops': {'external': {},
                                'subpatch-preview',
                                'viewport-gpu'],
                      'name': 'vibe3d-editor-commands',
-                     'ordinaryDigest': 'd5be4205fa6edceb7f9409a6c5d94f2906ab61ab632a463685b7a385dc993cbc',
+                     'ordinaryDigest': 'f58d8122ee34e81f08aa2fd70033e040464c9ca8128d982e159975e88774ccda',
                      'root': 'packages/editor-commands',
                      'sources': ['source/commands/history/clear.d',
                                  'source/commands/history/save_as_script.d',
@@ -1573,7 +1573,7 @@ SPECS = {'alignment-ops': {'external': {},
                                  'source/commands/select/type_from.d',
                                  'source/macro_recorder.d',
                                  'source/step_trace.d'],
-                     'testDigest': 'fb776711e91b48e7c5502a58e957447b4f4801a8535a4ed9824725e309b3d719',
+                     'testDigest': '1c1ab47976b2ea5beec61d6c8a396174127598839d8305ecba8c79e03f72741b',
                      'testImports': ['../source', 'source'],
                      'testLower': ['alignment-ops',
                                    'camera-model',
@@ -1782,7 +1782,7 @@ SPECS = {'alignment-ops': {'external': {},
                                  'screen-buckets',
                                  'spatial'],
                        'name': 'vibe3d-interaction-query',
-                       'ordinaryDigest': '251f35a7cdb6623a2c488cd68f5a544ec3bb2fe69198a9e42c033f13d9c01a76',
+                       'ordinaryDigest': '10b1a9b7448770580f8d090749a447d7a8a758119a7d95f71d0911300ff0c356',
                        'root': 'packages/interaction-query',
                        'sources': ['source/constraint.d',
                                    'source/hover_state.d',
@@ -1796,7 +1796,7 @@ SPECS = {'alignment-ops': {'external': {},
                                    'source/toolpipe/guide.d',
                                    'source/viewgrid.d',
                                    'source/workplane_fit.d'],
-                       'testDigest': '46f300524e3052607873fbb16df3facdf9d9f31a4e2f42c36421ef893f59bce4',
+                       'testDigest': '0129b9d5e5237f0bbad24a1f11e5c8d80717777fc28c0d6925f367eb949f5c31',
                        'testImports': ['source', '../source'],
                        'testLower': ['edit-contracts',
                                      'math',
@@ -1867,7 +1867,7 @@ SPECS = {'alignment-ops': {'external': {},
                                  'transform-ops',
                                  'viewport-gpu'],
                        'name': 'vibe3d-interactive-tools',
-                       'ordinaryDigest': '4904be477abe70128c8b8a84272b4f45a6d7e75c904e503376ed579cbcead30d',
+                       'ordinaryDigest': '61a034839646a65171af886d86d8f9a36ca660e33e3cdcf09d47b2e5b2e3eac9',
                        'root': 'packages/interactive-tools',
                        'sources': ['source/commands/mesh/smooth.d',
                                    'source/commands/tool/attr.d',
@@ -2296,7 +2296,7 @@ SPECS = {'alignment-ops': {'external': {},
                                               'version': '6d35b70a2a23c16c5b6cc19ea3e2d05a99eb0061'}},
                  'lower': ['document-model', 'log', 'math', 'mesh'],
                  'name': 'vibe3d-interchange',
-                 'ordinaryDigest': 'd90177ee97660a714c4048186ae53afcb7e5c517d2af0442556792e48f82042f',
+                 'ordinaryDigest': '4c8721c54b37629a30cd86cb31ceb21352841f46f37b714cf7f0e9b83c30ea82',
                  'root': 'packages/interchange',
                  'sources': ['source/io/assimp_runtime.d',
                              'source/io/assimp_wire.d',
@@ -2306,7 +2306,7 @@ SPECS = {'alignment-ops': {'external': {},
                              'source/io/scene_export.d',
                              'source/io/scene_import.d',
                              'source/io/scene_ir.d'],
-                 'testDigest': '637b4d8018094a1b076d43d4aab78d05d6f89d113bb87050ba3588a320c20432',
+                 'testDigest': 'a1a4d32f4370e2b3fda8cdd7319c95bfad1ffb31ea0f316006e3a18d6b6dc535',
                  'testImports': ['source', '../source'],
                  'testLower': ['document-model', 'log', 'math', 'mesh'],
                  'testSources': ['../source/io/assimp_runtime.d',
@@ -2344,23 +2344,26 @@ SPECS = {'alignment-ops': {'external': {},
          'testSources': ['../source/log.d']},
  'math': {'external': {},
           'lower': [],
-          'name': 'vibe3d-math',
-          'ordinaryDigest': 'eb6d40d7138fcdd9e50ce3c0d809c17f44f753faf31231ad82f01b4476c09d1b',
-          'root': 'util/math',
-          'sources': ['source/math.d',
-                      'source/math_geometry.d',
-                      'source/math_matrix.d',
-                      'source/math_quaternion.d',
-                      'source/math_vector.d'],
-          'testDigest': '53b3aa196c4af14606d780de14f34b0e22ecc651077c4998a93f7b9467a24e74',
+          'name': 'vibe3d:math',
+          'testName': 'vibe3d-math-tests',
+          'targetName': 'vibe3d-math',
+          'ordinaryDigest': 'd83d7a57f0e5ed1d092fea67c4149bbf4df5f12802af9e8a466c1612b9e2f1ea',
+          'root': 'libraries/util/math',
+          'transitionalSources': ['source/math.d', 'source/math_geometry.d', 'source/math_matrix.d', 'source/math_quaternion.d', 'source/math_vector.d', 'source/vibe3d/util/math/package.d'],
+          'sources': ['source/vibe3d/util/math/math.d',
+                      'source/vibe3d/util/math/math_geometry.d',
+                      'source/vibe3d/util/math/math_matrix.d',
+                      'source/vibe3d/util/math/math_quaternion.d',
+                      'source/vibe3d/util/math/math_vector.d'],
+          'testDigest': '899af459f6a9f6a1491e1558e1a925d7f26f837c0e4d6549efa79909b05014df',
           'testImports': ['../source', 'source'],
           'testLower': [],
-          'testSources': ['../source/math.d',
-                          '../source/math_geometry.d',
-                          '../source/math_matrix.d',
-                          '../source/math_quaternion.d',
-                          '../source/math_vector.d',
-                          'source/tests/unit/math_test.d']},
+          'testSources': ['../source/vibe3d/util/math/math.d',
+                          '../source/vibe3d/util/math/math_geometry.d',
+                          '../source/vibe3d/util/math/math_matrix.d',
+                          '../source/vibe3d/util/math/math_quaternion.d',
+                          '../source/vibe3d/util/math/math_vector.d',
+                          'source/vibe3d/util/math/tests/unit/math_test.d']},
  'mesh': {'external': {},
           'lower': ['edit-contracts',
                     'math',
@@ -2372,13 +2375,13 @@ SPECS = {'alignment-ops': {'external': {},
                     'profiling',
                     'spatial'],
           'name': 'vibe3d-mesh',
-          'ordinaryDigest': 'a8fd838bb804fb2e0cafef3fe3172f08834c9104abd93bd707aad9385c382789',
+          'ordinaryDigest': '9351de51df0803695afe7f5cfdbac5ac479a8ec588812843d6b20fd6ae0d628b',
           'root': 'packages/mesh',
           'sources': ['source/mesh.d',
                       'source/mesh_morph.d',
                       'source/mesh_planes.d',
                       'source/mesh_selsets.d'],
-          'testDigest': '67252b91f780af88b4c11960c4e1cc48c9523e179dd0848bc492deee1fb38a3f',
+          'testDigest': '270176339edde7aa17c98682508fd6295e0844bd83e0b3c4a6c4dadead990687',
           'testImports': ['../source', 'source'],
           'testLower': ['edit-contracts',
                         'math',
@@ -2427,20 +2430,20 @@ SPECS = {'alignment-ops': {'external': {},
  'mesh-edit-log': {'external': {},
                    'lower': ['math', 'mesh-change', 'mesh-contracts', 'plane-bytes'],
                    'name': 'vibe3d-mesh-edit-log',
-                   'ordinaryDigest': 'e0cadefca788a315ad5f6916d7ce05c96ac0f0a0643296fcf79951240dbefddd',
+                   'ordinaryDigest': 'f2ae101c9e86d0f10e68594e30c45d7c289257e13ab5369a9fffc775a1d589b0',
                    'root': 'packages/mesh-edit-log',
                    'sources': ['source/mesh_edit_delta.d'],
-                   'testDigest': '0fe42e66bcbc6f721c5f411495cd79766fb1c45f34ceb652a1703cdab490c00f',
+                   'testDigest': 'c737aec5d8e7544c6ef7604b72f75c866647dba79a6bea59c74b478138df5c66',
                    'testImports': ['../source', 'source'],
                    'testLower': ['math', 'mesh-change', 'mesh-contracts', 'plane-bytes'],
                    'testSources': ['../source/mesh_edit_delta.d', 'source/mesh_edit_log_protocol_test.d']},
  'mesh-edit-replay': {'external': {},
                       'lower': ['math', 'mesh', 'mesh-change', 'mesh-contracts', 'mesh-edit-log'],
                       'name': 'vibe3d-mesh-edit-replay',
-                      'ordinaryDigest': '9119c346b4e1af5fdcef1ad77c93e2f5008e613221242b8992b5465e5e2f4486',
+                      'ordinaryDigest': 'cd29c4d87428b7afa73b7c7bca8c4f15deda62adfdb730a4c81e2b6bd4e33fde',
                       'root': 'packages/mesh-edit-replay',
                       'sources': ['source/mesh_edit_replay.d'],
-                      'testDigest': '5babb83a01ccb7dc0a0d0bfea7f6f6170274b1f85b6852ae0d2739e47b75b6c9',
+                      'testDigest': 'c39685c548446eb4cb4d467c14d0ba6890713a8f082694a182476732dfc612be',
                       'testImports': ['../source', 'source'],
                       'testLower': ['math', 'mesh', 'mesh-change', 'mesh-contracts', 'mesh-edit-log'],
                       'testSources': ['../source/mesh_edit_replay.d',
@@ -2450,7 +2453,7 @@ SPECS = {'alignment-ops': {'external': {},
  'mesh-ops': {'external': {},
               'lower': ['log', 'math', 'mesh', 'mesh-contracts', 'mesh-topology', 'spatial'],
               'name': 'vibe3d-mesh-ops',
-              'ordinaryDigest': '70c00b615b1c042b5c0c8abecfd1ca8365aa92a285aba3b122d01a431db24d51',
+              'ordinaryDigest': 'cfd1bbabee1582215b63bed6c96ad185e58d7c7163f812a416ce41de9a81dbac',
               'root': 'packages/mesh-ops',
               'sources': ['source/geometry_clipboard.d',
                           'source/mesh_analysis.d',
@@ -2482,7 +2485,7 @@ SPECS = {'alignment-ops': {'external': {},
                           'source/uv_transform.d',
                           'source/uv_unwrap.d',
                           'source/uv_weld.d'],
-              'testDigest': 'afebc8d6d575bfeb95358e59f7cdf10965be0ec84c7f561353dfe56fe3be4f1b',
+              'testDigest': '14018f50a82f611427b0ff55c15cb67690a49fa1020ce1c0a2e6aaf921cd0e18',
               'testImports': ['../source', 'source', '../../..'],
               'testLower': ['log',
                             'math',
@@ -2555,10 +2558,10 @@ SPECS = {'alignment-ops': {'external': {},
  'mesh-preview': {'external': {},
                   'lower': ['math', 'mesh', 'mesh-contracts'],
                   'name': 'vibe3d-mesh-preview',
-                  'ordinaryDigest': '6344d87b96cdd028fa5e7cef2a54870a8bb08d429d1d6a0b9a34d5fc4880eb9e',
+                  'ordinaryDigest': '768744eae69340d13ab695e47ad5d41a5b2d08704f0131a5c4e839b84e827d53',
                   'root': 'packages/mesh-preview',
                   'sources': ['source/active_mesh_resolver.d', 'source/morph_preview.d'],
-                  'testDigest': 'c22618544c1f0c2fcd9d709b68ace696301bc231e1ca607e90d80e8da52c72ad',
+                  'testDigest': '72182e803e68aeb7fbf11426c21a56eb78273b22b7420f3b7c908975bab94c7b',
                   'testImports': ['../source', 'source'],
                   'testLower': ['math', 'mesh', 'mesh-contracts'],
                   'testSources': ['../source/active_mesh_resolver.d',
@@ -2567,10 +2570,10 @@ SPECS = {'alignment-ops': {'external': {},
  'mesh-snapshot': {'external': {},
                    'lower': ['math', 'mesh', 'mesh-change', 'plane-bytes', 'profiling'],
                    'name': 'vibe3d-mesh-snapshot',
-                   'ordinaryDigest': '5180311ca580c201b4649e0186918434225cda7272f8e1be974636084bd112ca',
+                   'ordinaryDigest': '3983f366a2da3bea03c56b03910abd84923039359a0af72cd6286ea15d8dd531',
                    'root': 'packages/mesh-snapshot',
                    'sources': ['source/snapshot.d'],
-                   'testDigest': '43f3644760e94e327d1b8720790bf0c86c888f73fb3c9869f11e81839fdfc305',
+                   'testDigest': '4540227bd04ee547a737660219bcb7e0cc859941cfd7d804249c03c2d41fa0a4',
                    'testImports': ['../source', 'source'],
                    'testLower': ['math', 'mesh', 'mesh-change', 'plane-bytes', 'profiling'],
                    'testSources': ['../source/snapshot.d',
@@ -2601,10 +2604,10 @@ SPECS = {'alignment-ops': {'external': {},
  'param-schema': {'external': {},
                   'lower': ['math'],
                   'name': 'vibe3d-param-schema',
-                  'ordinaryDigest': 'aaf52380bf6bd3749be846f991a4c4ec566a37e15404fe0884b0bbbb2dfd808d',
+                  'ordinaryDigest': '8669a82d46d3157637fd61a5634ae4709b7de9eea53cc66715dda06f99475fe4',
                   'root': 'packages/param-schema',
                   'sources': ['source/argstring.d', 'source/params.d'],
-                  'testDigest': 'acc294d1a4b08243835a26662ff70d8c1951b96b5fc4129fd2f0081d88dac9dd',
+                  'testDigest': 'f1bba5d620502466996942d22511b6309a50183d86fecf743a2f5586f57496a0',
                   'testImports': ['source', '../source'],
                   'testLower': ['math'],
                   'testSources': ['../source/argstring.d',
@@ -2615,10 +2618,10 @@ SPECS = {'alignment-ops': {'external': {},
  'pipe-contracts': {'external': {},
                     'lower': ['edit-contracts', 'math', 'mesh', 'spatial'],
                     'name': 'vibe3d-pipe-contracts',
-                    'ordinaryDigest': '0ab9c7dc84dbe191078eef9818dfda61d1e486f3dcc46a9cfb5cc20ab41c6682',
+                    'ordinaryDigest': '4a7da1858f488a29a4ae3f3ba3cc0e826dec69b30655d6657f25de6c9537959b',
                     'root': 'packages/pipe-contracts',
                     'sources': ['source/operator.d', 'source/toolpipe/packets.d'],
-                    'testDigest': '255037c083299e09d6c2825cbeae24ef616320ab5daf71006f846d659380ed10',
+                    'testDigest': '30967fd475ed4c4d7ef91bc87bd6faa74f4fe0399c1e8076a9e6c04be11e3e0c',
                     'testImports': ['../source', 'source'],
                     'testLower': ['edit-contracts', 'math', 'mesh', 'spatial'],
                     'testSources': ['../source/operator.d',
@@ -2640,7 +2643,7 @@ SPECS = {'alignment-ops': {'external': {},
                                'profiling',
                                'spatial'],
                      'name': 'vibe3d-pipe-evaluation',
-                     'ordinaryDigest': 'a1fb4c13591738f2f6ab0c256546e4581b7abe72795aa5a342630db0ed9a72d7',
+                     'ordinaryDigest': '79967846d3ef339a9941cdd0e418e6fe47c3f0c79d4ea527fc7c67f394a2f127',
                      'root': 'packages/pipe-evaluation',
                      'sources': ['source/toolpipe/attr_cache.d',
                                  'source/toolpipe/obbox.d',
@@ -2654,7 +2657,7 @@ SPECS = {'alignment-ops': {'external': {},
                                  'source/toolpipe/stages/symmetry.d',
                                  'source/toolpipe/stages/workplane.d',
                                  'source/toolpipe/state_paths.d'],
-                     'testDigest': '91cfc49b35777e7f2d8e9507cc6b91b1d1e20bfcb5ae4c6420fd765e6821cad3',
+                     'testDigest': '34657a71ceffa21779c61d661e6635cee16279779e1b49b380775e56a10617ce',
                      'testImports': ['source', '../source'],
                      'testLower': ['document-model',
                                    'edit-contracts',
@@ -2704,13 +2707,13 @@ SPECS = {'alignment-ops': {'external': {},
                             'profiling',
                             'spatial'],
                   'name': 'vibe3d-pipe-runtime',
-                  'ordinaryDigest': '55c08d5c93ea29597f41748ef6244546919fa301a71a0fecbf7de5f9fa7bf25c',
+                  'ordinaryDigest': 'bef2f241058e4a3f6bee241a59041e5402b1879eff4c83ee3c650bee11d23f1e',
                   'root': 'packages/pipe-runtime',
                   'sources': ['source/falloff.d',
                               'source/toolpipe/pipeline.d',
                               'source/toolpipe/stage.d',
                               'source/toolpipe/subject.d'],
-                  'testDigest': 'b0ff546de1d52c5881aab17631a3253e2e079875de1190ba716a8920be1bdec8',
+                  'testDigest': '28a4b8d1dc2e184b8e8f546ba19c7b14c0b09a83fb19e38983928a8d2bde8363',
                   'testImports': ['source', '../source'],
                   'testLower': ['edit-contracts',
                                 'log',
@@ -2765,10 +2768,10 @@ SPECS = {'alignment-ops': {'external': {},
                            'spatial',
                            'viewport-gpu'],
                  'name': 'vibe3d-scene-query',
-                 'ordinaryDigest': 'fa5902958259e7113d6079c04db01e4fa4e1aa545b90e3ea7987b1203d650b2f',
+                 'ordinaryDigest': 'ce6818cb769c3f0c85b3e944731e9f617f4508a205f0d48662fcad5b3d4475be',
                  'root': 'packages/scene-query',
                  'sources': ['source/bvh_pick.d', 'source/symmetry_pick.d'],
-                 'testDigest': 'ea82ff1ef847233455efc2e38f585c05f534a2de4ae4575e2b577481e56cade0',
+                 'testDigest': '19edc6c7fc0759245de7c0c76a1bb6cd5936b8643ba9316923820f0627554698',
                  'testImports': ['../source', 'source'],
                  'testLower': ['edit-contracts',
                                'interaction-query',
@@ -2801,7 +2804,7 @@ SPECS = {'alignment-ops': {'external': {},
                      'ordinaryDigest': 'bb36babeda0c7f51f6f818c7a86fd9059442132428ec71999c8d75b6138dbeb3',
                      'root': 'packages/selection-model',
                      'sources': ['source/selection_product.d', 'source/selection_projection.d'],
-                     'testDigest': '340d70fb49abd1b8c611bb106e7d2ae6bae8daeaf61035e521f9ee0bb4a8dcfa',
+                     'testDigest': '9ae550bed97f2f93d881850b43f5438fb9411a806679284fc233bfb875422dca',
                      'testImports': ['../source', 'source'],
                      'testLower': ['document-model', 'edit-contracts', 'math', 'mesh', 'subpatch-preview'],
                      'testSources': ['../source/selection_product.d',
@@ -2812,14 +2815,14 @@ SPECS = {'alignment-ops': {'external': {},
  'spatial': {'external': {},
              'lower': ['math'],
              'name': 'vibe3d-spatial',
-             'ordinaryDigest': '598bfe820ed2bb7c21bdadeba4a4a8a1f8ac221ccee61b8e79f6e1ad71524839',
+             'ordinaryDigest': 'e3b2648470cf37781f2e25326b94404860bbf615db89ec7aa8311dd0cfa007da',
              'root': 'packages/spatial',
              'sources': ['source/item_xform.d',
                          'source/spatial.d',
                          'source/symmetry_plane.d',
                          'source/trackball.d',
                          'source/workplane_basis.d'],
-             'testDigest': '7d173abafeec7c2d6ae71cc8d8bb48d420e6e6b7f7564badde647c0dccdbd37b',
+             'testDigest': 'b2397761c64e4eef9d47c881a421633b4b4010398d4aaeaf307d9238b20dfb5c',
              'testImports': ['../source', 'source'],
              'testLower': ['math'],
              'testSources': ['../source/item_xform.d',
@@ -2840,14 +2843,14 @@ SPECS = {'alignment-ops': {'external': {},
                                 'profiling',
                                 'viewport-gpu'],
                       'name': 'vibe3d-subpatch-preview',
-                      'ordinaryDigest': '6b5acac2a26a9c7588fb1935a50b9276486c0a715d7252c8ab7b79526b7a1b49',
+                      'ordinaryDigest': 'da3641450b11c908e36c8b2c956118817be553da7f5a61dc142eb8be5c949332',
                       'root': 'packages/subpatch-preview',
                       'sources': ['source/subpatch_factories.d',
                                   'source/subpatch_osd.d',
                                   'source/subpatch_preview.d',
                                   'source/subpatch_worker.d',
                                   'source/subpatch_worker_web.d'],
-                      'testDigest': '03a8234b5beed3022ccc2601afa25dbda82fb96649812a66530170f816efc587',
+                      'testDigest': '37a3a01da1633dd2d83c8598039730c3bf15006924a7e33a1e0e8083e2b06c62',
                       'testImports': ['source', '../source'],
                       'testLower': ['display-policy',
                                     'edit-contracts',
@@ -2877,7 +2880,7 @@ SPECS = {'alignment-ops': {'external': {},
                 'ordinaryDigest': '01f42ae2ea43d3180ed47d1805b01dbd58c9d8f574ccfa2f53f1532c106e814d',
                 'root': 'packages/tool-state',
                 'sources': ['source/tools/common/session_mesh_key.d', 'source/tools/edit/preview_rebuild.d'],
-                'testDigest': '20c8a82a8d18a236f6c8e5efbf3e7dc7af74a1740c35b26ae0afb4d7a7a8f889',
+                'testDigest': 'a6dff35abcfea24d1a5f21a05c762a0f8190402722944cfaffd0c96bb657e2bc',
                 'testImports': ['source', '../source'],
                 'testLower': ['math', 'mesh', 'mesh-edit-log', 'mesh-snapshot'],
                 'testSources': ['../source/tools/common/session_mesh_key.d',
@@ -2897,7 +2900,7 @@ SPECS = {'alignment-ops': {'external': {},
                              'profiling',
                              'spatial'],
                    'name': 'vibe3d-transform-ops',
-                   'ordinaryDigest': '0b8c8eacc3ddb7faad1426e1e2ed51e8706a5a8db1e5a37ebb11709bd41ce61c',
+                   'ordinaryDigest': 'b6fc2afa9899f64f0ff189d5b5b2f2a2bc0ba6e676d08c3f843eeeb735726fc8',
                    'root': 'packages/transform-ops',
                    'sources': ['source/tools/transform/arcball.d',
                                'source/tools/transform/cluster_values.d',
@@ -2906,7 +2909,7 @@ SPECS = {'alignment-ops': {'external': {},
                                'source/tools/transform/relocate_plane.d',
                                'source/tools/transform/scale_input.d',
                                'source/tools/transform/xform_kernels.d'],
-                   'testDigest': '233085e4e4acb70755f067ed1fe12a93b5de3e86b1bec8aff46e61d07209bf4a',
+                   'testDigest': '0e9a3cceeaecbf674953ea6521dca238a21b1bf5cd76d0c83d6fc5aa78b34bce',
                    'testImports': ['source', '../source'],
                    'testLower': ['document-model',
                                  'interaction-query',
@@ -2945,7 +2948,7 @@ SPECS = {'alignment-ops': {'external': {},
                             'profiling',
                             'spatial'],
                   'name': 'vibe3d-viewport-gpu',
-                  'ordinaryDigest': '0beed45f31e9d91418ace10adaaddc96cda59c71102a7885b55229b7f03c5d0f',
+                  'ordinaryDigest': '81a53467e7ec395f6e5b1da4d1380c29818e7b65cf34e33076ec9a552b1a0ee0',
                   'root': 'packages/viewport-gpu',
                   'sources': ['source/display_sync.d',
                               'source/gl_thread_guard.d',
@@ -2954,7 +2957,7 @@ SPECS = {'alignment-ops': {'external': {},
                               'source/mesh_gpu.d',
                               'source/shader.d',
                               'source/viewport_env.d'],
-                  'testDigest': '13b70e7e6ca5f7476c39cadaf0d924443d4dd520dd3c657409c0a5d4d7f2794c',
+                  'testDigest': '84870feb344ced504377653b0cb850f9ae0c6e1beba597024ee7855081480949',
                   'testImports': ['source', '../source'],
                   'testLower': ['camera-model',
                                 'display-policy',
@@ -2994,14 +2997,14 @@ SPECS = {'alignment-ops': {'external': {},
                              'spatial',
                              'viewport-gpu'],
                    'name': 'vibe3d-viewport-host',
-                   'ordinaryDigest': '11c6a22e387ff9892f76b248c04f07fda27470070e7f1c187564a209b093dfa0',
+                   'ordinaryDigest': 'a4e3924015a110fb45714702608c9917f4869afa4c7da21e33f00e4e14b26c58',
                    'root': 'packages/viewport-host',
                    'sources': ['source/bg_gpu_cache.d',
                                'source/image_cache.d',
                                'source/image_plane.d',
                                'source/viewport.d',
                                'source/viewport_composite.d'],
-                   'testDigest': 'cb19766f4ec9ff3ea68300d50435ee4e73ad03532712430e18e46ab94e7486c2',
+                   'testDigest': '92034dacb230dca99d868140dd369bebe734fa4595cef12750aa5bc29ef0bcab',
                    'testHelpers': ['tests/source/image_plane_source_cells.d'],
                    'testImports': ['source', '../source'],
                    'testLower': ['application-core',
@@ -3038,7 +3041,7 @@ SPECS = {'alignment-ops': {'external': {},
 SPECS.update({'ai-advisor': {'external': {},
                 'lower': ['interaction-data', 'math', 'mesh', 'mesh-ops', 'pipe-evaluation'],
                 'name': 'vibe3d-ai-advisor',
-                'ordinaryDigest': '3d8f9c0487ec2c01d1536e94e21e3d5f58f9ae430c0d7ead7e5a7e404f0da926',
+                'ordinaryDigest': '2ad223e35ea63deb63f106a5b6b06a21539458eeab1215c92d39e6870238dc62',
                 'root': 'packages/ai-advisor',
                 'sources': ['source/ai/analysis.d',
                             'source/ai/copilot_gate.d',
@@ -3055,7 +3058,7 @@ SPECS.update({'ai-advisor': {'external': {},
                             'source/ai/support_loop_candidates.d',
                             'source/ai/synthetic_dataset.d',
                             'source/ai/training_dataset.d'],
-                'testDigest': '67e24efe156faeabfe3fdc0fc9b5d7d3ef7dc5191307e87f9b25c5b26bbb1c03',
+                'testDigest': '9032f542266c091c5ed5f6d8ce47278c24427600660c24e23ca5a8c9a7c1badd',
                 'testImports': ['source', '../source'],
                 'testLower': ['interaction-data', 'math', 'mesh', 'mesh-ops', 'pipe-evaluation'],
                 'testSources': ['../source/ai/analysis.d',
@@ -3133,7 +3136,7 @@ SPECS.update({'ai-advisor': {'external': {},
                                 'subpatch-preview',
                                 'viewport-host'],
                       'name': 'vibe3d-document-actions',
-                      'ordinaryDigest': 'a739fe2efec05f802800881b1667b9c114c395f954ebd820e21a3585f18a1447',
+                      'ordinaryDigest': '0d95b8946a3d7697ad9b869ee9470874b608acb0ce4f02546617deea2a6622dc',
                       'root': 'packages/document-actions',
                       'sources': ['source/commands/file/quit.d',
                                   'source/commands/image/commands.d',
@@ -3141,7 +3144,7 @@ SPECS.update({'ai-advisor': {'external': {},
                                   'source/commands/layer/commands.d',
                                   'source/commands/scene/load_mesh.d',
                                   'source/commands/scene/reset.d'],
-                      'testDigest': '0490cf32cfd2b910f464fba90366139fc68e9b39ec8dcb38d9e309cfcd5a011f',
+                      'testDigest': '2c1d68f0fc56fe0d44239c2763619a85d6b21b0584b9fafea8755dd8286e33f1',
                       'testImports': ['source', '../source'],
                       'testLower': ['application-core',
                                     'camera-model',
@@ -3233,10 +3236,10 @@ SPECS.update({'ai-advisor': {'external': {},
  'remesh-runtime': {'external': {},
                     'lower': ['math', 'mesh', 'mesh-change'],
                     'name': 'vibe3d-remesh-runtime',
-                    'ordinaryDigest': 'cc16147cffd10fccf5bccb6ccd899dca0d740fd349e0da76c553d5a0036ab34e',
+                    'ordinaryDigest': '86735a56df6ea781b29cffd528dd1476c7b2f421ee59c83e67709415a602303e',
                     'root': 'packages/remesh-runtime',
                     'sources': ['source/remesh/region_stitch.d', 'source/remesh/remesh_job.d'],
-                    'testDigest': 'bb83587306d26c048bbb16aaacbc5ede36257c19c3530c6f53ebff7391e4ba83',
+                    'testDigest': '4a2e7a19e29daea24dc110ef48769f5e8bf68c5d98a986efe3a26199299e19cc',
                     'testImports': ['source', '../source'],
                     'testLower': ['math', 'mesh', 'mesh-change'],
                     'testSources': ['../source/remesh/region_stitch.d',
@@ -3245,7 +3248,7 @@ SPECS.update({'ai-advisor': {'external': {},
                                     'source/tests/unit/remesh/remesh_job_test.d']}})
 SPECS['interactive-tools']['sources'] = sorted(SPECS['interactive-tools']['sources'] + ['source/commands/falloff.d'])
 SPECS['interactive-tools']['testSources'] = sorted(SPECS['interactive-tools']['testSources'] + ['../source/commands/falloff.d'])
-SPECS['interactive-tools']['testDigest'] = '5395da6450d4b43f84e09fdd6b8dcbdc0b0852e7d8872a69ac35a169c7ff8ba1'
+SPECS['interactive-tools']['testDigest'] = '18ad3fe709168f27829438a4deaadc0d69f31308f5ba8b188e501eb42ab4510f'
 CONFIGS = ('modeling', 'modeling-noai', 'with-render', 'web', 'root-tests', 'isolated-tests')
 FORBIDDEN_IMPORTS = {'interactive-tools': ('editor_app', 'viewport'),
                      'viewport-host': ('tool', 'editor_app'),
@@ -3279,8 +3282,8 @@ ARCHIVES = dict(legacy_ARCHIVES, **{'nfde': 'bin/libnfde.a', 'd-onnxruntime': 'l
 
 SPECS.update({'render-model': {'name': 'vibe3d-render-model',
                   'root': 'packages/render-model',
-                  'ordinaryDigest': 'af6b4d165c799e5d3308c23a786a46e9a0b06b6031ab0757968d0d4321f4a65b',
-                  'testDigest': 'efe3ac1e1959a0136634e1ebef32365eba40604fa7ceac31239876e24fcec96c',
+                  'ordinaryDigest': '6fbbec6515bd790c449ff527cd45339e7822db5b4a73f0c26f0a21ae29831767',
+                  'testDigest': 'c1ed5b1527c183b49448d8519f5d9e045b3b10514b5aee78a344990a0289a0bb',
                   'sources': ['source/render/backend.d', 'source/render/scene.d'],
                   'testSources': ['../source/render/backend.d',
                                   '../source/render/scene.d',
@@ -3292,8 +3295,8 @@ SPECS.update({'render-model': {'name': 'vibe3d-render-model',
                   'ordinaryConfig': 'with-render'},
  'render-backends': {'name': 'vibe3d-render-backends',
                      'root': 'packages/render-backends',
-                     'ordinaryDigest': 'e9de9183a28bf05f73b914a33b1d98c50ee295748686cbc187333ecb8149f976',
-                     'testDigest': 'bc8d62ce2b594f36f33d844e7a16c2942ae0db8ba1033ef8158603f37677a767',
+                     'ordinaryDigest': '8c72c62044bdf63f62e24825b6c95835c74dd1c3d75aae82c4a5a6d9d468becb',
+                     'testDigest': '517e16da20b917b8f614ad9810b865944fb9dbdbb39867aeab0cfe5a4de8a71b',
                      'sources': ['source/render/backend_bridge.d',
                                  'source/render/cycles_backend.d',
                                  'source/render/render_diff.d',
@@ -3327,8 +3330,8 @@ SPECS.update({'render-model': {'name': 'vibe3d-render-model',
                  'ordinaryConfig': 'modeling-noai'},
  'editor-ui': {'name': 'vibe3d-editor-ui',
                'root': 'packages/editor-ui',
-               'ordinaryDigest': '21635cc8039e932cba87af8367516330d48bf3f1a7388224b9315f7abf78c66d',
-               'testDigest': '1451730bc7c84f155bfebda42d204aea778f23a79fb478e8feffaa51a383e3f2',
+               'ordinaryDigest': '4feade7d5970159d95619708e3450e35bf35e739b61db5a4bc928bc5129ab38c',
+               'testDigest': '1447463ef4a735d6bf89438e883e9b311172d39606acf4d98df4fe4692f2dd43',
                'sources': ['source/args_dialog.d',
                            'source/buttonset.d',
                            'source/copilot_overlay.d',
@@ -3702,9 +3705,32 @@ def canonical_digest(raw):
               ('description','license','authors','copyright') and not k.startswith('_comment')}
     return hashlib.sha256(json.dumps(grants,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
+def internal_owner(name):
+    for owner, spec in SPECS.items():
+        if name in (spec['name'], test_name(owner)):
+            return owner
+    raise BoundaryError('support unknown internal identity: '+name)
+
+
+def is_internal(name):
+    return any(name in (spec['name'], test_name(owner)) for owner, spec in SPECS.items())
+
+
+def test_name(owner):
+    return SPECS[owner].get('testName', SPECS[owner]['name']+'-tests')
+
+
+def archive_name(owner):
+    return 'lib'+SPECS[owner].get('targetName', SPECS[owner]['name'])+'.a'
+
+
+def ordinary_arguments(project, owner):
+    return [':math', '--root='+str(project)] if owner=='math' else ['--root='+str(project/SPECS[owner]['root'])]
+
+
 def production_files(project, owner):
     spec = SPECS[owner]
-    return sorted((project/spec['root']/p).resolve() for p in spec['sources'])
+    return sorted((project/spec['root']/p).resolve() for p in spec['sources'] + spec.get('transitionalSources', []))
 
 def test_helper_files(project, owner):
     return [(project/SPECS[owner]['root']/p).resolve()
@@ -3727,9 +3753,88 @@ def test_files(project, owner):
     require(len(files)==len(set(files)), 'support explicit source ownership overlaps: '+owner)
     return sorted(files)
 
+MATH_TRANSITIONAL = {'source/math.d': 'module math;\n\npublic import vibe3d.util.math.math;\n',
+ 'source/math_geometry.d': 'module math_geometry;\n\npublic import vibe3d.util.math.math_geometry;\n',
+ 'source/math_matrix.d': 'module math_matrix;\n\npublic import vibe3d.util.math.math_matrix;\n',
+ 'source/math_quaternion.d': 'module math_quaternion;\n'
+                             '\n'
+                             'public import vibe3d.util.math.math_quaternion;\n',
+ 'source/math_vector.d': 'module math_vector;\n\npublic import vibe3d.util.math.math_vector;\n',
+ 'source/vibe3d/util/math/package.d': 'module vibe3d.util.math;\n'
+                                      '\n'
+                                      'public import vibe3d.util.math.math_vector :\n'
+                                      '    Vec3,\n'
+                                      '    Vec4,\n'
+                                      '    vec3Lerp,\n'
+                                      '    normalize,\n'
+                                      '    cross,\n'
+                                      '    dot,\n'
+                                      '    rotateAboutAxis,\n'
+                                      '    rotateAboutPivot,\n'
+                                      '    scaleAlongBasis,\n'
+                                      '    safeNormalize;\n'
+                                      '\n'
+                                      'public import vibe3d.util.math.math_matrix :\n'
+                                      '    identityMatrix,\n'
+                                      '    translationMatrix,\n'
+                                      '    pivotRotationMatrix,\n'
+                                      '    pivotScaleMatrix,\n'
+                                      '    pivotScaleMatrixBasis,\n'
+                                      '    matrixFromEulerZYX,\n'
+                                      '    eulerZYXFromMatrix,\n'
+                                      '    applyAffine,\n'
+                                      '    transformPoint,\n'
+                                      '    matrixMirrorsWinding,\n'
+                                      '    normalMatrix,\n'
+                                      '    frameMatrix,\n'
+                                      '    frameMatrixInverse,\n'
+                                      '    matMul4,\n'
+                                      '    wrapAboutPivot,\n'
+                                      '    wrapAboutPivotStable,\n'
+                                      '    modelMatrix,\n'
+                                      '    mulMV,\n'
+                                      '    lookAt,\n'
+                                      '    perspectiveMatrix,\n'
+                                      '    orthographicMatrix;\n'
+                                      '\n'
+                                      'public import vibe3d.util.math.math_quaternion :\n'
+                                      '    Quat,\n'
+                                      '    slerp,\n'
+                                      '    quatFromMatrix,\n'
+                                      '    matrixFromQuat;\n'
+                                      '\n'
+                                      'public import vibe3d.util.math.math_geometry :\n'
+                                      '    faceNormalFirst3,\n'
+                                      '    pointInPolygon2D,\n'
+                                      '    frontFacingLocal,\n'
+                                      '    ringStartCornerSign,\n'
+                                      '    closestOnSegment2D,\n'
+                                      '    closestOnSegment2DSquared,\n'
+                                      '    rayPlaneIntersect,\n'
+                                      '    closestOnSegmentToRay,\n'
+                                      '    perpendicularFrame,\n'
+                                      '    rayTriangleIntersect,\n'
+                                      '    closestPointOnTriangle2D,\n'
+                                      '    triangulatePolygonEarClip,\n'
+                                      '    planeFromLineAndWorkplane,\n'
+                                      '    planeForSlice,\n'
+                                      '    snapAngleToMultiple,\n'
+                                      '    snapLineEndpointToAngle,\n'
+                                      '    closestPointOnSegmentToRay,\n'
+                                      '    closestPointOnLineToRay,\n'
+                                      '    offsetInPlane,\n'
+                                      '    offsetMeetDir,\n'
+                                      '    offsetMeet,\n'
+                                      '    bevelMiterPoint,\n'
+                                      '    bevelArcPoints;\n'}
+
+
 def check_raw_tree(project, owner):
     for selected in closure(owner)|closure(owner,True)|{owner}:
         spec=SPECS[selected]; root=project/spec['root']
+        if selected=='math':
+            for path, expected in MATH_TRANSITIONAL.items():
+                require((root/path).is_file() and (root/path).read_text()==expected, 'support math transitional source custody: '+path)
         for tests in (False,True):
             path=root/('tests/dub.json' if tests else 'dub.json')
             require(path.is_file(),'support selected descriptor missing: '+selected)
@@ -3755,17 +3860,17 @@ def check_raw_tree(project, owner):
                 'support fixture identity: '+owner+':'+path)
 
 def validate_description(description, project, owner, config, tests=False, harness=None, compiler="dmd"):
-    root_name=SPECS[owner]['name']+('-tests' if tests else '')
+    root_name=test_name(owner) if tests else SPECS[owner]['name']
     require(description['rootPackage']==root_name,'support resolved root package: '+owner)
     active_list=[p for p in description['packages'] if p.get('active')]
     active={p['name']:p for p in active_list}
     require(len(active)==len(active_list),'support resolved package population duplicate')
     expected={SPECS[x]['name'] for x in closure(owner,tests)}|{root_name}
-    internal={n for n in active if n.startswith('vibe3d-')}
+    internal={n for n in active if is_internal(n)}
     require(internal==expected,'support resolved internal package population: '+owner)
     external=set()
     for name in internal:
-        selected=name.removeprefix('vibe3d-').removesuffix('-tests')
+        selected=internal_owner(name)
         path=project/SPECS[selected]['root']/('tests' if name.endswith('-tests') else '')
         raw, cfg=raw_config(path,active[name]['configuration'])
         external.update(k for k in set(raw.get('dependencies',{}))|set(cfg.get('dependencies',{})) if not k.startswith('vibe3d-'))
@@ -3775,7 +3880,7 @@ def validate_description(description, project, owner, config, tests=False, harne
                 'support committed native chooser path')
         validate_external(active[name],config=='web')
     for name in internal:
-        is_test=name.endswith('-tests'); selected=name.removeprefix('vibe3d-').removesuffix('-tests')
+        is_test=name.endswith('-tests'); selected=internal_owner(name)
         spec=SPECS[selected];path=(project/spec['root']/('tests' if is_test else '')).resolve()
         package=active[name]
         require(Path(package['path']).resolve()==path,'support resolved owner path: '+name)
@@ -3818,9 +3923,9 @@ def validate_description(description, project, owner, config, tests=False, harne
     expected_targets=set() if config in ('root-tests','isolated-tests') else {n for n,p in active.items() if p['targetType']!='sourceLibrary'}
     require(set(targets)==expected_targets,'support resolved target population: '+owner)
     for name,target in targets.items():
-        if not name.startswith('vibe3d-'):continue
+        if not is_internal(name):continue
         settings=target['buildSettings']
-        selected=name.removeprefix('vibe3d-').removesuffix('-tests')
+        selected=internal_owner(name)
         expected_sources=test_files(project,selected) if name.endswith('-tests') else production_files(project,selected)
         if selected=='ai3d-runtime' and not name.endswith('-tests') and config=='web':
             excluded={'source/ai3d/job_controller.d','source/ai3d/stage_artifact.d','source/ai3d/worker_manager.d'}
@@ -3865,7 +3970,7 @@ def validate_description(description, project, owner, config, tests=False, harne
             actual_paths=[str(Path(p).resolve()) for p in settings.get(field,[])]
             require(len(actual_paths)==len(expected_paths) and set(actual_paths)==expected_paths,
                     'support target '+field+': '+name)
-        archives={str(roots[n]/(ARCHIVES[n] if n in ARCHIVES else 'lib'+n+'.a')) for n in seen-{name}
+        archives={str(roots[n]/(ARCHIVES[n] if n in ARCHIVES else archive_name(internal_owner(n)))) for n in seen-{name}
                   if active[n]['targetType'] in ('staticLibrary','library')}
         require(set(settings.get('linkerFiles',[]))==archives and len(settings.get('linkerFiles',[]))==len(archives),
                 'support target D archive inputs: '+name)
@@ -3924,7 +4029,7 @@ def validate_actual_compiler(commands, project, owner, description, home, harnes
     own=str(production_files(project,owner)[0]);compiles=[c for c in commands if own in c['sourceInputs']]
     require(len(compiles)==1,'support actual compiler source identity: '+owner)
     command=compiles[0];sources=command['sourceInputs']
-    generated=[p for p in sources if Path(p).name=='dub_test_root.d' and Path(p).is_relative_to(home/'cache'/(SPECS[owner]['name']+'-tests')/'~master'/'code')]
+    generated=[p for p in sources if Path(p).name=='dub_test_root.d' and Path(p).is_relative_to(home/'cache'/test_name(owner)/'~master'/'code')]
     expected=[str(p) for p in test_files(project,owner)]+[str(harness.resolve())]+generated
     require(len(generated)==1 and len(sources)==len(set(sources)) and sorted(sources)==sorted(expected),
             'support actual compiler source identity: '+owner)
@@ -3943,7 +4048,7 @@ def validate_actual_compiler(commands, project, owner, description, home, harnes
     links=[c for c in commands if any(p in c['objectInputs'] for p in command['outputs'])]
     require(len(links)==1,'support actual compiler D archive inputs: '+owner)
     linked=links[0]
-    static={n:ARCHIVES[n] for n,p in active.items() if not n.startswith('vibe3d-') and p['targetType'] in ('staticLibrary','library')}
+    static={n:ARCHIVES[n] for n,p in active.items() if not is_internal(n) and p['targetType'] in ('staticLibrary','library')}
     archives=linked['archiveInputs']
     if renderer:
         target=next(t for t in description['targets'] if t['rootPackage']==description['rootPackage'])
@@ -4006,8 +4111,8 @@ ENABLED_MODULES = frozenset(['tests.unit.sdl_error_test',
  'io.scene_import',
  'io.scene_ir',
  'log',
- 'math_geometry',
- 'math_quaternion',
+ 'vibe3d.util.math.math_geometry',
+ 'vibe3d.util.math.math_quaternion',
  'mesh',
  'mesh_corner_maps',
  'mesh_dirty',
@@ -4170,7 +4275,7 @@ ENABLED_MODULES = frozenset(['tests.unit.sdl_error_test',
  'tests.unit.io.native_test',
  'tests.unit.json_num_test',
  'tests.unit.layer_params_test',
- 'tests.unit.math_test',
+ 'vibe3d.util.math.tests.unit.math_test',
  'tests.unit.mesh_analysis_test',
  'tests.unit.mesh_by_value_gate',
  'tests.unit.mesh_edge_slice_test',
@@ -4354,7 +4459,7 @@ def validate_runtime(output, owner):
     # once; private/public enabled identities keep their original guards.
     own={compiler_module(p) for p in SPECS[owner]['testSources'] if p.endswith('.d')}
     for selected in closure(owner,True)|{owner}:
-        modules={compiler_module(p) for p in SPECS[selected]['sources'] + SPECS[selected].get('testHelpers', []) if p.endswith('.d')}
+        modules={compiler_module(p) for p in SPECS[selected]['sources'] + SPECS[selected].get('testHelpers', []) + (SPECS[selected].get('transitionalSources', []) if selected!=owner else []) if p.endswith('.d')}
         if selected==owner:modules |= own
         for module in modules:
             require(sum(name==module for name,_ in roster)==1,
@@ -4374,7 +4479,7 @@ def stage_dependencies(active, archive, evidence, env, renderer=False):
     env['DUB_HOME'] = str(home)
     receipts = {}
     for name, package in active.items():
-        if name.startswith('vibe3d-'):
+        if is_internal(name):
             continue
         original = Path(package['path']).resolve()
         staged = (archive/'third_party/nfde' if name=='nfde' else
@@ -4496,7 +4601,7 @@ def run(command,cwd,env,evidence,name,renderer_kind=None):
 
 def describe(project,owner,config,compiler,env,evidence,tests=False,recipe=None,harness=None):
     root=project/SPECS[owner]['root']/('tests' if tests else '')
-    command=['dub','describe','--root='+str(root),'--config='+config,'--compiler='+compiler,'--quiet']
+    command=['dub','describe']+(['--root='+str(root)] if tests else ordinary_arguments(project,owner))+['--config='+config,'--compiler='+compiler,'--quiet']
     if recipe:command+=['--recipe='+str(recipe)]
     name=config+('-tests' if tests else '')+('-receipt' if recipe else '')
     result=run(command,project,env,evidence,name);description=json.loads(result.stdout)
@@ -4533,7 +4638,7 @@ def renderer_native_receipt(project, compiler, evidence, active):
                 'PREPARATION-REFUSED: renderer D compiler configuration identity')
     for path in receipt['abi']['dCompilerConfigAbsent']:
         require(not Path(path).exists(), 'PREPARATION-REFUSED: renderer D compiler configuration absence')
-    external={name:p for name,p in active.items() if not name.startswith('vibe3d-') and name!='vibe3d'}
+    external={name:p for name,p in active.items() if not is_internal(name) and name!='vibe3d'}
     require(set(receipt['packages'])==set(external), 'PREPARATION-REFUSED: renderer native dependency receipt population')
     for name, package in external.items():
         record=receipt['packages'][name];root=Path(package['path']).resolve()
@@ -4679,18 +4784,18 @@ def renderer_description(description, project, owner, config, tests=False, harne
     active_list=[p for p in description['packages'] if p.get('active')]
     active={p['name']:p for p in active_list}
     require(len(active)==len(active_list), 'support renderer active package identity')
-    root_name='vibe3d' if owner=='app' else SPECS[owner]['name']+('-tests' if tests else '')
+    root_name='vibe3d' if owner=='app' else (test_name(owner) if tests else SPECS[owner]['name'])
     require(description['rootPackage']==root_name, 'support renderer resolved root identity')
     for name, package in active.items():
         path=Path(package['path']).resolve()
-        require(path.is_relative_to(project) or not name.startswith('vibe3d-'), 'support renderer internal owner path')
-        if name.startswith('vibe3d-') or name==root_name:
-            selected=name.removeprefix('vibe3d-').removesuffix('-tests')
+        require(path.is_relative_to(project) or not is_internal(name), 'support renderer internal owner path')
+        if is_internal(name) or name==root_name:
+            selected=internal_owner(name)
             if owner=='app' and name==root_name:
                 expected=[(project/p).resolve() for p in APP_SOURCES]
             else:
                 spec=SPECS[selected]
-                own=spec['testSources'] if name.endswith('-tests') else spec['sources']
+                own=spec['testSources'] if name.endswith('-tests') else spec['sources']+spec.get('transitionalSources', [])
                 expected=[(path/p).resolve() for p in own]
                 if not name.endswith('-tests') and package['configuration'] in ('root-tests','isolated-tests'):
                     expected+=test_helper_files(project,selected)
@@ -4734,7 +4839,7 @@ def renderer_description(description, project, owner, config, tests=False, harne
         expected_archives=[]
         for n in seen-{name}:
             if active[n]['targetType'] not in ('library','staticLibrary'):continue
-            expected_archives.append(str((Path(active[n]['path'])/(ARCHIVES[n] if n in ARCHIVES else 'lib'+n+'.a')).resolve()))
+            expected_archives.append(str((Path(active[n]['path'])/(ARCHIVES[n] if n in ARCHIVES else archive_name(internal_owner(n)))).resolve()))
         require(sorted(target['buildSettings'].get('linkerFiles',[]))==sorted(expected_archives), 'support renderer exact D archive inputs: '+name)
         roots={n:Path(active[n]['path']).resolve() for n in seen}
         libs,lflags=native_grants(seen,roots)
@@ -4929,7 +5034,7 @@ def execute_renderer(project,owner,compiler,env,evidence):
     active={p['name']:p for d in descriptions for p in d['packages'] if p.get('active')}
     receipt={}
     if owner=='render-model':
-        require(not any(not n.startswith('vibe3d-') for n in active), 'PREPARATION-REFUSED: render-model unexpected native/external dependency')
+        require(not any(not is_internal(n) for n in active), 'PREPARATION-REFUSED: render-model unexpected native/external dependency')
     else:receipt=renderer_native_receipt(project,compiler,evidence,active)
     archive=evidence/'archive';require(not archive.exists(),'PREPARATION-REFUSED: renderer archive exists');archive.mkdir()
     import tarfile
@@ -4938,7 +5043,7 @@ def execute_renderer(project,owner,compiler,env,evidence):
     with tar.open('wb') as stream:subprocess.run(['git','archive',sha]+(['--']+members if members else []),cwd=project,stdout=stream,check=True)
     with tarfile.open(tar) as stream:stream.extractall(archive,filter='data')
     if owner!='app':require(not (archive/'source').exists(), 'support renderer isolated archive contains desktop')
-    dependencies=stage_dependencies({n:p for n,p in active.items() if not n.startswith('vibe3d-') and n!='vibe3d'},archive,evidence,env,renderer=True)
+    dependencies=stage_dependencies({n:p for n,p in active.items() if not is_internal(n) and n!='vibe3d'},archive,evidence,env,renderer=True)
     shared=[];plugins=[]
     for name,record in dependencies.items():
         for relative,item in record['nativeArtifacts'].items():
@@ -4992,7 +5097,7 @@ def execute_renderer(project,owner,compiler,env,evidence):
     root=archive/SPECS[owner]['root'];home=Path(env['DUB_HOME'])
     harness=root/'tests/boundary_roster.d'
     harness.write_text('module boundary_roster; import std.stdio : writeln; import std.file : getcwd; shared static this() { writeln("PKG-CWD path=",getcwd()); foreach(info; ModuleInfo) if(info !is null) writeln("PKG-MODULE name=",info.name," unittest=",info.unitTest !is null ? 1:0); }\n')
-    generated=home/'cache'/(SPECS[owner]['name']+'-tests')/'~master/code/dub_test_root.d';generated.parent.mkdir(parents=True,exist_ok=True)
+    generated=home/'cache'/test_name(owner)/'~master/code/dub_test_root.d';generated.parent.mkdir(parents=True,exist_ok=True)
     generated.write_text('module dub_test_root;\nvoid main() {}\n')
     raw=json.loads((root/'tests/dub.json').read_text());raw['sourceFiles']+=['boundary_roster.d',str(generated)];raw['mainSourceFile']=str(generated)
     recipe=root/'tests/dub.boundary.json';recipe.write_text(json.dumps(raw,indent=2))
@@ -5025,6 +5130,7 @@ def execute(project,owner,compiler,env,evidence):
     # DUB loads declared recipes before selecting configurations. Preserve their
     # exact metadata closure without adding the unselected package source trees.
     metadata=set()
+    selected_recipes={(project/member/suffix).resolve() for member in members for suffix in ('dub.json','tests/dub.json')}
     def recipe(path):
         path=path.resolve();relative=str(path.relative_to(project))
         if relative in metadata:return
@@ -5041,7 +5147,7 @@ def execute(project,owner,compiler,env,evidence):
                         for package in items:
                             if isinstance(package,str):recipe(path.parent/package/'dub.json')
                             else:fields(package)
-                    elif field=='sourceFiles':
+                    elif field=='sourceFiles' and path in selected_recipes:
                         metadata.update(str((path.parent/source).resolve().relative_to(project)) for source in items)
                     else:fields(items)
             elif isinstance(value,list):
@@ -5061,7 +5167,8 @@ def execute(project,owner,compiler,env,evidence):
     tar=evidence/'committed.tar'
     with tar.open('wb') as stream:subprocess.run(['git','archive',sha,'--']+members,cwd=project,stdout=stream,check=True)
     with tarfile.open(tar) as stream:stream.extractall(archive,filter='data')
-    require(not (archive/'source').exists() and not (archive/'dub.json').exists(),'PREPARATION-REFUSED: desktop production root')
+    require(not (archive/'source').exists(), 'PREPARATION-REFUSED: desktop production root')
+    require(not (archive/'dub.json').exists() or ((archive/'dub.json').read_bytes()==(project/'dub.json').read_bytes() and 'dub.json' in metadata), 'PREPARATION-REFUSED: root recipe metadata identity')
     check_raw_tree(archive,owner)
     root=archive/SPECS[owner]['root'];
     # DUB owns external native dependencies; all internal source roots are the isolated archive.
@@ -5073,7 +5180,7 @@ def execute(project,owner,compiler,env,evidence):
     for description in (original,selected):
         for package in description['packages']:
             name=package['name']
-            if not package.get('active') or name.startswith('vibe3d-'):continue
+            if not package.get('active') or is_internal(name):continue
             if name in active:
                 require(Path(package['path']).resolve()==Path(active[name]['path']).resolve(),
                         'PREPARATION-REFUSED: dependency source path conflict: '+name)
@@ -5083,7 +5190,7 @@ def execute(project,owner,compiler,env,evidence):
     dependencies=stage_dependencies(active,archive,evidence,env)
     def require_staged_dependencies(description):
         for package in description['packages']:
-            if package.get('active') and not package['name'].startswith('vibe3d-'):
+            if package.get('active') and not is_internal(package['name']):
                 require(Path(package['path']).resolve()==Path(dependencies[package['name']]['staged']).resolve(),
                         'PREPARATION-REFUSED: canonical dependency cache selected: '+package['name'])
     production=describe(archive,owner,ordinary_config,compiler,env,evidence)
@@ -5094,8 +5201,8 @@ def execute(project,owner,compiler,env,evidence):
         frozen = {owner: fixture}
         legacy_validate_staged_fixture(legacy_fixture_receipt(archive,owner,frozen),
             legacy_fixture_receipt(project,owner,frozen),owner,archive,frozen)
-    built=run(['dub','build','--root='+str(root),'--config='+ordinary_config,'--compiler='+compiler,'--force','--verbose'],archive,env,evidence,'production-build')
-    require((root/('lib'+SPECS[owner]['name']+'.a')).is_file(),'NO-VERDICT: ordinary static archive missing')
+    built=run(['dub','build']+ordinary_arguments(archive,owner)+['--config='+ordinary_config,'--compiler='+compiler,'--force','--verbose'],archive,env,evidence,'production-build')
+    require((root/archive_name(owner)).is_file(),'NO-VERDICT: ordinary static archive missing')
     harness=root/'tests/boundary_roster.d'
     receipt_source='module boundary_roster; import std.stdio : writeln; import std.file : getcwd,read; import std.digest.sha : sha256Of; import std.digest : toHexString; import std.string : toLower; shared static this() { writeln("PKG-CWD path=",getcwd()); foreach(info; ModuleInfo) if(info !is null) writeln("PKG-MODULE name=",info.name," unittest=",info.unitTest !is null ? 1:0);'
     if owner in FIXTURES:receipt_source += legacy_fixture_observer_statement(archive,owner,FIXTURES)

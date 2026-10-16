@@ -148,9 +148,7 @@
     "vibe3d-mesh": {
       "path": "../../mesh"
     },
-    "vibe3d-math": {
-      "path": "../../../util/math"
-    },
+    "vibe3d:math": {"path": "../../.."},
     "vibe3d-subpatch-preview": {
       "path": "../../subpatch-preview"
     }
@@ -166,7 +164,7 @@
         "vibe3d-document-model": "isolated-tests",
         "vibe3d-edit-contracts": "isolated-tests",
         "vibe3d-mesh": "isolated-tests",
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-subpatch-preview": "isolated-tests"
       }
     }

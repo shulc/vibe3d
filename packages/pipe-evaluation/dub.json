@@ -25,9 +25,7 @@
     "vibe3d-mesh-change": {
       "path": "../mesh-change"
     },
-    "vibe3d-math": {
-      "path": "../../util/math"
-    },
+    "vibe3d:math": {"path": "../.."},
     "vibe3d-profiling": {
       "path": "../profiling"
     },
@@ -196,7 +194,7 @@
         "vibe3d-mesh": "modeling",
         "vibe3d-edit-contracts": "modeling",
         "vibe3d-mesh-change": "modeling",
-        "vibe3d-math": "modeling",
+        "vibe3d:math": "modeling",
         "vibe3d-profiling": "modeling",
         "vibe3d-pipe-contracts": "modeling",
         "vibe3d-document-model": "modeling",
@@ -215,7 +213,7 @@
         "vibe3d-mesh": "modeling-noai",
         "vibe3d-edit-contracts": "modeling-noai",
         "vibe3d-mesh-change": "modeling-noai",
-        "vibe3d-math": "modeling-noai",
+        "vibe3d:math": "modeling-noai",
         "vibe3d-profiling": "modeling-noai",
         "vibe3d-pipe-contracts": "modeling-noai",
         "vibe3d-document-model": "modeling-noai",
@@ -237,7 +235,7 @@
         "vibe3d-mesh": "with-render",
         "vibe3d-edit-contracts": "with-render",
         "vibe3d-mesh-change": "with-render",
-        "vibe3d-math": "with-render",
+        "vibe3d:math": "with-render",
         "vibe3d-profiling": "with-render",
         "vibe3d-pipe-contracts": "with-render",
         "vibe3d-document-model": "with-render",
@@ -258,7 +256,7 @@
         "vibe3d-mesh": "web",
         "vibe3d-edit-contracts": "web",
         "vibe3d-mesh-change": "web",
-        "vibe3d-math": "web",
+        "vibe3d:math": "web",
         "vibe3d-profiling": "web",
         "vibe3d-pipe-contracts": "web",
         "vibe3d-document-model": "web",
@@ -279,7 +277,7 @@
         "vibe3d-mesh": "root-tests",
         "vibe3d-edit-contracts": "root-tests",
         "vibe3d-mesh-change": "root-tests",
-        "vibe3d-math": "root-tests",
+        "vibe3d:math": "root-tests",
         "vibe3d-profiling": "root-tests",
         "vibe3d-pipe-contracts": "root-tests",
         "vibe3d-document-model": "root-tests",
@@ -299,7 +297,7 @@
         "vibe3d-mesh": "isolated-tests",
         "vibe3d-edit-contracts": "isolated-tests",
         "vibe3d-mesh-change": "isolated-tests",
-        "vibe3d-math": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
         "vibe3d-profiling": "isolated-tests",
         "vibe3d-pipe-contracts": "isolated-tests",
         "vibe3d-document-model": "isolated-tests",
