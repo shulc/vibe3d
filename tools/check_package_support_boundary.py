@@ -4026,7 +4026,7 @@ def compiler_commands(output, compiler_cwd=None, response_inputs=None):
 
 
 def validate_actual_compiler(commands, project, owner, description, home, harness, renderer=False):
-    own=str(production_files(project,owner)[0]);compiles=[c for c in commands if own in c['sourceInputs']]
+    own=str((project/SPECS[owner]['root']/SPECS[owner]['sources'][0]).resolve());compiles=[c for c in commands if own in c['sourceInputs']]
     require(len(compiles)==1,'support actual compiler source identity: '+owner)
     command=compiles[0];sources=command['sourceInputs']
     generated=[p for p in sources if Path(p).name=='dub_test_root.d' and Path(p).is_relative_to(home/'cache'/test_name(owner)/'~master'/'code')]
