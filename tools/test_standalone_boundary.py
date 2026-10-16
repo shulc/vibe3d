@@ -120,13 +120,25 @@ class BoundaryControls(unittest.TestCase):
                               '/+ outer /+ module wrong; +/ ' + declaration + ' +/\n'
                               'enum a = "' + declaration + '";\n'
                               'enum b = `' + declaration + '`;\n'
-                              'enum c = q{ module wrong; };\n')
+                              'enum c = q{ module wrong; };\n'
+                              '// module wrong . name;\n'
+                              '/+ module wrong/*gap*/.name; +/\n'
+                              'enum d = "module wrong . name;";\n'
+                              'enum e = q{ module wrong/*gap*/.name; };\n'
+                              'enum moduleимя = 0;\n'
+                              'enum f = "module имя . name;";\n')
                     physical.write_text(good + decoys)
                     self.assertEqual(census._wave19_coordinate(root / old, root), expected,
                                      'comments and string declarations are not code: ' + old)
                     for label, changed in (
                             ('different duplicate', good + 'module wrong;\n'),
                             ('matching duplicate', good + declaration + '\n'),
+                            ('spaced wrong duplicate', good + 'module wrong . name;\n'),
+                            ('comment wrong duplicate', good + 'module wrong/*gap*/.name;\n'),
+                            ('unicode duplicate', good + 'module имя . name;\n'),
+                            ('spaced matching duplicate', good + 'module ' + name.replace('.', ' . ') + ';\n'),
+                            ('comment matching duplicate', good + 'module ' + name.replace('.', '/*gap*/.') + ';\n'),
+                            ('decoys without code', prefix + decoys),
                             ('wrong identity', prefix + 'module wrong;\n'),
                             ('comment identity', '//' + prefix[2:] + declaration + '\n'),
                             ('string identity', '"' + prefix[1:] + declaration + '";\n'),
@@ -138,6 +150,13 @@ class BoundaryControls(unittest.TestCase):
                                 census._wave19_coordinate(root / old, root)
                     physical.unlink()
                     recipe.unlink()
+
+    def test_current_support_raw_tree(self):
+        actual = Path(__file__).resolve().parents[1]
+        self.assertEqual(len(support.SPECS), 55)
+        for owner in support.SPECS:
+            with self.subTest(owner=owner):
+                support.check_raw_tree(actual, owner)
 
     def test_current_app_renderer_description(self):
         actual = Path(__file__).resolve().parents[1]

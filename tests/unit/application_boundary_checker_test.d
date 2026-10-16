@@ -9,6 +9,16 @@ import std.string : lineSplitter;
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest {
+    version (BoundaryRawTreeWitness) {
+        auto raw = execute(["python3", "-c",
+            "import sys;sys.path.insert(0,sys.argv[1]+'/tools');"
+            ~ "import test_standalone_boundary as t;"
+            ~ "t.BoundaryControls('test_current_support_raw_tree').test_current_support_raw_tree();"
+            ~ "print('PKG-RAW-CONTROLS owners=55')", repoRoot]);
+        assert(raw.status == 0 && raw.output.lineSplitter.canFind("PKG-RAW-CONTROLS owners=55"),
+            "support actual raw-tree controls: " ~ raw.output);
+        return;
+    }
     version (BoundaryProductionWitness) enum onlyProduction = true;
     else enum onlyProduction = false;
     version (BoundaryUnittestWitness) enum onlyUnittest = true;

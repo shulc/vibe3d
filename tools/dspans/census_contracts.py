@@ -7311,11 +7311,11 @@ def _wave19_coordinate(path, root):
         code = text
         for start, end in sorted(lexical.comments + lexical.strings, reverse=True):
             code = code[:start] + ' ' * (end - start) + code[end:]
-        declarations = re.findall(r'\bmodule\s+([A-Za-z_][A-Za-z_0-9.]*)\s*;', code)
+        declarations = re.findall(r'\bmodule\b', code)
         valid = (code[offset - 7:offset] == 'module '
                  and code[offset:offset + len(name)] == name
                  and code[offset + len(name):offset + len(name) + 1] == ';'
-                 and declarations == [name])
+                 and len(declarations) == 1)
         _source_validity.append(valid)
         if not valid:
             raise ValueError('Wave19 real declaration identity: ' + old)
@@ -7410,7 +7410,8 @@ def logical_source_paths(directory, pattern, *, root=None):
             if (coordinate_owner == owner and logical.is_relative_to(normal)
                     and logical.match(pattern) and (root / (new if moved else old)).is_file()
                     and not any(destination == old for origin, destination in SOURCE_MOVES)):
-                _wave19_coordinate(logical, root)
+                # Inventory is complete before any lexical declaration check;
+                # read_source_text validates the selected input after its floors.
                 result.append(logical)
         return result
     result = []

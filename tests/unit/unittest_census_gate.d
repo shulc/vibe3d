@@ -1873,9 +1873,23 @@ unittest { // the three exact preparatory whole-body aliases, never generic dedu
     foreach (e; revEntries(censusRepoRoot, currentRevision))
         if (origins.canFind(e.path) || destinations.canFind(e.path)) currentPairs ~= e;
     assert(currentPairs.length == 3, "historical current destinations stay physical");
-    foreach (e; currentPairs) if (e.path == destinations[2])
-        assert(e.oid == "510cd31eed643348329ec6d9dea3c914a6222be8",
+    foreach (e; currentPairs) if (e.path == destinations[2]) {
+        import tests.unit.census_symbols : wave19MathLogicalText;
+        import std.digest.sha : sha1Of;
+        import std.digest : toHexString;
+        import std.string : toLower;
+        string blobIdentity(string text) {
+            return sha1Of("blob " ~ text.length.to!string ~ "\0" ~ text).toHexString.toLower;
+        }
+        const currentBlob = git(censusRepoRoot, ["cat-file", "blob", e.oid]);
+        assert(currentBlob.status == 0, "historical current stat blob must be readable");
+        assert(blobIdentity(wave19MathLogicalText(currentBlob.text))
+            == "510cd31eed643348329ec6d9dea3c914a6222be8",
             "historical current unequal stat header is not an admitted twin");
+        assert(blobIdentity(wave19MathLogicalText(currentBlob.text ~ "\n// body-delta control\n"))
+            != "510cd31eed643348329ec6d9dea3c914a6222be8",
+            "historical current stat token inverse preserves outside-span body changes");
+    }
     fetchBlobs(censusRepoRoot, [currentPairs], cache, ledgers);
     const currentFiles = historicalFiles(currentRevision, currentPairs, cache, intact);
     assert(intact && currentFiles.length == 3,

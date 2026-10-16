@@ -2806,14 +2806,14 @@ private bool wave19OwnerMoved(string root, const Wave19Owner owner) {
         assert(!exists(buildPath(base, moved ? row.oldPath : row.newPath)),
             "Wave19 duplicate real source: " ~ row.oldPath);
         const expected = moved ? row.newModule : row.oldModule;
-        auto declarations = matchAll(blankNonCode(readText(physical)),
-            regex(`\bmodule\s+([A-Za-z_][A-Za-z_0-9.]*)\s*;`));
+        const code = blankNonCode(readText(physical));
         size_t count;
-        foreach (declaration; declarations) {
-            assert(declaration[1] == expected, "Wave19 real module identity: " ~ row.oldPath);
-            ++count;
-        }
+        foreach (declaration; matchAll(code, regex(`\bmodule\b`))) ++count;
         assert(count == 1, "Wave19 requires one real module declaration: " ~ row.oldPath);
+        auto declaration = matchFirst(code,
+            regex(`\bmodule\s+([A-Za-z_][A-Za-z_0-9.]*)\s*;`));
+        assert(!declaration.empty && declaration[1] == expected,
+            "Wave19 real module identity: " ~ row.oldPath);
     }
     assert(population != 0, "Wave19 selected owner must have original real inputs: " ~ owner.name);
     return moved;
@@ -2877,7 +2877,7 @@ public string wave19MathLogicalPath(string path, string root = repoRoot) {
 
 // Only module/import token spans may be inverted. Strings, comments and body
 // expressions retain their actual bytes for the original census assertions.
-private string wave19MathLogicalText(string source) {
+package(tests.unit) string wave19MathLogicalText(string source) {
     const code = blankNonCode(source);
     struct Edit { size_t begin, end; string text; }
     Edit[] edits;
@@ -3385,11 +3385,14 @@ public struct Wave15Entry {
 public Wave15Entry[] wave15DirEntries(string directory, string pattern,
         SpanMode span, bool followSymlink = true, string mathRoot = repoRoot) {
     import std.file : dirEntries, exists, isFile, isDir, getSize;
-    import std.path : baseName, dirName, globMatch, relativePath;
+    import std.path : baseName, dirName, globMatch, relativePath, isAbsolute;
     import std.algorithm : startsWith, canFind;
     const base = wave15Normalize(mathRoot);
     const normal = wave19LogicalPath(directory, base);
     Wave15Entry[] result;
+    string entryName(string absolute) {
+        return isAbsolute(directory) ? absolute : relativePath(absolute, wave15Normalize("."));
+    }
     // Project the real originals into their old logical layout; transitional
     // inputs are never directory members. Historical destinations below keep
     // their original single ownership through wave15Moves.
@@ -3410,7 +3413,7 @@ public Wave15Entry[] wave15DirEntries(string directory, string pattern,
             if (span == SpanMode.shallow && relative.canFind("/")) continue;
             if (!globMatch(baseName(logical), pattern)) continue;
             const physical = wave19PhysicalPath(logical, base);
-            result ~= Wave15Entry(logical, true, false, getSize(physical));
+            result ~= Wave15Entry(entryName(logical), true, false, getSize(physical));
         }
     }
     foreach (pin; wave15MovePins) {
@@ -3437,7 +3440,7 @@ public Wave15Entry[] wave15DirEntries(string directory, string pattern,
             if (wave15Match(wave15Normalize(entry.name), move.newPath, root)) { movedDestination = true; break; }
         }
         if (!movedDestination)
-            result ~= Wave15Entry(entry.name, entry.isFile, entry.isDir, entry.isFile ? entry.size : 0);
+            result ~= Wave15Entry(entryName(entry.name), entry.isFile, entry.isDir, entry.isFile ? entry.size : 0);
     }
     foreach (move; wave15Moves) {
         string root;
@@ -3667,6 +3670,10 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
             const logical = buildPath(scratch, row.oldPath);
             assert(wave19PhysicalPath(logical, scratch ~ "/.") == logical,
                 "Wave19 each old real file remains selected: " ~ row.oldPath);
+        }
+        foreach (row; wave19Modules) {
+            if (row.owner != owner.name) continue;
+            const logical = buildPath(scratch, row.oldPath);
             remove(logical);
             put(row.newPath, "module " ~ row.newModule ~ ";\n");
         }
@@ -3706,6 +3713,20 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
             assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
             put(row.newPath, "module " ~ row.newModule ~ "; module " ~ row.newModule ~ ";\n");
             assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
+            foreach (second; ["wrong . name", "wrong/*gap*/.name", "имя . name",
+                    row.newModule.replace(".", " . "), row.newModule.replace(".", "/*gap*/.")]) {
+                put(row.newPath, "module " ~ row.newModule ~ "; module " ~ second ~ ";\n");
+                assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
+            }
+            const decoys = "// module wrong . name;\n/+ module wrong/*gap*/.name; +/\n"
+                ~ "enum a = \"module wrong . name;\";\n"
+                ~ "enum b = q{ module wrong/*gap*/.name; };\n"
+                ~ "enum moduleимя = 0;\n";
+            put(row.newPath, "module " ~ row.newModule ~ ";\n" ~ decoys);
+            assert(wave19OwnerMoved(scratch, owner.name),
+                "Wave19 spaced/comment declaration decoys leave selected code identity: " ~ row.oldPath);
+            put(row.newPath, decoys);
+            assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
             put(row.newPath, "module " ~ row.newModule ~ ";\n");
             put(row.oldPath, "module " ~ row.oldModule ~ ";\n");
             assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
@@ -3718,6 +3739,23 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
         assert(wave15DirEntries(buildPath(scratch, owner.oldRoot), "*.d", SpanMode.depth, true, scratch ~ "/.").length
             == ownerPopulations[index],
             "Wave19 each logical owner walk excludes transitional shims: " ~ owner.name);
+        import std.path : relativePath, isAbsolute;
+        import std.array : array;
+        const absoluteDirectory = buildPath(scratch, owner.oldRoot);
+        const relativeDirectory = relativePath(absoluteDirectory, wave15Normalize("."));
+        foreach (directory; [absoluteDirectory, absoluteDirectory ~ "/.",
+                relativeDirectory, relativeDirectory ~ "/."]) {
+            string[] actualNames, expectedNames;
+            foreach (entry; wave15DirEntries(directory, "*.d", SpanMode.depth, true, scratch ~ "/."))
+                actualNames ~= entry.name;
+            foreach (row; wave19Modules) if (row.owner == owner.name) {
+                const absoluteName = buildPath(scratch, row.oldPath);
+                expectedNames ~= isAbsolute(directory) ? absoluteName
+                    : relativePath(absoluteName, wave15Normalize("."));
+            }
+            assert(actualNames.sort().array == expectedNames.sort().array,
+                "Wave19 directory entries retain relative/absolute logical spelling: " ~ owner.name ~ " " ~ directory);
+        }
         put(oldRecipe, `{"name":"vibe3d-` ~ owner.name ~ `"}`);
         assertThrown!AssertError(wave19OwnerMoved(scratch, owner.name));
         remove(buildPath(scratch, oldRecipe));
