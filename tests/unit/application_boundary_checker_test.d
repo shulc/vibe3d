@@ -9,6 +9,18 @@ import std.string : lineSplitter;
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest {
+    version (BoundaryCoordinateWitness) {
+        auto coordinate = execute(["python3", "-c",
+            "import sys;sys.path.insert(0,sys.argv[1]+'/tools');"
+            ~ "import test_standalone_boundary as t;"
+            ~ "result=t.unittest.TestResult();"
+            ~ "t.BoundaryControls('test_selected_coordinate_declarations').run(result);"
+            ~ "assert result.testsRun == 1 and result.wasSuccessful(), (result.testsRun,result.errors,result.failures);"
+            ~ "print('PKG-COORDINATE-CONTROLS passed=1')", repoRoot]);
+        assert(coordinate.status == 0 && coordinate.output.lineSplitter.canFind("PKG-COORDINATE-CONTROLS passed=1"),
+            "support selected coordinate controls: " ~ coordinate.output);
+        return;
+    }
     version (BoundaryRawTreeWitness) {
         auto raw = execute(["python3", "-c",
             "import sys;sys.path.insert(0,sys.argv[1]+'/tools');"

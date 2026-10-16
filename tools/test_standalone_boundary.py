@@ -169,6 +169,48 @@ class BoundaryControls(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'Wave19 frozen client/import coordinate population'):
                     census._wave19_import_original(control_path, '', actual)
 
+    def test_current_captured_client_import_projection(self):
+        import hashlib
+        actual = Path(__file__).resolve().parents[1]
+        source = actual / 'tools/dspans/census_contracts.py'
+        tree = ast.parse(source.read_text())
+        names = ('_WAVE19_OWNERS', '_WAVE19_COORDINATES', '_WAVE19_CLIENT_IMPORTS')
+        namespace = {'_source_validity': []}
+        for node in tree.body:
+            if (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id in names):
+                namespace[node.targets[0].id] = ast.literal_eval(node.value)
+        functions = ('_wave19_moved', '_wave19_original', '_wave19_import_original')
+        nodes = [node for node in tree.body
+                 if isinstance(node, ast.FunctionDef) and node.name in functions]
+        self.assertEqual({node.name for node in nodes}, set(functions))
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), namespace)
+        clients = namespace['_WAVE19_CLIENT_IMPORTS']
+        self.assertEqual(len(clients), 791)
+        self.assertEqual(sum(map(len, clients.values())), 1943)
+        inverse = namespace['_wave19_import_original']
+        hashes = []
+        for relative in sorted(clients):
+            with self.subTest(path=relative):
+                logical = inverse(actual / relative, (actual / relative).read_text(), actual)
+                hashes.append((relative, hashlib.sha256(logical.encode()).hexdigest()))
+        # Independent lexical audit at 5d269154: all current logical bodies,
+        # including the three legitimate post-90c4e693 body changes.
+        digest = hashlib.sha256(json.dumps(hashes, separators=(',', ':')).encode()).hexdigest()
+        self.assertEqual(digest, '6f42efb7db4adbbaf13ff1fb94c74d3e9afed34f48a2b61ec79bac5daf4116bb',
+                         'Wave19 all791 current logical client bodies')
+        relative = 'tests/unit/mesh_test.d'
+        text = (actual / relative).read_text()
+        for corrected, stale in ((44323, 44292), (223235, 223204)):
+            rows = clients[relative]
+            self.assertEqual(sum(row[0] == corrected for row in rows), 1)
+            malformed = dict(clients)
+            malformed[relative] = tuple((stale, *row[1:]) if row[0] == corrected else row
+                                        for row in rows)
+            with self.subTest(stale=stale), patch.dict(namespace, _WAVE19_CLIENT_IMPORTS=malformed):
+                with self.assertRaisesRegex(ValueError, 'Wave19 declaration/import coordinate'):
+                    inverse(actual / relative, text, actual)
+
     def test_current_support_runtime_identities(self):
         # Independently frozen D1 enabled cells plus the unchanged math pilot.
         owners = ('math', 'edit-contracts', 'interaction-data', 'json-number', 'log', 'mesh-contracts', 'parallel', 'plane-bytes', 'profiling', 'screen-buckets', 'spatial', 'param-schema', 'mesh-change')

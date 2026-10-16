@@ -87,12 +87,49 @@ private size_t lineOf(string src, size_t off)
     return line;
 }
 
+private enum preparedProtocolIdentityControls = q"PY
+token_source = read_source_text(root / "packages/interactive-tools/tests/source/tests/unit/prepared_tool_transition_test.d")
+token_rows = d_string_rows(token_source, "kTokenModules")
+copyable_rows = d_string_rows(token_source, "kCopyableByDesign")
+if (len(token_rows) != 46 or token_rows.count("prepared_tool_effect") != 1
+        or len(copyable_rows) != 3
+        or copyable_rows.count("prepared_tool_effect.PreparedSubjectToken") != 1):
+    raise SystemExit("prepared-protocol actual two-table identity projection")
+qualified = "vibe3d.editing.contracts.prepared_tool_effect"
+for name, expected in (
+        ("kTokenModules", ["prepared_tool_effect", "prepared_tool_effect.Child", qualified + "_neighbor"]),
+        ("kCopyableByDesign", ["prepared_tool_effect", "prepared_tool_effect.Child", qualified + "_neighbor"]),
+        ("unrelatedTable", [qualified, qualified + ".Child", qualified + "_neighbor"])):
+    fixture = ('private enum string[] ' + name + ' = [\n'
+               + ',\n'.join(json.dumps(row) for row in
+                             (qualified, qualified + ".Child", qualified + "_neighbor")) + '\n];')
+    if d_string_rows(fixture, name) != expected:
+        raise SystemExit("prepared-protocol bounded identity projection: " + name)
+print('PREPARED-PROTOCOL-IDENTITY-CONTROLS passed=1')
+PY";
+
 // Tasks 20261990/20262570: call the production reader, then omit enough real
 // inputs from each full synthetic owner to fall below its independent floor.
 // See doc/library_layout_wave12_prerequisite_source_2026-10-12.md for evidence.
 unittest
 {
     import std.stdio : write;
+    version (PreparedProtocolIdentityWitness)
+    const probe = q"PY
+from pathlib import Path
+import ast
+import json
+import re
+import sys
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "tools/dspans"))
+from census_contracts import read_source_text
+scanner = ast.parse((root / "tools/check_prepared_protocol.py").read_text())
+exec(compile(ast.Module(body=[node for node in scanner.body
+    if isinstance(node, ast.FunctionDef) and node.name == "d_string_rows"],
+    type_ignores=[]), "check_prepared_protocol.py", "exec"))
+PY" ~ preparedProtocolIdentityControls;
+    else
     const probe = q"PY
 from pathlib import Path
 import sys
@@ -121,23 +158,7 @@ exec(compile(ast.Module(body=[node for node in scanner.body
     type_ignores=[]), "check_prepared_protocol.py", "exec"))
 if mutation_rejected(lambda fixture: None, ""):
     raise SystemExit("prepared-protocol complete writer mutation fixture changed its census")
-token_source = read_source_text(root / "packages/interactive-tools/tests/source/tests/unit/prepared_tool_transition_test.d")
-token_rows = d_string_rows(token_source, "kTokenModules")
-copyable_rows = d_string_rows(token_source, "kCopyableByDesign")
-if (len(token_rows) != 46 or token_rows.count("prepared_tool_effect") != 1
-        or len(copyable_rows) != 3
-        or copyable_rows.count("prepared_tool_effect.PreparedSubjectToken") != 1):
-    raise SystemExit("prepared-protocol actual two-table identity projection")
-qualified = "vibe3d.editing.contracts.prepared_tool_effect"
-for name, expected in (
-        ("kTokenModules", ["prepared_tool_effect", "prepared_tool_effect.Child", qualified + "_neighbor"]),
-        ("kCopyableByDesign", ["prepared_tool_effect", "prepared_tool_effect.Child", qualified + "_neighbor"]),
-        ("unrelatedTable", [qualified, qualified + ".Child", qualified + "_neighbor"])):
-    fixture = ('private enum string[] ' + name + ' = [\n'
-               + ',\n'.join(json.dumps(row) for row in
-                             (qualified, qualified + ".Child", qualified + "_neighbor")) + '\n];')
-    if d_string_rows(fixture, name) != expected:
-        raise SystemExit("prepared-protocol bounded identity projection: " + name)
+PY" ~ preparedProtocolIdentityControls ~ q"PY
 failures = census_contracts.production_lexer_census(root)
 if failures:
     raise SystemExit("prepared-protocol production lexer census: " + "; ".join(failures))
@@ -259,6 +280,9 @@ PY";
     env["VIBE3D_PERF_RUNTEST_LOCK_PATH"] = buildPath(scratch, "run.lock");
     const result = execute(["python3", "-c", probe, repoRoot], env);
     assert(result.status == 0, result.output);
+    version (PreparedProtocolIdentityWitness)
+        assert(result.output.indexOf("PREPARED-PROTOCOL-IDENTITY-CONTROLS passed=1") >= 0,
+            "prepared-protocol identity cell did not reach its terminal control: " ~ result.output);
     write(result.output);
 }
 
