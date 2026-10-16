@@ -225,8 +225,10 @@ enum string[string] kFacePlaneType = [
 /// `MeshOpEntry` stores. The fields are GENERATED from `kFacePlanes`, so
 /// adding a plane there adds a field here with no edit.
 struct FacePlaneDrops {
+    // Evaluate the complete declaration in CTFE: DMD 2.112.0 cannot lower
+    // an associative-array lookup directly inside a mixin expression.
     static foreach (n; kFacePlanes)
-        mixin(kFacePlaneType[n] ~ " " ~ n ~ ";");
+        mixin((() => kFacePlaneType[n] ~ " " ~ n ~ ";")());
 }
 
 

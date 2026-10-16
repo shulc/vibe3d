@@ -937,8 +937,9 @@ unittest // rewriteFaces / rewriteVertices touch neither mutationVersion nor top
     }
 
 static foreach (n; kFacePlanes) {
-    mixin("alias PlaneType_" ~ n ~ " = " ~ kFacePlaneType[n] ~ ";");
+    // Keep table lookups inside CTFE calls, as in FacePlaneDrops (DMD 2.112.0).
+    mixin((() => "alias PlaneType_" ~ n ~ " = " ~ kFacePlaneType[n] ~ ";")());
     mixin("static assert(is(typeof(Mesh." ~ n ~ ") == PlaneType_" ~ n ~ "), \"face plane live type equality: " ~ n ~ "\");");
     mixin("static assert(is(typeof(FacePlaneDrops." ~ n ~ ") == PlaneType_" ~ n ~ "), \"face plane drop type equality: " ~ n ~ "\");");
-    mixin("static assert(is(typeof(MeshOpEntry." ~ kFacePlaneEntryField[n] ~ ") == PlaneType_" ~ n ~ "), \"face plane entry type equality: " ~ n ~ "\");");
+    mixin((() => "static assert(is(typeof(MeshOpEntry." ~ kFacePlaneEntryField[n] ~ ") == PlaneType_" ~ n ~ "), \"face plane entry type equality: " ~ n ~ "\");")());
 }
