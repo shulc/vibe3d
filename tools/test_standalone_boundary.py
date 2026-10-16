@@ -156,7 +156,7 @@ class BoundaryControls(unittest.TestCase):
                     recipe.unlink()
         self.assertEqual(len(census._WAVE19_CLIENT_IMPORTS), 943)
         self.assertEqual(sum(map(len, census._WAVE19_CLIENT_IMPORTS.values())), 5098)
-        # Approved26 non-import identities: both referenced-owner states use
+        # Approved27 non-import identities: both referenced-owner states use
         # the real production raw guard with the ordinary native lexer.
         def identity_fixture(relative, moved, *, literal_context=True):
             parts = []
@@ -636,6 +636,8 @@ class BoundaryControls(unittest.TestCase):
             original=(actual/'dub.json').read_bytes();(isolated/'dub.json').write_bytes(original)
             namespace['archive']=isolated
             exec(archive_check,namespace)
+            app_namespace=dict(namespace,owner='app',metadata=[])
+            exec(archive_check,app_namespace)
             (isolated/'dub.json').write_bytes(b'{}\n')
             with self.assertRaisesRegex(support.BoundaryError, 'root recipe metadata identity'):
                 exec(archive_check,namespace)

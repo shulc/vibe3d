@@ -995,7 +995,8 @@ _WAVE19_COORDINATES = (('math',
   'packages/mesh-ops/tests/source/tests/unit/mesh_edge_slice_gate_test.d',
   'libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_edge_slice_gate_test.d',
   ((1853, 'vibe3d.mesh.ops.tests.unit.mesh_edge_slice_gate_test', 'tests.unit.mesh_edge_slice_gate_test'),
-   (1915, 'vibe3d.mesh.ops.mesh_edge_slice', 'mesh_edge_slice'))),
+   (1915, 'vibe3d.mesh.ops.mesh_edge_slice', 'mesh_edge_slice'),
+   (2010, 'vibe3d.mesh.ops.mesh_edge_slice', 'mesh_edge_slice'))),
  ('mesh-ops',
   'packages/mesh-ops/tests/source/tests/unit/mesh_edge_slice_test.d',
   'libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_edge_slice_test.d',
@@ -17983,7 +17984,7 @@ _WAVE19_CLIENT_IMPORTS = {'packages/ai-advisor/source/ai/element_candidates.d': 
  'tests/test_liveness_gate.d': ((11696, 'vibe3d.mesh.core.mesh', 'mesh', 'mesh'),)}
 
 
-# Wave19 D2 approved453-inventory subset:26 exact live identities, referenced-owner state.
+# Wave19 D2 approved454-inventory subset:27 exact live identities, referenced-owner state.
 _WAVE19_IDENTITIES = (('ID006',
   'packages/camera-model/tests/source/tests/unit/camera_model_population_test.d',
   'camera-model',
@@ -18217,8 +18218,9 @@ _WAVE19_IDENTITIES = (('ID006',
   7,
   'view',
   'vibe3d.viewport.camera.view',
-  True))
-_WAVE19_IDENTITY_PIN = '392f9d5e95cc13cdd576d22fde03ae9d1e62295f2bd66bfdd7b09d88a451514b'
+  True),
+ ('ID454', 'packages/mesh-ops/tests/source/tests/unit/mesh_edge_slice_gate_test.d', 'mesh-ops', 'packages/mesh-ops/source/mesh_edge_slice.d', 'mixin MeshByValueGate!(mesh_edge_slice);', 23, 'mesh_edge_slice', 'vibe3d.mesh.ops.mesh_edge_slice', False))
+_WAVE19_IDENTITY_PIN = '057baa85138d77a7936d4dbf31ce5aa0704e984ed556d64b6c346d44c6c745d7'
 _WAVE19_COORDINATE_PRIOR_IMPORTS = {'packages/camera-model/source/view.d': ((34, 'vibe3d.util.spatial.spatial', 'spatial', 'spatial'),
                                          (181, 'vibe3d.util.spatial.trackball', 'trackball', 'spatial'),
                                          (3660,
@@ -18498,8 +18500,8 @@ def _wave19_identity_intact(path, text, root):
     from pathlib import Path
     manifest = ''.join('\t'.join(map(str, row[:-1])) + '\t' + str(int(row[-1])) + '\n'
                        for row in _WAVE19_IDENTITIES)
-    valid = (len(_WAVE19_IDENTITIES) == 26
-             and len({row[0] for row in _WAVE19_IDENTITIES}) == 26
+    valid = (len(_WAVE19_IDENTITIES) == 27
+             and len({row[0] for row in _WAVE19_IDENTITIES}) == 27
              and hashlib.sha256(manifest.encode()).hexdigest() == _WAVE19_IDENTITY_PIN)
     _source_validity.append(valid)
     if not valid:

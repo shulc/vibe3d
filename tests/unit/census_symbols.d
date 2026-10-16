@@ -3033,7 +3033,7 @@ package(tests.unit) string wave19MathLogicalText(string source) {
 // Raw current D input, before historical body reconstruction. This also
 // preserves historical import bytes in unmoved consumers and fragment carriers.
 
-// Approved finite26 of453 non-import live identities. Referenced-owner state
+// Approved finite27 of454 non-import live identities. Referenced-owner state
 // controls spelling; source/module custody remains the original158-row table.
 private struct Wave19Identity {
     string id, path, owner, target, anchor;
@@ -3068,6 +3068,7 @@ private immutable Wave19Identity[] wave19Identities = [
     Wave19Identity("ID434", "tests/unit/version_gate_census_ai3d_remesh_test.d", "document-model", "packages/document-model/source/document.d", "import document : Document;", 7, "document", "vibe3d.documents.model.document", true),
     Wave19Identity("ID441", "tests/unit/version_gate_census_ai3d_remesh_test.d", "mesh", "packages/mesh/source/mesh.d", "import mesh : makeCube, Mesh;", 7, "mesh", "vibe3d.mesh.core.mesh", true),
     Wave19Identity("ID444", "tests/unit/version_gate_census_ai3d_remesh_test.d", "camera-model", "packages/camera-model/source/view.d", "import view : View;", 7, "view", "vibe3d.viewport.camera.view", true),
+    Wave19Identity("ID454", "packages/mesh-ops/tests/source/tests/unit/mesh_edge_slice_gate_test.d", "mesh-ops", "packages/mesh-ops/source/mesh_edge_slice.d", "mixin MeshByValueGate!(mesh_edge_slice);", 23, "mesh_edge_slice", "vibe3d.mesh.ops.mesh_edge_slice", false),
 ];
 private string wave19IdentityLogicalText(string source, string path, string root = repoRoot) {
     import std.digest.sha : sha256Of;
@@ -3081,7 +3082,7 @@ private string wave19IdentityLogicalText(string source, string path, string root
             ~ row.anchor ~ "\t" ~ row.offset.to!string ~ "\t" ~ row.oldText ~ "\t" ~ row.newText
             ~ "\t" ~ (row.literal ? "1" : "0") ~ "\n";
     }
-    assert(wave19Identities.length == 26 && sha256Of(manifest).toHexString.toLower == "392f9d5e95cc13cdd576d22fde03ae9d1e62295f2bd66bfdd7b09d88a451514b",
+    assert(wave19Identities.length == 27 && sha256Of(manifest).toHexString.toLower == "057baa85138d77a7936d4dbf31ce5aa0704e984ed556d64b6c346d44c6c745d7",
         "Wave19 frozen approved identity population");
     const normal = wave19LogicalPath(path, root), base = wave15Normalize(root);
     const code = blankNonCode(source), literals = blankNonCode(source, true);
@@ -4001,7 +4002,7 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
                 "Wave19 actual selected real source/carrier reaches original module: " ~ row.oldPath);
         }
     }
-    // Approved453-inventory subset:26 raw live operands, same original cell.
+    // Approved454-inventory subset:27 raw live operands, same original cell.
     string identityFixture(string path, bool moved, bool literalContext = true) {
         string result;
         bool[string] seen;

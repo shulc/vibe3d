@@ -31,4 +31,4 @@ module vibe3d.mesh.ops.tests.unit.mesh_edge_slice_gate_test;
 import vibe3d.mesh.ops.mesh_edge_slice;
 import tests.unit.mesh_by_value_gate;
 
-mixin MeshByValueGate!(mesh_edge_slice);
+mixin MeshByValueGate!(vibe3d.mesh.ops.mesh_edge_slice);
