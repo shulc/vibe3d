@@ -315,7 +315,7 @@ class BoundaryControls(unittest.TestCase):
         # reviewed D1 body deltas and three finite D2 reader/control transforms.
         # Expected construction never reads candidate client source for hashes.
         digest = hashlib.sha256(json.dumps(hashes, separators=(',', ':')).encode()).hexdigest()
-        self.assertEqual(digest, '87d49ffa875c991f6d7452c138e1c298686617e0ad753853ac6164807f73e009',
+        self.assertEqual(digest, '3dad8e2d2b297d5fba38d1507547f67d5629a87a558c50cf8dc50aba9eaa105f',
                          'Wave19 all943 current logical client bodies')
         # Newly owned sources retain their prior-D1 imported spelling only
         # while the D2 owner itself remains at the old coordinate. Exercise the
@@ -486,6 +486,10 @@ class BoundaryControls(unittest.TestCase):
  'vibe3d.viewport.camera.tests.unit.view_source_cells_test',
  'vibe3d.viewport.camera.tests.unit.view_test'}
         self.assertEqual(len(enabled), 87)
+        self.assertEqual(support.compiler_module('../../../../tests/unit/fixtures.d'),
+                         'tests.unit.fixtures')
+        self.assertEqual(support.compiler_module('../../../../tests/unit/mesh_by_value_gate.d'),
+                         'tests.unit.mesh_by_value_gate')
         modules = {support.compiler_module(path) for owner in owners
                    for field in ('sources', 'testSources', 'testHelpers', 'transitionalSources')
                    for path in support.SPECS[owner].get(field, []) if path.endswith('.d')}

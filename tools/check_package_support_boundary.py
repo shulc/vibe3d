@@ -4055,6 +4055,8 @@ def compiler_module(relative):
      '../source/commands/mesh/radial_array_.d': 'commands.mesh.radial_array_',
      '../source/commands/mesh/remove_.d': 'commands.mesh.remove_'}
     nominal['source/tests/unit/ui/stat_rows_test.d'] = 'tests.unit.ui.stat_rows_test'
+    nominal.update({'../../../../tests/unit/fixtures.d': 'tests.unit.fixtures',
+                    '../../../../tests/unit/mesh_by_value_gate.d': 'tests.unit.mesh_by_value_gate'})
     nominal.update({'../../../tests/unit/fixtures.d': 'tests.unit.fixtures', '../../../tests/unit/mesh_by_value_gate.d': 'tests.unit.mesh_by_value_gate', 'source/tests/unit/bevel_cold_arm_param_image_test.d': 'unit.bevel_cold_arm_param_image_test', 'source/tests/unit/falloff_rmb_discipline_test.d': 'falloff_rmb_discipline_test', 'source/tests/unit/prepared_param_update_test.d': 'unit.prepared_param_update_test', 'source/tests/unit/prepared_tool_transition_test.d': 'unit.prepared_tool_transition_test', 'source/tests/unit/tools/edit/topology_pen/move_protocol_test.d': 'tools.edit.topology_pen.move_protocol_test', 'source/tests/unit/tools/edit/topology_pen/press_compatibility_test.d': 'tools.edit.topology_pen.press_compatibility_test'})
     if relative in nominal: return nominal[relative]
     if relative=='../../../tests/unit/mesh_by_value_gate.d':return 'tests.unit.mesh_by_value_gate'
