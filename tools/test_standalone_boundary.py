@@ -257,7 +257,8 @@ class BoundaryControls(unittest.TestCase):
                     preflight.main()
             bad = subprocess.CompletedProcess([], 2, 'concrete stdout', 'concrete stderr')
             with patch.object(preflight.subprocess, 'run', return_value=bad):
-                with self.assertRaisesRegex(RuntimeError, 'concrete stdout\nconcrete stderr'):
+                with self.assertRaisesRegex(RuntimeError,
+                        'required executable failed: /resolved/dmd exit=2\nconcrete stdout\nconcrete stderr'):
                     preflight.main()
 
     def test_ldc_describe_failure_details(self):
