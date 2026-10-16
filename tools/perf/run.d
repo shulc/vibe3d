@@ -1596,10 +1596,9 @@ CaseResult runToolCase(ref ToolCase c, int runN, string meshType, int repeats) {
         }
     }
 
-    // 2. Arm the tool. `tool.set ... off` at the end is OUTSIDE the measured
-    // window and COMMITS the edit into history (deactivate() → commitEdit),
-    // which is why every case starts from its own resetMesh above rather
-    // than inheriting the previous case's mesh.
+    // 2. Arm the tool. Release and deactivation happen outside the measured
+    // window; every case starts from its own resetMesh rather than inheriting
+    // the previous case's committed edit.
     if (!script(format("tool.set %s on", c.toolId))) {
         res.status = CaseStatus.ERROR;
         res.detail = format("tool.set %s on failed", c.toolId);
@@ -1629,6 +1628,22 @@ CaseResult runToolCase(ref ToolCase c, int runN, string meshType, int repeats) {
 
     auto before = probeInfo();
     Vec3 posBefore = probePos(0);
+
+    // The tool opens its operation at the first viewport press. Keep that
+    // operation live while scrubbing; an attribute-only edit restores the
+    // live mesh after producing its temporary parameter preview.
+    auto camera = fetchCamera();
+    immutable buttonLog = format(
+        `{"t":0,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        camera.vpX, camera.vpY, camera.width, camera.height);
+    string toolButtonLog(string type) {
+        return buttonLog ~ format(
+            `{"t":1,"type":"%s","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+            type, camera.vpX + camera.width / 2, camera.vpY + camera.height / 2);
+    }
+    playAndWait(toolButtonLog("SDL_MOUSEBUTTONDOWN"));
+    scope(exit) playAndWait(toolButtonLog("SDL_MOUSEBUTTONUP"));
+    Thread.sleep(150.msecs); // Playback completion precedes SDL queue dispatch.
 
     // 3. WARM-UP — one interactive attr write, discarded. It has to be
     // separate: the first write is what sets `built` and populates the

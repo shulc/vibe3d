@@ -434,6 +434,11 @@ A synthesized drag would produce ~20 and require dividing by a frame count.
 Posting the same `tool.attr` through plain `/api/command` is **inert** — the
 latch never rises and the tool never rebuilds.
 
+The driver holds a viewport mouse press while scrubbing, then releases it
+outside the measured window. This opens the tool's live operation: a parameter
+write without that press builds a temporary preview and restores the live mesh,
+so it cannot witness the standing preview or its one-restore-per-rebuild cost.
+
 **What the number is.** `med` is one `rebuildPreview`, **not one preview
 frame**: a real drag additionally pays the frame loop's cache invalidation,
 GPU upload and draw, which this driver never triggers between calls. Treat it
