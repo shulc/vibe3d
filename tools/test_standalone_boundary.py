@@ -140,6 +140,10 @@ class BoundaryControls(unittest.TestCase):
                             ('comment matching duplicate', good + 'module ' + name.replace('.', '/*gap*/.') + ';\n'),
                             ('decoys without code', prefix + decoys),
                             ('wrong identity', prefix + 'module wrong;\n'),
+                            ('same-width wrong identity', prefix + 'module ' + 'x' * len(name) + ';\n'),
+                            ('identity suffix', prefix + 'module ' + name + 'Suffix;\n'),
+                            ('missing terminator', prefix + 'module ' + name + '\n'),
+                            ('wrong keyword at frozen position', prefix + 'import ' + name + ';\nmodule wrong;\n'),
                             ('comment identity', '//' + prefix[2:] + declaration + '\n'),
                             ('string identity', '"' + prefix[1:] + declaration + '";\n'),
                             ('comment at frozen position', '//' + prefix[2:] + declaration
@@ -150,6 +154,20 @@ class BoundaryControls(unittest.TestCase):
                                 census._wave19_coordinate(root / old, root)
                     physical.unlink()
                     recipe.unlink()
+        self.assertEqual(len(census._WAVE19_CLIENT_IMPORTS), 791)
+        self.assertEqual(sum(map(len, census._WAVE19_CLIENT_IMPORTS.values())), 1943)
+        control_path = actual / 'tests/unit/wave19-coordinate-control.d'
+        self.assertNotIn(control_path.relative_to(actual).as_posix(), census._WAVE19_CLIENT_IMPORTS)
+        self.assertEqual(census._wave19_import_original(control_path, '', actual), '')
+        extra_client = dict(census._WAVE19_CLIENT_IMPORTS)
+        extra_client['tests/unit/wave19-coordinate-extra.d'] = ()
+        extra_span = dict(census._WAVE19_CLIENT_IMPORTS)
+        first_client = next(iter(extra_span))
+        extra_span[first_client] += extra_span[first_client][:1]
+        for label, malformed in (('client population', extra_client), ('span population', extra_span)):
+            with self.subTest(case=label), patch.object(census, '_WAVE19_CLIENT_IMPORTS', malformed):
+                with self.assertRaisesRegex(ValueError, 'Wave19 frozen client/import coordinate population'):
+                    census._wave19_import_original(control_path, '', actual)
 
     def test_current_support_runtime_identities(self):
         # Independently frozen D1 enabled cells plus the unchanged math pilot.
