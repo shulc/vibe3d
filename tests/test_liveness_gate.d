@@ -262,11 +262,17 @@ unittest {  // rule (b): a source-backed test with no unittest of its own.
         "import vibe3d.mesh.core.mesh;\n"
       ~ "import std.stdio;\n"
       ~ "int main(string[] args) { writeln(\"scenario\"); return 0; }\n");
+    write(buildPath(d, "test_tmp_srcbacked_legacy.d"),
+        "import mesh;\n"
+      ~ "import std.stdio;\n"
+      ~ "int main(string[] args) { writeln(\"scenario\"); return 0; }\n");
     auto r = checkGate(d);
     assert(r.status == 2,
         format("rule (b) should refuse; --check-gate exited %d\n%s", r.status, r.output));
     assert(r.output.indexOf("test_tmp_srcbacked.d") >= 0,
         "the refusal must name the offending file:\n" ~ r.output);
+    assert(r.output.indexOf("test_tmp_srcbacked_legacy.d") >= 0,
+        "the refusal must retain the legacy source-backed fixture:\n" ~ r.output);
     writeln("PASS: barrier rule (b) refuses a source-backed test with no own unittest");
 }
 

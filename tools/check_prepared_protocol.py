@@ -1375,7 +1375,7 @@ def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=
                 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
             destination = mutant_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
-            copy_current(ROOT / relative, destination)
+            destination.write_text(read_source_text(ROOT / relative))
         edit(mutant_root)
         try:
             actual = scan_writer_graph(mutant_root)

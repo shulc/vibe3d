@@ -439,7 +439,6 @@ class BoundaryControls(unittest.TestCase):
  'vibe3d.mesh.ops.tests.unit.mesh_ops.bridge_test',
  'vibe3d.mesh.ops.tests.unit.mesh_ops.cleanup_test',
  'vibe3d.mesh.ops.tests.unit.mesh_ops.connected_mask_test',
- 'vibe3d.mesh.ops.tests.unit.mesh_ops.cut_test',
  'vibe3d.mesh.ops.tests.unit.mesh_ops.extrude_test',
  'vibe3d.mesh.ops.tests.unit.mesh_ops.face_alignment_test',
  'vibe3d.mesh.ops.tests.unit.mesh_ops.face_merge_test',
@@ -486,7 +485,7 @@ class BoundaryControls(unittest.TestCase):
  'vibe3d.viewport.camera.tests.unit.camera_model_population_test',
  'vibe3d.viewport.camera.tests.unit.view_source_cells_test',
  'vibe3d.viewport.camera.tests.unit.view_test'}
-        self.assertEqual(len(enabled), 88)
+        self.assertEqual(len(enabled), 87)
         modules = {support.compiler_module(path) for owner in owners
                    for field in ('sources', 'testSources', 'testHelpers', 'transitionalSources')
                    for path in support.SPECS[owner].get(field, []) if path.endswith('.d')}
@@ -494,7 +493,8 @@ class BoundaryControls(unittest.TestCase):
                          'D1+D2 independently frozen enabled module identity')
         output = ''.join('PKG-MODULE name=' + name + ' unittest='
                          + str(int(name in enabled)) + '\n' for name in sorted(modules))
-        output += '88 modules passed unittests\n'
+        output += '87 modules passed unittests\n'
+        output += 'MeshSnapshotFixtures: adjacency restore and keep-selection cells passed\n'
         for owner in owners:
             with self.subTest(owner=owner):
                 support.validate_runtime(output, owner)

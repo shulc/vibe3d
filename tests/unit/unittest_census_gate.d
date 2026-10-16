@@ -518,14 +518,14 @@ struct FileCensus
 }
 
 /// Census of a working-tree checkout rooted at `root`.
-FileCensus[] scanWorkingTree(string root)
+FileCensus[] scanWorkingTree(string root, bool historicalTree = false)
 {
     auto acc = appender!(FileCensus[]);
     const base = buildNormalizedPath(absolutePath(root));
     import tests.unit.census_symbols : wave19MathPhysicalPath, wave19MathLogicalPath;
     foreach (sub; censusRoots)
     {
-        const dir = exists(buildPath(root, "dub.json"))
+        const dir = !historicalTree && exists(buildPath(root, "dub.json"))
             ? wave19MathPhysicalPath(buildPath(root, sub), root) : buildPath(root, sub);
         if (!exists(dir) || !isDir(dir)) continue;
         foreach (entry; dirEntries(dir, SpanMode.depth))
@@ -1094,7 +1094,7 @@ struct Verdict
 }
 
 /// Run the census comparison for the checkout at `root`.
-Verdict judge(string root)
+Verdict judge(string root, bool historicalTree = false)
 {
     Verdict v;
 
@@ -1144,7 +1144,7 @@ Verdict judge(string root)
     v.baseDrops      = bestLedger.drops;
     v.baseLedgerRows = bestLedger.rows;
 
-    v.workFiles  = scanWorkingTree(root);
+    v.workFiles  = scanWorkingTree(root, historicalTree);
     v.work       = total(v.workFiles);
 
     const workLedgerPath = buildPath(root, ledgerPath);
@@ -1922,7 +1922,7 @@ unittest { // the three exact preparatory whole-body aliases, never generic dedu
             "historical caller sandbox exact object fetch");
         assert(git(sandbox, ["checkout", "-q", "-B", "probe", "FETCH_HEAD"]).status == 0,
             "historical caller sandbox exact checkout");
-        const admitted = judge(sandbox);
+        const admitted = judge(sandbox, true);
         assert(admitted.ran && admitted.historicalInputsIntact && admitted.baseRev == revision,
             "historical judge uses actual resolved preparatory commit");
         checkView(admitted.baseFiles, true);
@@ -1934,12 +1934,12 @@ unittest { // the three exact preparatory whole-body aliases, never generic dedu
             "historical physical high-water commit");
     }
     commit("different full commit with the same preparatory tree");
-    const physical = judge(sandbox);
+    const physical = judge(sandbox, true);
     assert(physical.baseRev != historicalCustodyRevision && physical.historicalInputsIntact,
         "historical same-tree different commit is not admitted");
     checkView(physical.baseFiles, false);
     remove(buildPath(sandbox, destinations[0]));
-    const lost = judge(sandbox);
+    const lost = judge(sandbox, true);
     assert(!lost.ok && lost.blocksSlack == -8 && lost.assertsSlack == -45,
         "historical nonadmitted twin removal remains a real loss");
     write(buildPath(sandbox, destinations[0]), read(buildPath(sandbox, origins[0])));
@@ -1947,7 +1947,7 @@ unittest { // the three exact preparatory whole-body aliases, never generic dedu
     write(thirdPath, read(buildPath(sandbox, origins[0])));
     commit("third path has its own physical high-water");
     remove(thirdPath);
-    const thirdLost = judge(sandbox);
+    const thirdLost = judge(sandbox, true);
     assert(!thirdLost.ok && thirdLost.blocksSlack == -8 && thirdLost.assertsSlack == -45,
         "historical unexpected third copy cannot buy a free later removal");
 }

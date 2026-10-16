@@ -214,10 +214,14 @@ owner_inputs = {owner: sorted(census_contracts.logical_source_paths(
 # removing a file link cannot traverse a directory link into the real tree.
 backing_paths = {census_contracts.physical_source_path(path, root=root)
                  for inputs in owner_inputs.values() for path in inputs}
-backing_paths.update(root / fragment["destination"]
-                     for fragment in census_contracts.SOURCE_FRAGMENTS)
+backing_paths.update(census_contracts.physical_source_path(
+    root / fragment["destination"], root=root)
+    for fragment in census_contracts.SOURCE_FRAGMENTS)
 # Every finite selected owner's physical coordinate is chosen by its recipe.
-backing_paths.update(root / relative for relative in ['util/math/dub.json', 'libraries/util/math/dub.json', 'packages/edit-contracts/dub.json', 'libraries/editing/contracts/dub.json', 'packages/interaction-data/dub.json', 'libraries/editing/interaction/data/dub.json', 'packages/mesh-change/dub.json', 'libraries/mesh/change/dub.json', 'packages/mesh-contracts/dub.json', 'libraries/mesh/contracts/dub.json', 'packages/param-schema/dub.json', 'libraries/editing/params/dub.json', 'packages/profiling/dub.json', 'libraries/util/profiling/dub.json', 'packages/spatial/dub.json', 'libraries/util/spatial/dub.json', 'util/json-number/dub.json', 'libraries/util/json-number/dub.json', 'util/log/dub.json', 'libraries/util/log/dub.json', 'util/parallel/dub.json', 'libraries/util/parallel/dub.json', 'util/plane-bytes/dub.json', 'libraries/util/plane-bytes/dub.json', 'util/screen-buckets/dub.json', 'libraries/util/screen-buckets/dub.json'] if (root / relative).is_file())
+for _, old, new in census_contracts._WAVE19_OWNERS:
+    backing_paths.add(root / (new if (root / new / "dub.json").is_file() else old) / "dub.json")
+backing_paths.update(census_contracts.physical_source_path(root / old, root=root)
+                     for _, old, _, _ in census_contracts._WAVE19_COORDINATES)
 with tempfile.TemporaryDirectory(prefix="protocol-owners-") as scratch:
     partial = Path(scratch)
     for path in sorted(backing_paths):

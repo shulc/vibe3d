@@ -664,7 +664,7 @@ unittest // census: every unittest module that listens on a chosen port is pinne
             rawInputs ~= e.name;
         }
     foreach (relative; historicalCarriers)
-        rawInputs ~= buildPath(repoRoot, relative);
+        rawInputs ~= wave19MathPhysicalPath(buildPath(repoRoot, relative), repoRoot);
     foreach (relative; [
         "packages/camera-model/source",
         "packages/document-channels/source",
@@ -747,7 +747,7 @@ unittest // census: every unittest module that listens on a chosen port is pinne
 ]) {
         size_t occurrences;
         foreach (candidate; rawInputs)
-            if (candidate == buildPath(repoRoot, relative)) ++occurrences;
+            if (candidate == wave19MathPhysicalPath(buildPath(repoRoot, relative), repoRoot)) ++occurrences;
         assert(occurrences == 1, "port census historical raw input membership: " ~ relative);
     }
     foreach (relative; [

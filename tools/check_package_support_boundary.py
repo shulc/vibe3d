@@ -3216,7 +3216,7 @@ SPECS.update({'ai-advisor': {'external': {},
                                     'source/tests/unit/remesh/remesh_job_test.d']}})
 SPECS['interactive-tools']['sources'] = sorted(SPECS['interactive-tools']['sources'] + ['source/commands/falloff.d'])
 SPECS['interactive-tools']['testSources'] = sorted(SPECS['interactive-tools']['testSources'] + ['../source/commands/falloff.d'])
-SPECS['interactive-tools']['testDigest'] = 'f28d060911f8239f106dd383bde0b8967e1a14e0a05e5fdd5cb939a5dd0b477f'
+SPECS['interactive-tools']['testDigest'] = 'a947d378a04adce5950bba83e3286e495c36717332d6baf02d927aa17dfe86f6'
 CONFIGS = ('modeling', 'modeling-noai', 'with-render', 'web', 'root-tests', 'isolated-tests')
 FORBIDDEN_IMPORTS = {'interactive-tools': ('editor_app', 'viewport'),
                      'viewport-host': ('tool', 'editor_app'),
@@ -4794,7 +4794,7 @@ def renderer_description(description, project, owner, config, tests=False, harne
             require(set(package.get('dependencies',[]))==declared, 'support renderer direct dependency DAG: '+name)
             require(not any(package.get(field) for field in HOOKS), 'support renderer internal hook: '+name)
         else:validate_external(package)
-    required={'render-model':['source/render/backend.d','source/render/scene.d'],
+    required={'render-model':['source/vibe3d/render/model/render/backend.d','source/vibe3d/render/model/render/scene.d'],
               'render-backends':['source/render/backend_bridge.d','source/render/cycles_backend.d','source/render/render_diff.d','source/render/rpr_backend.d']}
     for selected in ('render-model','render-backends') if owner in ('render-backends','app') else ('render-model',):
         package=active[SPECS[selected]['name']] if not (selected==owner and tests) else active[root_name]

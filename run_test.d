@@ -1530,7 +1530,7 @@ bool isSourceBackedTest(string path) {
     string txt;
     try { txt = readText(path); } catch (Exception) { return false; }
     static immutable string[] roots = [
-        "math", "mesh", "tools.", "toolpipe.", "falloff", "symmetry",
+        "vibe3d.", "math", "mesh", "tools.", "toolpipe.", "falloff", "symmetry",
         "view", "camera_stamp", "handler", "shader", "editmode", "command",
         "snapshot", "forms", "params", "argstring", "shortcuts", "ai.",
         "buttonset", "ai3d.", "document", "commands.ai3d.", "http_server",

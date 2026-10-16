@@ -44,9 +44,14 @@ static assert([__traits(allMembers, viewgrid)].canFind("viewVectorQuantum"));
 private struct Src { string rel, raw, code; }
 private Wave15Entry[] physicalEntries(string directory) {
     Wave15Entry[] result;
+    foreach (relative; ["libraries/mesh/core/source/vibe3d/mesh/core/package.d",
+                       "libraries/documents/model/source/vibe3d/documents/model/package.d"])
+        assert(countIdent(blankNonCode(readText(buildPath(repoRoot, relative))), "unittest") == 0,
+            "Wave19 selective facade has no unittest: " ~ relative);
     // The physical census keeps the five real math bodies, excluding the five
     // compatibility modules and facade; sources still reads their actual bytes.
-    if (directory == buildPath(repoRoot, "util/math/source")) {
+    if (["util/math/source", "packages/mesh/source", "packages/document-model/source"]
+            .canFind(directory[repoRoot.length + 1 .. $])) {
         foreach (entry; wave15DirEntries(directory, "*.d", SpanMode.depth))
             result ~= Wave15Entry(wave19MathPhysicalPath(entry.name),
                 entry.isFile, entry.isDir, entry.size);
@@ -74,7 +79,7 @@ private Src[] sources(bool production, bool logical = false) {
         ~ (!logical && exists(buildPath(repoRoot, "packages/http-runtime/source")) ? [buildPath(repoRoot, "packages/http-runtime/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/platform-file/source")) ? [buildPath(repoRoot, "packages/platform-file/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/remesh-runtime/source")) ? [buildPath(repoRoot, "packages/remesh-runtime/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/render-model/source")) ? [buildPath(repoRoot, "packages/render-model/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/render-model/source"), repoRoot)) ? [buildPath(repoRoot, "packages/render-model/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/render-backends/source")) ? [buildPath(repoRoot, "packages/render-backends/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/forms-model/source")) ? [buildPath(repoRoot, "packages/forms-model/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/editor-ui/source")) ? [buildPath(repoRoot, "packages/editor-ui/source")] : []))
@@ -132,7 +137,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
 ];
     Src[] logicalRaw = sources(false, true), logicalCode = sources(true, true);
     foreach (relative; sourceCarriers) {
-        const raw = readText(buildPath(repoRoot, relative));
+        const raw = wave15ReadText(buildPath(repoRoot, relative));
         const s = Src(relative, raw, blankUnittestBodies(blankNonCode(raw)));
         logicalRaw ~= s;
         logicalCode ~= s;

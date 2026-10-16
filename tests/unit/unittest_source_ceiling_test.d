@@ -197,7 +197,7 @@ private FileCount[] scanSourceTree(string root)
         ~ (exists(buildPath(root, "packages/remesh-runtime/source")) ? [buildPath(root, "packages/remesh-runtime/source")] : [])
         ~ (exists(buildPath(root, "packages/platform-file/source")) ? [buildPath(root, "packages/platform-file/source")] : [])
         ~ (exists(buildPath(root, "packages/document-actions/source")) ? [buildPath(root, "packages/document-actions/source")] : [])
-        ~ (exists(buildPath(root, "packages/render-model/source")) ? [buildPath(root, "packages/render-model/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/render-model/source"), root)) ? [buildPath(root, "packages/render-model/source")] : [])
         ~ (exists(buildPath(root, "packages/render-backends/source")) ? [buildPath(root, "packages/render-backends/source")] : [])
         ~ (exists(buildPath(root, "packages/forms-model/source")) ? [buildPath(root, "packages/forms-model/source")] : [])
         ~ (exists(buildPath(root, "packages/editor-ui/source")) ? [buildPath(root, "packages/editor-ui/source")] : []))
@@ -207,7 +207,7 @@ private FileCount[] scanSourceTree(string root)
         if (!entry.isFile || !entry.name.endsWith(".d")) continue;
         const text = readText(entry.name);
         const relative = toLedgerPath(relativePath(entry.name, root));
-        if (["libraries/util/math/source/math.d", "libraries/util/math/source/math_geometry.d", "libraries/util/math/source/math_matrix.d", "libraries/util/math/source/math_quaternion.d", "libraries/util/math/source/math_vector.d", "libraries/util/math/source/vibe3d/util/math/package.d"].canFind(relative)) {
+        if (["libraries/util/math/source/math.d", "libraries/util/math/source/math_geometry.d", "libraries/util/math/source/math_matrix.d", "libraries/util/math/source/math_quaternion.d", "libraries/util/math/source/math_vector.d", "libraries/util/math/source/vibe3d/util/math/package.d", "libraries/mesh/core/source/vibe3d/mesh/core/package.d", "libraries/documents/model/source/vibe3d/documents/model/package.d"].canFind(relative)) {
             assert(scanD(text).blocks == 0 && countVersionUnittest(text) == 0, "Wave19 math transitional source policy remains empty: " ~ relative);
             continue;
         }
