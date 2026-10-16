@@ -7305,10 +7305,17 @@ def _wave19_coordinate(path, root):
         name = current if moved else original
         text = physical.read_text()
         # The original module token position is unchanged by its own rename.
-        valid = (text[offset - 7:offset] == 'module '
-                 and text[offset:offset + len(name)] == name
-                 and text[offset + len(name):offset + len(name) + 1] == ';'
-                 and text.count('module ' + name + ';') == 1)
+        # Count all code declarations; comments and literals cannot supply one.
+        import re
+        lexical = dspans_client.spans(text)
+        code = text
+        for start, end in sorted(lexical.comments + lexical.strings, reverse=True):
+            code = code[:start] + ' ' * (end - start) + code[end:]
+        declarations = re.findall(r'\bmodule\s+([A-Za-z_][A-Za-z_0-9.]*)\s*;', code)
+        valid = (code[offset - 7:offset] == 'module '
+                 and code[offset:offset + len(name)] == name
+                 and code[offset + len(name):offset + len(name) + 1] == ';'
+                 and declarations == [name])
         _source_validity.append(valid)
         if not valid:
             raise ValueError('Wave19 real declaration identity: ' + old)

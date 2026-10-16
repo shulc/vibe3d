@@ -614,13 +614,14 @@ unittest // census: every unittest module that listens on a chosen port is pinne
 
     string[] offenders;
     size_t population, listeners;
+    import tests.unit.census_symbols : wave19MathPhysicalPath;
     const string[] censusRoots = ["tests/unit", "source", "packages/command-runtime/source", "packages/application-core/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source", "packages/ai-advisor/source", "packages/ai3d-runtime/source", "packages/document-actions/source", "packages/http-runtime/source", "packages/platform-file/source", "packages/remesh-runtime/source", "packages/ai-advisor/tests/source", "packages/ai3d-runtime/tests/source", "packages/document-actions/tests/source", "packages/remesh-runtime/tests/source"]
         ~ (exists(buildPath(repoRoot, "packages/interactive-tools/source")) ? ["packages/interactive-tools/source"] : [])
         ~ (exists(buildPath(repoRoot, "packages/interactive-tools/tests/source")) ? ["packages/interactive-tools/tests/source"] : [])
         ~ (exists(buildPath(repoRoot, "packages/viewport-host/source")) ? ["packages/viewport-host/source"] : [])
         ~ (exists(buildPath(repoRoot, "packages/viewport-host/tests/source")) ? ["packages/viewport-host/tests/source"] : [])
-        ~ (exists(buildPath(repoRoot, "packages/interaction-data/source")) ? ["packages/interaction-data/source"] : [])
-        ~ (exists(buildPath(repoRoot, "packages/interaction-data/tests/source")) ? ["packages/interaction-data/tests/source"] : []);
+        ~ (exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/interaction-data/source"), repoRoot)) ? ["packages/interaction-data/source"] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/interaction-data/tests/source"), repoRoot)) ? ["packages/interaction-data/tests/source"] : []);
     const string[] historicalCarriers = [
         "packages/camera-model/tests/source/tests/unit/view_test.d",
         "packages/document-channels/tests/source/tests/unit/layer_params_test.d",
@@ -655,7 +656,6 @@ unittest // census: every unittest module that listens on a chosen port is pinne
         "packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d",
 ];
     string[] rawInputs;
-    import tests.unit.census_symbols : wave19MathPhysicalPath;
     foreach (root; censusRoots)
         foreach (e; dirEntries(wave19MathPhysicalPath(buildPath(repoRoot, root)), SpanMode.depth)
                     .filter!(e => e.isFile && e.name.extension == ".d"))
@@ -749,6 +749,20 @@ unittest // census: every unittest module that listens on a chosen port is pinne
         foreach (candidate; rawInputs)
             if (candidate == buildPath(repoRoot, relative)) ++occurrences;
         assert(occurrences == 1, "port census historical raw input membership: " ~ relative);
+    }
+    foreach (relative; [
+        "packages/interaction-data/source/ai/advisor.d",
+        "packages/interaction-data/source/ai/debug_trace.d",
+        "packages/interaction-data/source/ai/interaction.d",
+        "packages/interaction-data/tests/source/tests/unit/ai/advisor_test.d",
+        "packages/interaction-data/tests/source/tests/unit/ai/debug_trace_test.d",
+        "packages/interaction-data/tests/source/tests/unit/ai/interaction_test.d",
+    ]) {
+        size_t occurrences;
+        foreach (candidate; rawInputs)
+            if (candidate == wave19MathPhysicalPath(buildPath(repoRoot, relative), repoRoot))
+                ++occurrences;
+        assert(occurrences == 1, "port census interaction-data raw input membership: " ~ relative);
     }
     foreach (inputPath; rawInputs)
     {

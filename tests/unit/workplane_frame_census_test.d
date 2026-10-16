@@ -52,7 +52,7 @@ private Wave15Entry[] physicalEntries(string directory) {
                 entry.isFile, entry.isDir, entry.size);
         return result;
     }
-    foreach (entry; dirEntries(directory, "*.d", SpanMode.depth))
+    foreach (entry; dirEntries(wave19MathPhysicalPath(directory, repoRoot), "*.d", SpanMode.depth))
         result ~= Wave15Entry(entry.name, entry.isFile, entry.isDir, entry.isFile ? entry.size : 0);
     return result;
 }
@@ -67,7 +67,7 @@ private Src[] sources(bool production, bool logical = false) {
         ~ (exists(buildPath(repoRoot, "packages/editor-commands/source")) ? [buildPath(repoRoot, "packages/editor-commands/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/interactive-tools/source")) ? [buildPath(repoRoot, "packages/interactive-tools/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/viewport-host/source")) ? [buildPath(repoRoot, "packages/viewport-host/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/interaction-data/source")) ? [buildPath(repoRoot, "packages/interaction-data/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/interaction-data/source"), repoRoot)) ? [buildPath(repoRoot, "packages/interaction-data/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/ai-advisor/source")) ? [buildPath(repoRoot, "packages/ai-advisor/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/ai3d-runtime/source")) ? [buildPath(repoRoot, "packages/ai3d-runtime/source")] : [])
         ~ (!logical && exists(buildPath(repoRoot, "packages/document-actions/source")) ? [buildPath(repoRoot, "packages/document-actions/source")] : [])

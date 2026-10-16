@@ -2666,11 +2666,11 @@ private string[] toolClassComposition() {
 
 private enum string[] kPinnedToolInterfaces = [
     "edit_session.FrameParameterEvalClient", "edit_session.LiveEvalClient",
-    "edit_session.RefireClient", "edit_session.SlotActivationClient", "params.ParamProvider",
+    "edit_session.RefireClient", "edit_session.SlotActivationClient",
     "prepared_record_context.PreparedToolDoorClient",
     "prepared_record_context.PreparedToolParamDoorClient",
     "prepared_record_context.PreparedToolPoseDoorClient", "tool.InputBindable",
-    "tool.TopologyStepClient",
+    "tool.TopologyStepClient", "vibe3d.editing.params.params.ParamProvider",
 ];
 
 private enum string[] kToolComposition = toolClassComposition();

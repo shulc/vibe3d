@@ -80,7 +80,7 @@ class BoundaryControls(unittest.TestCase):
 
     def test_current_math_consumer_description(self):
         actual = Path(__file__).resolve().parents[1]
-        result = subprocess.run(['dub', 'describe', '--root=' + str(actual / 'packages/spatial'),
+        result = subprocess.run(['dub', 'describe', ':spatial', '--root=' + str(actual),
             '--config=modeling-noai', '--compiler=dmd', '--nodeps', '--skip-registry=all', '--quiet'],
             cwd=actual, text=True, capture_output=True, check=True)
         description = json.loads(result.stdout)
@@ -89,6 +89,55 @@ class BoundaryControls(unittest.TestCase):
         next(p for p in changed['packages'] if p['name'] == 'vibe3d:math')['name'] = 'vibe3d-math'
         with self.assertRaisesRegex(support.BoundaryError, 'resolved internal package population: spatial'):
             support.validate_description(changed, actual, 'spatial', 'modeling-noai')
+
+    def test_selected_coordinate_declarations(self):
+        import sys
+        actual = Path(__file__).resolve().parents[1]
+        with patch.object(sys, 'path', [str(actual / 'tools/dspans'), *sys.path]):
+            import census_contracts as census
+        # Exercise the production reader at each frozen real coordinate in both
+        # selected states. No shim or guessed declaration supplies the identity.
+        with tempfile.TemporaryDirectory(prefix='boundary-coordinate-') as directory:
+            root = Path(directory)
+            for owner, old, new, spans in census._WAVE19_COORDINATES:
+                old_root, new_root = next(row[1:] for row in census._WAVE19_OWNERS
+                                          if row[0] == owner)
+                for moved in (False, True):
+                    recipe = root / (new_root if moved else old_root) / 'dub.json'
+                    recipe.parent.mkdir(parents=True, exist_ok=True)
+                    recipe.write_text(json.dumps({'name': owner if moved else 'vibe3d-' + owner}))
+                    physical = root / (new if moved else old)
+                    physical.parent.mkdir(parents=True, exist_ok=True)
+                    offset, current, original = spans[0]
+                    name = current if moved else original
+                    declaration = 'module ' + name + ';'
+                    prefix = ' ' * (offset - 7)
+                    good = prefix + declaration + '\n'
+                    expected = (physical, spans if moved else ())
+                    physical.write_text(good)
+                    self.assertEqual(census._wave19_coordinate(root / old, root), expected)
+                    decoys = ('// ' + declaration + '\n/* module wrong; */\n'
+                              '/+ outer /+ module wrong; +/ ' + declaration + ' +/\n'
+                              'enum a = "' + declaration + '";\n'
+                              'enum b = `' + declaration + '`;\n'
+                              'enum c = q{ module wrong; };\n')
+                    physical.write_text(good + decoys)
+                    self.assertEqual(census._wave19_coordinate(root / old, root), expected,
+                                     'comments and string declarations are not code: ' + old)
+                    for label, changed in (
+                            ('different duplicate', good + 'module wrong;\n'),
+                            ('matching duplicate', good + declaration + '\n'),
+                            ('wrong identity', prefix + 'module wrong;\n'),
+                            ('comment identity', '//' + prefix[2:] + declaration + '\n'),
+                            ('string identity', '"' + prefix[1:] + declaration + '";\n'),
+                            ('comment at frozen position', '//' + prefix[2:] + declaration
+                             + '\n' + declaration + '\n')):
+                        with self.subTest(path=old, moved=moved, case=label):
+                            physical.write_text(changed)
+                            with self.assertRaisesRegex(ValueError, 'Wave19 real declaration identity: '):
+                                census._wave19_coordinate(root / old, root)
+                    physical.unlink()
+                    recipe.unlink()
 
     def test_current_app_renderer_description(self):
         actual = Path(__file__).resolve().parents[1]

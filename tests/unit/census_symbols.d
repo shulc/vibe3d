@@ -101,7 +101,7 @@ private alias isFile = wave15IsFile;
 private alias readText = wave15ReadText;
 import std.format    : format;
 import std.path      : baseName, buildPath, dirName;
-import std.regex     : ctRegex, matchAll, regex;
+import std.regex     : ctRegex, matchAll, matchFirst, regex;
 import std.string    : indexOf, lastIndexOf, replace, split, strip;
 
 package bool isIdentChar(char c) {

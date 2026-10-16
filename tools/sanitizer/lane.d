@@ -1862,7 +1862,7 @@ void cmdTsanParallelCompletion() {
     run([ldc, "-g", "-O0", "--fsanitize=thread",
          "--enable-asserts=false", "--frame-pointer=all",
          "--d-version=SanitizerThreadPreinit", "-Isource",
-         "-of=" ~ probeBinary, probeSource, "util/parallel/source/tsan_annotate.d",
+         "-of=" ~ probeBinary, probeSource, "libraries/util/parallel/source/vibe3d/util/parallel/tsan_annotate.d",
          "source/tsan_preinit.d"], env);
     if (!exists(probeBinary))
         fail("tsan-parallel-completion: compiler produced no " ~ probeBinary);

@@ -107,7 +107,7 @@ unittest // buildLoops: native parallel and browser serial runners are byte-iden
     assert(diffs.length == 0,
         format("6950 buildLoops parallel/serial mesh planes differ: %s", diffs));
 
-    const runnerSource = blankNonCode(readText("util/parallel/source/tsan_annotate.d"));
+    const runnerSource = blankNonCode(readText("libraries/util/parallel/source/vibe3d/util/parallel/tsan_annotate.d"));
     const nativeParallelLoops = runnerSource.split("parallel(iota(count))").length - 1;
     assert(nativeParallelLoops == 2,
         format("6950 native runner must keep both parallel(iota(count)) arms; got %d",
