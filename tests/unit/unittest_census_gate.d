@@ -1220,14 +1220,6 @@ unittest
 
     auto v = judge(censusRepoRoot);
 
-    const dottedRoot = buildPath(censusRepoRoot, ".");
-    const entries = revEntries(dottedRoot, "HEAD");
-    assert(entries.count!(e => e.path == ledgerPath) == 1,
-        "Wave19 historical ledger keeps its exact relative key with dotted root");
-    const currentFiles = scanWorkingTree(dottedRoot);
-    assert(currentFiles.count!(f => f.path == "util/math/source/math_vector.d") == 1,
-        "Wave19 current mapped source keeps its exact relative key with dotted root");
-
     if (!v.ran)
     {
         // No git, no branch point, nothing to compare against. Say so loudly:
@@ -1383,6 +1375,13 @@ unittest
     git(sandbox, ["add", "-A"]);
     git(sandbox, ["-c", "user.email=census@invalid", "-c", "user.name=census",
                   "commit", "-q", "-m", "declared"]);
+    const dottedRoot = buildPath(sandbox, ".");
+    const dottedEntries = revEntries(dottedRoot, "HEAD");
+    assert(dottedEntries.count!(e => e.path == ledgerPath) == 1,
+        "Wave19 historical ledger keeps its exact relative key with dotted root");
+    const dottedFiles = scanWorkingTree(dottedRoot);
+    assert(dottedFiles.count!(f => f.path == "source/a.d") == 1,
+        "Wave19 current source keeps its exact relative key with dotted root");
     write(src, "// everything gone\n");
     auto v4 = judge(sandbox);
     assert(!v4.ok, "a ledger line already in the baseline must not pay for a second loss");

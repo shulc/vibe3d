@@ -35,6 +35,17 @@ unittest {
         }
     }
     static import mathApi = vibe3d.util.math;
+    static import oldMath = math;
+    static import oldVector = math_vector;
+    static import oldMatrix = math_matrix;
+    static import oldQuaternion = math_quaternion;
+    static import oldGeometry = math_geometry;
+    static assert(is(oldMath.Vec3 == mathApi.Vec3) && is(oldVector.Vec3 == mathApi.Vec3),
+        "Wave19 math old umbrella/vector imports retain original types");
+    static assert(__traits(isSame, oldMatrix.identityMatrix, mathApi.identityMatrix)
+        && __traits(isSame, oldQuaternion.slerp, mathApi.slerp)
+        && __traits(isSame, oldGeometry.faceNormalFirst3, mathApi.faceNormalFirst3),
+        "Wave19 math old component imports retain original overloads");
     static foreach (name; ["Vec3", "Vec4", "vec3Lerp", "normalize", "cross", "dot", "rotateAboutAxis", "rotateAboutPivot", "scaleAlongBasis", "safeNormalize", "identityMatrix", "translationMatrix", "pivotRotationMatrix", "pivotScaleMatrix", "pivotScaleMatrixBasis", "matrixFromEulerZYX", "eulerZYXFromMatrix", "applyAffine", "transformPoint", "matrixMirrorsWinding", "normalMatrix", "frameMatrix", "frameMatrixInverse", "matMul4", "wrapAboutPivot", "wrapAboutPivotStable", "modelMatrix", "mulMV", "lookAt", "perspectiveMatrix", "orthographicMatrix", "Quat", "slerp", "quatFromMatrix", "matrixFromQuat", "faceNormalFirst3", "pointInPolygon2D", "frontFacingLocal", "ringStartCornerSign", "closestOnSegment2D", "closestOnSegment2DSquared", "rayPlaneIntersect", "closestOnSegmentToRay", "perpendicularFrame", "rayTriangleIntersect", "closestPointOnTriangle2D", "triangulatePolygonEarClip", "planeFromLineAndWorkplane", "planeForSlice", "snapAngleToMultiple", "snapLineEndpointToAngle", "closestPointOnSegmentToRay", "closestPointOnLineToRay", "offsetInPlane", "offsetMeetDir", "offsetMeet", "bevelMiterPoint", "bevelArcPoints"])
         static assert(__traits(hasMember, mathApi, name), "Wave19 math approved facade export: " ~ name);
     static assert(!__traits(hasMember, mathApi, "isClose"), "Wave19 math fixture import stays hidden");

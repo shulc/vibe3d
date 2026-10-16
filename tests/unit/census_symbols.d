@@ -3272,13 +3272,13 @@ public struct Wave15Entry {
 }
 
 public Wave15Entry[] wave15DirEntries(string directory, string pattern,
-        SpanMode span, bool followSymlink = true, string root = repoRoot) {
+        SpanMode span, bool followSymlink = true, string mathRoot = repoRoot) {
     import std.file : dirEntries, exists, isFile, isDir, getSize;
     import std.path : baseName, dirName, globMatch, relativePath;
     import std.algorithm : startsWith, canFind;
     const normal = wave15Normalize(directory);
     Wave15Entry[] result;
-    const base = wave15Normalize(root);
+    const base = wave15Normalize(mathRoot);
     const physicalDirectory = wave19MathPhysicalPath(directory, base);
     if (physicalDirectory != normal) {
         foreach (name; wave19MathModules) {
