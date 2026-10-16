@@ -288,7 +288,7 @@ private enum string[] kTokenModules = [
     "prepared_smooth_shift_activation",
     "prepared_stroke_extrude_activation",
     "prepared_tack_activation",
-    "prepared_tool_effect",
+    "vibe3d.editing.contracts.prepared_tool_effect",
     "prepared_topology_pen_activation",
     "prepared_topology_pen_deactivate",
     "prepared_topology_pen_update",
@@ -311,6 +311,7 @@ private enum string[] kTokenModules = [
 // handles.shapes is not accessible here"), because the package symbol is not
 // in scope at the point the mixin's `__traits(allMembers, ...)` resolves it.
 static import handles.shapes;
+static import vibe3d.editing.contracts.prepared_tool_effect;
 static foreach (m; kTokenModules) mixin("static import " ~ m ~ ";");
 
 /// Membership in the census, by NAME alone -- see the note above.
@@ -374,7 +375,7 @@ static assert(kCensusTokens.length == 104,
 private enum string[] kCopyableByDesign = [
     "handles.shapes.PreparedClickPointResourceToken",
     "mesh_gpu.PreparedGpuResourceToken",
-    "prepared_tool_effect.PreparedSubjectToken",
+    "vibe3d.editing.contracts.prepared_tool_effect.PreparedSubjectToken",
 ];
 
 static foreach (mod; kTokenModules)

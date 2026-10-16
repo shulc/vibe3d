@@ -1997,7 +1997,15 @@ NON_TOKEN_NONCOPYABLE = {
 def d_string_rows(source, name):
     block = re.search(r"private enum string\[\] " + name + r" = \[(.*?)\n\];",
                       source, re.S)
-    return re.findall(r'"([^"]+)"', block.group(1)) if block else None
+    if not block:
+        return None
+    rows = re.findall(r'"([^"]+)"', block.group(1))
+    # 20263013: these two reflection rosters retain their frozen logical identity.
+    if name in ("kTokenModules", "kCopyableByDesign"):
+        qualified = "vibe3d.editing.contracts.prepared_tool_effect"
+        rows = ["prepared_tool_effect" + row[len(qualified):]
+                if row == qualified or row.startswith(qualified + ".") else row for row in rows]
+    return rows
 
 def d_pinned_count(source, expr):
     m = re.search(r"static assert\(" + re.escape(expr) + r"\.length == (\d+)",
