@@ -1,8 +1,8 @@
 module commands.falloff;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import commands.tool.host : ToolHost;
 import vibe3d.editing.params.params : Param, wireArgs;
@@ -193,7 +193,7 @@ class FalloffReverseCommand : Command {
 // (toolpipe/packets.d) so this and the `applySetAttr` "type" switch can't
 // drift apart (task 0179 Stage 4).
 private bool validFalloffType(string t) {
-    import toolpipe.packets : FalloffType, falloffTypeFromName;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType, falloffTypeFromName;
     FalloffType dummy;
     return falloffTypeFromName(t, dummy);
 }

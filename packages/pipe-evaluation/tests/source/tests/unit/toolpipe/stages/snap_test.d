@@ -8,9 +8,9 @@ import std.conv      : to;
 import std.string    : split, strip;
 import std.algorithm : canFind;
 import toolpipe.stage    : Stage, TaskCode, ordSnap;
-import toolpipe.packets  : SnapPacket, SnapConfig, SnapHitPacket, SnapType, SnapMode;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SnapPacket, SnapConfig, SnapHitPacket, SnapType, SnapMode;
 import toolpipe.guide    : SnapGuide, GuideDrawState;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath;
 import vibe3d.editing.params.params            : Param, IntEnumEntry;
 import math : Vec3;
@@ -103,8 +103,8 @@ unittest { // The snap config is ONE declaration — and `enabled` is the
 unittest {
     import math : Vec3, lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
-    import mesh             : Mesh;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh             : Mesh;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import snap             : snapCursor, SnapResult, invalidateSnapGrids;
     import vibe3d.editing.contracts.editmode         : EditMode;
     import std.math         : PI, round, sqrt;

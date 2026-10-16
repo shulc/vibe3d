@@ -22,7 +22,7 @@ import std.format  : format;
 import std.process : thisProcessID;
 import std.algorithm : filter;
 import std.array     : array;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import io.lwo_export : exportLwo;
 import tests.unit.io.lwo_ptag_fixture;
 

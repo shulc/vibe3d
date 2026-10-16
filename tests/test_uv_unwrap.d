@@ -31,13 +31,13 @@ import std.format    : format;
 import std.json      : parseJSON, JSONValue;
 import std.algorithm : canFind;
 
-import mesh          : Mesh, MeshMap, MapDomain, kUvMapName, makeCube;
+import vibe3d.mesh.core.mesh          : Mesh, MeshMap, MapDomain, kUvMapName, makeCube;
 import math          : Vec3;
-import view          : View;
+import vibe3d.viewport.camera.view          : View;
 import vibe3d.editing.contracts.editmode      : EditMode;
-import snapshot      : MeshSnapshot;
-import uv_project    : UvProjMode, UvProjAxis, projectUv;
-import uv_unwrap     : uvUnwrap, uvDirichletEnergy, uvAngularDistortion;
+import vibe3d.mesh.snapshot.snapshot      : MeshSnapshot;
+import vibe3d.mesh.ops.uv_project    : UvProjMode, UvProjAxis, projectUv;
+import vibe3d.mesh.ops.uv_unwrap     : uvUnwrap, uvDirichletEnergy, uvAngularDistortion;
 import commands.mesh.uv_unwrap : UvUnwrap;
 import std.net.curl  : post, get;
 
@@ -356,7 +356,7 @@ unittest {
 
     // Dirichlet energy must drop (compute analytically from fixture geometry).
     {
-        import mesh : Mesh;
+        import vibe3d.mesh.core.mesh : Mesh;
         Mesh mm;
         mm.vertices = [
             Vec3(0,0,0), Vec3(1,0,0),       Vec3(2,0,0),

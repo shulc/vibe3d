@@ -1,5 +1,5 @@
 module commands.mesh.uv_project;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 /// `uv.project` — generate or overwrite the active "uv" PolyVertex MeshMap
 /// from one of four standard projections: planar, box, cylindrical, spherical.
@@ -39,16 +39,16 @@ import mesh_edit_replay : apply, revert;
 ///   (e) write UV data, record, commitChange(Material)
 
 import command;
-import mesh     : Mesh, MeshMap, MapDomain, MeshEditBatch, kUvMapName,
+import vibe3d.mesh.core.mesh     : Mesh, MeshMap, MapDomain, MeshEditBatch, kUvMapName,
                   MAX_MESH_MAPS;
 import math     : Vec3;
-import view     : View;
+import vibe3d.viewport.camera.view     : View;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import vibe3d.editing.params.params   : Param;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit;
-import uv_project : UvProjMode, UvProjAxis, projectUv;
+import vibe3d.mesh.ops.uv_project : UvProjMode, UvProjAxis, projectUv;
 
 /// One affected corner: its owning face index and its loop index. At module
 /// scope rather than inside `applyImpl` so the kernel can take it as a

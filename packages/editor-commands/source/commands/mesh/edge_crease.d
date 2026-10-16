@@ -1,12 +1,12 @@
 module commands.mesh.edge_crease;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope;
 
 // ---------------------------------------------------------------------------
 // Edge-crease (subdivision semi-sharp crease) lifecycle commands — task 1062.
@@ -401,7 +401,7 @@ version (unittest) private Mesh creaseCell_(out uint eA, out uint eB) {
 
 unittest { // set: [Create, Values], and the crease arm bumps topologyVersion
     import std.conv : to;
-    import mesh_edit_delta : MeshOpEntry;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshOpEntry;
 
     uint eA, eB;
     auto m = new Mesh;

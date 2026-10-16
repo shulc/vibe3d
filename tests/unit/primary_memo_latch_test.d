@@ -15,7 +15,7 @@ module tests.unit.primary_memo_latch_test;
 
 // --- cell (a): latchEditTarget seats a DESELECTED member at the front -------
 unittest {
-    import document;
+    import vibe3d.documents.model.document;
     import vibe3d.editing.contracts.seltype : SelMode;
     import tests.unit.primary_memo_fixture : layeredDocument;
 
@@ -40,7 +40,7 @@ unittest {
 
 // --- cell (b): setActive ----------------------------------------------------
 unittest {
-    import document;
+    import vibe3d.documents.model.document;
     import tests.unit.primary_memo_fixture : layeredDocument;
 
     auto doc = layeredDocument(4);
@@ -57,8 +57,8 @@ unittest {
 
 // --- cell (c): the derivation RATE, which is why the memo exists ------------
 unittest {
-    import document;
-    import document_selection : g_editTargetDerives, resetEditTargetDerives;
+    import vibe3d.documents.model.document;
+    import vibe3d.documents.model.document_selection : g_editTargetDerives, resetEditTargetDerives;
     import vibe3d.editing.contracts.seltype : SelMode;
     import std.format : format;
     import tests.unit.primary_memo_fixture : layeredDocument;

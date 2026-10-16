@@ -1,15 +1,15 @@
 module commands.mesh.loop_slice;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import mesh_ops.loop_slice;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.loop_slice;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import shader;
 import vibe3d.editing.params.params : Param;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 import selection_product : addNewLoopEdges;
 
@@ -149,7 +149,7 @@ class MeshAddLoop : Command, Operator {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         if (vts.get!SubjectPacket() is null) return false;
         if (editMode != EditMode.Edges)       return false;
         if (!mesh.hasAnySelectedEdges())      return false;
@@ -325,7 +325,7 @@ class MeshLoopSlice : Command, Operator {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         if (vts.get!SubjectPacket() is null) return false;
         if (editMode != EditMode.Edges)       return false;
         if (!mesh.hasAnySelectedEdges())      return false;

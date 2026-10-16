@@ -23,9 +23,9 @@
 import std.conv : to;
 import std.math : fabs;
 
-import mesh : CloneWeld, Mesh, MeshMap, MapDomain, kUvMapName,
+import vibe3d.mesh.core.mesh : CloneWeld, Mesh, MeshMap, MapDomain, kUvMapName,
               MeshEditBatch;
-import mesh_edge_slice :
+import vibe3d.mesh.ops.mesh_edge_slice :
               // task 3240 (plan 2910 step 3): `addEdgePoint` is a free
               // function in `packages/mesh-ops/source/mesh_edge_slice.d`; the
               // direct selective import makes `m.addEdgePoint(...)` resolve
@@ -35,7 +35,7 @@ import mesh_edge_slice :
               // declaration beats an imported one — naming it here would
               // change which function the file's own call sites mean.)
               addEdgePoint;
-import mesh_ops.poly_bevel : kPolyBevelEditScope, insetFacesByMask,
+import vibe3d.mesh.ops.mesh_ops.poly_bevel : kPolyBevelEditScope, insetFacesByMask,
     spikeFacesByMask;
 // Task 1903 Stage F2: the polygon-bevel entries are free functions over
 // `ref MeshEditBatch` in `source/mesh_ops/poly_bevel.d`, so this test opens the

@@ -2,22 +2,22 @@
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.commands.mesh.remove_test;
-import mesh_edit_replay : captureSelectedEdgeEnds, restoreSelectedEdgeEnds, apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : captureSelectedEdgeEnds, restoreSelectedEdgeEnds, apply, revert;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : MeshSnapshot, SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot, SelectionSnapshot;
 // `undoTrackerEnabled` left this list at task 1903 stage L3-b, with the fork
 // it named: `mesh.delete` and `mesh.remove` are unconditionally on the delta
 // path now, so importing the toggle here would suggest these blocks select
 // between two of them.
-import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope;
 import commands.mesh.delete_ : MeshDelete;
 import math : Vec3;
-import mesh : makeGridPlane;
+import vibe3d.mesh.core.mesh : makeGridPlane;
 import commands.mesh.remove_;
 
 // task 0693 — undo of a remove/delete must bring the UV map BACK.
@@ -35,7 +35,7 @@ import commands.mesh.remove_;
 // value that vanished. An "is the map non-empty" assert would only catch the
 // second.
 unittest {
-    import mesh : makeCube, kUvMapName, MapDomain;
+    import vibe3d.mesh.core.mesh : makeCube, kUvMapName, MapDomain;
     import std.math : abs;
     import std.conv : to;
 

@@ -6,10 +6,10 @@ module io.assimp_wire;
 // before it can reach ImportedScene or an aiScene builder.
 
 import core.stdc.string : memcpy;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import io.scene_ir : ImportedPart, ImportedScene, ImportedSurface;
 import math : Vec3, identityMatrix, matrixMirrorsWinding, transformPoint;
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
+import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName;
 import std.conv : to;
 
 private struct Reader {

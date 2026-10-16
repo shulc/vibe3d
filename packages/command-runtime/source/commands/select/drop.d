@@ -1,11 +1,11 @@
 module commands.select.drop;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param, wireArgs;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 
 // Drop owns an ordered component image and restores the prior component mode
 // through the host's promotion door, including accepted empty invocations.

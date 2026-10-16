@@ -1,8 +1,8 @@
 module tests.unit.application_core_mesh_test;
 
-import document : Document, Layer, NoEditTargetException;
-import mesh : Mesh, makeCube;
-import active_mesh_resolver : activeMeshResolver;
+import vibe3d.documents.model.document : Document, Layer, NoEditTargetException;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
+import vibe3d.mesh.preview.active_mesh_resolver : activeMeshResolver;
 import std.stdio : writeln;
 import std.exception : assertThrown;
 

@@ -33,11 +33,11 @@ module commands.image_plane.commands;
 // ---------------------------------------------------------------------------
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params     : Param;
-import document   : Document, Layer, ItemKind, ImagePlaneData, kindInfo;
+import vibe3d.documents.model.document   : Document, Layer, ItemKind, ImagePlaneData, kindInfo;
 import vibe3d.editing.contracts.seltype    : SelMode;
 import image_plane : kImageLinkSlot;
 import vibe3d.mesh.change.change_bus : noteLayerChange, LayerChange;

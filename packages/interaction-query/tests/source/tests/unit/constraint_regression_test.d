@@ -3,7 +3,7 @@ module tests.unit.constraint_regression_test;
 import constraint;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
-import toolpipe.packets : SnapPacket, ConstrainHitPacket, HoverTargetKind;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, ConstrainHitPacket, HoverTargetKind;
 
 
 unittest { // the THREE measured numbers, and the two refutations behind them

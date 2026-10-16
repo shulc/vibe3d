@@ -8,8 +8,8 @@ module tests.unit.session_mesh_key_stamp_as_test;
 // candidate with a Polygons commit, so its topology counter differs from the
 // live mesh's — asserted, or (a) and (d) could not be told apart.
 
-import mesh : Mesh, makeCube, installPreparedMeshImage;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.core.mesh : Mesh, makeCube, installPreparedMeshImage;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import tools.common.session_mesh_key : SessionMeshKey;
 
 private Mesh candidateOf(ref const Mesh live) {

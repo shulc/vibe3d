@@ -3,7 +3,7 @@ import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import display_state : DrawPlan;
 
 import bindbc.opengl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import bindbc.sdl;
 
 import tools.transform.transform;
@@ -16,7 +16,7 @@ struct PreparedMoveActivationImage {
 }
 import handler;
 import viewport_scheme : schemeColor, SchemeColor;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype : SelType;
@@ -37,7 +37,7 @@ import snap_render : publishLastSnap, clearLastSnap;
 // (CLAUDE.md: "Single-primary EDITING... tools hit the primary only"), so
 // its ModelSpace is the same resolver every other picking/snap call site
 // uses.
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import prepared_record_context : PreparedRecordContext;
 import vibe3d.editing.contracts.prepared_tool_effect :
     PreparedTransformProductEffect, PreparedTransformProductKind,
@@ -838,7 +838,7 @@ public:
     // Read once at the arm and frozen for the gesture — a mode that changed
     // mid-drag must not change the conversion mid-drag.
     private bool screenActionCentre(ref VectorStack vts) {
-        import toolpipe.packets : ActionCenterPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : ActionCenterPacket;
         import toolpipe.stages.actcenter : ActionCenterStage;
         auto acen = vts.get!ActionCenterPacket();
         return acen !is null
@@ -990,7 +990,7 @@ public:
             // sum it delivered, so the snap probes where the gizmo tracks.
             // `lastMX/lastMY` stay written below as the fallback for a
             // dispatch with no cooked gesture.
-            import toolpipe.packets : GesturePacket;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets : GesturePacket;
             int prevMX, prevMY;
             gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
                              lastMX, lastMY, prevMX, prevMY);

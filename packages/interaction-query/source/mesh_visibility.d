@@ -34,7 +34,7 @@ module mesh_visibility;
 // `tests/unit/snap_visibility_corpus_test.d` are edited for exactly this —
 // see the card's §Находки.
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import math : Vec3, frontFacingLocal, pointInPolygon2D;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;

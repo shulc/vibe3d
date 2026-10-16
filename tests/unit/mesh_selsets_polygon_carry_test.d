@@ -10,8 +10,8 @@
 module tests.unit.mesh_selsets_polygon_carry_test;
 
 import math : Vec3;
-import mesh;
-import mesh_selsets;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.core.mesh_selsets;
 
 private size_t faceByCentroid(ref Mesh m, Vec3 target, double tol = 1e-4) {
     foreach (fi; 0 .. m.faces.length) {

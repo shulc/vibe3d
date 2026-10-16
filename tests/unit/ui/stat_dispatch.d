@@ -18,12 +18,12 @@ module tests.unit.ui.stat_dispatch;
 import std.json : JSONValue, parseJSON;
 
 import command   : Command;
-import document  : Document;
+import vibe3d.documents.model.document  : Document;
 import vibe3d.editing.contracts.editmode  : EditMode;
-import mesh      : Mesh;
+import vibe3d.mesh.core.mesh      : Mesh;
 import vibe3d.editing.params.params    : injectParamsInto;
 import vibe3d.editing.contracts.seltype   : SelType;
-import view      : View;
+import vibe3d.viewport.camera.view      : View;
 
 import commands.select.by_stat : SelectByStatVertex, SelectByStatEdge,
                                  SelectByStatPolygon;

@@ -56,7 +56,7 @@ module image_cache;
 // from the HTTP thread directly.
 // ---------------------------------------------------------------------------
 
-import io.image_decode : DecodedImage, ImageInfo, imageDecode, imageInfo,
+import vibe3d.documents.image_codec.io.image_decode : DecodedImage, ImageInfo, imageDecode, imageInfo,
                           MAX_IMAGE_BYTES;
 import vibe3d.util.log.log : logWarn;
 

@@ -23,7 +23,7 @@ import vibe3d.editing.contracts.editmode : EditMode;
 import commands.viewport.display : kCavityGainMax, kCavityDistanceMin,
     kCavityDistanceMax, kCavityAttenuationMax;
 import layout_reset_action : LayoutResetAction;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import prefs : Prefs, seedLayoutIniIfMissing;
 import tests.unit.ui.headless_panel : openPanel;
 import ui.panels : drawViewportPropsPanel, resetViewportPropsDrawSnapshot,

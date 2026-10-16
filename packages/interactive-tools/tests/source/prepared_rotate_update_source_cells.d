@@ -2,9 +2,9 @@ module prepared_rotate_update_source_cells;
 
 import prepared_rotate_update;
 import core.atomic : atomicOp;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import prepared_record_context : PreparedRecordContext;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedRotateUpdateKind;
 import math : Vec3;
@@ -13,7 +13,7 @@ import tools.transform.rotate : RotateTool, PreparedRotateUpdateImage,
 
 unittest {
     import command_history : CommandHistory;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import record_observer_hub : RecordObserverHub;
 

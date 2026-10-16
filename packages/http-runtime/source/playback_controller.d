@@ -1,7 +1,7 @@
 module playback_controller;
 
 import core.time : MonoTime;
-import eventlog : EventLogParseResult, EventPlayer, ImmediateEventSink,
+import vibe3d.platform.input.eventlog : EventLogParseResult, EventPlayer, ImmediateEventSink,
     ParsedEventLog, parseEventLog;
 import std.format : format;
 

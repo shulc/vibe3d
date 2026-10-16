@@ -10,8 +10,8 @@
     "vibe3d-interaction-query": {
       "path": "../interaction-query"
     },
-    "vibe3d-mesh": {
-      "path": "../mesh"
+    "vibe3d:mesh": {
+      "path": "../.."
     },
     "vibe3d:math": {
       "path": "../.."
@@ -164,7 +164,7 @@
       ],
       "subConfigurations": {
         "vibe3d-interaction-query": "modeling",
-        "vibe3d-mesh": "modeling",
+        "vibe3d:mesh": "modeling",
         "vibe3d:math": "modeling",
         "vibe3d:edit-contracts": "modeling"
       }
@@ -174,7 +174,7 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-interaction-query": "modeling-noai",
-        "vibe3d-mesh": "modeling-noai",
+        "vibe3d:mesh": "modeling-noai",
         "vibe3d:math": "modeling-noai",
         "vibe3d:edit-contracts": "modeling-noai"
       }
@@ -187,7 +187,7 @@
       ],
       "subConfigurations": {
         "vibe3d-interaction-query": "with-render",
-        "vibe3d-mesh": "with-render",
+        "vibe3d:mesh": "with-render",
         "vibe3d:math": "with-render",
         "vibe3d:edit-contracts": "with-render"
       }
@@ -199,7 +199,7 @@
       ],
       "subConfigurations": {
         "vibe3d-interaction-query": "web",
-        "vibe3d-mesh": "web",
+        "vibe3d:mesh": "web",
         "vibe3d:math": "web",
         "vibe3d:edit-contracts": "web"
       }
@@ -211,7 +211,7 @@
       ],
       "subConfigurations": {
         "vibe3d-interaction-query": "root-tests",
-        "vibe3d-mesh": "root-tests",
+        "vibe3d:mesh": "root-tests",
         "vibe3d:math": "root-tests",
         "vibe3d:edit-contracts": "root-tests"
       },
@@ -222,7 +222,7 @@
       "versions": [],
       "subConfigurations": {
         "vibe3d-interaction-query": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
         "vibe3d:math": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests"
       },

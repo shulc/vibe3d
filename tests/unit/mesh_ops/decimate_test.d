@@ -2,14 +2,14 @@
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.mesh_ops.decimate_test;
-import mesh_ops.triangulate : triangulateFacesByMask;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.ops.mesh_ops.triangulate : triangulateFacesByMask;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import subpatch_factories : subdivideCube;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
-import mesh_ops.decimate;
-import mesh_edit_delta : MeshEditScope, MeshEditDelta, MeshOpEntry;
+import vibe3d.mesh.ops.mesh_ops.decimate;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope, MeshEditDelta, MeshOpEntry;
 
 // TASK 1903 Stage D2 — `reduceToTarget` is a free function over
 // `ref MeshEditBatch` now, so a test cannot call it on a bare `Mesh` any more:

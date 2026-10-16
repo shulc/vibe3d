@@ -29,8 +29,8 @@ module tests.unit.toolpipe.required_packets_witness_test;
 
 import toolpipe.pipeline : Pipeline;
 import toolpipe.stage    : Stage, TaskCode, ordAcen, ordWork;
-import operator            : Operator, Task, VectorStack, PacketKind;
-import toolpipe.packets    : FalloffPacket;
+import vibe3d.editing.pipeline.contracts.operator            : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets    : FalloffPacket;
 import vibe3d.util.log.log                  : snapshot, resetLogForTest, g_stderrMinLevel, LogLevel;
 
 import std.algorithm : canFind, filter;

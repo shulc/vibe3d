@@ -10,15 +10,15 @@ import std.string : indexOf;
 import command_history : CommandHistory;
 import commands.file.load : FileLoad, FileLoadMode;
 import commands.file.save : FileSave, FileSaveMode;
-import document : Document, Layer;
+import vibe3d.documents.model.document : Document, Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
 import file_io_registration : registerFileIoCommands;
 import live_registration_roles : LiveSessionRole, LiveView,
     LiveViewModeRole;
-import mesh : makeCube, makeGridPlane, makeOctahedron;
+import vibe3d.mesh.core.mesh : makeCube, makeGridPlane, makeOctahedron;
 import registry : Registry;
 import session_owner : Session;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..", "..");

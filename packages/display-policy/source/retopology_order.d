@@ -1,6 +1,6 @@
 module retopology_order;
 
-import document : Document, Layer, LayerRole, kindInfo;
+import vibe3d.documents.model.document : Document, Layer, LayerRole, kindInfo;
 
 // The item draw sequence of the retopology display (task 8610, plan §10.3 /
 // §10.4). Captured: the foreground items draw in REVERSE layer order,

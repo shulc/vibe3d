@@ -63,7 +63,7 @@ import std.array : array;
 import std.conv  : to;
 
 import math : Vec3;
-import mesh : Mesh, edgeKey;
+import vibe3d.mesh.core.mesh : Mesh, edgeKey;
 
 /// Result of `stitchRegion`. `ok == false` means the patch could not be
 /// pinned back robustly (see `failReason`) — the caller (remesh_job) should

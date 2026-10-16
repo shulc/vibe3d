@@ -1,9 +1,9 @@
 module tests.unit.mesh_wire_compact_undo_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import math : Vec3;
-import mesh : Mesh;
-import mesh_edit_delta : MeshEditScope, MeshEditTracker;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope, MeshEditTracker;
 
 private bool hasVertAt(in Mesh m, Vec3 p) {
     foreach (v; m.vertices) if (v == p) return true;

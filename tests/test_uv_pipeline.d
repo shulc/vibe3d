@@ -33,7 +33,7 @@ import std.math   : fabs;
 import std.file   : write, remove, exists;
 import std.format : format;
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
+import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName;
 import io.scene_ir       : ImportedScene, flattenToMesh;
 import io.scene_import   : importViaAssimp;
 import io.scene_export   : exportViaAssimp;

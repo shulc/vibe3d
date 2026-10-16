@@ -3,8 +3,8 @@ module tests.unit.symmetry_regression_test;
 import symmetry;
 import std.math : abs;
 import math : Vec3;
-import mesh : Mesh;
-import toolpipe.packets : SymmetryPacket;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
 
 
 // ---------------------------------------------------------------------------

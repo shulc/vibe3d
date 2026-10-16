@@ -1,8 +1,8 @@
 module session_owner;
 
-import document : Document, noEditTargetMesh;
+import vibe3d.documents.model.document : Document, noEditTargetMesh;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.seltype : SelType, SelTypeOrder, geometryEditMode, geometrySelType;
 
 /// The one approved active-layer lifecycle seam (task 5720). It is a function

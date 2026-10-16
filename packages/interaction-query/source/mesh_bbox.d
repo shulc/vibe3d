@@ -1,7 +1,7 @@
 module mesh_bbox;
 
 import math : Vec3;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 
 /// Bounding box of the layer geometry in mesh-local coordinates. Selection
 /// and edit mode deliberately do not participate. `seen` is false only when

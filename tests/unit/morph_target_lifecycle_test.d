@@ -36,9 +36,9 @@ import std.path      : buildPath, dirName;
 import std.string    : indexOf;
 
 import math        : Vec3;
-import mesh        : Mesh, MapKind, makeCube;
-import document    : Document, Layer;
-import view        : View;
+import vibe3d.mesh.core.mesh        : Mesh, MapKind, makeCube;
+import vibe3d.documents.model.document    : Document, Layer;
+import vibe3d.viewport.camera.view        : View;
 import vibe3d.editing.contracts.editmode    : EditMode;
 import morph_target;
 import session_owner : Session;

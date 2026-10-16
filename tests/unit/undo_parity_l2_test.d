@@ -43,8 +43,8 @@
 module tests.unit.undo_parity_l2_test;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math : Vec3;
 

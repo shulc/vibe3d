@@ -6,7 +6,7 @@ module tests.unit.gpu_owner_real_backend_test;
 import bindbc.opengl : GLboolean, GLsizei, GLuint, GL_FALSE, GL_TRUE,
     glDeleteBuffers, glDeleteVertexArrays, glGenBuffers, glGenVertexArrays,
     glIsBuffer, glIsVertexArray;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuMesh,
     GpuResourceOwner, PreparedGpuResourceToken, ValidatedGpuResourceToken;
 import std.file : readText;

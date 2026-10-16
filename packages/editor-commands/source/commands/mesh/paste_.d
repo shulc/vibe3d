@@ -1,12 +1,12 @@
 module commands.mesh.paste_;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : MeshSnapshot;
-import geometry_clipboard : geometryClipboard;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.ops.geometry_clipboard : geometryClipboard;
 
 /// Append the clipboard geometry to the active mesh and select what it pasted —
 /// the faces for a face clip, the points for a vertex-mode clip (task 1200,
@@ -32,7 +32,7 @@ class MeshPaste : Command, Operator {
     // paste is deliberately mode-agnostic (see class doc).
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         if (geometryClipboard.empty) return false;

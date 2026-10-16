@@ -7,9 +7,9 @@ import std.math      : abs;
 import math : Vec3, dot;
 public import vibe3d.util.spatial.symmetry_plane : symmetrySide;
 static import math;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
-import toolpipe.packets : SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
 
 // ---------------------------------------------------------------------------
 // Symmetry — phase 7.6b math helpers and per-vertex pairing builder.

@@ -8,8 +8,8 @@ import vibe3d.editing.contracts.editmode : EditMode;
 unittest {
     import command  : Command, kNoEditTargetReason;
     import tool     : Tool;
-    import mesh     : Mesh;
-    import view     : View;
+    import vibe3d.mesh.core.mesh     : Mesh;
+    import vibe3d.viewport.camera.view     : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     static final class NeedsCmd : Command {

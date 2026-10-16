@@ -18,8 +18,8 @@ import std.json : JSONValue, JSONType, parseJSON;
 import command;
 import command_args;
 import vibe3d.editing.params.params   : Param;
-import mesh     : Mesh;
-import view     : View;
+import vibe3d.mesh.core.mesh     : Mesh;
+import vibe3d.viewport.camera.view     : View;
 import vibe3d.editing.contracts.editmode : EditMode;
 
 // A command whose whole content is its schema. Four slots of four different

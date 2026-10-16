@@ -71,11 +71,11 @@ module commands.image.commands;
 import std.path : baseName, stripExtension;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params    : Param;
-import document  : Document, Layer, ItemKind, ImageData;
+import vibe3d.documents.model.document  : Document, Layer, ItemKind, ImageData;
 import vibe3d.editing.contracts.seltype   : SelMode;
 import io.formats     : FilterSpec;
 import io.file_dialog : pickOpenPath, PickResult, PickOutcome;
@@ -651,8 +651,8 @@ version (unittest) {
     import std.file : write, remove, exists;
     import std.path : buildPath;
     import io.image_path : writeTestBmp, imageTestDir;
-    import mesh   : makeCube;
-    import view   : View;
+    import vibe3d.mesh.core.mesh   : makeCube;
+    import vibe3d.viewport.camera.view   : View;
 
     // The fixture the tests share:
     //
@@ -767,7 +767,7 @@ unittest {
 // visually identical row sitting in the list.
 // ---------------------------------------------------------------------------
 unittest {
-    import document : LinkState;
+    import vibe3d.documents.model.document : LinkState;
 
     auto f = makeImgFixture("load_undo");
     immutable before = f.doc.layers.length;
@@ -821,7 +821,7 @@ unittest {
 // both consumers' links Live again without anything having recorded them.
 // ---------------------------------------------------------------------------
 unittest {
-    import document : LinkState;
+    import vibe3d.documents.model.document : LinkState;
 
     auto f = makeImgFixture("remove_middle");
     immutable size_t bIdx = f.doc.indexOf(f.clipB);

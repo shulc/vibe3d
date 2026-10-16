@@ -1,15 +1,15 @@
 module commands.select.sets;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params   : Param;
-import snapshot : MeshSnapshot, SelectionSnapshot;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot, SelectionSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import vibe3d.editing.contracts.seltype  : SelType;
-import document : Document, Layer;
-import mesh_selsets;
+import vibe3d.documents.model.document : Document, Layer;
+import vibe3d.mesh.core.mesh_selsets;
 
 // ---------------------------------------------------------------------------
 // select.set.{store,apply,edit,rename,delete} — named, typed, per-mesh

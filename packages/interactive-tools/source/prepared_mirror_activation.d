@@ -1,7 +1,7 @@
 module prepared_mirror_activation;
 
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.alignment.mirror : MirrorTool, PreparedMirrorActivationImage,
     PreparedMirrorDeactivateImage;
 

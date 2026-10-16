@@ -15,7 +15,7 @@
 // obligation, an OPEN rewrite that says nothing loses the plane instead.
 module tests.unit.mesh_corner_provenance_test;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
 
 // Two quads sharing an edge, with a per-corner map whose value is a key of the

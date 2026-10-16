@@ -1,5 +1,5 @@
 module tools.slice.edge_slice_tool;
-import mesh_edge_slice : EdgeSliceResult, addEdgePoint, edgeIndexOf, edgeSliceEx, edgeSliceReachable;
+import vibe3d.mesh.ops.mesh_edge_slice : EdgeSliceResult, addEdgePoint, edgeIndexOf, edgeSliceEx, edgeSliceReachable;
 import display_state : DrawPlan;
 
 import bindbc.sdl;
@@ -8,10 +8,10 @@ import std.math : round;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the `t = %` HUD
 
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : AimViewport, Viewport, aimSpace, projectToWindowFull, screenPointToRay;
@@ -21,13 +21,13 @@ import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale, hoverAtPress;
 import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.common.session_mesh_key : SessionMeshKey;
 import display_sync : refreshDisplay;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels;
 import viewport_scheme : schemeColor, SchemeColor;
-import document : Layer, primaryModelSpace;
+import vibe3d.documents.model.document : Layer, primaryModelSpace;
 import overlay_space : OverlaySpace;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
@@ -41,7 +41,7 @@ import prepared_edge_slice_deactivate : PreparedEdgeSliceDeactivateOwner;
 import prepared_param_update : PreparedParamUpdateOwner;
 import mesh_gpu : GpuUploadOwner;
 import symmetry : mirrorEdgePoint;
-import toolpipe.packets : SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
 import handler : BoxHandlerBatchResourceOwner;
 
 // (m0, m1): the point's mirror edge under the symmetry that was live when it

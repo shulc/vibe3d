@@ -6,7 +6,7 @@ module tests.unit.surface_pack_test;
 
 import std.format : format;
 
-import mesh   : Surface;
+import vibe3d.mesh.core.mesh   : Surface;
 import shader : packSurfaceSlots, LIT_MAX_MATS;
 
 unittest {

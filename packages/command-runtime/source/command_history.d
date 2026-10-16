@@ -143,7 +143,7 @@ enum HistoryFlags : uint {
 final class DropPressMarkerCommand : Command {
     private string pressName_;
     this(ulong token, string pressName) {
-        import view : View;
+        import vibe3d.viewport.camera.view : View;
         import vibe3d.editing.contracts.editmode : EditMode;
         View emptyView;
         super(null, emptyView, EditMode.Vertices);
@@ -1962,9 +1962,9 @@ final class CommandHistory {
         // without this batch the undo of a 3 000-edge remove delivered 3 003
         // times where the forward command delivered once (measured). Nested
         // batches coalesce, so a revert that opens its own is unaffected.
-        { import mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
+        { import vibe3d.mesh.core.mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
           beginDeliveryBatchGlobal(); }
-        scope(exit) { import mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
+        scope(exit) { import vibe3d.mesh.core.mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
         if (_lockout) return false;
         if (undoStack.length == 0) return false;
         bool generationDone;
@@ -2056,9 +2056,9 @@ final class CommandHistory {
         // without this batch the undo of a 3 000-edge remove delivered 3 003
         // times where the forward command delivered once (measured). Nested
         // batches coalesce, so a revert that opens its own is unaffected.
-        { import mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
+        { import vibe3d.mesh.core.mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
           beginDeliveryBatchGlobal(); }
-        scope(exit) { import mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
+        scope(exit) { import vibe3d.mesh.core.mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
         if (_lockout) return false;
         if (redoStack.length == 0) return false;
 
@@ -2275,8 +2275,8 @@ final class CommandHistory {
         // restore delivered 3 005 times for a 3 000-edge remove where the first
         // fire delivered once (measured). One re-fire step is ONE delivery, the
         // same batch `undo()`/`redo()` hold; nested batches coalesce.
-        { import mesh : beginDeliveryBatchGlobal; beginDeliveryBatchGlobal(); }
-        scope(exit) { import mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
+        { import vibe3d.mesh.core.mesh : beginDeliveryBatchGlobal; beginDeliveryBatchGlobal(); }
+        scope(exit) { import vibe3d.mesh.core.mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
         if (!refireOpen) {
             // Caller forgot refireBegin(); treat as a plain apply+record.
             if (!cmd.apply()) return false;
@@ -2387,8 +2387,8 @@ final class CommandHistory {
 // ---------------------------------------------------------------------------
 version (unittest) {
     private final class _EpochTestCmd : Command {
-        import mesh    : Mesh;
-        import view    : View;
+        import vibe3d.mesh.core.mesh    : Mesh;
+        import vibe3d.viewport.camera.view    : View;
         import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh  _mesh;
         private View  _view = new View(0, 0, 1, 1);
@@ -2400,7 +2400,7 @@ version (unittest) {
     }
 
     private final class _ThrowingParamsCmd : Command {
-        import mesh : Mesh; import view : View; import vibe3d.editing.contracts.editmode : EditMode;
+        import vibe3d.mesh.core.mesh : Mesh; import vibe3d.viewport.camera.view : View; import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh mesh_; private View view_ = new View(0, 0, 1, 1);
         int paramCalls;
         this() { super(&mesh_, view_, EditMode.Vertices); }
@@ -2415,8 +2415,8 @@ version (unittest) {
     // Tracks how many times apply()/revert() were called — used to verify
     // records are stepped in the expected order.
     private final class _TrackedCmd : Command {
-        import mesh     : Mesh;
-        import view     : View;
+        import vibe3d.mesh.core.mesh     : Mesh;
+        import vibe3d.viewport.camera.view     : View;
         import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh  _mesh;
         private View  _view = new View(0, 0, 1, 1);
@@ -2471,8 +2471,8 @@ version (unittest) {
     // and adopts the LAST later command's `after` — the same law
     // MeshVertexEdit.mergeRun / LayerXformEdit.mergeRunTail use.
     private final class _RunMergeableTestCmd : Command, RunMergeable {
-        import mesh    : Mesh;
-        import view    : View;
+        import vibe3d.mesh.core.mesh    : Mesh;
+        import vibe3d.viewport.camera.view    : View;
         import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh _mesh;
         private View _view = new View(0, 0, 1, 1);
@@ -2498,8 +2498,8 @@ version (unittest) {
     // A command that is neither MeshVertexEdit nor RunMergeable — stands in
     // for box's BoxLiveEditCommand ladder shape (R14).
     private final class _PlainTestCmd : Command {
-        import mesh    : Mesh;
-        import view    : View;
+        import vibe3d.mesh.core.mesh    : Mesh;
+        import vibe3d.viewport.camera.view    : View;
         import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh _mesh;
         private View _view = new View(0, 0, 1, 1);
@@ -2511,7 +2511,7 @@ version (unittest) {
     }
 
     private final class _DecliningRunMergeCmd : Command, RunMergeable {
-        import mesh : Mesh; import view : View; import vibe3d.editing.contracts.editmode : EditMode;
+        import vibe3d.mesh.core.mesh : Mesh; import vibe3d.viewport.camera.view : View; import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh mesh_; private View view_ = new View(0, 0, 1, 1);
         bool throws_;
         this(bool throws = false) { super(&mesh_, view_, EditMode.Vertices); throws_ = throws; }
@@ -2528,7 +2528,7 @@ version (unittest) {
 
 unittest { // P1.0b.3b real detached consolidation matrix.
     import commands.mesh.vertex_edit : MeshVertexEdit;
-    import mesh : Mesh; import view : View; import vibe3d.editing.contracts.editmode : EditMode;
+    import vibe3d.mesh.core.mesh : Mesh; import vibe3d.viewport.camera.view : View; import vibe3d.editing.contracts.editmode : EditMode;
     import math : Vec3;
 
     // Single and multi MeshVertexEdit use the production merge primitive.
@@ -2960,8 +2960,8 @@ version(unittest) {
         auto h = new CommandHistory();
 
         static class StubModel : Command {
-            import mesh     : Mesh;
-            import view     : View;
+            import vibe3d.mesh.core.mesh     : Mesh;
+            import vibe3d.viewport.camera.view     : View;
             import vibe3d.editing.contracts.editmode : EditMode;
             bool reverted = false;
             bool applied  = false;
@@ -2981,8 +2981,8 @@ version(unittest) {
             protected override void revertImpl() { reverted = true; }
         }
         static class StubUi : Command {
-            import mesh     : Mesh;
-            import view     : View;
+            import vibe3d.mesh.core.mesh     : Mesh;
+            import vibe3d.viewport.camera.view     : View;
             import vibe3d.editing.contracts.editmode : EditMode;
             bool reverted = false;
             private Mesh  _mesh;
@@ -3001,8 +3001,8 @@ version(unittest) {
             protected override void revertImpl() { reverted = true; }
         }
         static class StubLifecycle : Command {
-            import mesh     : Mesh;
-            import view     : View;
+            import vibe3d.mesh.core.mesh     : Mesh;
+            import vibe3d.viewport.camera.view     : View;
             import vibe3d.editing.contracts.editmode : EditMode;
             bool reverted = false;
             bool applied  = false;

@@ -159,8 +159,8 @@
     "vibe3d-interchange": {
       "path": "../interchange"
     },
-    "vibe3d-mesh": {
-      "path": "../mesh"
+    "vibe3d:mesh": {
+      "path": "../.."
     }
   },
   "configurations": [
@@ -175,7 +175,7 @@
         "vibe3d-document-io": "modeling",
         "vibe3d:edit-contracts": "modeling",
         "vibe3d-interchange": "modeling",
-        "vibe3d-mesh": "modeling"
+        "vibe3d:mesh": "modeling"
       },
       "dependencies": {
         "nfde": {
@@ -192,7 +192,7 @@
         "vibe3d-document-io": "modeling-noai",
         "vibe3d:edit-contracts": "modeling-noai",
         "vibe3d-interchange": "modeling-noai",
-        "vibe3d-mesh": "modeling-noai"
+        "vibe3d:mesh": "modeling-noai"
       },
       "dependencies": {
         "nfde": {
@@ -212,7 +212,7 @@
         "vibe3d-document-io": "with-render",
         "vibe3d:edit-contracts": "with-render",
         "vibe3d-interchange": "with-render",
-        "vibe3d-mesh": "with-render"
+        "vibe3d:mesh": "with-render"
       },
       "dependencies": {
         "nfde": {
@@ -231,7 +231,7 @@
         "vibe3d-document-io": "web",
         "vibe3d:edit-contracts": "web",
         "vibe3d-interchange": "web",
-        "vibe3d-mesh": "web"
+        "vibe3d:mesh": "web"
       }
     },
     {
@@ -246,7 +246,7 @@
         "vibe3d-document-io": "root-tests",
         "vibe3d:edit-contracts": "root-tests",
         "vibe3d-interchange": "root-tests",
-        "vibe3d-mesh": "root-tests"
+        "vibe3d:mesh": "root-tests"
       },
       "targetType": "sourceLibrary",
       "dependencies": {
@@ -264,7 +264,7 @@
         "vibe3d-document-io": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d-interchange": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests"
+        "vibe3d:mesh": "isolated-tests"
       },
       "targetType": "sourceLibrary",
       "dependencies": {

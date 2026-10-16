@@ -2,21 +2,21 @@ module prepared_slice_deactivate_source_cells;
 
 import prepared_slice_deactivate;
 import core.atomic : atomicOp;
-import document : Layer;
-import mesh : Mesh;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.slice.slice_tool : SliceTool, PreparedSliceDeactivateImage;
 
 unittest {
     import command_history : CommandHistory;
     import commands.mesh.session_edit : MeshSessionEdit;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
     import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     auto layer = new Layer; layer.meshRef() = makeCube();
     GpuMesh gpu; EditMode mode = EditMode.Polygons;

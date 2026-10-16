@@ -32,10 +32,10 @@ module tests.unit.primary_memo_order_test;
 // --- cell (a): the real `layer.reorder` command moves the tie-break ---------
 unittest {
     import commands.layer.commands : LayerReorder;
-    import document;
+    import vibe3d.documents.model.document;
     import vibe3d.editing.contracts.editmode : EditMode;
     import tests.unit.primary_memo_fixture : layeredDocument, setIntParam;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     auto doc = layeredDocument(4);
 
@@ -69,7 +69,7 @@ unittest {
 
 // --- cell (b): an in-place permutation, which the pointer key cannot see ----
 unittest {
-    import document;
+    import vibe3d.documents.model.document;
     import tests.unit.primary_memo_fixture : layeredDocument;
 
     auto doc = layeredDocument(4);

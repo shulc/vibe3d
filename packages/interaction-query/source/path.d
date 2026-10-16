@@ -1,7 +1,7 @@
 module path;
 
 import math : Vec3, normalize;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 
 // ---------------------------------------------------------------------------
 // PathSource — lightweight ordered vertex-index list + closed flag.

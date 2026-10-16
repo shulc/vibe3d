@@ -8,8 +8,8 @@ import std.format : format;
 
 import vibe3d.editing.contracts.editmode : EditMode;
 import math     : Vec3;
-import mesh     : Mesh, Surface, kSurfaceSlots;
-import view     : View;
+import vibe3d.mesh.core.mesh     : Mesh, Surface, kSurfaceSlots;
+import vibe3d.viewport.camera.view     : View;
 import commands.mesh.surface_attr : MeshSurfaceAttr, surfaceSlotCount, kSurfaceAttrs;
 
 /// Two quads; `faceMaterial` as given.

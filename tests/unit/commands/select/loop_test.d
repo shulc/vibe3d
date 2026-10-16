@@ -3,9 +3,9 @@
 // this file exists for that one question.
 module tests.unit.commands.select.loop_test;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
-import view;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode : EditMode;
 import commands.select.loop : SelectLoop;
 

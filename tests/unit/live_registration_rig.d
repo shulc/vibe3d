@@ -12,7 +12,7 @@ import commands.mesh.morph_edit : MeshMorphEdit;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.tool.host : ToolHost, ToolHostReadView;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
 import editor_app : EditorApp;
@@ -22,7 +22,7 @@ import http_command_adapter : AutomationResetContext, CommandHttpAdapter;
 import http_server : HttpServer;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import math : Vec3;
-import mesh : Mesh, makeCube, makeOctahedron;
+import vibe3d.mesh.core.mesh : Mesh, makeCube, makeOctahedron;
 import mesh_gpu : GpuMesh;
 import pipe_gizmo_host : PipeGizmoHost;
 import remesh.remesh_job : RemeshJob;
@@ -38,7 +38,7 @@ import tool_activation_ownership : ToolTransition;
 import tool_lifecycle_registration : registerToolLifecycleCommands;
 import tools.edit.topology_pen.defs : TopoPenFactories;
 import ui.remesh_modal_state : RemeshModalState;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import viewport : LayoutPreset, ViewportManager;
 
 private void noOpResetUi() {}

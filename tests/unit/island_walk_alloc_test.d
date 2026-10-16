@@ -40,7 +40,7 @@ module tests.unit.island_walk_alloc_test;
 
 import core.memory : GC;
 import std.format : format;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 
 // R x R quads with 8-neighbour (shared-vertex) adjacency — the relation
 // `Mesh.faceAdjacencySharingVertex` produces for a quad grid, built directly

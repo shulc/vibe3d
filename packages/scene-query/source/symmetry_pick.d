@@ -2,14 +2,14 @@ module symmetry_pick;
 
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
-import mesh    : Mesh;
+import vibe3d.mesh.core.mesh    : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype  : SelType;
-import toolpipe.packets       : SubjectPacket, SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets       : SubjectPacket, SymmetryPacket;
 import toolpipe.stages.symmetry : SymmetryStage, liveSymmetryStage;
 import toolpipe.subject        : evaluateSubject, SubjectSource;
 import symmetry               : mirrorElement;
-import operator               : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator               : VectorStack;
 
 // ---------------------------------------------------------------------------
 // Symmetry-aware interactive pick helpers — the POINTER-gesture door of the

@@ -6,7 +6,7 @@ module tests.unit.display_refresh_mask_semantics_test;
 import std.format : format;
 import std.traits : EnumMembers;
 
-import mesh_edit_delta : DisplayRefreshMask, MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : DisplayRefreshMask, MeshEditScope;
 
 private struct ScopeRow {
     string name;

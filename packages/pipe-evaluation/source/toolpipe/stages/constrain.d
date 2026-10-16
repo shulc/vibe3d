@@ -1,9 +1,9 @@
 module toolpipe.stages.constrain;
 
 import toolpipe.stage   : Stage, TaskCode, ordCons, ToolSwitchTransient;
-import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           SubjectPacket;
-import operator         : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.operator         : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths      : setStatePath, installPreparedStatePath;
 import vibe3d.editing.params.params           : Param, IntEnumEntry, wireTagForValue;
 import surface_pick     : BackgroundRayPicker, SurfaceHit;
@@ -140,7 +140,7 @@ public:
     // orthographic producer retains its represented-component comparison
     // (9528, doc/tool_perspective_component_guide_amendment_2026-10-06.md).
     auto componentGuide(Vec3 incoming, const ref GuideEnvironment env) {
-        import toolpipe.packets : ComponentGuide;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : ComponentGuide;
         import vibe3d.util.spatial.spatial : lockedViewAxis, eyeVectorAt, isOrtho, projectToWindowFull, screenPointToRay;
         import constraint : surfaceComponentMask;
         ComponentGuide result;

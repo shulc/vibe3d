@@ -1,13 +1,13 @@
 module commands.mesh.session_edit;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : MeshSnapshot;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import commands.mesh.gesture_payload : GesturePayload;
 import commands.mesh.mesh_edit_payload : MeshEditPayload;
 import vibe3d.editing.contracts.tool_policy_values : AttrImage, StepOrigin;
@@ -177,7 +177,7 @@ class MeshSessionEdit : Command, Operator, GesturePayload {
     override bool hasGesturePayload() const { return hasPayload(); }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         // TASK 1552 — a carrier with NO PAYLOAD must refuse, not restore a

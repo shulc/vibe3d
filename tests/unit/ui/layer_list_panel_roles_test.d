@@ -21,7 +21,7 @@ import command_history : CommandHistory, RecordMode;
 import commands.layer.commands : LayerAttr, LayerRename, LayerSelect,
     LayerSetVisible;
 import commands.image_plane.commands : ImagePlaneAdd;
-import document : Document, ItemKind, Layer, kindInfo;
+import vibe3d.documents.model.document : Document, ItemKind, Layer, kindInfo;
 import edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
 import forms : Form, formById, g_forms, g_formsPanelEnabled, loadForms;
@@ -29,7 +29,7 @@ import forms_render : FormsPanel;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import layer_params : itemPropsTarget;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import registry : Registry;
 import vibe3d.editing.contracts.seltype : SelType, currentSelType;
 import session_owner : Session;
@@ -49,7 +49,7 @@ import ui.layer_list_panel : LayerListDrawSnapshot, LayerListDrawnRow,
     LayerListPanelState, LayerListReadRole, bindLayerListPanel,
     drawLayerListPanel, layerFormBoundItem, layerFormProvider,
     layerFormGangMixed, layerListDrawSnapshot, resetLayerListDrawSnapshot;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
 

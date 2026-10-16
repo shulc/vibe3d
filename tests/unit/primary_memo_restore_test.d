@@ -19,7 +19,7 @@ module tests.unit.primary_memo_restore_test;
 
 // --- cell (a): restoreItemSelection, with no list mutation in the frame -----
 unittest {
-    import document;
+    import vibe3d.documents.model.document;
     import vibe3d.editing.contracts.seltype : SelMode;
     import tests.unit.primary_memo_fixture : layeredDocument;
 
@@ -48,7 +48,7 @@ unittest {
 
 // --- cell (b): resetSelectionState empties the answer ----------------------
 unittest {
-    import document;
+    import vibe3d.documents.model.document;
     import vibe3d.editing.contracts.seltype : SelMode;
     import tests.unit.primary_memo_fixture : layeredDocument;
 

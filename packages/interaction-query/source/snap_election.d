@@ -3,8 +3,8 @@ module snap_election;
 import std.math : sqrt, isNaN;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
-import mesh : Mesh;
-import toolpipe.packets : SnapPacket, SnapType, SnapMode;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
 import constraint : BackgroundSource;
 import snap : SnapResult, SnapAdmit, typeEligible,

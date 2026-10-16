@@ -25,7 +25,7 @@ import std.path   : buildPath;
 import std.process : thisProcessID;
 import std.uuid   : randomUUID;
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
+import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName;
 import io.scene_ir     : ImportedScene, ImportedPart, ImportedSurface, flattenToMesh;
 import io.scene_import : importViaAssimp;
 import io.assimp_runtime : initAssimp, isAssimpAvailable;

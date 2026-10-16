@@ -206,7 +206,7 @@ unittest // plan -> FacePass: mode off culls by surface; the mode and a mirror a
 
 unittest // a face-layout build moves the layout generation, on the prepared path too
 {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh, GpuUploadOwner, PreparedGpuUploadToken,
                       ValidatedGpuUploadToken;
     GpuMesh gpu;

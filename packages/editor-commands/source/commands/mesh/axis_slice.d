@@ -1,15 +1,15 @@
 module commands.mesh.axis_slice;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import mesh_ops.cut;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.cut;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
 import math : Vec3;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 
 // ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ class MeshAxisSlice : Command, Operator {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         if (vts.get!SubjectPacket() is null) return false;
         if (count_ < 1) return false;
         if (count_ > MAX_AXIS_SLICE_COUNT) count_ = MAX_AXIS_SLICE_COUNT;
@@ -299,7 +299,7 @@ class MeshJulienne : Command, Operator {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         if (vts.get!SubjectPacket() is null) return false;
         if (countA_ < 1 || countB_ < 1) return false;
         if (countA_ > MAX_AXIS_SLICE_COUNT) countA_ = MAX_AXIS_SLICE_COUNT;

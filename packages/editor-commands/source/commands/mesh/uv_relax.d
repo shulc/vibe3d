@@ -1,5 +1,5 @@
 module commands.mesh.uv_relax;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 /// Command `uv.relax` — N Jacobi uniform-Laplacian passes over the per-corner
 /// UV map.  Interior UV vertices move toward the mean of their UV neighbours;
@@ -28,14 +28,14 @@ import mesh_edit_replay : apply, revert;
 /// site.
 
 import command;
-import mesh            : Mesh, MapDomain, MeshEditBatch, kUvMapName;
-import view            : View;
+import vibe3d.mesh.core.mesh            : Mesh, MapDomain, MeshEditBatch, kUvMapName;
+import vibe3d.viewport.camera.view            : View;
 import vibe3d.editing.contracts.editmode        : EditMode;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import vibe3d.editing.params.params          : Param;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit;
-import uv_relax        : uvRelax;
+import vibe3d.mesh.ops.uv_relax        : uvRelax;
 
 class UvRelax : Command {
     private int          iter_ = 5;

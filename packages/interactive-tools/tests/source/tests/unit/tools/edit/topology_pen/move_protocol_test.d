@@ -1,8 +1,8 @@
 module tools.edit.topology_pen.move_protocol_test;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
-import toolpipe.packets : SnapType, SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType, SymmetryPacket;
 import tools.edit.topology_pen.snap_guide : admitsMoveElement;
 import evaluated_move_weld : EvaluatedMoveWeld, searchMoveElement, pairedMoveEnds, moveFaceNormal, MoveElementHit, evaluatedMoveHandle, heldMoveEngages;
 
@@ -307,8 +307,8 @@ unittest {
 
 unittest {
     import tools.edit.topology_pen.tool : TopologyPenTool;
-    import toolpipe.packets : SubjectPacket, SnapPacket;
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, SnapPacket;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     import bindbc.sdl;
     loadSDL(); SDL_SetModState(cast(SDL_Keymod)0);
     import math : lookAt, perspectiveMatrix;
@@ -385,8 +385,8 @@ import tools.edit.topology_pen.defs : PenMode;
 
 private void ordinaryPolygonMove(PenMode mode,float extent, bool closed = false, uint stale = 0) {
     import tools.edit.topology_pen.tool : TopologyPenTool;
-    import toolpipe.packets : SubjectPacket, SnapPacket;
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, SnapPacket;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     import bindbc.sdl;
     import math : lookAt, perspectiveMatrix;
     import std.math : PI;
@@ -597,7 +597,7 @@ unittest {
 unittest {
     import tools.edit.topology_pen.tool : TopologyPenTool;
     import tools.edit.topology_pen.defs : MoveElem;
-    import document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
     import snap : setBackgroundSnapSources;
     import math : lookAt, orthographicMatrix;
 import vibe3d.util.spatial.spatial : projectToWindowFull;
@@ -649,8 +649,8 @@ import vibe3d.util.spatial.spatial : projectToWindowFull;
 
 private void symmetricConfinedFrames(PenMode mode) {
     import tools.edit.topology_pen.tool : TopologyPenTool;
-    import toolpipe.packets : SubjectPacket, SnapPacket;
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, SnapPacket;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     import bindbc.sdl;
     import math : lookAt, orthographicMatrix;
     import snap : invalidateSnapGrids, g_snapGridBuilds, snapCursor;

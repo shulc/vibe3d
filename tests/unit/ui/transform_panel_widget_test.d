@@ -22,7 +22,7 @@ module tests.unit.ui.transform_panel_widget_test;
 
 import std.math : fabs;
 
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;

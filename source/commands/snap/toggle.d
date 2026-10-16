@@ -1,8 +1,8 @@
 module commands.snap.toggle;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 
 import toolpipe.stages.snap    : heldDragGuideCount, liveSnapStage;
@@ -30,7 +30,7 @@ class SnapToggleCommand : Command {
     // held records one entry whose undo / redo never touch the state
     // (findings_K-G2 / K-G3 G3-s, G3-r; script origin records nothing, gap 563).
     override CmdFlags cmdFlags() const {
-        import held_gesture_buttons : g_heldGestureButtons;
+        import vibe3d.platform.input.held_gesture_buttons : g_heldGestureButtons;
         auto f = CmdFlags.SideEffect | CmdFlags.Momentary;
         if (heldDragGuideCount() >= 1) f |= CmdFlags.MouseDownOk;
         if (origin == CommandOrigin.ui && !g_heldGestureButtons.any) f |= CmdFlags.UndoForce;

@@ -12,8 +12,8 @@ import tests.unit.census_symbols : exists = wave15Exists;
 import std.algorithm : sort, max;
 import std.math      : abs;
 import math : Vec3, dot;
-import mesh : Mesh;
-import toolpipe.packets : SymmetryPacket;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
 import std.conv : to;
 import symmetry;
 
@@ -296,7 +296,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
 // (u5) SymmetryStage — the STATE of A: a base POINT, its side read against the
 // current plane.
 unittest {
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     import toolpipe.pipeline : ToolPipeContext, resetToolSwitchTransientStages;
     import toolpipe.stages.symmetry : SymmetryStage;
     auto ctx = new ToolPipeContext;
@@ -340,11 +340,11 @@ unittest {
 
 // (u5b) ActionCenterStage — the EVENT of A.
 unittest {
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.editing.contracts.seltype : SelType;
     import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
-    import toolpipe.packets : ActionCenterPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : ActionCenterPacket;
     import toolpipe.stages.symmetry : SymmetryStage;
     import toolpipe.stages.actcenter : ActionCenterStage;
     auto m = new Mesh;
@@ -439,7 +439,7 @@ unittest {
     // (xiii) the latch is taken in the LAYER space, not world: with the
     // primary layer moved +2 in X a world point at x 1.5 is local x -0.5.
     {
-        import document : primaryModelSpaceResolver;
+        import vibe3d.documents.model.document : primaryModelSpaceResolver;
         import vibe3d.util.spatial.spatial : ModelSpace;
         ModelSpace moved;
         moved.m    = [1,0,0,0, 0,1,0,0, 0,0,1,0,  2,0,0,1];
@@ -728,7 +728,7 @@ unittest {
     import math : lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : AimViewport, Viewport, aimSpace, ModelSpace;
     import std.math : PI;
-    import toolpipe.packets : FalloffPacket, FalloffType;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType;
     import tools.transform.transform : TransformTool;
     static import tools.transform.cluster_values;
     static assert(is(TransformTool.ClusterPivots == tools.transform.cluster_values.ClusterPivots));

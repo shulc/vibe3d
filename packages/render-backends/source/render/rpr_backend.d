@@ -43,7 +43,7 @@ import core.atomic        : atomicLoad, atomicStore, atomicOp;
 
 import bindbc.rpr;
 
-import render.backend;
+import vibe3d.render.model.render.backend;
 import math : Vec3;
 
 // ---------------------------------------------------------------------------

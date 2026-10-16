@@ -1,6 +1,6 @@
 module tools.common.session_mesh_key;
 
-import mesh : Mesh, MeshTopoKey;
+import vibe3d.mesh.core.mesh : Mesh, MeshTopoKey;
 
 /// THE IDENTITY OF THE MESH A GESTURE WAS ARMED OVER (task 2880, backlog 2760).
 ///
@@ -100,7 +100,7 @@ struct SessionMeshKey {
 }
 
 unittest { // TERM 3 — the COUNTS, isolated
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     // The COUNTS, isolated, and the isolation has to be BUILT. A
     // reset to empty moves the counter as well (2 -> 1 was the measured pair

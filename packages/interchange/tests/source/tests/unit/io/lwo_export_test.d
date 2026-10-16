@@ -18,7 +18,7 @@ import std.file    : read, exists, remove, tempDir;
 import std.path    : buildPath;
 import std.format  : format;
 import std.process : thisProcessID;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import io.lwo_export : exportLwo;
 import io.lwo_import : sceneFromLwo;
 import io.scene_ir   : ImportedScene;
@@ -131,7 +131,7 @@ private float[string] surfScalars(const(ubyte)[] b)
 
 unittest { // a default surface exports the reference's fresh-cube values, SMAN included
     import std.math : abs;
-    import mesh : Surface;
+    import vibe3d.mesh.core.mesh : Surface;
     Mesh m = kindTris([false], [0]);
     m.surfaces = [Surface()];
     const path = scratchPath("s1e_default");
@@ -146,7 +146,7 @@ unittest { // a default surface exports the reference's fresh-cube values, SMAN 
 }
 
 unittest { // smoothing off exports SMAN 0 (always written)
-    import mesh : Surface;
+    import vibe3d.mesh.core.mesh : Surface;
     Mesh m = kindTris([false], [0]);
     Surface off;
     off.smoothing = false;
@@ -191,7 +191,7 @@ private ptrdiff_t sideValue(const(ubyte)[] b)
 }
 
 unittest { // SIDE iff double-sided
-    import mesh : Surface;
+    import vibe3d.mesh.core.mesh : Surface;
     Mesh m = kindTris([false], [0]);
     Surface one, two;
     two.twoSided = true;

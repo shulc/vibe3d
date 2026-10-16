@@ -2,10 +2,10 @@ module ui.channels_panel;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
-import document : Document, Layer;
+import vibe3d.documents.model.document : Document, Layer;
 import forms : Form;
 import forms_render : FormsPanel;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.seltype : SelType;
 import session_owner : Session;
 import tool : Tool;
@@ -403,7 +403,7 @@ void drawChannelsPanel(ChannelsReadRole read, ChannelsActions actions,
 /// through the `mesh.morph.*` commands, which are what undo records.
 private void drawVertexMapsSection(const(Mesh)* m) {
     import std.format  : format;
-    import mesh        : isMorphKind, MapKind;
+    import vibe3d.mesh.core.mesh        : isMorphKind, MapKind;
     import morph_target : morphTargetName;
 
     if (m is null) return;

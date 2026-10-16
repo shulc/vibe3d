@@ -17,14 +17,14 @@ int ringCount(int v, int lo) pure nothrow @nogc @safe {
 }
 
 import toolpipe.pipeline       : g_pipeCtx;
-import toolpipe.packets        : SubjectPacket, WorkplanePacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets        : SubjectPacket, WorkplanePacket;
 import toolpipe.stage          : TaskCode;
 import toolpipe.stages.workplane : WorkplaneStage;
-import operator                : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator                : VectorStack;
 import drag                    : HandleDrag, DragFrame, DragKind, planeDragDelta;
 import handler                 : MoveHandler;
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.subject : evaluateSubject, viewOnlySubject, SubjectSource;
@@ -34,7 +34,7 @@ import snap_render : publishLastSnap, clearLastSnap;
 // Task 0617 Stage 4: Create-tools always build into the active/primary
 // layer's mesh (the `mesh` argument below), so its ModelSpace is the same
 // resolver every other cross-module picking/snap call site uses.
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 
 // ---------------------------------------------------------------------------
 // Helpers shared by interactive Create-tools (BoxTool and the upcoming

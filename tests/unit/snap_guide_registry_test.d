@@ -12,10 +12,10 @@ import std.format : format;
 
 import math : Vec3, lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : ModelSpace, Viewport, projectToWindowFull;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import snap : SnapResult, invalidateSnapGrids, snapCursor;
 import toolpipe.guide : GuideDrawState, SnapGuide;
-import toolpipe.packets : SnapPacket, SnapType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType;
 import tools.create.pen_geometry : LineGuide;
 
 /// Proposes `at` (as `type`) when `on`; re-ranks nothing.
@@ -291,7 +291,7 @@ unittest { // 9513: background placement and edited-only weld are distinct elect
     import toolpipe.stages.snap : SnapStage, liveSnapGuides;
     import tools.edit.topology_pen.snap_guide : PenSnapGuide;
     import snap : editedVertexAt, setBackgroundSnapSources;
-    import toolpipe.packets : SnapMode;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapMode;
 
     auto saved = g_pipeCtx;
     scope(exit) { g_pipeCtx = saved; setBackgroundSnapSources(null, null); invalidateSnapGrids(); }
@@ -325,9 +325,9 @@ unittest { // 9513: background placement and edited-only weld are distinct elect
 }
 
 unittest { // 9513: a non-live stage resolves its own registered placement guides
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     import toolpipe.pipeline : g_pipeCtx;
-    import toolpipe.packets : SubjectPacket, SnapHitPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, SnapHitPacket;
     import toolpipe.stages.snap : SnapStage;
     import toolpipe.guide : SnapPurpose;
 

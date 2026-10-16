@@ -1,6 +1,6 @@
 module ui.retained_item;
 
-import document : Document, Layer;
+import vibe3d.documents.model.document : Document, Layer;
 import std.typecons : Rebindable;
 
 /// A document-item identity that UI storage may rebind but ordinary reads can

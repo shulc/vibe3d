@@ -7,11 +7,11 @@ import command;
 import command : CmdFlags;
 import vibe3d.editing.params.argstring : serializeParams, serializeCommandLine;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;
-import mesh    : Mesh;
-import view    : View;
+import vibe3d.mesh.core.mesh    : Mesh;
+import vibe3d.viewport.camera.view    : View;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh     : Mesh;
-import view     : View;
+import vibe3d.mesh.core.mesh     : Mesh;
+import vibe3d.viewport.camera.view     : View;
 import std.stdio : writeln;
 import command_history;
 
@@ -28,8 +28,8 @@ static assert(is(commands.tool.lifecycle.ToolArmLifecyclePolicy ==
 // that overturned the original finding. Pin the silence so a future "fix" has
 // to re-read that reasoning instead of re-deriving the same broken line.
 unittest {
-    import mesh : Mesh, makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import commands.tool.lifecycle : ToolActivationCommand;
 
@@ -86,8 +86,8 @@ version (unittest) {
     // history keeps. `_flags` is a constructor argument so one class covers
     // both an undoable and a non-undoable subject.
     private final class _RefireGateCmd : Command {
-        import mesh     : Mesh;
-        import view     : View;
+        import vibe3d.mesh.core.mesh     : Mesh;
+        import vibe3d.viewport.camera.view     : View;
         import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh  _mesh;
         private View  _view = new View(0, 0, 1, 1);
@@ -194,8 +194,8 @@ version (unittest) {
     // A row of a tool session (`token`) whose revert succeeds; `applied`
     // false and nothing recorded makes its revert answer false instead.
     private final class _SessionRowCmd : Command {
-        import mesh     : Mesh;
-        import view     : View;
+        import vibe3d.mesh.core.mesh     : Mesh;
+        import vibe3d.viewport.camera.view     : View;
         import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh _mesh;
         private View _view = new View(0, 0, 1, 1);
@@ -219,8 +219,8 @@ version (unittest) {
 }
 
 unittest { // task 9508 (findings_K-RD rule 2): one undo of a session-reverting drop row
-    import mesh : Mesh, makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import commands.tool.lifecycle : ToolActivationCommand;
     Mesh m = makeCube();
@@ -322,10 +322,10 @@ unittest {
     import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, AttrImage, StepOrigin;
     import commands.tool.lifecycle : ToolActivationCommand;
     import commands.mesh.session_edit : MeshSessionEdit;
-    import mesh : Mesh, makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import snapshot : MeshSnapshot;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
     Mesh m = makeCube();
     View v = new View(0, 0, 800, 600);
     MeshSessionEdit press(ulong token) {
@@ -424,7 +424,7 @@ class ResidualPress : commands.mesh.session_edit.MeshSessionEdit {
 import commands.mesh.session_edit;
 import commands.tool.lifecycle : ToolActivationCommand;
 import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation, AttrImage, StepOrigin;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 
 class ResidualRig {
     Mesh m;
@@ -435,7 +435,7 @@ class ResidualRig {
     size_t completions;
     bool armed;
     this(bool populate = true) {
-        import mesh : makeCube;
+        import vibe3d.mesh.core.mesh : makeCube;
         m = makeCube(); v = new View(0, 0, 800, 600); h = new CommandHistory();
         activation = new ToolActivationCommand(&m, v, EditMode.Vertices, "pen", "", false, false, false, 7);
         if (populate) {

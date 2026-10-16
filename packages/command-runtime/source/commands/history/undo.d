@@ -2,8 +2,8 @@ module commands.history.undo;
 
 import command;
 import command_history : CommandHistory;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 
 /// Pop the top entry off the undo stack and revert it. Wired to Ctrl+Z

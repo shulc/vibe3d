@@ -1,7 +1,7 @@
 module prepared_slice_activation;
 
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.slice.slice_tool : SliceTool, PreparedSliceActivationImage;
 
 struct PreparedSliceActivationToken {

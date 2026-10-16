@@ -12,7 +12,7 @@ import core.time : Duration, MonoTime, msecs, seconds;
 import core.sync.condition : Condition;
 import core.sync.mutex : Mutex;
 
-import mesh : Mesh, Surface;
+import vibe3d.mesh.core.mesh : Mesh, Surface;
 // The JSON bodies and the escaper that assembles them (task 0720, D5).
 // Ordinary import: this module is their consumer, not their public facade.
 import http_json : jsonEsc, meshToJsonDetailed, meshPlanesJson,
@@ -23,7 +23,7 @@ import core.atomic;
 import vibe3d.util.profiling.perf_probe : g_perf, g_commandGc, FrameProbe, FrameProbeSnapshot,
                     FrameWorkProbe, FrameWorkSnapshot, toJson;
 
-import eventlog : ImmediateEventSink;
+import vibe3d.platform.input.eventlog : ImmediateEventSink;
 import playback_controller : PlaybackController, PlaybackStatus,
     encodePlaybackStatus;
 import vibe3d.editing.params.argstring : parseArgstring, ParsedLine;
@@ -5396,7 +5396,7 @@ unittest {
     import std.json : JSONType, parseJSON;
     import std.string : startsWith, toLower;
 
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     final class RouteReplies {
         shared bool done;

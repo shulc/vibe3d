@@ -1,8 +1,8 @@
 module commands.file.quit;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 
 /// "File → Quit" — terminates the main loop cleanly. Wired in

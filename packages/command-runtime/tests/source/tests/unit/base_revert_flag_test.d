@@ -35,8 +35,8 @@ import std.format : format;
 import command;
 import command_history;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh     : Mesh;
-import view     : View;
+import vibe3d.mesh.core.mesh     : Mesh;
+import vibe3d.viewport.camera.view     : View;
 
 // ---------------------------------------------------------------------------
 // Probes. Each is the smallest command that can occupy one of the three

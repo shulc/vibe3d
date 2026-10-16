@@ -3,9 +3,9 @@ module tests.unit.selection_projection_algorithm_cells_test;
 import subpatch_factories : subdivideCube;
 
 import core.memory : GC;
-import document : Document, Layer, beginPreparedLayerRead;
+import vibe3d.documents.model.document : Document, Layer, beginPreparedLayerRead;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import selection_projection : SelectionProjectionInput,
     SelectionProjectionReadModel, encodeSelectionProjection;
 import vibe3d.editing.contracts.seltype : SelMode, SelType, SelTypeOrder;

@@ -42,8 +42,8 @@
     "vibe3d:math": {
       "path": "../../.."
     },
-    "vibe3d-mesh": {
-      "path": "../../mesh"
+    "vibe3d:mesh": {
+      "path": "../../.."
     },
     "vibe3d:mesh-change": {
       "path": "../../.."
@@ -57,11 +57,11 @@
     "vibe3d:spatial": {
       "path": "../../.."
     },
-    "vibe3d-pipe-contracts": {
-      "path": "../../pipe-contracts"
+    "vibe3d:pipe-contracts": {
+      "path": "../../.."
     },
-    "vibe3d-mesh-preview": {
-      "path": "../../mesh-preview"
+    "vibe3d:mesh-preview": {
+      "path": "../../.."
     }
   },
   "toolchainRequirements": {
@@ -206,13 +206,13 @@
       "subConfigurations": {
         "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d:math": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
         "vibe3d:mesh-change": "isolated-tests",
         "vibe3d:profiling": "isolated-tests",
         "vibe3d:screen-buckets": "isolated-tests",
         "vibe3d:spatial": "isolated-tests",
-        "vibe3d-pipe-contracts": "isolated-tests",
-        "vibe3d-mesh-preview": "isolated-tests"
+        "vibe3d:pipe-contracts": "isolated-tests",
+        "vibe3d:mesh-preview": "isolated-tests"
       }
     }
   ],

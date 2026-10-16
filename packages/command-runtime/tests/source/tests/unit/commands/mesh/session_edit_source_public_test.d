@@ -1,8 +1,8 @@
 module tests.unit.commands.mesh.session_edit_source_public_test;
 
 import commands.mesh.session_edit : MeshSessionEdit;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 
 // ---------------------------------------------------------------------------
 // wireName / label / editScope round-trip — no snapshots involved; this unit
@@ -18,8 +18,8 @@ import snapshot : MeshSnapshot;
 
 
 unittest {
-    import mesh      : Mesh;
-    import view       : View;
+    import vibe3d.mesh.core.mesh      : Mesh;
+    import vibe3d.viewport.camera.view       : View;
     import vibe3d.editing.contracts.editmode   : EditMode;
 
     Mesh mesh;

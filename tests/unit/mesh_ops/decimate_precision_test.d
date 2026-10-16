@@ -1,9 +1,9 @@
 module tests.unit.mesh_ops.decimate_precision_test;
 
 import math;
-import mesh;
-import mesh_edit_delta : MeshEditScope;
-import mesh_ops.decimate;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.ops.mesh_ops.decimate;
 import tests.unit.census_symbols : stripCommentsAndStrings = blankNonCode;
 
 private uint floatBits(float value)

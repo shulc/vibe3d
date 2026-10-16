@@ -4,8 +4,8 @@ module commands.copilot.analyze;
 version (WithAI):
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import copilot_panel : CopilotPanel;
 import ai.analysis    : analyzeMesh;

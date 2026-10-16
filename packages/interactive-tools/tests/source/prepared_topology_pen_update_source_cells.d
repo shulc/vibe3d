@@ -2,7 +2,7 @@ module prepared_topology_pen_update_source_cells;
 
 import prepared_topology_pen_update;
 import core.atomic : atomicOp;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedTopologyPenUpdateKind;
 import tools.edit.topology_pen.tool : TopologyPenTool,
     PreparedTopologyPenUpdateImage;
@@ -11,7 +11,7 @@ unittest {
     import command_history : CommandHistory;
     import prepared_record_context : PreparedRecordContext;
     import record_observer_hub : RecordObserverHub;
-    import toolpipe.packets : ConstrainHitPacket, HoverTarget, SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainHitPacket, HoverTarget, SubjectPacket;
 
     auto tool = new TopologyPenTool(); VectorStack empty;
     ConstrainHitPacket initialHit; HoverTarget initialTarget;

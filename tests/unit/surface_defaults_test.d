@@ -14,7 +14,7 @@ import std.path      : buildPath, dirName;
 import std.string    : indexOf;
 
 import math   : Vec3;
-import mesh   : Mesh, Surface, kSurfaceSlots, effectiveSurfaceSlot, kDefaultSmoothingAngleDeg;
+import vibe3d.mesh.core.mesh   : Mesh, Surface, kSurfaceSlots, effectiveSurfaceSlot, kDefaultSmoothingAngleDeg;
 import shader : packSurfaceSlots, LIT_MAX_MATS, shaderSourceForValidation;
 import io.scene_ir : ImportedSurface, roughnessFromShininess, applyAssimpMaterialKeys;
 import light_rig : specPowerForRoughness;

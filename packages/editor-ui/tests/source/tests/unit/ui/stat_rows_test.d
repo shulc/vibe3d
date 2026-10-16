@@ -7,10 +7,10 @@
 
 module tests.unit.ui.stat_rows_test;
 
-import document : Document, Layer, ItemKind;
-import mesh;
-import mesh_stats;
-import mesh_selsets;
+import vibe3d.documents.model.document : Document, Layer, ItemKind;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_stats;
+import vibe3d.mesh.core.mesh_selsets;
 import vibe3d.editing.contracts.seltype  : SelType;
 import ui.stat_rows;
 import math     : Vec3;
@@ -477,7 +477,7 @@ unittest {
 // A typo in a dispatch string is otherwise a button that silently does nothing.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import commands.select.by_stat : SelectByStatVertex, SelectByStatEdge,
                                      SelectByStatPolygon;

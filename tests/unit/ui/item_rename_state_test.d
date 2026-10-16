@@ -5,11 +5,11 @@ import command : Command;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import commands.layer.commands : LayerRename;
-import document : ImageData, ItemKind, Layer;
+import vibe3d.documents.model.document : ImageData, ItemKind, Layer;
 import edit_session : EditSession;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import registry : Registry;
 import session_owner : Session;
 import tool : Tool;
@@ -17,7 +17,7 @@ import tool_activation_ownership : ToolTransition;
 import ui.discard_guard : GuardRecord;
 import ui.item_rename : ItemRenameCapacity, ItemRenameController,
     ItemRenameExit, ItemRenameState, bindItemRenameController;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private final class RenameApplicationHarness {
     Session* owner;

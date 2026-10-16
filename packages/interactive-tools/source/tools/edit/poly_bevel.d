@@ -6,12 +6,12 @@ import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
 
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import mesh_ops.poly_bevel;
+import vibe3d.mesh.ops.mesh_ops.poly_bevel;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.editing.contracts.editmode : EditMode;
@@ -20,11 +20,11 @@ import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta, haulWorldPerPixel;
 import overlay_space : OverlaySpace, OverlayAxis;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
     PreviewRebuildCounts;
@@ -41,9 +41,9 @@ import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedPolyBevelParamEffect,
     PreparedPolyBevelParamKind;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import mesh_gpu : GpuUploadOwner;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import vibe3d.mesh.core.mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import core.stdc.string : memcmp;
 import command_history : PreparedHistoryKind;
 
@@ -799,7 +799,7 @@ public:
 }
 
 unittest { // P1.0b.3d identity preview must not prepare history.
-    import view : View; import mesh_gpu : GpuMesh;
+    import vibe3d.viewport.camera.view : View; import mesh_gpu : GpuMesh;
     import record_observer_hub : RecordObserverHub;
     Mesh m; GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto view = new View(0, 0, 1, 1);

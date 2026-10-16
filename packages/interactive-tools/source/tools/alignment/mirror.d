@@ -3,12 +3,12 @@ import display_state : DrawPlan;
 
 import bindbc.opengl;
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import std.math : PI;
 
 import tool;
 import tools.topology_step;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : ModelSpace, Viewport, screenPointToRay;
@@ -16,12 +16,12 @@ import vibe3d.editing.params.params : Param, IntEnumEntry;
 import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import vibe3d.editing.contracts.editmode : EditMode;
 import shader : Shader, LitShader;
 import handler : MoveHandler, ToolHandles, BoxHandler, HandlePart, firstHitPart, gizmoSize, drawWorldSegments;
 import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, gesturePrevPixel;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
     PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
@@ -29,7 +29,7 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedToolParamDoorClient;
 import prepared_mirror_activation : PreparedMirrorActivationOwner,
     PreparedMirrorDeactivateOwner;
-import document : Layer, primaryModelSpace;
+import vibe3d.documents.model.document : Layer, primaryModelSpace;
 import command_history : PreparedHistoryKind;
 import display_sync : refreshDisplay;
 
@@ -827,7 +827,7 @@ public:
         // own pair. `moverLastMX/MY` stay written: they are the fallback when
         // no gesture is published, and the other half of the debug agreement
         // check inside `gesturePrevPixel`.
-        import toolpipe.packets : GesturePacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : GesturePacket;
         int prevMX, prevMY;
         gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
                          moverLastMX, moverLastMY, prevMX, prevMY);

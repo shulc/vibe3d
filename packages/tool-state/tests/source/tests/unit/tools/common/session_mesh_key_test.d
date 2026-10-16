@@ -1,7 +1,7 @@
 module tests.unit.tools.common.session_mesh_key_test;
 
-import mesh : Mesh;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import tools.common.session_mesh_key : SessionMeshKey;
 
 // THE THREE TERMS ARE ONE BLOCK EACH, NOT ONE BLOCK OF THREE. druntime stops
@@ -12,7 +12,7 @@ import tools.common.session_mesh_key : SessionMeshKey;
 // terms it actually breaks.
 
 unittest { // the basics: stamp matches, fresh and invalidated keys do not
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     Mesh m = makeCube();
     SessionMeshKey k;
@@ -27,7 +27,7 @@ unittest { // the basics: stamp matches, fresh and invalidated keys do not
 }
 
 unittest { // TERM 1 — the ADDRESS, isolated
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     // The ADDRESS, isolated. Two identically-built meshes carry the
     // same counter AND the same counts (asserted, or this cell would be
@@ -50,7 +50,7 @@ unittest { // TERM 1 — the ADDRESS, isolated
 }
 
 unittest { // TERM 2 — the COUNTER, isolated
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     // The COUNTER, isolated. Same object, so the address holds; a
     // bare Geometry-class commit adds no vertex and no face, so the counts

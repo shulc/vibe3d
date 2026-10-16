@@ -40,11 +40,11 @@ import std.json;
 import std.math : fabs, sqrt;
 import std.conv : to;
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName, UvWallLaw,
+import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName, UvWallLaw,
               MeshEditBatch;
-import mesh_ops.edge_bevel : kEdgeBevelEditScope, bevelEdgesByMask;
-import mesh_ops.poly_bevel : kPolyBevelEditScope, bevelFacesByMask;
-import mesh_ops.extrude : kExtrudeEditScope, extrudeFacesByMask;
+import vibe3d.mesh.ops.mesh_ops.edge_bevel : kEdgeBevelEditScope, bevelEdgesByMask;
+import vibe3d.mesh.ops.mesh_ops.poly_bevel : kPolyBevelEditScope, bevelFacesByMask;
+import vibe3d.mesh.ops.mesh_ops.extrude : kExtrudeEditScope, extrudeFacesByMask;
 // Task 1903 Stage F2: the polygon-bevel entries are free functions over
 // `ref MeshEditBatch` in `source/mesh_ops/poly_bevel.d`, so this test opens the
 // batch itself. UNRECORDED — the fixture compares MAP payloads, not an op-log.
@@ -629,7 +629,7 @@ unittest {
 
 // --- a mesh with NO per-corner map is unaffected (and must not crash) -------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     foreach (which; 0 .. 3) {
         Mesh m = makeCube();
         m.buildLoops();

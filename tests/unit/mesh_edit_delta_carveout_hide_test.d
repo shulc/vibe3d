@@ -22,14 +22,14 @@
 // says this cell measures the DERIVE and not the branch.
 // ===========================================================================
 module tests.unit.mesh_edit_delta_carveout_hide_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.algorithm.searching : canFind;
 import std.format : format;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
-import mesh_edit_delta;
+import vibe3d.mesh.edit_log.mesh_edit_delta;
 
 /// The DERIVED hidden planes, as one exact list per domain. This is the plane
 /// dump the plan asks for, taken straight off the marks words rather than

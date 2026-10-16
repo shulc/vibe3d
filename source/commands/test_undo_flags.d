@@ -1,8 +1,8 @@
 module commands.test_undo_flags;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 
 // ---------------------------------------------------------------------------

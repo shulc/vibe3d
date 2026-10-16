@@ -51,8 +51,8 @@ module tests.unit.l5_axis0_batch_test;
 
 import std.format : format;
 
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import command;
 import vibe3d.mesh.change.change_bus : changeBus;

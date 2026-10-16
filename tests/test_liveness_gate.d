@@ -259,7 +259,7 @@ unittest {  // rule (b): a source-backed test with no unittest of its own.
     const d = freshTmpDir("rule_b");
     scope(exit) rmdirRecurse(d);
     write(buildPath(d, "test_tmp_srcbacked.d"),
-        "import mesh;\n"
+        "import vibe3d.mesh.core.mesh;\n"
       ~ "import std.stdio;\n"
       ~ "int main(string[] args) { writeln(\"scenario\"); return 0; }\n");
     auto r = checkGate(d);

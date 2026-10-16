@@ -7,7 +7,7 @@ import command_history : CommandHistory, PreparedHistoryKind,
                          PreparedHistoryResult, PreparedHistoryToken,
                          ValidatedPreparedHistoryToken;
 import record_observer_hub : RecordObserverHub;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_gpu : GpuResourceOwner, GpuUploadOwner, GpuCreateOwner,
                   GpuCreateUploadOwner;
 import handler : ClickPointResourceOwner, BoxHandlerBatchResourceOwner;
@@ -62,15 +62,15 @@ import prepared_box_param : PreparedBoxParamOwner;
 import registry : PreparedPipeAttrs;
 import toolpipe.pipeline : Pipeline;
 import pipe_gizmo_host : PipeGizmoHost;
-import document : Layer;
-import operator : VectorStack;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import vibe3d.mesh.change.change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
 
 unittest {
     import command : Command, CmdFlags;
-    import mesh : Mesh;
-    import view : View;
+    import vibe3d.mesh.core.mesh : Mesh;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     final class C : Command {
         private Mesh mesh_;

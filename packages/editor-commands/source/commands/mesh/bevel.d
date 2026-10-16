@@ -1,16 +1,16 @@
 module commands.mesh.bevel;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import mesh_ops.poly_bevel;
-import mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.poly_bevel;
+import vibe3d.mesh.ops.mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
-import snapshot : MeshSnapshot;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 import selection_product : repointToFaceBorder;
 
@@ -220,7 +220,7 @@ class MeshBevel : Command, Operator {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         if (mesh.faces.length == 0) return false;

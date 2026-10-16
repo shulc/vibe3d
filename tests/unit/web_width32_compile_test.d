@@ -73,12 +73,12 @@ case " $flags " in *" -version=web "*) ;; *)
 esac
 mapfile -t files < <(dub describe --config=web --data=source-files --data-list \
     2>>"$2" | sed '/^$/d' | grep '\.d$')
-for owner in packages/forms-model packages/editor-ui packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/alignment-ops packages/command-runtime packages/application-core packages/creation-ops packages/display-policy packages/input-events packages/interaction-query packages/interchange packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-ops packages/selection-model packages/scene-query packages/editor-commands packages/interactive-tools packages/viewport-host packages/mesh-snapshot packages/mesh-topology packages/mesh packages/pipe-evaluation packages/subpatch-preview packages/tool-state packages/transform-ops packages/viewport-gpu packages/pipe-contracts packages/mesh-preview ; do
+for owner in packages/forms-model packages/editor-ui  packages/document-channels  packages/document-io packages/alignment-ops packages/command-runtime packages/application-core packages/creation-ops packages/display-policy  packages/interaction-query packages/interchange    packages/selection-model packages/scene-query packages/editor-commands packages/interactive-tools packages/viewport-host    packages/pipe-evaluation packages/subpatch-preview packages/tool-state packages/transform-ops packages/viewport-gpu   ; do
     mapfile -t package_files < <(dub describe --root="$owner" --config=web \
         --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
     files+=("${package_files[@]}")
 done
-for selected in :edit-contracts :interaction-data :json-number :log :mesh-contracts :parallel :param-schema :plane-bytes :profiling :screen-buckets :spatial :mesh-change; do
+for selected in :edit-contracts :interaction-data :json-number :log :mesh-contracts :parallel :param-schema :plane-bytes :profiling :screen-buckets :spatial :mesh-change :camera-model :image-codec :input-events :mesh-edit-log :mesh-topology :render-model :mesh :document-model :mesh-edit-replay :mesh-ops :mesh-preview :mesh-snapshot :pipe-contracts; do
     mapfile -t package_files < <(dub describe "$selected" --config=web --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
     files+=("${package_files[@]}")
 done
@@ -99,7 +99,7 @@ SH";
                inventory.status, inventory.output));
     string[][string] importsByModule;
     string[string] sourcePathByModule;
-    const productionPrefixes = [buildPath(repoRoot, "packages/camera-model/source") ~ "/", buildPath(repoRoot, "packages/document-channels/source") ~ "/", buildPath(repoRoot, "packages/image-codec/source") ~ "/", buildPath(repoRoot, "packages/document-io/source") ~ "/", buildPath(repoRoot, "source") ~ "/", buildPath(repoRoot, "packages/alignment-ops/source") ~ "/", buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "libraries/editing/params/source"), buildPath(repoRoot, "packages/pipe-runtime/source") ~ "/", buildPath(repoRoot, "packages/creation-ops/source") ~ "/", buildPath(repoRoot, "packages/display-policy/source") ~ "/", buildPath(repoRoot, "libraries/editing/contracts/source") ~ "/", buildPath(repoRoot, "packages/input-events/source") ~ "/", buildPath(repoRoot, "packages/interaction-query/source") ~ "/", buildPath(repoRoot, "packages/interchange/source") ~ "/", buildPath(repoRoot, "libraries/mesh/change/source") ~ "/", buildPath(repoRoot, "libraries/mesh/contracts/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-log/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-replay/source") ~ "/", buildPath(repoRoot, "packages/mesh-ops/source") ~ "/", buildPath(repoRoot, "packages/mesh-snapshot/source") ~ "/", buildPath(repoRoot, "packages/mesh-topology/source") ~ "/", buildPath(repoRoot, "packages/mesh/source") ~ "/", buildPath(repoRoot, "packages/pipe-evaluation/source") ~ "/", buildPath(repoRoot, "libraries/util/profiling/source") ~ "/", buildPath(repoRoot, "libraries/util/spatial/source") ~ "/", buildPath(repoRoot, "packages/subpatch-preview/source") ~ "/", buildPath(repoRoot, "packages/tool-state/source") ~ "/", buildPath(repoRoot, "packages/transform-ops/source") ~ "/", buildPath(repoRoot, "packages/viewport-gpu/source") ~ "/", buildPath(repoRoot, "libraries/util/log/source") ~ "/", buildPath(repoRoot, "libraries/util/math/source/vibe3d/util/math") ~ "/", buildPath(repoRoot, "libraries/util/parallel/source") ~ "/", buildPath(repoRoot, "libraries/util/plane-bytes/source") ~ "/", buildPath(repoRoot, "libraries/util/screen-buckets/source") ~ "/", buildPath(repoRoot, "packages/pipe-contracts/source") ~ "/", buildPath(repoRoot, "packages/mesh-preview/source") ~ "/", buildPath(repoRoot, "libraries/util/json-number/source") ~ "/",
+    const productionPrefixes = [buildPath(repoRoot, "libraries/viewport/camera/source") ~ "/", buildPath(repoRoot, "packages/document-channels/source") ~ "/", buildPath(repoRoot, "libraries/documents/image-codec/source") ~ "/", buildPath(repoRoot, "packages/document-io/source") ~ "/", buildPath(repoRoot, "source") ~ "/", buildPath(repoRoot, "packages/alignment-ops/source") ~ "/", buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "libraries/documents/model/source"), buildPath(repoRoot, "libraries/editing/params/source"), buildPath(repoRoot, "packages/pipe-runtime/source") ~ "/", buildPath(repoRoot, "packages/creation-ops/source") ~ "/", buildPath(repoRoot, "packages/display-policy/source") ~ "/", buildPath(repoRoot, "libraries/editing/contracts/source") ~ "/", buildPath(repoRoot, "libraries/platform/input/source") ~ "/", buildPath(repoRoot, "packages/interaction-query/source") ~ "/", buildPath(repoRoot, "packages/interchange/source") ~ "/", buildPath(repoRoot, "libraries/mesh/change/source") ~ "/", buildPath(repoRoot, "libraries/mesh/contracts/source") ~ "/", buildPath(repoRoot, "libraries/mesh/edit-log/source") ~ "/", buildPath(repoRoot, "libraries/mesh/edit-replay/source") ~ "/", buildPath(repoRoot, "libraries/mesh/ops/source") ~ "/", buildPath(repoRoot, "libraries/mesh/snapshot/source") ~ "/", buildPath(repoRoot, "libraries/mesh/topology/source") ~ "/", buildPath(repoRoot, "libraries/mesh/core/source") ~ "/", buildPath(repoRoot, "packages/pipe-evaluation/source") ~ "/", buildPath(repoRoot, "libraries/util/profiling/source") ~ "/", buildPath(repoRoot, "libraries/util/spatial/source") ~ "/", buildPath(repoRoot, "packages/subpatch-preview/source") ~ "/", buildPath(repoRoot, "packages/tool-state/source") ~ "/", buildPath(repoRoot, "packages/transform-ops/source") ~ "/", buildPath(repoRoot, "packages/viewport-gpu/source") ~ "/", buildPath(repoRoot, "libraries/util/log/source") ~ "/", buildPath(repoRoot, "libraries/util/math/source/vibe3d/util/math") ~ "/", buildPath(repoRoot, "libraries/util/parallel/source") ~ "/", buildPath(repoRoot, "libraries/util/plane-bytes/source") ~ "/", buildPath(repoRoot, "libraries/util/screen-buckets/source") ~ "/", buildPath(repoRoot, "libraries/editing/pipeline/contracts/source") ~ "/", buildPath(repoRoot, "libraries/mesh/preview/source") ~ "/", buildPath(repoRoot, "libraries/util/json-number/source") ~ "/",
         buildPath(repoRoot, "packages/selection-model/source"),
         buildPath(repoRoot, "packages/scene-query/source"),
         buildPath(repoRoot, "packages/editor-commands/source"),
@@ -208,6 +208,66 @@ SH";
         ["screen_buckets", "vibe3d.util.screen_buckets.screen_buckets"]])
             if (name == pair[0]) { name = pair[1]; ++d1Translations; }
     assert(d1Translations == 26, "Wave19 D1 web baseline translates 26 original real definitions");
+    size_t d2Translations;
+    foreach (ref name; expectedCurrentModules)
+        foreach (pair; [
+            ["view", "vibe3d.viewport.camera.view"],
+            ["document", "vibe3d.documents.model.document"],
+            ["document_selection", "vibe3d.documents.model.document_selection"],
+            ["edit_target_contract", "vibe3d.documents.model.edit_target_contract"],
+            ["image_data", "vibe3d.documents.model.image_data"],
+            ["item_kinds", "vibe3d.documents.model.item_kinds"],
+            ["io.image_decode", "vibe3d.documents.image_codec.io.image_decode"],
+            ["eventlog", "vibe3d.platform.input.eventlog"],
+            ["held_gesture_buttons", "vibe3d.platform.input.held_gesture_buttons"],
+            ["input_context", "vibe3d.platform.input.input_context"],
+            ["input_zones", "vibe3d.platform.input.input_zones"],
+            ["sdl_error", "vibe3d.platform.input.sdl_error"],
+            ["shortcuts", "vibe3d.platform.input.shortcuts"],
+            ["tool_input", "vibe3d.platform.input.tool_input"],
+            ["mesh_edit_delta", "vibe3d.mesh.edit_log.mesh_edit_delta"],
+            ["mesh_edit_replay", "vibe3d.mesh.edit_replay.mesh_edit_replay"],
+            ["geometry_clipboard", "vibe3d.mesh.ops.geometry_clipboard"],
+            ["mesh_edge_slice", "vibe3d.mesh.ops.mesh_edge_slice"],
+            ["mesh_ops.bevel_curves", "vibe3d.mesh.ops.mesh_ops.bevel_curves"],
+            ["mesh_ops.bevel_fin", "vibe3d.mesh.ops.mesh_ops.bevel_fin"],
+            ["mesh_ops.bevel_vertex", "vibe3d.mesh.ops.mesh_ops.bevel_vertex"],
+            ["mesh_ops.box_geom", "vibe3d.mesh.ops.mesh_ops.box_geom"],
+            ["mesh_ops.bridge", "vibe3d.mesh.ops.mesh_ops.bridge"],
+            ["mesh_ops.bridge_patch", "vibe3d.mesh.ops.mesh_ops.bridge_patch"],
+            ["mesh_ops.cleanup", "vibe3d.mesh.ops.mesh_ops.cleanup"],
+            ["mesh_ops.connected_mask", "vibe3d.mesh.ops.mesh_ops.connected_mask"],
+            ["mesh_ops.cut", "vibe3d.mesh.ops.mesh_ops.cut"],
+            ["mesh_ops.decimate", "vibe3d.mesh.ops.mesh_ops.decimate"],
+            ["mesh_ops.edge_bevel", "vibe3d.mesh.ops.mesh_ops.edge_bevel"],
+            ["mesh_ops.extrude", "vibe3d.mesh.ops.mesh_ops.extrude"],
+            ["mesh_ops.face_alignment", "vibe3d.mesh.ops.mesh_ops.face_alignment"],
+            ["mesh_ops.face_merge", "vibe3d.mesh.ops.mesh_ops.face_merge"],
+            ["mesh_ops.loop_slice", "vibe3d.mesh.ops.mesh_ops.loop_slice"],
+            ["mesh_ops.poly_bevel", "vibe3d.mesh.ops.mesh_ops.poly_bevel"],
+            ["mesh_ops.revolve", "vibe3d.mesh.ops.mesh_ops.revolve"],
+            ["mesh_ops.select_loop", "vibe3d.mesh.ops.mesh_ops.select_loop"],
+            ["mesh_ops.thicken", "vibe3d.mesh.ops.mesh_ops.thicken"],
+            ["mesh_ops.triangulate", "vibe3d.mesh.ops.mesh_ops.triangulate"],
+            ["mesh_stats", "vibe3d.mesh.ops.mesh_stats"],
+            ["uv_island", "vibe3d.mesh.ops.uv_island"],
+            ["uv_project", "vibe3d.mesh.ops.uv_project"],
+            ["uv_relax", "vibe3d.mesh.ops.uv_relax"],
+            ["uv_transform", "vibe3d.mesh.ops.uv_transform"],
+            ["uv_unwrap", "vibe3d.mesh.ops.uv_unwrap"],
+            ["uv_weld", "vibe3d.mesh.ops.uv_weld"],
+            ["active_mesh_resolver", "vibe3d.mesh.preview.active_mesh_resolver"],
+            ["morph_preview", "vibe3d.mesh.preview.morph_preview"],
+            ["snapshot", "vibe3d.mesh.snapshot.snapshot"],
+            ["mesh_topo", "vibe3d.mesh.topology.mesh_topo"],
+            ["mesh", "vibe3d.mesh.core.mesh"],
+            ["mesh_morph", "vibe3d.mesh.core.mesh_morph"],
+            ["mesh_planes", "vibe3d.mesh.core.mesh_planes"],
+            ["mesh_selsets", "vibe3d.mesh.core.mesh_selsets"],
+            ["operator", "vibe3d.editing.pipeline.contracts.operator"],
+            ["toolpipe.packets", "vibe3d.editing.pipeline.contracts.toolpipe.packets"]])
+            if (name == pair[0]) { name = pair[1]; ++d2Translations; }
+    assert(d2Translations == 55, "Wave19 D2 web baseline translates55 original real definitions");
     expectedCurrentModules ~= currentOnlyModules;
     string[] added, removed;
     foreach (name; selectedModules) if (!expectedCurrentModules.canFind(name)) added ~= name;

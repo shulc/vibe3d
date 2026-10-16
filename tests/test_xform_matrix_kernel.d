@@ -26,8 +26,8 @@ import std.math : PI, fabs, sqrt;
 
 import math : Vec3, identityMatrix, translationMatrix, pivotRotationMatrix, pivotScaleMatrixBasis, normalize, lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace, ModelSpace;
-import mesh : Mesh;
-import toolpipe.packets : FalloffPacket, SymmetryPacket;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform.transform : TransformTool;
 import tools.transform.xform_kernels :
     applyTranslateIncremental, applyRotateIncremental,
@@ -85,7 +85,7 @@ private AimViewport testViewport() {
 // evaluateFalloff); fractional weights merely exercise the (1-w)I + wR blend
 // path rather than the w==1 fast path.
 private FalloffPacket weightedFalloff(float[] weights) {
-    import toolpipe.packets : FalloffType;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType;
     FalloffPacket f;
     f.enabled = true;
     f.type    = FalloffType.Selection;
@@ -637,7 +637,7 @@ private Vec3[] sixVerts() {
 // falloff projects the eval position onto the line and ignores off-axis offset
 // (see falloff.linearWeight), so only the Y coord of weightVerts matters here.
 private FalloffPacket linearYFalloff(Vec3 start, Vec3 end) {
-    import toolpipe.packets : FalloffType, FalloffShape;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType, FalloffShape;
     FalloffPacket f;
     f.enabled = true;
     f.type    = FalloffType.Linear;

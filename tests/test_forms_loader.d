@@ -358,8 +358,8 @@ YAML";
 
 unittest {
     import toolpipe.stages.falloff : FalloffStage;
-    import toolpipe.packets : FalloffType, FalloffShape;
-    import mesh     : Mesh;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType, FalloffShape;
+    import vibe3d.mesh.core.mesh     : Mesh;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     Mesh m;

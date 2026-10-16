@@ -8,17 +8,17 @@ import std.math      : abs, sqrt;
 
 import math : Vec3, dot;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, aimSpace, ModelSpace;
-import document : primaryModelSpace;
-import mesh : Mesh, MapDomain;
+import vibe3d.documents.model.document : primaryModelSpace;
+import vibe3d.mesh.core.mesh : Mesh, MapDomain;
 import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 14)
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.tool_policy_values : Rollover;
 import toolpipe.stage    : Stage, TaskCode, ordWght, ToolSwitchTransient,
                            PresetClaimable;
 import toolpipe.pipeline : g_pipeCtx;
-import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffShape,
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffShape,
                             FalloffMix, LassoStyle, ElementConnect, ElementMode;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath, installPreparedStatePath;
 import vibe3d.editing.params.params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
 
@@ -446,7 +446,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
 
     override bool evaluate(ref VectorStack vts) {
         if (!pipeEnabled) return false;
-        import toolpipe.packets : SubjectPacket, ActionCenterPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, ActionCenterPacket;
         // Cache the viewport for callers outside the pipeline.
         if (auto subj = vts.get!SubjectPacket()) {
             lastVp_ = subj.viewport;
@@ -1222,7 +1222,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
         if (anchorRing.length != 2) return;    // need a picked edge
         Mesh* m = mesh_;
         if (m is null) return;
-        import mesh : edgeLoopRing;
+        import vibe3d.mesh.core.mesh : edgeLoopRing;
         loopRing_ = edgeLoopRing(*m, anchorRing[0], anchorRing[1]);
     }
 
@@ -1306,7 +1306,7 @@ private:
     public override bool attrArmsSlot(string name) const { return name == "type"; }
 
     public static bool parsePreparedType(string value, out FalloffType result) {
-        import toolpipe.packets : falloffTypeFromName;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : falloffTypeFromName;
         if (value == "none") { result = FalloffType.None; return true; }
         return falloffTypeFromName(value, result);
     }
@@ -1949,7 +1949,7 @@ void restoreFalloffSetFromCombined(FalloffStage[] set,
 // unittest pass, so it only constructs a throwaway Mesh + FalloffStage and
 // reads computed state — it never touches global/shared editor state.
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.math : abs, isNaN;
 
     // makeGridPlane(8): a flat 9x9 vertex grid (vertex(i,j) = i*9 + j) of
@@ -2158,7 +2158,7 @@ unittest {
 //     block already noted, which would break the collision the block needs.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import vibe3d.mesh.change.mesh_dirty : g_topoEpochs;
 
     Mesh* a = new Mesh;
@@ -2225,9 +2225,9 @@ unittest {
 // code the app's hub reaches.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
-    import mesh_edit_delta : MeshEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
     // Heap, not stack — see the M9 block above for why the epoch table's raw
     // address keying makes a stack local unsafe here.

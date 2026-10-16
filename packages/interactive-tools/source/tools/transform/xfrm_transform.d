@@ -15,7 +15,7 @@ import prepared_xfrm_replay : PreparedXfrmReplayOwner;
 import prepared_move_update : PreparedMoveUpdateOwner;
 import prepared_rotate_update : PreparedRotateUpdateOwner;
 import prepared_scale_update : PreparedScaleUpdateOwner;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import mesh_gpu : GpuUploadOwner;
 
 // XfrmTransformTool — `xfrm.transform`: ONE tool that can translate,
@@ -96,19 +96,19 @@ private struct XfrmPreparedState {
 import bindbc.sdl;
 import std.json : JSONValue;
 import std.traits : FieldNameTuple, FieldTypeTuple;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import vibe3d.editing.interaction.data.ai.interaction : AiInteractionPhase;
 import math : Vec3, translationMatrix, pivotRotationMatrix, pivotScaleMatrixBasis, dot, identityMatrix, matMul4, wrapAboutPivot, wrapAboutPivotStable, eulerZYXFromMatrix, frameMatrix, frameMatrixInverse, normalize;
 import vibe3d.util.spatial.spatial : Pin, Viewport, ModelSpace;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, g_settledGeomEpochs;
 import mesh_gpu : GpuMesh;
-import mesh_ops.connected_mask : connectedComponentMask, edgeCentroid;
+import vibe3d.mesh.ops.mesh_ops.connected_mask : connectedComponentMask, edgeCentroid;
 import handler  : ToolHandles, HitRule;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import shader : Shader;
 import vibe3d.editing.params.params : Param;
 import tools.transform.transform : TransformTool, VertexEditFactory,
@@ -154,7 +154,7 @@ import command : Command;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
 // Task 0614 Phase 3/4 — the item-mode apply path + its undo command.
-import document : Layer, ItemXform;
+import vibe3d.documents.model.document : Layer, ItemXform;
 import tools.transform.item_xform_kernels : applyGestureToItems;
 import commands.layer.xform_edit : LayerXformEdit, LayerXformTarget;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_frames, Phase;
@@ -167,12 +167,12 @@ import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
 import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
-import toolpipe.packets  : FalloffType, ElementMode, ElementConnect,
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : FalloffType, ElementMode, ElementConnect,
                           FalloffConfig, FalloffPacket, SnapPacket,
                           SymmetryPacket, SubjectPacket;
 import toolpipe.subject  : SubjectSource, evaluateSubject;
 import hover_state       : hoverAtPress;
-import snapshot          : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot          : MeshSnapshot;
 
 // MS-3.5 — runtime blend-mode toggle. The fold blends the composed matrix toward
 // identity by the falloff weight; MatrixLerp (keep-b) is the decision, confirmed
@@ -1601,7 +1601,7 @@ public:
         // gated for the multi-cell replica rule and is what keeps the cache
         // honest if a future caller draws without ticking.
         {
-            import toolpipe.packets : SubjectPacket;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
             if (auto sp = vts.get!SubjectPacket()) cachedSubjType_ = sp.selType;
         }
 
@@ -1899,7 +1899,7 @@ public:
         if (!active) return image;
         image.expectedSubject = cachedSubjType_;
         image.nextSubject = cachedSubjType_;
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         if (auto sp = vts.get!SubjectPacket()) image.nextSubject = sp.selType;
         image.expectedActiveDrag = activeDrag;
         image.expectedMove = moveSub;
@@ -1927,7 +1927,7 @@ public:
         if (!active) return p;
         p.valid = true;
         p.subject = cachedSubjType_;
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         if (auto sp = vts.get!SubjectPacket()) p.subject = sp.selType;
         p.selectionHash = computeSelectionHash();
         // recorded remainder (1906 §3.6): preparation-time twin of this
@@ -2834,7 +2834,7 @@ public:
         // right/up/fwd — this is the single place that formula must live.
         bool tracksSelection = false;
         {
-            import toolpipe.packets : AxisPacket;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets : AxisPacket;
             if (auto ap = vts.get!AxisPacket())
                 tracksSelection = ap.tracksSelection;
         }
@@ -5331,7 +5331,7 @@ public:
     // do for the R/S arms (capture from a fresh buildLocalVts). No-op cost on a non-symmetry
     // change (the extra evaluate is cheap and only runs on the rare config tweak).
     private void recaptureLivePipePackets() {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
         VectorStack vts;
         if (!buildLocalVts(subj, vts)) return;
@@ -5340,7 +5340,7 @@ public:
     }
 
     override bool applyHeadless() {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         import math : matrixFromEulerZYX;
         SubjectPacket subj;
         VectorStack vts;
@@ -5475,7 +5475,7 @@ public:
     // Does NOT call beginEdit() / buildVertexCacheIfNeeded() / seed tracking;
     // captureDragBaselineIfStale owns that wrapper-session tail.
     private bool captureBaselinePacketsNoSession() {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
         VectorStack vts;
         buildLocalVts(subj, vts);
@@ -7416,8 +7416,8 @@ private:
     /// dropped and routing stays inert.
     private void captureMorphRunBaseline(const(Vec3)[] base) {
         import morph_target : resolveMorphTarget;
-        import mesh_morph   : morphApply;
-        import mesh         : MapKind;
+        import vibe3d.mesh.core.mesh_morph   : morphApply;
+        import vibe3d.mesh.core.mesh         : MapKind;
         morphRunValid_ = false;
         dragMorphBaseline.length = 0;
         string nm; MapKind kind;
@@ -7443,7 +7443,7 @@ private:
     /// what keeps every non-routed drag byte-identical to before this task.
     protected MorphRoute buildMorphRouteFor(const(Vec3)[] base) {
         import morph_target : resolveMorphTarget;
-        import mesh         : MapKind;
+        import vibe3d.mesh.core.mesh         : MapKind;
         MorphRoute r;
         string nm; MapKind kind;
         if (!resolveMorphTarget(mesh, nm, kind)) return r;
@@ -7678,7 +7678,7 @@ unittest { // A fresh wrapper caches its live subject before any lifecycle tick.
 
 unittest { // Xfrm's completed gesture rows are navigated by one ToolSession.
     import edit_session : EditSession;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     auto savedPipe = g_pipeCtx;
     scope(exit) g_pipeCtx = savedPipe;
@@ -7728,7 +7728,7 @@ unittest { // Xfrm's completed gesture rows are navigated by one ToolSession.
 
 unittest { // A detached Xfrm close carries the same ToolSession token.
     import edit_session : EditSession;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     auto savedPipe = g_pipeCtx;
     scope(exit) g_pipeCtx = savedPipe;
@@ -7817,7 +7817,7 @@ unittest {
     // A foreign command cannot witness this because CommandHistory's append
     // guard consolidates first. The open Move edit must land in-session.
     import command_history : HistoryFlags;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     Mesh selectionBoundaryMesh = makeCube();
     selectionBoundaryMesh.resetSelection();
     GpuMesh selectionBoundaryGpu;

@@ -24,17 +24,17 @@ module commands.layer.commands;
 // notification happen in one place — see app.d's installSwitchHook.
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param, paramToJson, injectParamsInto, wireArgs;
-import document : Document, Layer, ItemKind, ItemXform, kindInfo, LinkState,
+import vibe3d.documents.model.document : Document, Layer, ItemKind, ItemXform, kindInfo, LinkState,
                   ImageData, ImagePlaneData, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
 import layer_params : LayerPropsProvider;
 import vibe3d.editing.contracts.seltype : SelMode, selModeFromToken;
 import vibe3d.mesh.change.change_bus : MeshChangeAll, noteLayerChange, LayerChange,
                     noteItemSelectionChange;
-import snapshot : MeshSnapshot, SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot, SelectionSnapshot;
 
 import std.json : JSONValue, JSONType;
 
@@ -512,8 +512,8 @@ final class LayerReorder : LayerCommandBase {
 // Pin the fix directly: a reorder must leave selection/focus untouched.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
 
     auto doc = Document.bootstrap(makeCube());        // [meshA(primary+focus+selected)]
     auto meshA = doc.layers[0];
@@ -820,7 +820,7 @@ final class LayerSelect : LayerCommandBase {
     override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
 
     override Param[] params() {
-        import item_kinds : ItemKind, kindInfo;
+        import vibe3d.documents.model.item_kinds : ItemKind, kindInfo;
         import std.traits : EnumMembers;
         // The wire TOKEN doubles as the display label: the display name of a
         // kind lives in `ui/channel_rows.d` and no command in this tree imports
@@ -920,7 +920,7 @@ final class LayerSelect : LayerCommandBase {
         // N-command bracket would have fired the tool-drop / GPU-re-upload /
         // cache-invalidation hook N times per click.
         if (kindArg.length > 0) {
-            import item_kinds : ItemKind, kindFromToken;
+            import vibe3d.documents.model.item_kinds : ItemKind, kindFromToken;
             ItemKind want;
             if (!kindFromToken(kindArg, want)) {
                 refusal_ = "layer.select: unknown kind '" ~ kindArg ~ "'";
@@ -989,7 +989,7 @@ final class LayerSelect : LayerCommandBase {
         // designs; the choices here are the ordinary tree-view ones and the
         // reading the doc's phrasing points at.
         if (modeArg == "range") {
-            import item_kinds : kindInfo;
+            import vibe3d.documents.model.item_kinds : kindInfo;
             auto anchor = doc.firstSelectedItem;
             // Membership in the ROW SET, not merely non-null: this command is
             // the item list's, and a span is only defined over the rows that
@@ -1665,8 +1665,8 @@ final class LayerParent : LayerCommandBase {
 // no server needed; tests the command directly against a live Document).
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
     import math : Vec3;
     import std.math : isClose;
 
@@ -1737,8 +1737,8 @@ unittest {
 // here, so the fixture is rebuilt inline.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
 
     auto doc = Document.bootstrap(makeCube());        // "Layer 1" == meshA
     auto meshA = doc.layers[0];
@@ -1818,9 +1818,9 @@ unittest {
 // `canBePrimary`) — not by calling `Layer` accessors directly.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
-    import view : View;
-    import document : ImageData;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
+    import vibe3d.documents.model.document : ImageData;
 
     auto doc = Document.bootstrap(makeCube());        // "Layer 1" == meshA
     auto meshA = doc.layers[0];
@@ -1937,9 +1937,9 @@ unittest {
 // satisfied by an implementation that got the other backwards.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
-    import view : View;
-    import document : ImageData, ImagePlaneData, LinkState;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
+    import vibe3d.documents.model.document : ImageData, ImagePlaneData, LinkState;
 
     auto doc = Document.bootstrap(makeCube());
     auto meshA = doc.layers[0];
@@ -2063,8 +2063,8 @@ unittest {
 // always the target".
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
 
     auto doc = Document.bootstrap(makeCube());       // "Layer 1" == MeshA
     auto meshA = doc.layers[0];
@@ -2131,8 +2131,8 @@ unittest {
 // not merely that a delete occurred — the whole point of this blocker.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
 
     auto doc = Document.bootstrap(makeCube());        // "Layer 1" == MeshA
     auto meshA = doc.layers[0];
@@ -2209,8 +2209,8 @@ unittest {
 // write/query/revert single-attr round-trip against a live Document.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
     import std.json   : JSONValue, JSONType;
     import std.math   : isClose;
     import std.conv   : to;
@@ -2354,7 +2354,7 @@ unittest {
     // would fire just as happily if the param had gone missing entirely
     // (which is what the `?` read-back above rules out).
     {
-        import document : ImageData;
+        import vibe3d.documents.model.document : ImageData;
 
         auto imgLayer = new Layer;
         imgLayer.name = "logo";
@@ -2414,8 +2414,8 @@ unittest {
 // guard, delete-clears-child, undo-delete-restores-child, reset-clears.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
 
     // Build a 3-layer doc: layer 0 = A (primary), 1 = B, 2 = C.
     auto doc = Document.bootstrap(makeCube());
@@ -2509,8 +2509,8 @@ unittest {  // layer.delete on a MIDDLE image that two consumers still point
             // rather than crashing or sliding onto the item that took the
             // vacated slot, and undo relinks both to ONE object with no
             // recorded link list to restore.
-    import mesh : makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
 
     auto doc   = Document.bootstrap(makeCube());
     auto clipA = mkLinkTestClip("clipA");
@@ -2565,8 +2565,8 @@ unittest {  // layer.delete on a MIDDLE image that two consumers still point
 
 unittest {  // layer.duplicate carries the clone's OUTGOING links: same target
             // by identity, independent slot set.
-    import mesh : makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
 
     auto doc   = Document.bootstrap(makeCube());
     auto clipA = mkLinkTestClip("clipA");

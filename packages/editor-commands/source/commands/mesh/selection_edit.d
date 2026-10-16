@@ -1,11 +1,11 @@
 module commands.mesh.selection_edit;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 
 /// Record-flavor selection command (the mutation has ALREADY happened —
 /// captured before/after the interactive picking / lasso / clear path).
@@ -88,7 +88,7 @@ class MeshSelectionEdit : Command, Operator {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         after.restore(*mesh);

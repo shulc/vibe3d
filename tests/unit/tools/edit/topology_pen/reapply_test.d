@@ -65,9 +65,9 @@ unittest {
 // 9494: real typed property widget over a released carried Move. The frozen
 // press image and pairing are produced before the panel writes its value.
 unittest {
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
     import toolpipe.stages.symmetry : SymmetryStage;
     import property_panel : PropertyPanel;

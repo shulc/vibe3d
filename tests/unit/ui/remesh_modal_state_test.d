@@ -8,7 +8,7 @@ import d_imgui.imgui_h : ImVec2;
 import editor_app : MeshDg;
 import imgui_flag_boundary : anyPopupOpen;
 import math : Vec3;
-import mesh : Mesh, makeGridPlane;
+import vibe3d.mesh.core.mesh : Mesh, makeGridPlane;
 import remesh.remesh_job : MAX_REMESH_TARGET_QUADS,
     MIN_REMESH_TARGET_QUADS, RemeshJob;
 import ui.remesh_modal_state : RemeshModalState;

@@ -3,8 +3,8 @@ module tests.unit.commands.ui.layout_reset_test;
 import command_history : CommandHistory;
 import commands.ui.layout_reset : UiLayoutResetCommand;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh;
-import view : View;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.viewport.camera.view : View;
 
 unittest {
     Mesh mesh;

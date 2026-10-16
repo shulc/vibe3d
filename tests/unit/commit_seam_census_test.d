@@ -20,7 +20,7 @@ module tests.unit.commit_seam_census_test;
 
 import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart, wave15UseInputs;
 
-import mesh_edge_slice : edgeIndexOfVerts, insertEdgePoint, rebuildFacesWithChordSplits;
+import vibe3d.mesh.ops.mesh_edge_slice : edgeIndexOfVerts, insertEdgePoint, rebuildFacesWithChordSplits;
 
 import std.file : SpanMode;
 import tests.unit.census_symbols : dirEntries = wave15DirEntries, readTextOnce = wave15ReadText, exists = wave15Exists;

@@ -1,6 +1,6 @@
 module edge_bevel_offset_cube_test;
-import mesh : Mesh,edgeKey,MeshEditBatch;
-import mesh_ops.edge_bevel : bevelEdgesByMask,kEdgeBevelEditScope;
+import vibe3d.mesh.core.mesh : Mesh,edgeKey,MeshEditBatch;
+import vibe3d.mesh.ops.mesh_ops.edge_bevel : bevelEdgesByMask,kEdgeBevelEditScope;
 import math : Vec3;
 import std.json : parseJSON,JSONValue,JSONType;
 import std.file : readText;

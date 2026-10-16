@@ -2,8 +2,8 @@ module prepared_xfrm_replay;
 
 import core.atomic : atomicOp;
 import prepared_record_context : PreparedRecordContext;
-import mesh : Mesh;
-import document : Layer;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.documents.model.document : Layer;
 import tools.transform.xfrm_transform : XfrmTransformTool,
     PreparedXfrmReplayImage, PreparedXfrmUpdatePreProjection;
 

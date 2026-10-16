@@ -20,10 +20,10 @@
 // should redden two blocks here only ever proves the first. Run M-C1, M-C2,
 // M-B3 and M-L1 in isolation.
 module tests.unit.mesh_edit_batch_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
-import mesh;
-import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta;
 import vibe3d.mesh.change.change_bus      : changeBus;
 import math            : Vec3;
 import std.format      : format;
@@ -1047,8 +1047,8 @@ unittest // a NESTED close's extra flags are published too
 //     ⇒ block (2) reddens — the bare bump becomes invisible.
 // ===========================================================================
 unittest {
-    import mesh : Mesh, makeCube;
-    import mesh_edit_delta : MeshEditScope;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
     Mesh m = makeCube();
 

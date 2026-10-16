@@ -36,8 +36,8 @@ import vibe3d.editing.params.argstring   : parseArgstring, serializeParams;
 import command     : Command;
 import command_args : bindArgs;
 import vibe3d.editing.contracts.editmode    : EditMode;
-import mesh        : Mesh;
-import view        : View;
+import vibe3d.mesh.core.mesh        : Mesh;
+import vibe3d.viewport.camera.view        : View;
 
 import commands.select.element   : SelectElementCommand;
 import commands.select.drop      : SelectDropCommand;
@@ -54,8 +54,8 @@ import commands.falloff          : FalloffAddCommand;
 import commands.file.load        : FileLoad;
 import commands.workplane        : WorkplaneRotateCommand;
 import commands.layer.commands   : LayerAttr;
-import document                  : Document;
-import mesh                      : makeCube;
+import vibe3d.documents.model.document                  : Document;
+import vibe3d.mesh.core.mesh                      : makeCube;
 
 private Mesh     gMesh;
 private View     gView;

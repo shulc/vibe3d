@@ -4,7 +4,7 @@
 module tests.unit.display_payload_provenance_test;
 
 import vibe3d.mesh.change.change_bus : changeBus;
-import mesh : Mesh, g_isDocumentMesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, g_isDocumentMesh, makeCube;
 import mesh_gpu : DisplayPayloadBasis, DisplayPayloadProvenance,
     DisplayPayloadWriter, GpuMesh;
 import std.format : format;

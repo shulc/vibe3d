@@ -1,6 +1,6 @@
 module ui.item_rename;
 
-import document : Document, Layer;
+import vibe3d.documents.model.document : Document, Layer;
 import ui.retained_item : RetainedItem;
 
 enum size_t ItemRenameCapacity = 256;

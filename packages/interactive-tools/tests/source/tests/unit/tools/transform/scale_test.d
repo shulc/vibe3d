@@ -4,24 +4,24 @@
 module tests.unit.tools.transform.scale_test;
 
 import bindbc.opengl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import bindbc.sdl;
 import sdl.stdinc : SDL_FALSE, SDL_TRUE, SDL_bool;
 import tools.transform.transform;
 import handler;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype : SelType;
 import math;
 import shader;
-import toolpipe.packets : FalloffPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import std.math : sqrt;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
-import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import vibe3d.editing.params.params : Param;
 import falloff_handles : screenFalloffActive, screenFalloffSetCenter, screenFalloffLMBBegin;
 import tools.transform.scale;

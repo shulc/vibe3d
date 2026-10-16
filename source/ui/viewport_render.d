@@ -22,8 +22,8 @@ module ui.viewport_render;
 import math;
 import vibe3d.util.spatial.spatial : ModelSpace, Orientation, Viewport, isOrtho;                 // Vec3, Viewport, ModelSpace, identityMatrix, matMul4
 import bg_gpu_cache          : BgGpuDrawCache;
-import mesh;                 // Mesh, MeshStructKey, MeshTopoKey
-import mesh_ops.loop_slice   : loopSliceRingEdges;
+import vibe3d.mesh.core.mesh;                 // Mesh, MeshStructKey, MeshTopoKey
+import vibe3d.mesh.ops.mesh_ops.loop_slice   : loopSliceRingEdges;
 import vibe3d.editing.contracts.editmode;             // EditMode
 import vibe3d.editing.contracts.seltype;              // SelType, viewportPickType
 import mesh_gpu              : BaseDots, BaseWire, FacePass, GpuMesh, OccludedPass;
@@ -32,7 +32,7 @@ import retopology_dot_cull  : cullEyeOf, DotCullKey, DotList, visibleDots;
 import retopology_order     : entersItemSequence, retopologyDrawSequence, SeqEntry;
 import viewport_scheme       : schemeColor, SchemeColor;
 import handles.gl_util       : setThickLineScreenSize;
-import document              : Document, Layer, kindInfo;
+import vibe3d.documents.model.document              : Document, Layer, kindInfo;
 import viewport              : Viewport3D;
 import viewport_overlay_mode : OverlayMode;
 import display_state         : DrawPlan, SurfaceShading;
@@ -45,10 +45,10 @@ import model_preview : ModelPreviewView, ModelPreviewResolution, ModelPreviewKey
 import subpatch_preview : SubpatchPreview;
 import toolpipe.pipeline     : ToolPipeContext;
 import toolpipe.stage        : TaskCode;
-import toolpipe.packets      : SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets      : SubjectPacket;
 import toolpipe.stages.workplane : WorkplaneStage;
 import tools.create.create_common : pickMostFacingPlane;
-import operator              : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator              : VectorStack;
 import viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadius,
                                axisComp, viewWorkPlaneAnchor;
 import shader                : Shader, LitShader, CheckerShader, GridShader;
@@ -603,7 +603,7 @@ private:
             inputs.buildSubject(subj, vts);
             inputs.activeTool.draw(shader, viewport, vts, inputs.plan, visualOnly);
         } else if (inputs.falloffActive) {
-            import toolpipe.packets : FalloffPacket;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
             SubjectPacket subj; VectorStack vts;
             inputs.buildSubject(subj, vts);
             FalloffPacket fp;
@@ -744,7 +744,7 @@ public:
         import image_plane : resolvePlacementFor, ImagePlanePlacement;
         import image_cache : imagePixelCache;
         import handles.gl_util : drawImagePlane;
-        import view : ProjKind;
+        import vibe3d.viewport.camera.view : ProjKind;
         import std.algorithm : sort;
 
         static struct Drawable { float depth; ImagePlanePlacement pl; }
@@ -1392,11 +1392,11 @@ public:
     // it), so an implementation gated on it would light items in Vertices mode.
     {
         import vibe3d.editing.contracts.seltype          : SelType;
-        import document         : kindInfo;
+        import vibe3d.documents.model.document         : kindInfo;
         import viewport_scheme  : itemHighlight, itemHighlightColor, ItemHighlight;
         import image_plane      : resolvePlacementFor;
         import handles.gl_util  : drawWorldSegment;
-        import view             : ProjKind;
+        import vibe3d.viewport.camera.view             : ProjKind;
 
         if (display.currentType == SelType.Item) {
             segTimer_.mark(GpuSeg.overlays);
@@ -1601,7 +1601,7 @@ public:
 }
 
 unittest { // private ViewportSceneRenderer.dotCullFor cache lifetime
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     auto v=new Viewport3D(0,0,0,650,544);
     v.camera.setOrientation(Orientation.fromBasis(Vec3(1,0,0),Vec3(0,1,0),Vec3(0,0,1)));
     v.camera.distance=4;

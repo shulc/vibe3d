@@ -1,9 +1,9 @@
 module tests.unit.mesh_ops.bridge_patch_test;
-import mesh_edit_replay : apply, revert;
-import mesh;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
+import vibe3d.mesh.core.mesh;
 import math;
-import mesh_ops.bridge;
-import mesh_ops.bridge_patch;
+import vibe3d.mesh.ops.mesh_ops.bridge;
+import vibe3d.mesh.ops.mesh_ops.bridge_patch;
 import tools.edit.bridge_tool : applyBridgeOp, BridgeParams, resolveBridgeSelection;
 import vibe3d.editing.contracts.editmode : EditMode;
 import std.json;
@@ -185,9 +185,9 @@ unittest
         tiny.addVertex(p);
     tiny.addFace([0u, 1u, 2u]);
     assert(tiny.faceNormal(0) == Vec3(0, 1, 0), "tiny fallback");
-    assert(readText("packages/mesh-ops/source/mesh_ops/bridge_patch.d")
+    assert(readText("libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/bridge_patch.d")
             .indexOf("m.faceNormal(owner)") >= 0, "production normal seam census");
-    assert(noSpace(readText("packages/mesh-ops/source/mesh_ops/bridge.d"))
+    assert(noSpace(readText("libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/bridge.d"))
             .indexOf("smoothSourceDirections(ed.mesh,groups,i,chord,adjusted)") >= 0,
             "production Smooth wiring census");
 }
@@ -317,9 +317,9 @@ unittest
     auto directions = curveSourceDirections(m, gs);
     close(directions[0], Vec3d(-.36859759092330935, 0, -.4392768099904061),
             "captured Curve centroid direction");
-    assert(noSpace(readText("packages/mesh-ops/source/mesh_ops/bridge.d")).indexOf("curveSourceDirections(ed.mesh,groups)") >= 0,
+    assert(noSpace(readText("libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/bridge.d")).indexOf("curveSourceDirections(ed.mesh,groups)") >= 0,
             "production Curve direction wiring census");
-    assert(noSpace(readText("packages/mesh-ops/source/mesh_ops/bridge.d")).indexOf("i,chord,adjusted):curveDirections;") >= 0,
+    assert(noSpace(readText("libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/bridge.d")).indexOf("i,chord,adjusted):curveDirections;") >= 0,
             "production Curve centroid consumer wiring census");
 }
 
@@ -377,7 +377,7 @@ private void flippedSkin(const ref Mesh base, const ref Mesh plain,
 
 unittest
 {
-    import snapshot : MeshSnapshot;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
     Mesh base;
     foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0),
             Vec3(0,0,2), Vec3(1,0,2), Vec3(2,0,2),
@@ -399,8 +399,8 @@ unittest
 
 unittest
 {
-    import snapshot : MeshSnapshot;
-    import mesh_edit_delta : MeshEditDelta;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta;
     foreach (path; 0 .. 6)
     {
         Mesh base;
@@ -488,7 +488,7 @@ unittest
 
 unittest
 {
-    import snapshot : MeshSnapshot;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
     import std.math : isFinite;
     import std.process : environment;
     // OURS robustness only: preserve effective spans and use the existing rails.

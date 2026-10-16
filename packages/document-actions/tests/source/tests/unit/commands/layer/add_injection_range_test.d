@@ -31,10 +31,10 @@ module tests.unit.commands.layer.add_injection_range_test;
 
 import std.conv : to;
 
-import mesh     : Mesh;
-import view     : View;
+import vibe3d.mesh.core.mesh     : Mesh;
+import vibe3d.viewport.camera.view     : View;
 import vibe3d.editing.contracts.editmode : EditMode;
-import document : Document, ItemKind;
+import vibe3d.documents.model.document : Document, ItemKind;
 import commands.layer.commands : LayerAdd;
 
 private LayerAdd mkAdd(Document* doc, Mesh* m, View v) {

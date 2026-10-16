@@ -8,8 +8,8 @@ import std.math : sqrt, isNaN, abs;
 import math;
 import vibe3d.util.spatial.spatial : Orientation, Viewport, eyeVectorAt, lockedViewAxis, projectToWindowFull, screenPointToRay, viewPixelScale;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
-import toolpipe.packets : GesturePacket, GestureTrack;
-import toolpipe.packets : ComponentGuide;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : GesturePacket, GestureTrack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : ComponentGuide;
 import coord_rounding : CoordinateRounding, kFixedIncrementDefault, coordRounding,
                        coordRoundingFixedIncrement;
 import drag;

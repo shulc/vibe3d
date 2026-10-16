@@ -32,7 +32,7 @@ import core.time     : dur;
 
 import math : Vec3, transformPoint, lookAt, perspectiveMatrix, rayPlaneIntersect, closestPointOnSegmentToRay, dot, cross, normalize;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindow, projectToWindowFull, ModelSpace, screenPointToRay;
-import document : ItemXform;
+import vibe3d.documents.model.document : ItemXform;
 
 // buildDragLog/playAndWait pulled in by NAME only — drag_helpers defines its
 // own Vec3/Viewport, so a blanket import would collide with the math.* types.

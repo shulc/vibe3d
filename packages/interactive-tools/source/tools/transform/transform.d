@@ -47,8 +47,8 @@ struct PreparedTransformEditCloseImage {
 }
 import mesh_gpu : GpuUploadOwner;
 import command_history : PreparedHistoryKind;
-import operator : VectorStack;
-import mesh;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype : SelType;
@@ -61,7 +61,7 @@ import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.mesh.morph_edit  : MeshMorphEdit;
 import snap : SnapResult, snapPacketOf;
 import snap_render : publishLastSnap, clearLastSnap;
-import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.stages.snap : liveSnapGuides;
 import toolpipe.stages.symmetry : SymmetryStage;
@@ -71,7 +71,7 @@ import pipe_gizmo_host : PipeGizmoHost;
 // Task 0617 Stage 4: transform tools drag the active/primary mesh only, so
 // its ModelSpace is the same resolver every other picking/snap call site
 // uses.
-import document : primaryModelSpace, Layer;
+import vibe3d.documents.model.document : primaryModelSpace, Layer;
 
 // Factory: builds a fresh MeshVertexEdit (the tools share a registry-driven
 // constructor that wires the mesh, the camera view and the edit mode; the tool
@@ -85,7 +85,7 @@ alias MorphEditFactory = MeshMorphEdit delegate();
 version (unittest) unittest {
     import record_observer_hub : RecordObserverHub;
     import command : Command, CmdFlags;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     final class PreparedProbeCommand : Command {
         private Mesh owned;
         private View probeView = new View(0, 0, 1, 1);
@@ -534,7 +534,7 @@ protected:
     private void captureMorphEditBaseline() {
         import morph_target : resolveMorphTarget;
         import tools.transform.morph_route : defaultStored;
-        import mesh : MapKind;
+        import vibe3d.mesh.core.mesh : MapKind;
         morphEditOpen_ = false;
         morphEditMap_  = null;
         morphEditBefore_.length    = 0;
@@ -568,7 +568,7 @@ protected:
             if (morphEditBeforeHas_[i]) map.setEntry(i, morphEditBefore_[i]);
             else                        mesh.clearMorphValue(morphEditMap_, i);
         }
-        import mesh_edit_delta : MeshEditScope;
+        import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
         mesh.commitChange(MeshEditScope.Maps);
     }
 
@@ -584,7 +584,7 @@ protected:
         import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
         import tools.transform.morph_route : defaultStored;
         import morph_target : resolveMorphTarget;
-        import mesh : MapKind;
+        import vibe3d.mesh.core.mesh : MapKind;
         if (!editCapturing || !morphEditOpen_) return null;
         if (history is null) return null;
         auto map = mesh.morphMapForWrite(morphEditMap_);
@@ -1139,7 +1139,7 @@ protected:
 
     void currentBasis(out Vec3 ax, out Vec3 ay, out Vec3 az,
                       ref VectorStack vts) {
-        import toolpipe.packets            : AxisPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets            : AxisPacket;
         import tools.create.create_common         : pickMostFacingPlane;
         // ACEN.Local + multi-cluster: the gizmo's CENTER is anchored
         // to cluster 0 (actcenter.d documents
@@ -1976,7 +1976,7 @@ import vibe3d.util.spatial.spatial : screenPointToRay, isOrtho;
     // pivot-invariant for translates so it ignores the per-cluster path.
     public alias ClusterPivots = tools.transform.cluster_values.ClusterPivots;
     ClusterPivots queryClusterPivots(ref VectorStack vts) {
-        import toolpipe.packets : ActionCenterPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : ActionCenterPacket;
         ClusterPivots out_;
         if (auto acen = vts.get!ActionCenterPacket()) {
             out_.centers   = acen.clusterCenters;
@@ -1990,7 +1990,7 @@ import vibe3d.util.spatial.spatial : screenPointToRay, isOrtho;
     // in lockstep with ClusterPivots via shared clusterOf indexing).
     public alias ClusterAxes = tools.transform.cluster_values.ClusterAxes;
     ClusterAxes queryClusterAxes(ref VectorStack vts) {
-        import toolpipe.packets : AxisPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : AxisPacket;
         ClusterAxes out_;
         if (auto axis = vts.get!AxisPacket()) {
             out_.right = axis.clusterRight;
@@ -2005,7 +2005,7 @@ import vibe3d.util.spatial.spatial : screenPointToRay, isOrtho;
     // registered (unit tests that bypass app.d's pipe init). See the
     // action-center parity plan Phase 2.
     Vec3 queryActionCenter(ref VectorStack vts) {
-        import toolpipe.packets : ActionCenterPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : ActionCenterPacket;
         if (auto acen = vts.get!ActionCenterPacket())
             return acen.center;
         // Fallback (no ACEN packet published): bbox center of the

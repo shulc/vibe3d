@@ -4,7 +4,7 @@ import bindbc.sdl : SDL_GetModState, KMOD_SHIFT;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import commands.layer.commands : layerDeleteButtonState;
-import document : Document, Layer;
+import vibe3d.documents.model.document : Document, Layer;
 import forms : Form;
 import forms_render : FormsPanel;
 import imgui_flag_boundary : inputTextSubmitOnEnter;

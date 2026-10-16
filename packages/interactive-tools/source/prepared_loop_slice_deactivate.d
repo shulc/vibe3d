@@ -1,9 +1,9 @@
 module prepared_loop_slice_deactivate;
 
 import core.atomic : atomicOp;
-import document : Layer;
-import mesh : Mesh;
-import snapshot : MeshSnapshot;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.slice.loop_slice_tool : LoopSliceTool,
     PreparedLoopSliceDeactivateImage;
 

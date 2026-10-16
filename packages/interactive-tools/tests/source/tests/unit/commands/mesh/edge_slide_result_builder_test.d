@@ -8,14 +8,14 @@ import commands.mesh.vertex_position_result : VertexPositionResult;
 import display_sync : activeMeshResolver;
 import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
-import mesh : Mesh, edgeSlidePositions, g_isDocumentMesh;
-import operator : VectorStack;
+import vibe3d.mesh.core.mesh : Mesh, edgeSlidePositions, g_isDocumentMesh;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import std.file : readText;
 import std.format : format;
 import std.json : JSONType, parseJSON;
-import toolpipe.packets : FalloffPacket, FalloffType, SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType, SubjectPacket;
 import tools.slice.edge_slide : EdgeSlideTool;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private Mesh asymmetricOpenStrip(out bool[] selected) {
     Mesh m;

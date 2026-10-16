@@ -33,7 +33,7 @@ version (WithAI):
 
 import bindbc.opengl : GLuint, glEnable, glDisable, GL_DEPTH_TEST;
 
-import mesh    : Mesh;
+import vibe3d.mesh.core.mesh    : Mesh;
 import math    : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
 import handler : drawWorldSegment;

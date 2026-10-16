@@ -1,7 +1,7 @@
 module retopology_dot_cull;
 
 import math : Vec3, cross, dot, faceNormalFirst3, matrixMirrorsWinding;
-import mesh : Mesh, MeshKey, MeshTermTopology;
+import vibe3d.mesh.core.mesh : Mesh, MeshKey, MeshTermTopology;
 import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, MeshTermGeomEpoch;
 import camera_stamp : CameraStamp;
 

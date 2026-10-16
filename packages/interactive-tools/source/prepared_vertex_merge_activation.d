@@ -1,7 +1,7 @@
 module prepared_vertex_merge_activation;
 
 import core.atomic : atomicOp;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import tools.edit.vert_merge_tool : VertexMergeTool,
     PreparedVertexMergeActivationImage;

@@ -1,10 +1,10 @@
 module commands.tool.do_apply;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import commands.mesh.mesh_edit_payload : MeshEditPayload, MeshRestorePolicy;
 import commands.tool.host : ToolHost;
 

@@ -1,15 +1,15 @@
 module tests.unit.headless_edit_lifecycle_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command : Command;
 import command_history;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.mesh_edit_payload : MeshEditPayload, MeshRestorePolicy;
-import mesh : Mesh, MeshInvocation, MeshEditBatch, makeCube, editBatchStackLength;
-import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope;
+import vibe3d.mesh.core.mesh : Mesh, MeshInvocation, MeshEditBatch, makeCube, editBatchStackLength;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope;
 import math : Vec3;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tool : Tool, ToolSessionPolicy, HeadlessSourcePolicy;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import application_command_binding : CommandInvocationContext, CommandInvocationOutcome;
@@ -296,7 +296,7 @@ unittest { // Failed cold source is not retained; successful rebind starts fresh
 }
 
 unittest { // Pending words/frame accumulator and other subjects survive failure.
-    import mesh : g_isDocumentMesh, beginDeliveryBatchGlobal,
+    import vibe3d.mesh.core.mesh : g_isDocumentMesh, beginDeliveryBatchGlobal,
         endDeliveryBatchGlobal, deliveryPendingSetLength;
     auto rig = sourceRig();
     auto m = &rig.session.editMesh();
@@ -341,7 +341,7 @@ unittest { // Pending words/frame accumulator and other subjects survive failure
 }
 
 unittest { // A newly queued rejected subject is removed, without global reset.
-    import mesh : g_isDocumentMesh, beginDeliveryBatchGlobal,
+    import vibe3d.mesh.core.mesh : g_isDocumentMesh, beginDeliveryBatchGlobal,
         endDeliveryBatchGlobal, deliveryPendingSetLength;
     auto rig = sourceRig();
     auto m = &rig.session.editMesh();
@@ -368,7 +368,7 @@ unittest { // A newly queued rejected subject is removed, without global reset.
 }
 
 unittest { // Hide-derive pending membership is also per subject.
-    import mesh : g_isDocumentMesh, hideDerivePendingSetContains;
+    import vibe3d.mesh.core.mesh : g_isDocumentMesh, hideDerivePendingSetContains;
     Mesh m = makeCube(), other = makeCube();
     auto filter = g_isDocumentMesh;
     scope(exit) g_isDocumentMesh = filter;

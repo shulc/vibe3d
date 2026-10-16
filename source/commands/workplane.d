@@ -4,9 +4,9 @@ import std.math : isNaN, sqrt;
 import std.json : JSONValue, JSONType;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh    : Mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh    : Mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.params.params : Param, wireArgs;
 import math     : Vec3, dot, cross, normalize;
@@ -51,7 +51,7 @@ class WorkplaneResetCommand : Command, Operator {
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         auto wp = findWorkplane();
@@ -103,7 +103,7 @@ class WorkplaneEditCommand : Command, Operator {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         auto wp = findWorkplane();
@@ -140,7 +140,7 @@ class WorkplaneRotateCommand : Command, Operator {
     void setAxis(string s)  { axisStr_  = s; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         auto wp = findWorkplane();
@@ -181,7 +181,7 @@ class WorkplaneOffsetCommand : Command, Operator {
     void setAxis(string s) { axisStr_ = s; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         auto wp = findWorkplane();
@@ -214,7 +214,7 @@ class WorkplaneAlignToSelectionCommand : Command, Operator {
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         auto wp = findWorkplane();

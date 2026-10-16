@@ -9,9 +9,9 @@ import std.format : format;
 
 import math : Vec3, cross, dot;
 import vibe3d.util.spatial.spatial : Viewport, eyeVectorAt;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.seltype : SelType;
-import toolpipe.packets : SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
 import tools.create.pen_geometry;
 
 // Public geometry composition pins: new fields and kinds need cases.

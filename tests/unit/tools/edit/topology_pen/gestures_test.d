@@ -33,14 +33,14 @@ import std.json : JSONValue;
 import std.math : hypot, SQRT2;
 
 import tool;
-import mesh                : Mesh, MeshCacheKey;
-import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder, isVertexBorder;
+import vibe3d.mesh.core.mesh                : Mesh, MeshCacheKey;
+import vibe3d.mesh.ops.mesh_ops.select_loop : selectLoopEdges, isEdgeBorder, isVertexBorder;
 import math : Vec3, closestOnSegment2D, closestPointOnSegmentToRay, dot, pointInPolygon2D, rayPlaneIntersect;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, screenPointToRay, AimViewport, aimSpace, ModelSpace, screenPointToLocalRay;
-import document             : primaryModelSpace;
+import vibe3d.documents.model.document             : primaryModelSpace;
 import shader              : Shader;
-import operator            : VectorStack, viewportOf;
-import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
+import vibe3d.editing.pipeline.contracts.operator            : VectorStack, viewportOf;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType;
 import toolpipe.pipeline   : g_pipeCtx;
 import toolpipe.stage      : TaskCode;
@@ -56,15 +56,15 @@ import bvh_pick              : BvhPick;
 import command_history      : CommandHistory;
 import commands.mesh.vertex_new : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot              : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot              : MeshSnapshot;
 import display_sync         : refreshDisplay;
 import vibe3d.mesh.change.change_bus            : MeshEditScope;
 import vibe3d.editing.params.params                : Param, IntEnumEntry, wireTagForValue;
-import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
+import vibe3d.platform.input.tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
                                 InputMod, ResetScope, InputBinding,
                                 resolveToolAction, toButton, toMods;
 import drag                  : planeDragDelta;
-import eventlog               : queryMouse;
+import vibe3d.platform.input.eventlog               : queryMouse;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -94,7 +94,7 @@ struct BoundPen {
 /// factory would otherwise leave null — and a null carrier records nothing.
 /// A rig's own assignment, before or after this call, wins.
 BoundPen bindPenSession(TopologyPenTool pen, CommandHistory h) {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     auto view = new View(0, 0, 100, 100);
     MeshSessionEdit delegate() generic(string wire) {
@@ -265,9 +265,9 @@ unittest {
 // Both are exact identities (no camera/raycast round-trip involved), so
 // the Newell-null rejection triggers deterministically.
 unittest {
-    import view            : View;
+    import vibe3d.viewport.camera.view            : View;
     import vibe3d.editing.contracts.editmode        : EditMode;
-    import mesh_edit_delta : MeshEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -548,7 +548,7 @@ unittest {
 // test_topopen_move_drag.d / test_topopen_move_undo_redo.d.)
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -586,7 +586,7 @@ unittest {
 // image, records nothing and CLOSES the step, so the next press opens its own
 // [R4-3]. Each positive half sits above the negative half it pairs with.
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -637,7 +637,7 @@ unittest {
            && m.vertices[a] == Vec3(3, 2, 3),
         "the cut LEFT step is its own Move row, the mesh as it stood at the second press");
     {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         loadSDL();   // the release reads SDL's modifier state
         SubjectPacket subj;
         subj.mesh = &m;
@@ -673,9 +673,9 @@ unittest {
 // release into a discard. The rig mirrors the router: its held set is written
 // before each delivery, as `InputRouter.processEvent` does.
 unittest {
-    import held_gesture_buttons : g_heldGestureButtons;
-    import toolpipe.packets : SubjectPacket;
-    import view : View;
+    import vibe3d.platform.input.held_gesture_buttons : g_heldGestureButtons;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -735,9 +735,9 @@ unittest {
 // release closes its step (a lost inert release must not swallow the next
 // gesture's release and leave the step open).
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
     auto history = new CommandHistory();
@@ -828,7 +828,7 @@ unittest {
 // is the same on both sides.
 unittest {
     import core.memory : GC;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     auto t       = new TopologyPenTool();
     auto history = new CommandHistory();
     Mesh m = makeGridPlane(16);
@@ -855,7 +855,7 @@ unittest {
 // 0.018; at 3e-5 of it the move is ~5e-7 — above float's step at |x| = 1
 // (1.2e-7), so a kept change would show, and below the eps, so it must not.
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import snap : setBackgroundSnapSources;
     setBackgroundSnapSources(null, null);
     static Vec3[] smoothOnce(float strength, out size_t rows, out Vec3[] before) {
@@ -890,7 +890,7 @@ unittest {
 // needed — the display tail is guarded off).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -936,9 +936,9 @@ unittest {
 // (compared by position: the corner's removal renumbers the survivors).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -980,7 +980,7 @@ unittest {
 // mutation, the press still one row (L5).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -1015,7 +1015,7 @@ unittest {
 // orphaned edges/vertices it deleted and the removed face itself.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -1061,9 +1061,9 @@ unittest {
 // unittests above).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import std.math : abs;
     import std.format : format;
 
@@ -1119,9 +1119,9 @@ unittest {
 // (captured before the cut), never from the tool's own output.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import std.math : abs;
 
     auto t       = new TopologyPenTool();
@@ -1173,9 +1173,9 @@ unittest {
 // `MeshAddLoop.evaluate` open-interval guard copied into `commitAddLoop`.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -1206,9 +1206,9 @@ unittest {
 // state.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -1247,9 +1247,9 @@ unittest {
 // orientation sign-flip T2 documents (which flips all four together).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import std.algorithm : max, min;
     import std.math : abs;
 
@@ -1311,7 +1311,7 @@ unittest {
 // reference does with undo granularity for this gesture is still unmeasured.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import std.math : abs;
 
@@ -1381,10 +1381,10 @@ unittest {
 // handler — the option moved modes, the law did not.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.algorithm : max, min;
     import std.math : abs;
 
@@ -1608,7 +1608,7 @@ unittest {
 // stronger statement about the same vertex.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -1680,7 +1680,7 @@ unittest {
 // still asserted — each landing point is checked against its own rail.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -1746,7 +1746,7 @@ unittest {
 // `slideDeltaFromDrag`'s note on clamp removal.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -1794,7 +1794,7 @@ unittest {
 // position-only, zero topology mutation.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -1828,7 +1828,7 @@ unittest {
 // state.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -1865,7 +1865,7 @@ unittest {
 // stay UNTOUCHED while A (valence-2, via A-D) slides normally.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -1912,7 +1912,7 @@ unittest {
 // than guessed.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -1963,7 +1963,7 @@ unittest {
 // entry.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -2011,9 +2011,9 @@ unittest {
 // under bare `dub test`.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -2106,7 +2106,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import std.format : format;
-    import view       : View;
+    import vibe3d.viewport.camera.view       : View;
     import vibe3d.editing.contracts.editmode   : EditMode;
 
     static immutable double[3][8] run11BoundaryVerts = [
@@ -2805,9 +2805,9 @@ unittest {
 // through the same `/api/tool/state` field a Tier-C test reads.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.viewport.camera.view : View;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     loadSDL();
@@ -2894,7 +2894,7 @@ unittest {
 // `dub test`.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import snap : setBackgroundSnapSources;
 
@@ -2945,7 +2945,7 @@ unittest {
 // under bare `dub test`.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import snap : setBackgroundSnapSources;
 
@@ -3002,7 +3002,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import std.format : format;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import snap : setBackgroundSnapSources;
 
@@ -3138,7 +3138,7 @@ unittest {
 // call, not the kernel itself).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3179,7 +3179,7 @@ unittest {
 // non-adjacent split (v0->v3), proving the split isn't quad-only.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3226,7 +3226,7 @@ unittest {
 // no mutation, the press still one row (L5).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3261,7 +3261,7 @@ unittest {
 // a byte-identical no-op.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3306,7 +3306,7 @@ unittest {
 // right face count. `max|dp| = 0` is the fourth: a split never moves geometry.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3413,7 +3413,7 @@ unittest {
 // tells them the change is intentional rather than a regression.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3465,7 +3465,7 @@ unittest {
 // anything keyed on it.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3524,7 +3524,7 @@ unittest {
 // that does not land on a vertex (C == -1) must be a byte-identical no-op.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3559,7 +3559,7 @@ unittest {
 // no-op.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3611,7 +3611,7 @@ unittest {
 // this test pins.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3673,7 +3673,7 @@ unittest {
 // unsorted-variant regression regardless of fan-walk order.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3728,7 +3728,7 @@ unittest {
 // must undo back to the exact pre-split state.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -3783,9 +3783,9 @@ unittest {
 // `loadSDL()` is idempotent (safe to call more than once across unittests).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     loadSDL();
     SDL_SetModState(cast(SDL_Keymod)0);
@@ -3929,7 +3929,7 @@ unittest {
 //     loop.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.format : format;
 
     Mesh m = makeGridPlane(2);   // 3x3 verts (0..8), 4 quads, 12 edges
@@ -3956,9 +3956,9 @@ unittest {
 // exact pre-/post-move positions.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.format : format;
 
     auto t       = new TopologyPenTool();
@@ -4036,9 +4036,9 @@ unittest {
 // cells the column was dragged across, i.e. V 9→6, E 12→7, F 4→2.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.format : format;
 
     auto t       = new TopologyPenTool();
@@ -4110,9 +4110,9 @@ unittest {
 // the targets: only `dragSnap_` differs.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.format : format;
 
     auto t       = new TopologyPenTool();
@@ -4200,11 +4200,11 @@ version (unittest) private void driveWeldingVertexGrab(TopologyPenTool t, ref Me
 }
 
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import display_sync : activeMeshResolver;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     Mesh offscreen;
@@ -4270,11 +4270,11 @@ unittest {
 // The same press and the same landing with the application's snapping OFF: the
 // vertex moves and nothing is destroyed. The gate, on the element path.
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import display_sync : activeMeshResolver;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     Mesh offscreen;
@@ -4328,11 +4328,11 @@ unittest {
 // an empty query.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import display_sync : activeMeshResolver;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     Mesh offscreen;
@@ -4410,12 +4410,12 @@ unittest {
 // cell the edge was dragged across.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import display_sync : activeMeshResolver;
     import snap : setBackgroundSnapSources;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     Mesh offscreen;
@@ -4536,10 +4536,10 @@ unittest {
 // that destroyed topology. The row must exist and undo the whole gesture.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import display_sync : activeMeshResolver;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     Mesh offscreen;
@@ -4606,11 +4606,11 @@ unittest {
 // press pixel and is released there. It is still ONE row, and the mesh equals
 // the press image bit for bit. Driven through the real SDL dispatch.
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import display_sync : activeMeshResolver;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     Mesh offscreen;
     auto savedResolver = activeMeshResolver;
@@ -4681,11 +4681,11 @@ unittest {
 // camera, so every vertex has neighbours INSIDE the 24px acceptance and the
 // gate is the only thing standing between a click and a weld.
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import display_sync : activeMeshResolver;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     Mesh offscreen;
@@ -4749,9 +4749,9 @@ unittest {
 // vertices) — every entry lands at its target, δ=0.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.format : format;
 
     auto t       = new TopologyPenTool();
@@ -4793,9 +4793,9 @@ unittest {
 // byte-identical no-op — no mutation, the press still one row (L5).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -4835,9 +4835,9 @@ unittest {
 // as one single undo entry covering the whole gesture).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.format : format;
 
     auto t       = new TopologyPenTool();
@@ -4892,9 +4892,9 @@ unittest {
 // every target verbatim.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.math   : abs;
     import std.format : format;
 
@@ -4978,7 +4978,7 @@ unittest {
 // above that and still an order of magnitude under every refuted rival.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import math : normalize, cross;
     import snap : setBackgroundSnapSources;
     import std.math : abs, cos, sin, PI;
@@ -5072,7 +5072,7 @@ unittest {
 // geometry.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
@@ -5142,7 +5142,7 @@ unittest {
 // no-background case.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
@@ -5208,9 +5208,9 @@ unittest {
 // a miss must fall through to RMB-lasso unchanged).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.viewport.camera.view : View;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     auto t    = new TopologyPenTool();
@@ -5263,9 +5263,9 @@ unittest {
 // test sets directly).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -5358,10 +5358,10 @@ unittest {
 // pure-`dub test`.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
@@ -5601,7 +5601,7 @@ unittest { // U3 — boundary detection: `makeGridPlane(2)`'s edge 0-1 (a
            // resolve `hoverBoundary_==true` and `hoverBoundaryFace_==` that
            // single incident face — cross-checked independently via
            // `isEdgeBorder`/`facesAroundEdge` (not via the code under test).
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(2);   // 3x3 verts (0..8), 4 quads, 12 edges
@@ -5632,7 +5632,7 @@ unittest { // U3 — boundary detection: `makeGridPlane(2)`'s edge 0-1 (a
 unittest { // U4 — interior (non-boundary) edge: `makeGridPlane(2)`'s edge
            // 3-4 is shared by two cells, so `hoverBoundary_` must resolve
            // false and there is no hatch face.
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(2);   // 3x3 verts (0..8), 4 quads, 12 edges
@@ -5811,9 +5811,9 @@ unittest { // commitDupLoop — T1 BOUNDARY (doc/topopen_p11_duploop_plan.md
            // loop vert; the M original loop verts UNCHANGED; one history
            // entry; undo restores EXACTLY (removes all new geometry); redo
            // re-applies.
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.format : format;
 
     auto t       = new TopologyPenTool();
@@ -5891,9 +5891,9 @@ unittest { // commitDupLoop — T2 INTERIOR, FLAGGED (doc/topopen_p11_duploop_pl
            // NOT capture this case. This test pins only the well-defined
            // TOPOLOGY DELTA (open-chain M=N+1); manifoldness is
            // DELIBERATELY NOT asserted here.
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.format : format;
 
     auto t       = new TopologyPenTool();
@@ -5939,7 +5939,7 @@ unittest { // commitDupLoop — NO-OP GUARD (doc/topopen_p11_duploop_plan.md
            // gathered loop -- `extendEdgesByMask` skips it (no orienting
            // face to bridge against) and returns 0 -- must be a clean
            // no-op: no mutation, no history entry, `!canUndo`.
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -5978,9 +5978,9 @@ unittest { // commitDupLoop — resyncSession-on-success (doc/topopen_p11_duploo
            // -- its cached index would otherwise dangle against the
            // resized arrays. Mirrors `removeFaceAt`'s/`commitAddLoop`'s own
            // resyncSession()-on-success discipline.
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -6022,8 +6022,8 @@ unittest { // commitDupLoop — resyncSession-on-success (doc/topopen_p11_duploo
 // any `gpu_`/GL tail, so it runs under a bare `dub test`.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(2);
@@ -6098,9 +6098,9 @@ unittest {
 // edges (one incident face) and its inner edges are not (two).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.viewport.camera.view : View;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     auto t = new TopologyPenTool();
@@ -6181,9 +6181,9 @@ unittest {
 // resolution": a miss must fall through to Shift+RMB-lasso unchanged).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.viewport.camera.view : View;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     auto t    = new TopologyPenTool();
@@ -6249,9 +6249,9 @@ unittest {
 // MIN-DRAG test's own doc comment for why.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -6346,10 +6346,10 @@ unittest {
 // pure-`dub test`.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
@@ -6508,7 +6508,7 @@ unittest { // loopNeighborsOf — an interior loop vertex gets exactly its 2
            // (doc/topopen_p12_smoothloop_plan.md Phase 1 — mirrors
            // `uniqueRingVerts`'s own REV1 FIX-1 grid rig: `makeGridPlane(2)`,
            // a 3x3 vertex grid, `index(i,j) = i*3+j`).
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.algorithm : sort;
 
     Mesh m = makeGridPlane(2);   // 3x3 verts (0..8), 4 quads, 12 edges
@@ -6542,9 +6542,9 @@ unittest { // applySmoothLoopPasses — interior relax + nearest-foot re-snap,
            // off the flat grid's own colinear midpoint (else the relax would
            // be a no-op on this perfectly uniform grid) so the test can
            // discriminate "actually relaxed" from "left alone".
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
@@ -6645,9 +6645,9 @@ unittest { // applySmoothLoopPasses — the corner lock holds on EVERY pass, not
            // passes while the four border mids (perturbed outward) relax. A
            // one-pass cell cannot see a lock that lapses after pass 0: from
            // pass 1 on a corner's neighbours differ from it, so it would move.
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import snap : setBackgroundSnapSources;
     import std.format : format;
 
@@ -6705,9 +6705,9 @@ unittest { // applySmoothLoopPasses — a gesture that nets to ZERO movement
            // current position, and no background source exists to re-snap
            // anything) is the ROUTINE no-op case — byte-identical mesh, NO
            // undo entry (mirrors `applySmoothPasses`'s own T7 no-op test).
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import snap : setBackgroundSnapSources;
 
     setBackgroundSnapSources(null, null);   // test-isolation, not a production call site
@@ -6758,9 +6758,9 @@ unittest { // applySmoothLoopPasses — the no-op guard is SCALE-RELATIVE, so a
            // control: making the guard vacuous (eps 0, or deleting it) would
            // green the first arm and RED the second, so neither arm alone can
            // be satisfied by simply removing the check.
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import snap : setBackgroundSnapSources;
     import std.format : format;
 
@@ -6840,9 +6840,9 @@ unittest { // applySmoothLoopPasses — the no-op guard is SCALE-RELATIVE, so a
 // a miss must fall through to Shift+Ctrl+RMB-lasso unchanged).
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.viewport.camera.view : View;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     auto t    = new TopologyPenTool();
@@ -6892,9 +6892,9 @@ unittest {
 // MIN-DRAG test's own doc comment for why.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import snap : setBackgroundSnapSources;
 
     setBackgroundSnapSources(null, null);   // test-isolation: force the deterministic no-bg no-op path
@@ -7006,10 +7006,10 @@ unittest {
 // identical relax+re-snap outcome.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
@@ -7098,7 +7098,7 @@ unittest {
 // chord split — Δv=0, no vertex is ever inserted on this path.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -7131,9 +7131,9 @@ unittest {
 // fabricate a target out of nothing.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 200, 200);
@@ -7445,8 +7445,8 @@ unittest {
 // every row, which is what makes the rows comparable.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     Mesh m = makeGridPlane(3);
     auto vp = makeGridPlaneTestViewport();
@@ -7565,8 +7565,8 @@ unittest {
 // override resolution and the per-button booking are both exercised.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     Mesh m = makeGridPlane(3);
     auto vp = makeGridPlaneTestViewport();
@@ -7693,8 +7693,8 @@ unittest {
 // this is the pin that turns that into a failure.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     Mesh m = makeGridPlane(3);
     auto vp = makeGridPlaneTestViewport();
@@ -7743,8 +7743,8 @@ unittest {
 // freely and a second Ctrl drag elects afresh; a Ctrl press on empty space in
 // Point mode places nothing (the slide it replaced declined there too).
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     Mesh m = makeGridPlane(3);
     auto vp = makeGridPlaneTestViewport();
@@ -7792,8 +7792,8 @@ unittest {
 // release.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(3);
@@ -7979,9 +7979,9 @@ unittest {
 // asserted exactly.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     loadSDL();
     SDL_SetModState(cast(SDL_Keymod)0);
@@ -8110,8 +8110,8 @@ version (unittest) private bool fillCellSetEq(const(uint)[] a, const(uint)[] b) 
 // comment, doc's empirical finding #2). Also covers F7 (undo restores the
 // exact pre-fill V/E/F).
 unittest {
-    import mesh : makeGridPlane;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -8213,7 +8213,7 @@ unittest {
 // mouth edge (0 incident faces -> 1 -- Δe=0, the edge record itself is
 // REUSED, never duplicated).
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -8323,8 +8323,8 @@ unittest {
 // resolvable: two separate single-cell interior gaps, far enough apart
 // that neither's reconstruction can be confused with the other's.
 unittest {
-    import mesh : makeGridPlane;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -8402,7 +8402,7 @@ unittest {
 // made: it is what dropping a guard the reference does not have produces on
 // this rig. Recorded as a changed fixture, not as a fix.
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -8469,8 +8469,8 @@ unittest {
 // -- `deleteFacesByMask`'s `keepFloatingEdges` contract). A cursor over
 // EITHER cell must resolve to exactly that ONE cell, never a span of both.
 unittest {
-    import mesh : makeGridPlane;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -8533,8 +8533,8 @@ unittest {
 // `commitFill([])` must be a clean no-op (the press still one row (L5), mesh
 // byte-identical).
 unittest {
-    import mesh : makeGridPlane;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -8582,10 +8582,10 @@ unittest {
 // exactly like pre-Fill behavior; dropdown=Fill must fill immediately
 // (commit-on-DOWN) and arm NOTHING.
 unittest {
-    import mesh : makeGridPlane;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -8646,8 +8646,8 @@ unittest {
 // precedence rule -- MANDATORY opponent fix #2's sibling gate, not nested
 // inside `hoverOverMesh_`).
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(3);
@@ -8736,8 +8736,8 @@ unittest {
 // mode, off any border edge, and when ANY gesture is armed -- mirrors the
 // F8 `fillRing_` test above, same precedence rules.
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.math : abs;
 
     auto t = new TopologyPenTool();
@@ -8885,7 +8885,7 @@ version (unittest) private Mesh makeFillBridgeRig(out uint[4] barA, out uint[4] 
 }
 
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import std.algorithm : canFind;
 
@@ -9003,8 +9003,8 @@ unittest {
 // is screen-convex and the slot-2/3 swap of it is not", which pins the
 // two-order search without depending on which of the two won.
 unittest {
-    import mesh : makeGridPlane;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import std.algorithm : canFind;
 
@@ -9091,7 +9091,7 @@ unittest {
 // corners on three quarters of all searches, which is why it is tested as its
 // own contrast pair rather than folded into another rig.
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.algorithm : canFind;
 
     auto t = new TopologyPenTool();
@@ -9168,7 +9168,7 @@ version (unittest) private Mesh makeFillTripleRig(out uint[4] bar, out uint loos
 }
 
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import std.algorithm : canFind;
 
@@ -9218,9 +9218,9 @@ unittest {
 //
 // FAILS ON THE OLD RULE, whose `fillDown` armed nothing whatsoever on a miss.
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.algorithm : canFind;
 
     auto t       = new TopologyPenTool();
@@ -9297,7 +9297,7 @@ unittest {
 // deliberately untouched. The rig therefore plants both degenerate polygons
 // by hand, the way an importer that does carry them would deliver them.
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto t       = new TopologyPenTool();
@@ -9356,8 +9356,8 @@ unittest {
 // FAILS ON THE OLD RULE, which consulted no pick at all and capped the cell
 // from that pixel regardless of what was sitting in it.
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(3);
@@ -9535,7 +9535,7 @@ unittest {
 // captured callers of the routine below consume, every other face creator
 // leaves covered authorship alone.
 unittest {
-    import mesh_topo : edgeKey;
+    import vibe3d.mesh.topology.mesh_topo : edgeKey;
     Mesh m;
     foreach (i; 0 .. 3) m.addVertex(Vec3(i, 0, i % 2));
     m.addEdge(0, 2);
@@ -9552,7 +9552,7 @@ unittest {
 // consuming every key, consuming only the first/last pair, and consuming the
 // ring's sides all differ.
 unittest {
-    import mesh_topo : edgeKey;
+    import vibe3d.mesh.topology.mesh_topo : edgeKey;
     Mesh m;
     foreach (i; 0 .. 5) m.addVertex(Vec3(i, 0, i % 2));
     m.addEdge(1, 2);
@@ -9589,7 +9589,7 @@ unittest {
 // is a STRICT subset of the hexagon, which is the whole difference between
 // "subset" and "duplicate face" as the measured word.
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import std.math : cos, sin, PI;
 
@@ -9714,8 +9714,8 @@ unittest {
 // `pickPrimaryFace` answers -1 here (no `gpu_` under a bare `dub test`), so
 // this exercises the EDGE term of the gate in isolation.
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(3);
@@ -9796,8 +9796,8 @@ unittest {
 // first write really changes the mesh the second ask must ignore.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(3);
@@ -9849,7 +9849,7 @@ unittest {
 // press; a vertex anchors on itself. Pixels come from the mesh's own points.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.format : format;
 
     auto t = new TopologyPenTool();
@@ -9887,7 +9887,7 @@ unittest {
     // On a moved and turned layer (local != world) the polygon's press ray is
     // the LOCAL one: the anchor is the local point under the press, on the
     // polygon's local plane.
-    import document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
     import math : dot;
     import std.math : abs;
     ItemXform xf;
@@ -9912,7 +9912,7 @@ unittest {
 // At H=(0.3,0,0.2), q=0.005, (6,-3) px gives world (0.015,0,-0.005)
 // but local (0.0025,0,0.03): WORLD X wins while LOCAL Z would win.
 unittest {
-    import document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
     import math : lookAt, orthographicMatrix;
     import std.format : format;
     enum double ps = 0.002275172049;
@@ -9960,7 +9960,7 @@ unittest {
     }
     // Query admission and this tool's bound mesh are independent identities.
     import hover_state : ToolPressSource, toolPressSourcesResolver;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.algorithm : reverse;
     auto secondary = makeGridPlane(2);
     foreach (ref face; secondary.faces) reverse(face);
@@ -10055,8 +10055,8 @@ unittest {
 // with the law from Move Loop, whose `moveLoopUp` carries the same gate.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(3);
@@ -10101,7 +10101,7 @@ unittest {
 // default Move mode DECLINES an empty-space press, which is the very
 // distinction between the two modes (task 0483).
 unittest {
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t = new TopologyPenTool();
     Mesh m;
@@ -10201,8 +10201,8 @@ unittest {
 // the fact sees "none") while `resyncSession` MUST clear it (its seed is an
 // edge index an external history navigation can delete).
 unittest {
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(3);
@@ -10328,7 +10328,7 @@ unittest {
 // how far); this test makes our two origins explicit so neither can drift.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import constraint : topoPenPressPickPx, topoPenSnapAcceptPx, topoPenSnapGatherPx;
 
     auto t = new TopologyPenTool();
@@ -10416,7 +10416,7 @@ unittest {
 // and the edge are NOT candidates at those distances.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(2);
@@ -10481,7 +10481,7 @@ unittest {
 // reach, and the VERTEX must win.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(2);
@@ -10520,7 +10520,7 @@ unittest {
 // face 0 = [0,1,4,3] hides v0 (its only polygon) and edges 0-1, 0-3 (an
 // endpoint hidden); v1 stays visible (it touches face 1).
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(2);
@@ -10573,7 +10573,7 @@ unittest {
 //      improvement.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     Mesh m = makeGridPlane(2);   // 3x3 verts / 4 quads: vertex 4 is the interior one
     Mesh* mp = &m;
@@ -10625,7 +10625,7 @@ unittest {
 // and the service's walk can offer anything it enumerates.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     Mesh m = makeGridPlane(2);   // 3x3 verts / 4 quads; vertex 4 is the interior one
     Mesh* mp = &m;
@@ -10752,7 +10752,7 @@ unittest {
     // interior open. A 3x3 grid seen from its own front, with backFace ON and
     // innerSnap at its default, still refuses the interior vertex.
     {
-        import mesh : makeGridPlane;
+        import vibe3d.mesh.core.mesh : makeGridPlane;
         Mesh grid = makeGridPlane(2);
         Mesh* gp  = &grid;
         Viewport front = makeGridPlaneFrontViewport();
@@ -10858,7 +10858,7 @@ unittest {
 // different answer once the topology under it changes.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     Mesh m = makeGridPlane(2);
     Mesh* mp = &m;
@@ -10888,7 +10888,7 @@ unittest {
 // must not drift: priority 2, and no flags at all.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     Mesh m = makeGridPlane(2);
     Mesh* mp = &m;
@@ -10969,10 +10969,10 @@ unittest {
 // global, so this block installs a pipeline and restores whatever was there.
 // ---------------------------------------------------------------------------
 unittest {
-    import view     : View;
+    import vibe3d.viewport.camera.view     : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh     : makeGridPlane;
-    import toolpipe.packets  : SubjectPacket;
+    import vibe3d.mesh.core.mesh     : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SubjectPacket;
     import toolpipe.pipeline : ToolPipeContext;
 
     loadSDL();
@@ -11207,10 +11207,10 @@ unittest {
 // partner is skipped for the partner.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
     // 9513: exercise the actual registered innerSnap-off guide during Split.
@@ -11478,10 +11478,10 @@ unittest {
 // resolved nothing and the split never happened.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeGridPlane;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import constraint : topoPenSnapAcceptPx;
 
     loadSDL();
@@ -11627,7 +11627,7 @@ version (unittest) private float projectedY(Mesh* m, uint vi, const ref Viewport
 // indistinguishable.
 // ---------------------------------------------------------------------------
 version (unittest) private TopologyPenTool makeRemoveTestTool(Mesh* m, CommandHistory h) {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     auto t    = new TopologyPenTool();
     auto view = new View(0, 0, 100, 100);
@@ -11673,8 +11673,8 @@ version (unittest) private int gridVertAt(ref Mesh m, Vec3 p) {
 }
 
 unittest { // an EDGE-latched press DISSOLVES the edge — it does not remove a polygon
-    import toolpipe.packets : SubjectPacket;
-    import mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     Mesh m   = makeGridPlane(3);
     auto vp  = makeGridPlaneTestViewport();
@@ -11721,8 +11721,8 @@ unittest { // an EDGE-latched press DISSOLVES the edge — it does not remove a 
 }
 
 unittest { // a VERTEX-latched press merges its whole fan and drops the vertex
-    import toolpipe.packets : SubjectPacket;
-    import mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     Mesh m   = makeGridPlane(3);
     auto vp  = makeGridPlaneTestViewport();
@@ -11758,8 +11758,8 @@ unittest { // a VERTEX-latched press merges its whole fan and drops the vertex
 
 unittest { // a CORNER vertex (one incident polygon): the merge is vacuous and
            // the quad collapses to a triangle
-    import toolpipe.packets : SubjectPacket;
-    import mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     Mesh m   = makeGridPlane(3);
     auto vp  = makeGridPlaneTestViewport();
@@ -11793,8 +11793,8 @@ unittest { // a CORNER vertex (one incident polygon): the merge is vacuous and
 }
 
 unittest { // Edge Loop + Keep Vertices, both ways round, on an edge-latched press
-    import toolpipe.packets : SubjectPacket;
-    import mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     // Runs one Remove press with the given flags and hands the mesh back.
     static void press(ref Mesh m, bool loop, bool keepVertex, ref CommandHistory h) {
@@ -11866,8 +11866,8 @@ unittest { // Edge Loop + Keep Vertices, both ways round, on an edge-latched pre
 }
 
 unittest { // the loop variant keys on the EFFECTIVE flag, never on the button
-    import toolpipe.packets : SubjectPacket;
-    import mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     // The chord that FORCES the loop flag, against a plain press with the flag
     // set by the user. These were measured bit-identical down to the removed-
@@ -11904,8 +11904,8 @@ unittest { // the loop variant keys on the EFFECTIVE flag, never on the button
 }
 
 unittest { // a BORDER seed is a TOTAL no-op, in BOTH variants
-    import toolpipe.packets : SubjectPacket;
-    import mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     foreach (loop; [false, true]) {
         Mesh m   = makeGridPlane(3);
@@ -11988,8 +11988,8 @@ unittest { // ...and the seed gate is a GATE, not the kernel's per-edge skip
 }
 
 unittest { // one undo restores counts AND positions, for all three primitives
-    import toolpipe.packets : SubjectPacket;
-    import mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     static void roundTrip(bool loop, uint a, uint b, bool vertexPress, uint v) {
         Mesh m  = makeGridPlane(3);
@@ -12022,8 +12022,8 @@ unittest { // one undo restores counts AND positions, for all three primitives
 }
 
 unittest { // Keep Vertices reaches the EDGE path and nothing else
-    import toolpipe.packets : SubjectPacket;
-    import mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     // Measured only on the edge path, and the reference reads the flag in
     // neither of the other two primitives — so honouring it there would be
@@ -12049,8 +12049,8 @@ unittest { // Keep Vertices reaches the EDGE path and nothing else
 }
 
 unittest { // a bare retopo chain elsewhere in the mesh SURVIVES a dissolve
-    import toolpipe.packets : SubjectPacket;
-    import mesh : makeGridPlane;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
 
     // vibe3d-side contract, not a ported behaviour (`captureWireEdges`): this
     // tool builds face-less edges as an ordinary intermediate state, and the
@@ -12115,7 +12115,7 @@ unittest { // a bare retopo chain elsewhere in the mesh SURVIVES a dissolve
 // be resolved from outside the acceptance range; that block tests it.)
 // ---------------------------------------------------------------------------
 unittest {
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     auto t = new TopologyPenTool();
 
@@ -12326,7 +12326,7 @@ version (unittest) private Viewport viewportAlong(Vec3 dir, Vec3 focus) {
 }
 
 unittest { // P6a — MIRROR. Separates candidate B (and the pre-0619 law) from A.
-    import document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
     import math : normalize;
     import std.format : format;
 
@@ -12393,7 +12393,7 @@ unittest { // P6a — MIRROR. Separates candidate B (and the pre-0619 law) from 
 }
 
 unittest { // P6b — NON-UNIFORM SCALE. Separates candidate C from A.
-    import document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
     import math : normalize;
     import std.format : format;
 
@@ -12701,7 +12701,7 @@ unittest {
 // TP1 / TP2 match capture K-B6 T1 / T1c; TP4 rests on the static read only.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.format : format;
 
     int targetNear(bool backFace, bool frontView, bool withLoose) {

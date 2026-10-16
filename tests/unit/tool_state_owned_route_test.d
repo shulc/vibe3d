@@ -8,14 +8,14 @@ import core.time : Duration, MonoTime, msecs, seconds;
 import command_history : CommandHistory;
 import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
 import http_providers : ToolStateHttpAdapter;
 import http_server : BridgeResultKind, HttpServer;
 import math : Vec3;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import mesh_gpu : GpuMesh;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import pipe_gizmo_host : PipeGizmoHost;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_tool_transition : prepareArm;
@@ -30,7 +30,7 @@ import std.socket : InternetAddress, Socket, SocketOption, SocketOptionLevel,
     TcpSocket;
 import std.string : indexOf;
 import tool : Tool;
-import toolpipe.packets : ActionCenterPacket, SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : ActionCenterPacket, SubjectPacket;
 import toolpipe.pipeline : Pipeline, g_pipeCtx;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
@@ -38,7 +38,7 @@ import toolpipe.stages.constrain : ConstrainStage;
 import toolpipe.stages.falloff : FalloffStage;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import tests.unit.census_symbols : blankNonCode;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 

@@ -1,7 +1,7 @@
 module prepared_stroke_extrude_activation;
 
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.deform.stroke_extrude_tool : StrokeExtrudeTool,
     PreparedStrokeExtrudeActivationImage;
 

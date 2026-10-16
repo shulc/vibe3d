@@ -3,22 +3,22 @@ import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import display_state : DrawPlan;
 
 import bindbc.opengl;
-import operator : VectorStack, pickOcclusionOf;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack, pickOcclusionOf;
 import bindbc.sdl;
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : Viewport, eyeVectorAt, projectToWindowFull;
 import vibe3d.editing.params.params : Param;
 import handler : BoxHandler, gizmoSize, ToolHandles;
 import viewport_scheme : schemeColor, SchemeColor;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import shader : Shader, LitShader, previewFacePass;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedPenParamDoorClient;
@@ -28,17 +28,17 @@ import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEf
     PreparedPenParamKind;
 import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
 import command_history : PreparedHistoryKind;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import handler : BoxHandlerBatchResourceOwner;
 import snap_render : SnapOverlayOwner;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import vibe3d.mesh.core.mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import display_sync : refreshDisplay;
 import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame,
                               viewPrincipalAxis, axisUnit, screenToPlacementLocal,
                               backgroundSurfacePoint,
                               transformPoint, transformDir, snapLocalHit,
                               workplaneCursorPlaneHit;
-import toolpipe.packets : SnapType, SnapPacket, SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType, SnapPacket, SymmetryPacket;
 import toolpipe.stages.symmetry : liveSymmetryStage, workplaneSymmetryPlane, mapByWorkplaneOnceMore;
 import toolpipe.stages.snap : liveSnapGuides, liveSnapStage;
 import toolpipe.stages.constrain : liveConstrainStage;
@@ -49,7 +49,7 @@ import vibe3d.editing.contracts.seltype : SelType;
 import snap : SnapResult, snapCursor, cascadeClassWins, kAbsentClassDist,
     kCascadeVertex, kCascadeEdge, kCandidateToleranceBasePx, kVertexToleranceScale,
     elementPlaced, kMergeSnappedEdgeEndPx, kMergeAfterSnapPx;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import snap_render : publishLastSnap, clearLastSnap;
 import viewgrid : viewWorldPerPixel, viewVectorQuantum, vectorSnap, withAxisComp, axisComp;
 
@@ -75,7 +75,7 @@ version(unittest) unittest {
     import record_observer_hub : RecordObserverHub;
     import snap_render : g_lastSnap;
     import std.format : format;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     Mesh mesh; GpuMesh sceneGpu;
     auto pen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);

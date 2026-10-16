@@ -2,7 +2,7 @@ module tools.edit.topology_pen.press_compatibility_test;
 
 import tools.edit.topology_pen;
 import hover_state;
-import mesh : Mesh, makeGridPlane;
+import vibe3d.mesh.core.mesh : Mesh, makeGridPlane;
 import math : Vec3, lookAt, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, screenPointToRay, projectToWindowFull;
 import std.math : abs;
@@ -26,17 +26,17 @@ private void projected(Vec3 p, float x, float y, const ref Viewport vp) {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import operator : VectorStack;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import bindbc.sdl;
     import command_history : CommandHistory;
     import commands.mesh.session_edit : MeshSessionEdit;
     import vibe3d.mesh.change.change_bus : MeshEditScope;
     import edit_session : EditSession;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import tool : Tool;
-    import snapshot : MeshSnapshot, SelectionSnapshot;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot, SelectionSnapshot;
     import display_sync : activeMeshResolver;
     Mesh offscreen;const savedDisplay=activeMeshResolver;scope(exit)activeMeshResolver=savedDisplay;
     activeMeshResolver=()=>&offscreen;
@@ -83,7 +83,7 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.algorithm : reverse;
     const vp=viewport();auto m=makeGridPlane(2);auto t=new TopologyPenTool();t.meshSrc_=()=>&m;
     SubjectPacket subject;subject.mesh=&m;subject.viewport=vp;subject.pickFacing=true;subject.pickFacesDrawn=false;
@@ -194,7 +194,7 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
     import math : closestPointOnSegmentToRay, dot;
     import bvh_pick : BvhPick, SurfaceHit;
     const vp=viewport();
@@ -252,7 +252,7 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     const vp=viewport(); const ms=ModelSpace.world();
     SubjectPacket subject; subject.pickFacing=true; subject.pickFacesDrawn=false;
     auto t=new TopologyPenTool(); Mesh m; t.meshSrc_=()=>&m;
@@ -298,7 +298,7 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     const vp=viewport(); const ms=ModelSpace.world();
     auto t=new TopologyPenTool(); Mesh m; t.meshSrc_=()=>&m;
     SubjectPacket subject; subject.pickFacing=true; subject.pickFacesDrawn=false;
@@ -323,8 +323,8 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import operator : VectorStack;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import bindbc.sdl;
     const vp=viewport(); auto m=makeGridPlane(2); auto secondary=makeGridPlane(64);
     auto t=new TopologyPenTool();t.meshSrc_=()=>&m;
@@ -346,7 +346,7 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     const vp=viewport(); const ms=ModelSpace.world();
     auto t=new TopologyPenTool(); Mesh m; t.meshSrc_=()=>&m;
     SubjectPacket subject; subject.pickFacing=true; subject.pickFacesDrawn=false; subject.viewport=vp;
@@ -376,7 +376,7 @@ version (PerspectivePenFocused) {} else unittest {
 
 version (PerspectivePenFocused) {} else unittest {
     alias Marks = Mesh.Marks;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     const vp=viewport();auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
     m.vertices=[Vec3(-.15,0,0),Vec3(.15,0,0)];m.edges=[[0u,1u]];m.resizeEdgeSelection();
     int index;assert(t.resolveGrabTarget(300,300,vp,index,false)==MoveElem.Edge && index==0,"legacy-hidden-edge: shown loose edge positive");
@@ -395,8 +395,8 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import document : ItemXform, primaryModelSpaceResolver;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     const vp=viewport();ItemXform xf;xf.pos=Vec3(.3,0,.2);xf.rot=Vec3(0,90,0);xf.scl=Vec3(2,3,.5);
     const ms=xf.modelSpace();const saved=primaryModelSpaceResolver;scope(exit)primaryModelSpaceResolver=saved;primaryModelSpaceResolver=()=>ms;
     auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
@@ -430,7 +430,7 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
     import math : closestPointOnSegmentToRay, dot;
     const vp=viewport();ItemXform xf;xf.rot=Vec3(0,0,45);xf.scl=Vec3(3,.3,.1);const ms=xf.modelSpace();
     const saved=primaryModelSpaceResolver;scope(exit)primaryModelSpaceResolver=saved;primaryModelSpaceResolver=()=>ms;
@@ -454,7 +454,7 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     const vp=viewport();auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
     const saved=toolPressSourcesResolver;scope(exit)toolPressSourcesResolver=saved;toolPressSourcesResolver=()=>cast(ToolPressSource[])null;
     SubjectPacket subject;subject.pickFacing=true;subject.pickFacesDrawn=false;subject.mesh=&m;subject.viewport=vp;
@@ -466,7 +466,7 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     // Raw face incidence remains authoritative when an input has no edge array.
     const vp=viewport();Mesh m;m.vertices=[Vec3(0,0,0),Vec3(.15,0,-.05),Vec3(.15,0,.05)];m.faces=[[0u],[0u,1u,2u]];
     const s=toolPressSupport(m,ModelSpace.world(),vp);
@@ -510,7 +510,7 @@ private Mesh mixedTieRig(bool edge, bool compatibilityFirst, float ordinaryX,
 }
 
 version(TieDatum) {} else version(TieTransformed) {} else version (PerspectivePenFocused) {} else unittest {
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     const vp=viewport();auto t=new TopologyPenTool();Mesh m;t.meshSrc_=()=>&m;
     size_t population;
     version(TieOrdinaryFirst)const orders=[false,true];else const orders=[true,false];
@@ -553,7 +553,7 @@ version(TieDatum) {} else version(TieTransformed) {} else version (PerspectivePe
         assert(ordinaryOnly.index==ordinary && ordinaryOnly.reductionMetric==oMetric,
             edge?"MIXED_E: actual ordinary metric transport":"MIXED_V: actual ordinary metric transport");
 
-        import operator : VectorStack;
+        import vibe3d.editing.pipeline.contracts.operator : VectorStack;
         import bindbc.sdl;
         loadSDL();auto eventTool=new TopologyPenTool();eventTool.meshSrc_=()=>&m;
         import display_sync : activeMeshResolver;
@@ -598,8 +598,8 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version (PerspectivePenFocused) {} else unittest {
-    import document : ItemXform, primaryModelSpaceResolver;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import vibe3d.util.spatial.spatial : aimSpace;
     const vp=viewport();ItemXform transform;transform.pos=Vec3(.5f,1,-.5f);transform.scl=Vec3(2,4,.5f);
     const ms=transform.modelSpace();const saved=primaryModelSpaceResolver;scope(exit)primaryModelSpaceResolver=saved;
@@ -625,7 +625,7 @@ version (PerspectivePenFocused) {} else unittest {
 }
 
 version(TieMixedSource) {} else version (PerspectivePenFocused) {} else unittest {
-    import document : ItemXform;
+    import vibe3d.documents.model.document : ItemXform;
     const vp=viewport();ItemXform translated;translated.pos=Vec3(-.5f,0,0);
     foreach(edge;[false,true])if(tieClass(edge)) {
         Mesh m;const top=edge?270:300,bottom=edge?330:400;
@@ -770,9 +770,9 @@ version (PerspectivePenFocused) {} else unittest {
 unittest {
     import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
     import toolpipe.stages.constrain : ConstrainStage;
-    import toolpipe.packets : ConstrainGeom;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainGeom;
     import snap : setBackgroundSnapSources, backgroundSourcesFull;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import math : translationMatrix, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Orientation;
     import drag : HandleDrag, DragFrame, DragKind;
@@ -857,7 +857,7 @@ import vibe3d.util.spatial.spatial : Orientation;
     assert(abs(oldOff.x-.157257759f)<1e-6f&&abs(oldOff.y+.0048828125f)<1e-6f,"PEN_ORTHO_INHERITED: five-argument client retains captured ortho provider");
     assert(pen.grabOffset(orthoH,70,-42,ortho,newOff,perspectiveAccepted,true));
     assert(!perspectiveAccepted&&(newOff-oldOff).length<1e-6f,"PEN_ORTHO_ACCEPTANCE: orthographic guide does not change vertex publication policy");
-    import document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
     ItemXform transform;transform.pos=Vec3(.3f,0,.2f);transform.rot=Vec3(0,90,0);transform.scl=Vec3(2,3,.5f);
     const space=transform.modelSpace();const savedSpace=primaryModelSpaceResolver;scope(exit)primaryModelSpaceResolver=savedSpace;
     primaryModelSpaceResolver=()=>space;

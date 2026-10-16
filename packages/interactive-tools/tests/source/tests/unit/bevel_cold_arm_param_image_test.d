@@ -12,9 +12,9 @@ module unit.bevel_cold_arm_param_image_test;
 // bevel blocks, and the poly.bevel block above the edge.bevel one.
 // ---------------------------------------------------------------------------
 
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import prepared_record_context : PreparedRecordContext;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedPolyBevelParamKind, PreparedEdgeBevelParamKind,

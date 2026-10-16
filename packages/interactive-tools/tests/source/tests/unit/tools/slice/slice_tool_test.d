@@ -11,8 +11,8 @@ import std.format : format;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the RMB gap HUD (task 0288)
 import tool;
-import mesh;
-import mesh_ops.cut;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.cut;
 import math;
 import vibe3d.util.spatial.spatial : ModelSpace;
 import vibe3d.editing.contracts.editmode : EditMode;
@@ -20,13 +20,13 @@ import vibe3d.editing.params.params : Param, IntEnumEntry, wireTagForValue;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
-import operator : VectorStack;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import display_sync : refreshDisplay;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import handler : BoxHandler, FullCircleHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment, drawWorldQuad;
 import viewport_scheme : schemeColor, SchemeColor;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import tools.create.create_common : primitivePlacementFrame, pickWorkplaneFrame, WorkplaneFrame;
 import tools.slice.slice_tool;
 
@@ -696,7 +696,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import std.math : abs;
-    import document : ItemXform;
+    import vibe3d.documents.model.document : ItemXform;
 
     // Non-uniform scale is MANDATORY here (wrong (2) collapses onto the
     // correct law without it) and the rotation is deliberately not a multiple

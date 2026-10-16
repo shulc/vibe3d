@@ -20,7 +20,7 @@ import std.json;
 import std.conv : to;
 import std.math : abs;
 
-import mesh : CloneWeld, Mesh;
+import vibe3d.mesh.core.mesh : CloneWeld, Mesh;
 import math : Vec3;
 
 void main() {}

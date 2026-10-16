@@ -1,11 +1,11 @@
 module toolpipe.stages.path;
 
 import toolpipe.stage   : Stage, TaskCode, ordPath;
-import toolpipe.packets : PathPacket;
-import operator         : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : PathPacket;
+import vibe3d.editing.pipeline.contracts.operator         : Operator, Task, VectorStack, PacketKind;
 import vibe3d.editing.params.params           : Param;
 import path             : PathSource, resolveKnots;
-import mesh             : Mesh;
+import vibe3d.mesh.core.mesh             : Mesh;
 
 // ---------------------------------------------------------------------------
 // PathStage — PATH pipe slot publisher.

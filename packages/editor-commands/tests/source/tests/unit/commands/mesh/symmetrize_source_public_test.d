@@ -3,15 +3,15 @@ module tests.unit.commands.mesh.symmetrize_source_public_test;
 import commands.mesh.symmetrize;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math   : Vec3;
 import vibe3d.editing.params.params : Param;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
-import toolpipe.packets : SymmetryPacket, SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket, SubjectPacket;
 import symmetry : rebuildPairing, rebuildPairingTopological, applySymmetryMirror;
 
 // ---------------------------------------------------------------------------
@@ -37,9 +37,9 @@ import symmetry : rebuildPairing, rebuildPairingTopological, applySymmetryMirror
 
 version(unittest) {
     import math : Vec3;
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import symmetry : rebuildPairing, rebuildPairingTopological, applySymmetryMirror;
-    import toolpipe.packets : SymmetryPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
 
     // Build the two-quad mesh with v2 drifted by driftX.  v4 stays at
     // its base position (-1, 0.5, 0) — the spatial mirror of undrifted v2.

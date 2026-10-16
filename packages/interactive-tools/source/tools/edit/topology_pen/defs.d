@@ -17,7 +17,7 @@
 module tools.edit.topology_pen.defs;
 
 import commands.mesh.session_edit : MeshSessionEdit;
-import tool_input                 : ToolAction, PassThrough, InputButton, InputMod,
+import vibe3d.platform.input.tool_input                 : ToolAction, PassThrough, InputButton, InputMod,
                                     InputBinding, ResetScope;
 
 // The pen's `alias VertexNewFactory = MeshVertexNew delegate();` is gone as of

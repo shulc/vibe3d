@@ -22,11 +22,11 @@
 // This lives in the unit lane and not over HTTP because `Num`, `Sel` and above
 // all `sel.known` are row-model FIELDS, and no wire carries them.
 
-import document : Document, Layer, ItemKind;
+import vibe3d.documents.model.document : Document, Layer, ItemKind;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh;
-import mesh_selsets;
-import mesh_stats;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.core.mesh_selsets;
+import vibe3d.mesh.ops.mesh_stats;
 import vibe3d.editing.contracts.seltype  : SelType, SelMode;
 import ui.stat_rows;
 import tests.unit.ui.stat_dispatch : dispatchStatAction;
@@ -282,7 +282,7 @@ unittest {
 // and the two refusals.
 // ---------------------------------------------------------------------------
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import commands.layer.commands : LayerSelect;
     import vibe3d.editing.params.params : injectParamsInto;
     import std.json : parseJSON;

@@ -24,7 +24,7 @@ module tests.unit.falloff_screen_default_test;
 // to the same wrong value reddens the first assertion instead, which is why
 // both are here.
 
-import toolpipe.packets       : FalloffConfig, FalloffType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets       : FalloffConfig, FalloffType;
 import toolpipe.stages.falloff : FalloffStage;
 import vibe3d.editing.params.params                 : Param;
 

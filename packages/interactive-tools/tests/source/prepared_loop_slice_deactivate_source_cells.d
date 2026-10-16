@@ -2,9 +2,9 @@ module prepared_loop_slice_deactivate_source_cells;
 
 import prepared_loop_slice_deactivate;
 import core.atomic : atomicOp;
-import document : Layer;
-import mesh : Mesh;
-import snapshot : MeshSnapshot;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.slice.loop_slice_tool : LoopSliceTool,
     PreparedLoopSliceDeactivateImage;
 
@@ -12,14 +12,14 @@ unittest {
     import command_history : CommandHistory;
     import commands.mesh.session_edit : MeshSessionEdit;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuUploadOwner;
     import prepared_record_context : PreparedRecordContext;
     import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     EditMode mode = EditMode.Edges;
     auto view = new View(0,0,1,1);

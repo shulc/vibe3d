@@ -2,8 +2,8 @@ module commands.ui.layout_reset;
 
 import command;
 import vibe3d.editing.contracts.editmode;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 
 /// Authors a layout reset request. The main loop consumes it before the next
 /// ImGui frame because loading ini state during a frame is unsafe (task 6245).

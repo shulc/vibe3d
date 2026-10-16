@@ -31,8 +31,8 @@ void registerHistoryCommands(ref Registry reg,
     assert(panelState !is null, "history registration requires panel state");
     assert(macroRecorder !is null, "history registration requires macro recorder");
 
-    import mesh : Mesh;
-    import view : View;
+    import vibe3d.mesh.core.mesh : Mesh;
+    import vibe3d.viewport.camera.view : View;
     ref Mesh pilotMesh() { return session.activeMesh(); }
     ref View pilotView() { return live.view(); }
     registerHistoryNavigationCommands(reg,

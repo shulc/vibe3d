@@ -139,8 +139,8 @@
     }
   },
   "dependencies": {
-    "vibe3d-document-model": {
-      "path": "../../document-model"
+    "vibe3d:document-model": {
+      "path": "../../.."
     },
     "vibe3d-document-channels": {
       "path": "../../document-channels"
@@ -148,8 +148,8 @@
     "vibe3d:param-schema": {
       "path": "../../.."
     },
-    "vibe3d-mesh": {
-      "path": "../../mesh"
+    "vibe3d:mesh": {
+      "path": "../../.."
     },
     "vibe3d:spatial": {
       "path": "../../.."
@@ -163,8 +163,8 @@
     "vibe3d:log": {
       "path": "../../.."
     },
-    "vibe3d-image-codec": {
-      "path": "../../image-codec"
+    "vibe3d:image-codec": {
+      "path": "../../.."
     }
   },
   "importPaths": [
@@ -175,15 +175,15 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-document-model": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
         "vibe3d-document-channels": "isolated-tests",
         "vibe3d:param-schema": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
         "vibe3d:spatial": "isolated-tests",
         "vibe3d:math": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d:log": "isolated-tests",
-        "vibe3d-image-codec": "isolated-tests"
+        "vibe3d:image-codec": "isolated-tests"
       }
     }
   ],

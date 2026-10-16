@@ -1368,8 +1368,8 @@ string sourceDigest() {
         "packages/platform-file/tests/dub.json",
         "packages/document-actions/dub.json",
         "packages/document-actions/tests/dub.json",
-        "packages/render-model/dub.json",
-        "packages/render-model/tests/dub.json",
+        "libraries/render/model/dub.json",
+        "libraries/render/model/tests/dub.json",
         "packages/render-backends/dub.json",
         "packages/render-backends/tests/dub.json",
         "packages/forms-model/dub.json",
@@ -1396,7 +1396,7 @@ string sourceDigest() {
     // of a test run does not (task 0685 T7).
     try {
         foreach (pattern; ["*.d", "*.c"])
-            foreach (scanSourceRoot; ["packages/camera-model/source", "packages/camera-model/tests/source", "packages/document-channels/source", "packages/document-channels/tests/source", "packages/image-codec/source", "packages/image-codec/tests/source", "packages/document-io/source", "packages/document-io/tests/source", "source", "packages/command-runtime/source", "packages/application-core/source", "packages/document-model/source", "libraries/editing/params/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "libraries/editing/contracts/source", "libraries/mesh/change/source", "libraries/mesh/contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "libraries/util/profiling/source", "libraries/util/spatial/source", "libraries/util/log/source", "util/math/source", "libraries/util/parallel/source", "libraries/util/plane-bytes/source", "libraries/util/screen-buckets/source", "packages/pipe-contracts/source", "packages/mesh-preview/source", "libraries/util/json-number/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"])
+            foreach (scanSourceRoot; ["libraries/viewport/camera/source", "libraries/viewport/camera/tests/source", "packages/document-channels/source", "packages/document-channels/tests/source", "libraries/documents/image-codec/source", "libraries/documents/image-codec/tests/source", "packages/document-io/source", "packages/document-io/tests/source", "source", "packages/command-runtime/source", "packages/application-core/source", "libraries/documents/model/source", "libraries/editing/params/source", "packages/pipe-runtime/source", "libraries/mesh/ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "libraries/platform/input/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "libraries/editing/contracts/source", "libraries/mesh/change/source", "libraries/mesh/contracts/source", "libraries/mesh/edit-log/source", "libraries/mesh/edit-replay/source", "libraries/mesh/snapshot/source", "libraries/mesh/topology/source", "libraries/mesh/core/source", "libraries/util/profiling/source", "libraries/util/spatial/source", "libraries/util/log/source", "util/math/source", "libraries/util/parallel/source", "libraries/util/plane-bytes/source", "libraries/util/screen-buckets/source", "libraries/editing/pipeline/contracts/source", "libraries/mesh/preview/source", "libraries/util/json-number/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"])
             foreach (e; dirEntries(scanSourceRoot == "util/math/source" ? mathRoot ~ "/source" : scanSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
         foreach (pattern; ["*.d", "*.c"])
@@ -1413,8 +1413,8 @@ string sourceDigest() {
                 ~ (exists("packages/remesh-runtime/source") ? ["packages/remesh-runtime/source"] : [])
                 ~ (exists("packages/platform-file/source") ? ["packages/platform-file/source"] : [])
                 ~ (exists("packages/document-actions/source") ? ["packages/document-actions/source"] : [])
-                ~ (exists("packages/render-model/source") ? ["packages/render-model/source"] : [])
-                ~ (exists("packages/render-model/tests/source") ? ["packages/render-model/tests/source"] : [])
+                ~ (exists("libraries/render/model/source") ? ["libraries/render/model/source"] : [])
+                ~ (exists("libraries/render/model/tests/source") ? ["libraries/render/model/tests/source"] : [])
                 ~ (exists("packages/render-backends/source") ? ["packages/render-backends/source"] : [])
                 ~ (exists("packages/render-backends/tests/source") ? ["packages/render-backends/tests/source"] : [])
                 ~ (exists("packages/forms-model/source") ? ["packages/forms-model/source"] : [])
@@ -1570,7 +1570,7 @@ string buildProjectLib(string scratch) {
     bool[string] seen;
     // Task 20262150: moved conditional helpers need the same unittest source
     // grant as desktop/common; keep production package archives unchanged.
-    foreach (root; ["", " --root=packages/camera-model", " --root=packages/document-channels", " --root=packages/image-codec", " --root=packages/document-io", " --root=packages/command-runtime", " --root=packages/application-core", " --root=packages/document-model", " :param-schema", " --root=packages/pipe-runtime", " :json-number", " --root=packages/pipe-contracts", " --root=packages/mesh-preview", " --root=packages/mesh-ops", " --root=packages/tool-state", " --root=packages/transform-ops", " --root=packages/input-events", " --root=packages/display-policy", " --root=packages/viewport-gpu", " --root=packages/subpatch-preview", " --root=packages/selection-model", " --root=packages/scene-query", " --root=packages/editor-commands"]) {
+    foreach (root; ["", " :camera-model", " --root=packages/document-channels", " :image-codec", " --root=packages/document-io", " --root=packages/command-runtime", " --root=packages/application-core", " :document-model", " :param-schema", " --root=packages/pipe-runtime", " :json-number", " :pipe-contracts", " :mesh-preview", " :mesh-ops", " --root=packages/tool-state", " --root=packages/transform-ops", " :input-events", " --root=packages/display-policy", " --root=packages/viewport-gpu", " --root=packages/subpatch-preview", " --root=packages/selection-model", " --root=packages/scene-query", " --root=packages/editor-commands"]) {
         auto rr = executeShell("dub describe" ~ root
             ~ " --config=modeling --data=source-files --data-list 2>/dev/null");
         if (rr.status != 0) return "";

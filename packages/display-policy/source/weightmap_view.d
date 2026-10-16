@@ -24,7 +24,7 @@ module weightmap_view;
 // ---------------------------------------------------------------------------
 
 import math : Vec3;
-import mesh : Mesh, MeshMap, MapDomain;
+import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain;
 
 // ---------------------------------------------------------------------------
 // The current weight map

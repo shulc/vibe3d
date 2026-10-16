@@ -6,11 +6,11 @@ import ai3d.scene_validator : Ai3dMaxTotalFaces;
 
 import command;
 import commands.ai3d.import_result : Ai3dImportResult;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import vibe3d.editing.contracts.editmode;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.params.params : Param;
-import view;
+import vibe3d.viewport.camera.view;
 import vibe3d.util.log.log : logWarn;
 
 final class Ai3dGenerate : Command {

@@ -1,7 +1,7 @@
 module tests.unit.mesh_bbox_test;
 
 import math : Vec3;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_bbox;
 import tests.unit.mesh_by_value_gate;
 

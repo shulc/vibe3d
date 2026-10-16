@@ -11,7 +11,7 @@ module subpatch_preview;
 // retains cage data only. See application_layers_wave1_plan_2026-10-08.md §1A.
 // ---------------------------------------------------------------------------
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import vibe3d.mesh.change.mesh_dirty;   // MeshTermGeomEpoch (plain, per the note above)
 import subpatch_osd;

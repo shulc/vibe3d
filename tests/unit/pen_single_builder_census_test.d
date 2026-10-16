@@ -24,7 +24,7 @@ import tests.unit.census_symbols : exists = wave15Exists, readText = wave15ReadT
 import std.format : format;
 import std.path : buildPath, dirName;
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
     countOccurrences, isIdentChar, balancedSpan;
 

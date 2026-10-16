@@ -25,7 +25,7 @@ import std.path : buildPath, dirName;
 import std.regex : matchAll, regex;
 import std.string : indexOf, lastIndexOf;
 import tool_activation_ownership : CloseOutcome, CommandDoor, ToolTransition;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));

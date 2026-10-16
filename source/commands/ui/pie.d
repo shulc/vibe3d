@@ -3,8 +3,8 @@ module commands.ui.pie;
 import std.string : strip, toLower;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
 
@@ -66,7 +66,7 @@ final class UiPieCommand : Command {
             return false;
         }
 
-        import eventlog : queryMouse, queryEventStamp;
+        import vibe3d.platform.input.eventlog : queryMouse, queryEventStamp;
         int mx, my;
         queryMouse(mx, my);
         openPie(m.id, mx, my, queryEventStamp());

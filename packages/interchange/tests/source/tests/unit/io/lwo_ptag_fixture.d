@@ -28,7 +28,7 @@
 // surface-tag mismatch rather than a range exception.
 module tests.unit.io.lwo_ptag_fixture;
 
-import mesh : Mesh, Surface;
+import vibe3d.mesh.core.mesh : Mesh, Surface;
 import math : Vec3;
 
 /// Surface table: index 0 is the reader's default for an untagged polygon.

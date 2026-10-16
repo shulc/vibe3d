@@ -38,9 +38,9 @@ import imgui_impl_sdl2;
 import imgui_impl_opengl3;
 import math;
 import vibe3d.util.spatial.spatial : ModelSpace;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import eventlog;
+import vibe3d.platform.input.eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
 import tools.edit.topology_pen.defs : TopoPenFactories;
@@ -49,11 +49,11 @@ import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype;
 import session_owner : Session;
 import toolpipe;
-import operator         : VectorStack;
-import toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.contracts.operator         : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
-import view;
+import vibe3d.viewport.camera.view;
 import shader;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
@@ -212,7 +212,7 @@ import commands.history.save_as_script : HistorySaveAsScript;
 import commands.macros.record : MacroRecord;
 import commands.macros.save_recorded : MacroSaveRecorded;
 import macro_recorder : MacroRecorder;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 import commands.tool.host     : ToolHostReadView;
 import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
@@ -236,7 +236,7 @@ import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
                                 WorkplaneAlignToSelectionCommand;
 import command;
 import registry;
-import shortcuts;
+import vibe3d.platform.input.shortcuts;
 import buttonset;
 import vibe3d.editing.interaction.data.ai.debug_trace : latestHandleDebugTraceJson;
 import ai.element_candidates : publishElementCandidates,
@@ -269,13 +269,13 @@ import remesh.remesh_job : RemeshJob, RemeshParams,
 import commands.mesh.remesh : Remesh, RemeshStart, RemeshOpen;
 import forms_render;
 import layer_params   : LayerPropsProvider;
-import document       : Layer;
+import vibe3d.documents.model.document       : Layer;
 import snap           : ItemSnapFrame;
 import viewport : LayoutPreset;
 
 // Locally-scoped in app.d's main() (not top-level there), but EditorApp is a
 // module-scope struct so these three need to be top-level here (0415).
-import document       : Document;
+import vibe3d.documents.model.document       : Document;
 import command_history : CommandHistory, RecordMode;
 import viewport        : ViewportManager;
 
@@ -522,9 +522,9 @@ void installSnapState(EditorApp app)
     // Install item snap frames (Stage 3).
     {
         import snap             : setItemSnapFrames;
-        import toolpipe.packets : SnapType;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
         import toolpipe.stages.snap : liveSnapStage;
-        import document         : kindInfo;
+        import vibe3d.documents.model.document         : kindInfo;
 
         // Does anything downstream read the BOX half of these frames this
         // frame? Only `snapCursor`'s `SnapType.Box` branch does, so the bit is

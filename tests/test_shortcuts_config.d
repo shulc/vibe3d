@@ -4,7 +4,7 @@
 // app main loop. This pins the config/parser layer instead: normal config uses
 // Ctrl+Q, while macOS UI config uses Cmd+Q.
 
-import shortcuts;
+import vibe3d.platform.input.shortcuts;
 import std.conv : to;
 import bindbc.sdl : SDL_Keymod, SDLK_ESCAPE, SDLK_BACKSPACE, SDLK_DELETE, SDLK_p,
                    KMOD_LSHIFT, KMOD_LGUI;

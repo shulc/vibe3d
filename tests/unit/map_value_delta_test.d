@@ -18,14 +18,14 @@
 // across the step, never an absolute.
 // ===========================================================================
 module tests.unit.map_value_delta_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.algorithm.searching : canFind;
 import std.format : format;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
-import mesh_edit_delta;
+import vibe3d.mesh.edit_log.mesh_edit_delta;
 import vibe3d.mesh.change.change_bus : changeBus;
 import http_json : meshPlanesJson;
 import tests.unit.fixtures : makeTaggedGridMaps;

@@ -27,16 +27,16 @@
 // isolation.
 module tests.unit.mesh_thicken_surface_test;
 
-import mesh;
-import mesh_ops.bridge : kBridgeEditScope;
-import mesh_ops.thicken : thickenSurface;
-static import mesh_ops.thicken;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.bridge : kBridgeEditScope;
+import vibe3d.mesh.ops.mesh_ops.thicken : thickenSurface;
+static import vibe3d.mesh.ops.mesh_ops.thicken;
 import math : Vec3;
 import tests.unit.mesh_by_value_gate;
 
 // The seam's compile-time gate: no function in the extracted kernel module may
 // take a `Mesh` by VALUE. The shared gate carries its own positive control.
-mixin MeshByValueGate!(mesh_ops.thicken);
+mixin MeshByValueGate!(vibe3d.mesh.ops.mesh_ops.thicken);
 
 // Helper: count undirected edges shared by exactly one face.
 version (unittest) private size_t countOpenEdges(ref Mesh m) {

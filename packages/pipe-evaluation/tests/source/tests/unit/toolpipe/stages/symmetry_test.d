@@ -5,11 +5,11 @@ module tests.unit.toolpipe.stages.symmetry_test;
 
 import std.format : format;
 import math    : Vec3, dot;
-import mesh    : Mesh;
+import vibe3d.mesh.core.mesh    : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordSymm;
-import toolpipe.packets  : SymmetryPacket, SymmetryConfig;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SymmetryPacket, SymmetryConfig;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath;
 import symmetry          : rebuildPairing, rebuildPairingTopological;
 import vibe3d.editing.params.params            : Param, IntEnumEntry;
@@ -103,10 +103,10 @@ unittest { // One symmetry config, with one named behaviour-preserving exception
 // the scripted `/api/transform` path (which DOES bump mutationVersion).
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import vibe3d.mesh.change.change_bus : MeshEditScope;
     import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
     Mesh cube = makeCube();
     Mesh* meshPtr = &cube;

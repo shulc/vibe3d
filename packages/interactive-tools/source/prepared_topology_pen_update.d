@@ -1,7 +1,7 @@
 module prepared_topology_pen_update;
 
 import core.atomic : atomicOp;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedTopologyPenUpdateKind;
 import tools.edit.topology_pen.tool : TopologyPenTool,
     PreparedTopologyPenUpdateImage;

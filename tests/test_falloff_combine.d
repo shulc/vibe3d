@@ -25,9 +25,9 @@ import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, aimSpace, ModelSpace;
 import toolpipe.pipeline : Pipeline;
 import toolpipe.stages.falloff : FalloffStage;
-import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
                           SubjectPacket;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import falloff : evaluateFalloff;
 
 void main() {}

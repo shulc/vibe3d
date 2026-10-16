@@ -17,14 +17,14 @@ import vibe3d.editing.contracts.editmode : EditMode;
 import history_macro_registration : registerHistoryCommands;
 import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
 import macro_recorder : MacroRecorder;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import vibe3d.editing.params.params : Param, injectParamsInto;
 import registry : Registry;
 import session_owner : Session;
 import tool : Tool;
 import ui.history_panel : HistoryPanelActions, HistoryPanelController,
     HistoryPanelState, bindHistoryPanelActions;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
     "..", "..", "..", "..");

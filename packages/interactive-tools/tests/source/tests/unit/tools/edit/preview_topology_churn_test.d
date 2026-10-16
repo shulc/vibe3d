@@ -39,7 +39,7 @@
 module tests.unit.tools.edit.preview_topology_churn_test;
 
 import subpatch_preview : SubpatchPreview;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math : Vec3;
 import vibe3d.editing.contracts.editmode : EditMode;
@@ -89,7 +89,7 @@ private final class Rig {
         // and `release`. Opened LAST, so the `resize*` publishers above
         // deliver and zero exactly as they always did; what the batch has to
         // hold is the EDITS the blocks below make.
-        import mesh : beginDeliveryBatchGlobal;
+        import vibe3d.mesh.core.mesh : beginDeliveryBatchGlobal;
         beginDeliveryBatchGlobal();
     }
 
@@ -140,7 +140,7 @@ private final class Rig {
     /// class — that only happens when the batch is gone and the publishers'
     /// own deliveries have taken every word.
     void release() {
-        import mesh : endDeliveryBatchGlobal;
+        import vibe3d.mesh.core.mesh : endDeliveryBatchGlobal;
         endDeliveryBatchGlobal();
         assert(fedNonEmpty > 0,
             "RIG: not one frame handed the epoch table a non-empty change "
@@ -650,7 +650,7 @@ unittest {
 unittest {
     import commands.tool.do_apply : ToolDoApplyCommand;
     import commands.tool.host : ToolHost;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     auto rig = new Rig(subdividedCube(), EditMode.Polygons);
     scope(exit) rig.release();
     rig.mesh.selectFace(0);

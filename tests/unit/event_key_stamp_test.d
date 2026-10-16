@@ -1,7 +1,7 @@
 module tests.unit.event_key_stamp_test;
 
 import bindbc.sdl;
-import eventlog : EventLogger, parseEventLog, setEventPlayerClockForTest,
+import vibe3d.platform.input.eventlog : EventLogger, parseEventLog, setEventPlayerClockForTest,
     clearEventPlayerControlsForTest;
 import std.file : readText, remove, tempDir;
 import std.conv : to;

@@ -234,7 +234,7 @@ unittest { // frame-driven consumers are explicit and panel-independent
 unittest { // production legacy schemas cannot produce a mixed-source batch
     import property_panel : PropertyPanel;
     import tests.unit.ui.headless_panel : openPanel;
-    import toolpipe.packets : FalloffType;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType;
     import toolpipe.stages.axis : AxisStage;
     import toolpipe.stages.falloff : FalloffStage;
 

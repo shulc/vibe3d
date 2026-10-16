@@ -63,7 +63,7 @@ module ui.channel_rows;
 // provider each frame, which is what makes the memo sound.
 // ---------------------------------------------------------------------------
 
-import document     : Document, Layer, ItemKind, kindInfo;
+import vibe3d.documents.model.document     : Document, Layer, ItemKind, kindInfo;
 import layer_params : LayerPropsProvider;
 import vibe3d.editing.params.params       : Param, ParamProvider;
 import forms        : Form, Row, RowKind, WidgetKind, widgetForKind;

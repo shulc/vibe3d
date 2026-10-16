@@ -4,14 +4,14 @@ import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
 
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
 import tools.topology_step;
 import command : Command;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import mesh_ops.poly_bevel;
+import vibe3d.mesh.ops.mesh_ops.poly_bevel;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.editing.contracts.editmode : EditMode;
@@ -21,7 +21,7 @@ import value_drag : ValueDrag, insetValueDragLaw;
 import overlay_space : OverlaySpace;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
     PreviewRebuildCounts;
@@ -35,7 +35,7 @@ import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedPolyInsetParamEffect,
     PreparedPolyInsetParamKind;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import mesh_gpu : GpuUploadOwner;
 import core.stdc.string : memcmp;
 

@@ -2,13 +2,13 @@ module prepared_loop_slice_activation_source_cells;
 
 import prepared_loop_slice_activation;
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.slice.loop_slice_tool : LoopSliceTool, PreparedLoopSliceActivationImage;
 
 unittest {
     import command_history : CommandHistory;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
     import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind;

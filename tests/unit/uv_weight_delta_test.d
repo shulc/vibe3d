@@ -59,17 +59,17 @@
 // cell, in isolation.
 // ===========================================================================
 module tests.unit.uv_weight_delta_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.format : format;
 import std.json   : parseJSON;
 
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.mesh.change.change_bus : changeBus;
 import http_json  : meshPlanesJson, PlaneDumpMeta;
-import mesh_edit_delta : MeshOpEntry;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshOpEntry;
 
 import command;
 import commands.mesh.weightmap    : WeightmapCreate, WeightmapRemove,

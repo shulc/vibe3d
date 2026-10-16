@@ -1,8 +1,8 @@
 module prepared_selection_profile;
 
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.common.session_mesh_key : SessionMeshKey;
 import tools.alignment.radial_sweep_tool : RadialSweepTool;
 public import prepared_selection_profile_image : RadialSweepProfileImage;

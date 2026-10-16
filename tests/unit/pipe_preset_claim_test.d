@@ -14,7 +14,7 @@ import toolpipe.pipeline : Pipeline, noteUserStageChoice;
 import toolpipe.stage : PresetClaimable;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Pin;
-import toolpipe.packets : FalloffConfig, FalloffShape, FalloffType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffConfig, FalloffShape, FalloffType;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
 import toolpipe.stages.constrain : ConstrainStage;

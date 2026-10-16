@@ -6,7 +6,7 @@ module tests.unit.overlay_space_test;
 import std.math : sqrt, isNaN;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : ModelSpace;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import overlay_space;
 
 unittest { // Identity is byte-identical — the accessor does not round-trip a matrix.

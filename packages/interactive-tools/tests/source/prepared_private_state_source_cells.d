@@ -19,13 +19,13 @@ import tools.alignment.array_tool : ArrayTool;
 import tools.alignment.clone_tool : CloneTool;
 import tools.deform.magnet : MagnetTool;
 import tools.edit.reduce : ReductionTool;
-import snapshot : MeshSnapshot;
-import mesh : Mesh;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.core.mesh : Mesh;
 
 unittest {
     import command_history : CommandHistory;
     import commands.mesh.session_edit : MeshSessionEdit;
-    import document : Layer;
+    import vibe3d.documents.model.document : Layer;
     import vibe3d.editing.contracts.editmode : EditMode;
     import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuUploadOwner, GpuResourceOwner;
@@ -34,7 +34,7 @@ unittest {
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
     import snap_render : SnapOverlayOwner;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     auto layer = new Layer; GpuMesh gpu;
     auto sphere = new SphereTool(() => &layer.meshRef(), &gpu, LitShader.init);

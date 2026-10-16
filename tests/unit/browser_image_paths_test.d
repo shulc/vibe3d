@@ -20,15 +20,15 @@ import std.process : thisProcessID;
 import command : g_testMode;
 import commands.file.save : FileSave, FileSaveMode;
 import commands.image.commands : ImageLoad;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import vibe3d.editing.contracts.editmode : EditMode;
 import io.browser_pick_resume : setWorkRootForTest;
 import io.doc_state : clearCurrentDoc, currentDocPath, hasCurrentDoc;
 import io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
 import io.image_path : firstCollidingImageName, imageCollisionReadsForTest,
                        resolveStoredPath, storePathFor, writeTestBmp;
-import mesh : makeCube;
-import view : View;
+import vibe3d.mesh.core.mesh : makeCube;
+import vibe3d.viewport.camera.view : View;
 
 private string freshRoot(string tag) {
     auto r = buildPath(tempDir(), format("vibe3d_7430_%s_%d", tag, thisProcessID()));

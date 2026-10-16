@@ -1,11 +1,11 @@
 module tests.unit.commands.layer.commands_source_public_test;
 
-import document : Document, Layer, ItemKind;
+import vibe3d.documents.model.document : Document, Layer, ItemKind;
 import commands.layer.commands : layerDeleteButtonState;
 import vibe3d.editing.contracts.seltype : SelMode;
 
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     auto doc = Document.bootstrap(makeCube());
     auto meshA = doc.layers[0];
@@ -42,7 +42,7 @@ unittest {
 }
 
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     auto doc = Document.bootstrap(makeCube());
     auto meshA = doc.layers[0];

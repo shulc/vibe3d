@@ -38,11 +38,11 @@
 // correspondence. "Redo is byte-exact" is a property of THESE STANDS, not of
 // the mechanism; the mechanism's redo remainder is recorded in the task card.
 module tests.unit.mesh_edit_delta_face_reindex_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
-import mesh;
-import mesh_planes;
-import mesh_edit_delta;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.core.mesh_planes;
+import vibe3d.mesh.edit_log.mesh_edit_delta;
 import math : Vec3;
 import core.exception : AssertError;
 import std.format : format;

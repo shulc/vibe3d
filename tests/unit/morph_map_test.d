@@ -16,8 +16,8 @@ import std.math   : abs;
 import std.format : format;
 
 import math       : Vec3;
-import mesh       : MapKind;
-import mesh_morph : morphApply, morphRoutedStore;
+import vibe3d.mesh.core.mesh       : MapKind;
+import vibe3d.mesh.core.mesh_morph : morphApply, morphRoutedStore;
 
 // ---------------------------------------------------------------------------
 // Fixture plumbing

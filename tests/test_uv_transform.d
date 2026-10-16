@@ -29,8 +29,8 @@ import std.format : format;
 import std.json   : parseJSON, JSONType, JSONValue;
 import std.conv   : to;
 
-import mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
-import view       : View;
+import vibe3d.mesh.core.mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
+import vibe3d.viewport.camera.view       : View;
 import vibe3d.editing.contracts.editmode   : EditMode;
 import commands.mesh.uv_transform;
 import std.net.curl : post, get;
@@ -181,7 +181,7 @@ unittest {
 // the unit point).
 // ---------------------------------------------------------------------------
 unittest {
-    import uv_transform : makeFlipU, applyUvAffine, UvAffine;
+    import vibe3d.mesh.ops.uv_transform : makeFlipU, applyUvAffine, UvAffine;
 
     // --- centroid result ---
     auto m = makeCubeWithUv();

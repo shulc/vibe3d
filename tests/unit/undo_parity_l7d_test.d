@@ -65,8 +65,8 @@ import std.format : format;
 
 import vibe3d.mesh.change.change_bus : changeBus;
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import http_json : meshPlanesJson, PlaneDumpMeta;
 

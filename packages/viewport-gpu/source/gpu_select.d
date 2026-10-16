@@ -5,7 +5,7 @@ import std.string : toStringz;
 
 import math : matMul4;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_gpu : GpuMesh, kFaceStride;
 import shader : compileShader;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc, DrawPass;

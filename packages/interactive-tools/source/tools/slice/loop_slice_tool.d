@@ -4,11 +4,11 @@ import display_state : DrawPlan;
 import bindbc.sdl;
 import std.json : JSONValue;
 import std.algorithm : clamp, max, min, sort;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
 import tools.common.session_mesh_key : SessionMeshKey;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : Viewport, screenPointToRay;
@@ -18,7 +18,7 @@ import vibe3d.util.spatial.spatial : Viewport, screenPointToRay;
 // `bandFaces` branch, source/mesh_ops/loop_slice.d), not re-derive it.
 // `mesh.d` also imports these (privately, for its own mixin) but a private
 // import is not transitive, so this tool needs its own.
-import mesh_ops.loop_slice : MAX_LOOP_SLICE_COUNT, bandWalk, BandCell, loopSliceRingEdges,
+import vibe3d.mesh.ops.mesh_ops.loop_slice : MAX_LOOP_SLICE_COUNT, bandWalk, BandCell, loopSliceRingEdges,
     collectEdgeRing, insertEdgeLoopsMulti, kLoopSliceEditScope;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.params.params : Param, IntEnumEntry, wireTagForValue;
@@ -26,10 +26,10 @@ import hover_state : g_hoveredEdge, hoverAtPress;
 import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import selection_product : addNewLoopEdgesAndVerts;
 import display_sync : refreshDisplay;
-import document : Layer, primaryModelSpace;
+import vibe3d.documents.model.document : Layer, primaryModelSpace;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
@@ -41,7 +41,7 @@ import prepared_loop_slice_activation : PreparedLoopSliceActivationOwner;
 import prepared_loop_slice_deactivate : PreparedLoopSliceDeactivateOwner;
 import prepared_param_update : PreparedParamUpdateOwner, PreparedParamUpdateProducer;
 import mesh_gpu : GpuUploadOwner;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
 struct PreparedLoopSliceActivationImage {
     MeshSnapshot before;

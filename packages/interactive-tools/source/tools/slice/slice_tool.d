@@ -10,9 +10,9 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the RMB gap HUD (task 0288)
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import mesh_ops.cut;
+import vibe3d.mesh.ops.mesh_ops.cut;
 import math;
 import vibe3d.util.spatial.spatial : ModelSpace, Viewport, projectToWindowFull, screenPointToRay;
 import vibe3d.editing.contracts.editmode : EditMode;
@@ -20,13 +20,13 @@ import vibe3d.editing.params.params : Param, IntEnumEntry, wireTagForValue;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
-import operator : VectorStack;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import display_sync : refreshDisplay;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import handler : BoxHandler, FullCircleHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment, drawWorldQuad;
 import viewport_scheme : schemeColor, SchemeColor;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import tools.create.create_common : primitivePlacementFrame, pickWorkplaneFrame, WorkplaneFrame;
 // Reuse MoveTool's dominant-axis selector for the Ctrl axis-constraint (task
 // 0286): the SAME screen-direction → world-axis math the Move gizmo's Ctrl lock
@@ -43,8 +43,8 @@ import prepared_param_update : PreparedParamUpdateOwner, PreparedParamUpdateProd
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedSliceParamEffect, PreparedSliceParamKind;
 import mesh_gpu : GpuUploadOwner;
 import command_history : PreparedHistoryKind;
-import document : Layer;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import tools.common.session_mesh_key : SessionMeshKey;
 import toolpipe.stages.snap : liveSnapStage, snappingOn;
 import toolpipe.guide : SnapGuide;

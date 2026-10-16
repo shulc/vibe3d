@@ -14,26 +14,26 @@
   "importPaths": [],
   "dflags": [],
   "dependencies": {
-    "vibe3d-mesh": {
-      "path": "../../packages/mesh"
+    "vibe3d:mesh": {
+      "path": "../.."
     },
     "vibe3d:mesh-change": {
       "path": "../.."
     },
-    "vibe3d-mesh-edit-log": {
-      "path": "../../packages/mesh-edit-log"
+    "vibe3d:mesh-edit-log": {
+      "path": "../.."
     },
-    "vibe3d-mesh-edit-replay": {
-      "path": "../../packages/mesh-edit-replay"
+    "vibe3d:mesh-edit-replay": {
+      "path": "../.."
     },
-    "vibe3d-mesh-snapshot": {
-      "path": "../../packages/mesh-snapshot"
+    "vibe3d:mesh-snapshot": {
+      "path": "../.."
     },
     "vibe3d:edit-contracts": {
       "path": "../.."
     },
-    "vibe3d-mesh-topology": {
-      "path": "../../packages/mesh-topology"
+    "vibe3d:mesh-topology": {
+      "path": "../.."
     },
     "vibe3d:math": {
       "path": "../.."
@@ -41,14 +41,14 @@
     "vibe3d:spatial": {
       "path": "../.."
     },
-    "vibe3d-pipe-contracts": {
-      "path": "../../packages/pipe-contracts"
+    "vibe3d:pipe-contracts": {
+      "path": "../.."
     },
-    "vibe3d-mesh-preview": {
-      "path": "../../packages/mesh-preview"
+    "vibe3d:mesh-preview": {
+      "path": "../.."
     },
-    "vibe3d-document-model": {
-      "path": "../../packages/document-model"
+    "vibe3d:document-model": {
+      "path": "../.."
     },
     "vibe3d-pipe-runtime": {
       "path": "../../packages/pipe-runtime"
@@ -71,7 +71,7 @@
     {
       "name": "core",
       "subConfigurations": {
-        "vibe3d-document-model": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d-pipe-runtime": "isolated-tests",
         "vibe3d:param-schema": "isolated-tests"
@@ -79,17 +79,17 @@
     }
   ],
   "subConfigurations": {
-    "vibe3d-mesh": "isolated-tests",
+    "vibe3d:mesh": "isolated-tests",
     "vibe3d:mesh-change": "isolated-tests",
-    "vibe3d-mesh-edit-log": "isolated-tests",
-    "vibe3d-mesh-edit-replay": "isolated-tests",
-    "vibe3d-mesh-snapshot": "isolated-tests",
+    "vibe3d:mesh-edit-log": "isolated-tests",
+    "vibe3d:mesh-edit-replay": "isolated-tests",
+    "vibe3d:mesh-snapshot": "isolated-tests",
     "vibe3d:edit-contracts": "isolated-tests",
-    "vibe3d-mesh-topology": "isolated-tests",
+    "vibe3d:mesh-topology": "isolated-tests",
     "vibe3d:math": "isolated-tests",
     "vibe3d:spatial": "isolated-tests",
-    "vibe3d-pipe-contracts": "isolated-tests",
-    "vibe3d-mesh-preview": "isolated-tests",
+    "vibe3d:pipe-contracts": "isolated-tests",
+    "vibe3d:mesh-preview": "isolated-tests",
     "vibe3d-command-runtime": "isolated-tests",
     "vibe3d-application-core": "isolated-tests"
   }

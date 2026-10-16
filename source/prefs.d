@@ -81,7 +81,7 @@ private immutable RenamedAttr[] kRenamedAttrs = [
 /// The single weld float (0 = off) as `merge`, `dist` through `CloneWeld.fromLegacy`.
 private string[] legacyWeldAttrs(string value) {
     import std.conv : to;
-    import mesh : CloneWeld;
+    import vibe3d.mesh.core.mesh : CloneWeld;
     import vibe3d.editing.params.params : fmtFloatWire;
     try {
         const weld = CloneWeld.fromLegacy(value.to!float);

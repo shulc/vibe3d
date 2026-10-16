@@ -5,9 +5,9 @@ import bindbc.sdl;
 import std.math : atan2, abs, PI;
 import std.json : JSONValue;
 
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : Viewport, screenPointToLocalRay;
@@ -15,11 +15,11 @@ import vibe3d.mesh.change.change_bus : MeshEditScope;
 import vibe3d.editing.params.params : Param;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import shader : Shader, LitShader, drawLitPreview;
 import hover_state : g_hoveredFace, hoverAtPress;
-import eventlog : queryMouse;
-import document : Layer, primaryModelSpace;
+import vibe3d.platform.input.eventlog : queryMouse;
+import vibe3d.documents.model.document : Layer, primaryModelSpace;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
     PreparedSessionActivateEffect, PreparedActivateKind;

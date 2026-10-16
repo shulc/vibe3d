@@ -4,11 +4,11 @@ import prepared_record_context : PreparedToolParamDoorClient,
     PreparedGpuParamDoorClient;
 
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
 import tools.topology_step;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : ModelSpace, Viewport, screenPointToLocalRay, screenPointToRay;
@@ -18,12 +18,12 @@ import handler : Arrow, BoxHandler, ToolHandles, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import overlay_space : OverlaySpace;
 import drag : screenAxisDelta, gesturePrevPixel;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import command : Command;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.create.create_common : screenToPlacementWorld;
 
@@ -34,7 +34,7 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedRadialArrayEffect, PreparedRadialArrayKind;
 import prepared_radial_array_transition : PreparedRadialArrayTransitionOwner;
 import command_history : PreparedHistoryKind;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import mesh_gpu : GpuUploadOwner;
 import core.stdc.string : memcmp;
 
@@ -553,7 +553,7 @@ public:
         // this tool's own pair. `lastMX/MY` stay written as the fallback when
         // no gesture is published and as the other half of the debug agreement
         // check.
-        import toolpipe.packets : GesturePacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : GesturePacket;
         int prevMX, prevMY;
         gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
                          lastMX, lastMY, prevMX, prevMY);

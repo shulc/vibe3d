@@ -18,7 +18,7 @@ import http_command_adapter : AutomationResetContext, AutomationResetHook,
     CommandHttpAdapter;
 import http_providers : HistoryHttpAdapter;
 import http_server : BridgeResultKind, HttpServer;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import vibe3d.editing.params.params : Param, wireArgs;
 import vibe3d.util.profiling.perf_probe : g_commandGc;
 import pipe_gizmo_host : PipeGizmoHost;
@@ -38,7 +38,7 @@ import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
 import tool : Tool;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private size_t resetUiCalls;
 private size_t clearTraceCalls;

@@ -22,7 +22,7 @@ import command_history : CommandHistory, PreparedHistoryKind,
                          PreparedHistoryResult, PreparedHistoryToken,
                          ValidatedPreparedHistoryToken;
 import record_observer_hub : RecordObserverHub;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_gpu : GpuResourceOwner, GpuUploadOwner, GpuCreateOwner,
                   GpuCreateUploadOwner;
 import handler : ClickPointResourceOwner, BoxHandlerBatchResourceOwner;
@@ -77,8 +77,8 @@ import prepared_box_param : PreparedBoxParamOwner;
 import registry : PreparedPipeAttrs;
 import toolpipe.pipeline : Pipeline;
 import pipe_gizmo_host : PipeGizmoHost;
-import document : Layer;
-import operator : VectorStack;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import vibe3d.mesh.change.change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
 
@@ -1838,7 +1838,7 @@ public:
 
 
 version (unittest) unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import handler : ClickPointHandler, ClickPointResourceOwner;
     import vibe3d.mesh.change.change_bus : changeBus;
@@ -2062,7 +2062,7 @@ version (unittest) unittest {
     import toolpipe.stages.axis : AxisStage;
     import toolpipe.stages.constrain : ConstrainStage;
     import toolpipe.stages.falloff : FalloffStage;
-    import toolpipe.packets : FalloffType;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType;
     Pipeline pipe;
     auto pipeAcen = new ActionCenterStage(null, null);
     auto pipeAxis = new AxisStage();

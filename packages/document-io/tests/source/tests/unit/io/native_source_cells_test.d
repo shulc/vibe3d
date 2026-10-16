@@ -6,15 +6,15 @@ import std.json;
 import std.conv;
 import std.format;
 import std.algorithm;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import vibe3d.util.spatial.spatial;
-import document;
+import vibe3d.documents.model.document;
 import layer_params;
 import vibe3d.editing.params.params;
 import io.image_path;
 import vibe3d.editing.contracts.seltype;
-import mesh_selsets;
+import vibe3d.mesh.core.mesh_selsets;
 
 // ===========================================================================
 // Task 0616 Ph6 — the v8 additions, enumerated. Each block names the wrong
@@ -30,7 +30,7 @@ version (unittest) {
     import std.file       : tempDir, mkdirRecurse, rmdirRecurse, readText;
     import std.path       : buildPath, dirName, buildNormalizedPath;
     import io.image_path  : writeTestBmp;
-    import document       : LinkState;
+    import vibe3d.documents.model.document       : LinkState;
 
     /// A wiped scratch directory for one `.v3d` codec test. Wiped, not merely
     /// created: a file left behind by a previous run — including a DELIBERATE
@@ -81,7 +81,7 @@ version (unittest) {
 // file that really does still exist, so only the dimensions separate the two.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     auto root = v3dTestDir("clips");
     auto dirA = buildPath(root, "A");
@@ -190,7 +190,7 @@ unittest {
 //       the list's and not the insertion history's.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     auto root = v3dTestDir("links");
     auto path = buildPath(root, "scene.v3d");
@@ -285,7 +285,7 @@ unittest {
 // read `Unset` while having silently re-pointed something else.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     auto root = v3dTestDir("dangling");
     auto path = buildPath(root, "scene.v3d");
@@ -419,7 +419,7 @@ unittest {
         ~ `{"type":"empty","selected":false,"channels":{"name":"E"}}`
         ~ `]}`);
 
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     auto live = Document.bootstrap(makeCube());
     live.layers[0].name = "keepme";
     auto priorPrimary = live.primary;
@@ -452,7 +452,7 @@ unittest {
 // function.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     auto root = v3dTestDir("bad_channel");
     writeTestBmp(buildPath(root, "one.bmp"), 3, 2);
@@ -528,7 +528,7 @@ unittest {
 // reader's own `readV3d: path=…/vibe3d_v3d8_…` info line.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import std.algorithm : canFind;
 
     auto root = v3dTestDir("version_gate");
@@ -630,7 +630,7 @@ unittest {
 // length check. Both halves are exercised — one fixture per half.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     auto root = v3dTestDir("emit_every_item");
     writeTestBmp(buildPath(root, "clip.bmp"), 3, 2);
@@ -716,7 +716,7 @@ unittest {
 // default, not a blank and not the bad tag.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     auto root = v3dTestDir("bad_live_channel");
     writeTestBmp(buildPath(root, "clip.bmp"), 3, 2);

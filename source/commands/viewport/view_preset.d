@@ -2,9 +2,9 @@ module commands.viewport.view_preset;
 
 import command;
 import commands.viewport.command_base : ViewportCommand;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.contracts.editmode;
-import view;
+import vibe3d.viewport.camera.view;
 import viewport : ViewportManager;
 import vibe3d.editing.params.params : Param, wireArgs;
 
@@ -38,7 +38,7 @@ final class ViewportViewPreset : ViewportCommand {
     }
 
     protected override bool applyImpl() {
-        import view     : ProjKind, ViewPreset;
+        import vibe3d.viewport.camera.view     : ProjKind, ViewPreset;
         import viewport : applyCellViewPreset;
 
         // projKind is derived from the preset by the shared helper

@@ -693,7 +693,7 @@ version (PerfProbe) {
     }
 
     unittest { // SP3 refusal paths: GL-free, no timer sample
-        import mesh : Mesh, makeCube;
+        import vibe3d.mesh.core.mesh : Mesh, makeCube;
         import mesh_gpu : GpuMesh;
         g_perf.reset();
         Mesh cube = makeCube();
@@ -713,7 +713,7 @@ version (PerfProbe) {
     unittest { // SP3 positive cells on a real hidden GL 3.3 context (the frame_runner_finish_test rig)
         import bindbc.opengl;
         import bindbc.sdl;
-        import mesh : Mesh, makeCube;
+        import vibe3d.mesh.core.mesh : Mesh, makeCube;
         import mesh_gpu : GpuMesh;
         import std.conv : to;
         import std.process : environment;

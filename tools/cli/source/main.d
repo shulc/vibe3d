@@ -1,7 +1,7 @@
 module main;
 
 import command_invocation : CommandInvocationOutcome;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import vibe3d.util.log.log : g_stderrMinLevel, LogLevel;
 import io.native : readV3d, writeV3d, lastV3dRejectReason;
 import standalone_application : StandaloneApplication;

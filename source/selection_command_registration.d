@@ -24,8 +24,8 @@ import commands.select.type_from : SelectTypeFromCommand;
 import vibe3d.editing.contracts.editmode : EditMode;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import registry : Registry;
-import mesh : Mesh;
-import view : View;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.viewport.camera.view : View;
 import pilot_command_registration : PilotCommandDeps, registerElementSelectionCommand,
     registerDropSelectionCommand, registerInvertSelectionCommand;
 

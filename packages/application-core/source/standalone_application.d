@@ -1,6 +1,6 @@
 module standalone_application;
 
-import active_mesh_resolver : activeMeshResolver;
+import vibe3d.mesh.preview.active_mesh_resolver : activeMeshResolver;
 import vibe3d.mesh.change.change_bus : changeBus, ChangeBus, MeshChangeAll;
 import command : CommandOrigin, g_editTargetResolver;
 import command_executor : CommandExecutor;
@@ -8,10 +8,10 @@ import command_history : CommandHistory, HistoryEntry;
 import command_invocation : CommandInvocationService, CommandInvocationContext,
     CommandInvocationResult;
 import command_registry : CommandRegistry;
-import document : Document, primaryModelSpaceResolver;
+import vibe3d.documents.model.document : Document, primaryModelSpaceResolver;
 import http_json : meshPlanesJson;
 import vibe3d.util.spatial.spatial : ModelSpace, Viewport;
-import mesh : Mesh, g_isDocumentMesh;
+import vibe3d.mesh.core.mesh : Mesh, g_isDocumentMesh;
 import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
 import pilot_command_registration : PilotCommandDeps, registerTripleCommand,
     registerMeshSelectionCommand, registerHistoryNavigationCommands,
@@ -19,7 +19,7 @@ import pilot_command_registration : PilotCommandDeps, registerTripleCommand,
 import session_owner : Session;
 import std.conv : to;
 import std.json : JSONValue, parseJSON;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 // A stable owner lends the same registry to factories and dispatch. Observation
 // happens after invocation returns; disposal restores borrowed process globals.

@@ -4,10 +4,10 @@ import bindbc.opengl;
 import std.string : toStringz;
 
 
-import view;
+import vibe3d.viewport.camera.view;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
-import mesh : Surface, MarkView, kSurfaceSlots;
+import vibe3d.mesh.core.mesh : Surface, MarkView, kSurfaceSlots;
 import mesh_gpu : GpuMesh, FacePass;
 version (web) {
 } else {

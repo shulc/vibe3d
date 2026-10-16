@@ -23,7 +23,7 @@ import command : Command;
 import command_history : RecordMode;
 import vibe3d.editing.contracts.editmode : EditMode;
 import io.formats : FilterSpec;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import ui.discard_guard : UiRunOutcome;
 
 // ---------------------------------------------------------------------------

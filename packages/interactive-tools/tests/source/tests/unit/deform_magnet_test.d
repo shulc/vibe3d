@@ -3,11 +3,11 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.deform_magnet_test;
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace, ModelSpace;
 import falloff : evaluateFalloff;
-import toolpipe.packets : FalloffPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
 import deform_magnet;
 
 // ---------------------------------------------------------------------------
@@ -33,8 +33,8 @@ import deform_magnet;
 //   v7 moved along direction (1, 0, 1) — differs ↑ proves convergent not parallel
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
-    import toolpipe.packets : FalloffType, FalloffShape, ElementConnect;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType, FalloffShape, ElementConnect;
     import std.math : abs;
 
     Mesh m = makeCube();

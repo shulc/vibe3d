@@ -3,7 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.ui.channel_rows_test;
 
-import document     : Document, Layer, ItemKind, kindInfo;
+import vibe3d.documents.model.document     : Document, Layer, ItemKind, kindInfo;
 import layer_params : LayerPropsProvider, itemPropsTarget;
 import vibe3d.editing.params.params       : Param, ParamProvider;
 import forms        : Form, Row, RowKind, WidgetKind, widgetForKind;
@@ -50,8 +50,8 @@ private ChannelsModel modelFor(ref Document doc) {
 // than 1, every plane row is absent, and `channelCount` reads 14, not 24.
 // ---------------------------------------------------------------------------
 unittest {
-    import document : Document, ImagePlaneData;
-    import mesh     : makeCube;
+    import vibe3d.documents.model.document : Document, ImagePlaneData;
+    import vibe3d.mesh.core.mesh     : makeCube;
     import vibe3d.editing.contracts.seltype  : SelMode;
     import forms    : resolveControl;
 
@@ -139,8 +139,8 @@ unittest {
 // divider + "Mesh" label with nothing under it.
 // ---------------------------------------------------------------------------
 unittest {
-    import document : Document;
-    import mesh     : makeCube;
+    import vibe3d.documents.model.document : Document;
+    import vibe3d.mesh.core.mesh     : makeCube;
 
     auto doc = Document.bootstrap(makeCube());
     doc.layers[0].name = "just a mesh";
@@ -194,8 +194,8 @@ unittest {
 // are here rather than trusted to the count.
 // ---------------------------------------------------------------------------
 unittest {
-    import document : Document, ImageData, ImagePlaneData;
-    import mesh     : makeCube;
+    import vibe3d.documents.model.document : Document, ImageData, ImagePlaneData;
+    import vibe3d.mesh.core.mesh     : makeCube;
 
     static Layer mk(ItemKind k, string n) {
         auto l = new Layer;
@@ -305,7 +305,7 @@ unittest {
 // the grey-out exists to prevent.
 // ---------------------------------------------------------------------------
 unittest {
-    import document : ImageData;
+    import vibe3d.documents.model.document : ImageData;
 
     auto img = new Layer;
     img.name = "logo";
@@ -359,8 +359,8 @@ unittest {
 // is task 0612's hole re-created inside the fix for it.
 // ---------------------------------------------------------------------------
 unittest {
-    import document : Document, ImagePlaneData;
-    import mesh     : makeCube;
+    import vibe3d.documents.model.document : Document, ImagePlaneData;
+    import vibe3d.mesh.core.mesh     : makeCube;
     import vibe3d.editing.contracts.seltype  : SelMode;
 
     auto doc = Document.bootstrap(makeCube());
@@ -397,7 +397,7 @@ unittest {
 }
 
 unittest { // 6358: the header name is the item's live name, with one fallback
-    import document : Layer;
+    import vibe3d.documents.model.document : Layer;
     auto l = new Layer;
     l.name = "Named";
     assert(channelsHeaderName(l) == "Named", "6358 header name: a named item lost its name");

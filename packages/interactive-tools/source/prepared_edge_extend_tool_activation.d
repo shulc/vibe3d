@@ -1,7 +1,7 @@
 module prepared_edge_extend_tool_activation;
 
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.edit.edge_extend : EdgeExtendTool,
     PreparedEdgeExtendToolActivationImage;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;

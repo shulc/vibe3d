@@ -24,7 +24,7 @@ import std.file      : read, exists, getSize;
 import std.algorithm : min;
 import std.format    : format;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import io.scene_ir;
 import vibe3d.util.log.log : logWarn, logInfo;

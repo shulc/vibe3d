@@ -17,11 +17,11 @@ module tests.unit.primary_memo_delete_test;
 
 unittest {
     import commands.layer.commands : LayerDelete;
-    import document;
+    import vibe3d.documents.model.document;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.editing.contracts.seltype  : SelMode;
     import tests.unit.primary_memo_fixture : layeredDocument;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     auto doc = layeredDocument(8);
 

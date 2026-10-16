@@ -26,21 +26,21 @@
 //   W-d5   redo lands where the first run landed.
 //   W-d11  the counters are BLIND, made explicit.
 module tests.unit.commands.mesh.position_delta_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.format : format;
 import std.math   : isClose;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math      : Vec3;
 import vibe3d.editing.params.params    : Param;
 import http_json : meshPlanesJson;
-import mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
-import operator  : VectorStack;
-import toolpipe.packets : SubjectPacket;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
+import vibe3d.editing.pipeline.contracts.operator  : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 import commands.mesh.position_undo : PositionUndo;
 
 import commands.mesh.smooth        : MeshSmooth;
@@ -421,7 +421,7 @@ unittest {
 // three numbers measured on this stand.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : g_hideDeriveRuns, g_rebuildEdgesRuns, g_buildLoopsRuns;
+    import vibe3d.mesh.core.mesh : g_hideDeriveRuns, g_rebuildEdgesRuns, g_buildLoopsRuns;
 
 
     foreach (cell; cells()) {

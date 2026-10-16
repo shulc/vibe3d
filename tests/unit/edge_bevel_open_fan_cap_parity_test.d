@@ -104,8 +104,8 @@ import std.format : format;
 import std.json;
 import std.math   : sqrt;
 
-import mesh;
-import mesh_ops.edge_bevel;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.edge_bevel;
 import math;
 
 private enum string kFixture = "tests/fixtures/edge_bevel_open_fan_cap.json";

@@ -3,10 +3,10 @@ module ui.viewport_render_plan_test;
 import display_state : DrawPlan;
 import viewport_overlay_mode : OverlayMode;
 import vibe3d.util.spatial.spatial : Viewport;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import shader : Shader;
 import tool : Tool;
-import toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 import ui.viewport_render : ToolOverlayInputs, ViewportSceneRenderer;
 
 private final class PlanCaptureTool : Tool {

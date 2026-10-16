@@ -1,6 +1,6 @@
 module display_sync;
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_gpu : GpuMesh;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 
@@ -26,7 +26,7 @@ import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 // currently rendered, so the gate is the single authority on "is this
 // target the mesh on screen?".
 
-public import active_mesh_resolver : activeMeshResolver;
+public import vibe3d.mesh.preview.active_mesh_resolver : activeMeshResolver;
 
 /// Gated display refresh — shared by the interactive tool paths (drag fills
 /// / previews that own the display mid-gesture) and app.d's mid-batch pull

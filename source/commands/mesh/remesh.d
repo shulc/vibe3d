@@ -15,12 +15,12 @@ import std.algorithm.iteration : map;
 import std.array : array;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
-import view;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
 import vibe3d.editing.params.params : Param;
 import remesh.remesh_job : RemeshJob, RemeshParams,
@@ -61,7 +61,7 @@ final class Remesh : Command, Operator {
     override Param[] params() { return []; } // driven entirely by the job result
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         applied_ = false;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;

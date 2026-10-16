@@ -4,8 +4,8 @@ import std.math : sqrt;
 
 import math : Vec3, dot, cross, normalize, closestOnSegment2D;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
-import mesh : Mesh, edgeKey;
-import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
+import vibe3d.mesh.core.mesh : Mesh, edgeKey;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           HoverTarget, HoverTargetKind, SnapPacket;
 
 // ---------------------------------------------------------------------------

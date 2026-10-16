@@ -5,13 +5,13 @@ import prepared_record_context : PreparedToolParamDoorClient,
 
 import bindbc.opengl;
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import std.math : PI, abs, cos, sin;
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import mesh_ops.revolve;
+import vibe3d.mesh.ops.mesh_ops.revolve;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.editing.contracts.editmode : EditMode;
@@ -19,20 +19,20 @@ import vibe3d.editing.params.params : Param, IntEnumEntry;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import tools.common.session_mesh_key : SessionMeshKey;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import prepared_selection_profile_image : RadialSweepProfileImage;
 import shader : Shader, LitShader, drawLitPreview;
 import handler : ToolHandles, BoxHandler, gizmoSize, drawWorldSegments;
 import drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, gesturePrevPixel;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_radial_sweep_transition : PreparedRadialSweepTransitionOwner;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedRadialSweepEffect, PreparedRadialSweepKind;
 import mesh_gpu : GpuUploadOwner, GpuResourceOwner, GpuCreateUploadOwner;
 import prepared_selection_profile : PreparedSelectionProfileOwner;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import vibe3d.mesh.core.mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import command_history : PreparedHistoryKind;
 
 version (unittest) import std.conv : to;
@@ -1010,7 +1010,7 @@ public:
         // cooked gesture rather than from this tool's own pair. `lastMX/MY`
         // stay written as the fallback when no gesture is published and as
         // the other half of the debug agreement check.
-        import toolpipe.packets : GesturePacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : GesturePacket;
         int prevMX, prevMY;
         gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
                          lastMX, lastMY, prevMX, prevMY);

@@ -2,10 +2,10 @@ module commands.tool.bridge_headless;
 
 import commands.tool.headless : ToolHeadlessCommand;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import registry : ToolFactory;
 import tools.edit.bridge_tool : BridgeTool;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 // Task 20261600: relay the sole Bridge guard result; generic command refusal
 // and invocation-time replacement factories retain their existing contracts.

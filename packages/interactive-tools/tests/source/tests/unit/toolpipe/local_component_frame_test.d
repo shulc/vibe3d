@@ -6,12 +6,12 @@ import std.math : abs;
 import std.format : format;
 import math : Vec3, frameMatrix, frameMatrixInverse;
 import vibe3d.util.spatial.spatial : ModelSpace;
-import mesh : Mesh;
-import document : primaryModelSpaceResolver;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.documents.model.document : primaryModelSpaceResolver;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
-import operator : VectorStack;
-import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
 import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
@@ -108,7 +108,7 @@ unittest {
 unittest { // Partition constructions, cache domains and validated independent service.
     import toolpipe.stages.actcenter : g_acenClusterRebuilds;
     import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
-    import mesh_edit_delta : MeshEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
     Mesh mesh;
     mesh.vertices=[Vec3(0,0,0),Vec3(3,0,0),Vec3(0,1,0),Vec3(-2,0,0),Vec3(0,-1,0),Vec3(8,0,0),Vec3(9,0,0),Vec3(8,1,0)];
     mesh.faces._store=[[0u,1,2],[0u,3,4],[5u,6,7],[2u,5,6]];
@@ -142,7 +142,7 @@ unittest { // Partition constructions, cache domains and validated independent s
 unittest { // All incident normal, planar boundary, failed sum, subject and symmetry admission.
     import toolpipe.stages.axis : localVirtualVertexNormals;
     import toolpipe.stages.symmetry : SymmetryStage;
-    import toolpipe.packets : SymmetryPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
     Mesh mesh;mesh.vertices=[Vec3(0,0,0),Vec3(3,0,0),Vec3(0,1,0)];mesh.faces._store=[[0u,1,2]];
     foreach(vi;0..3) foreach(copy;0..2) {
         const p=mesh.vertices[vi];const a=cast(uint)mesh.vertices.length;
@@ -184,7 +184,7 @@ unittest { // All incident normal, planar boundary, failed sum, subject and symm
 }
 
 unittest { // Frozen compatibility globals; the Local solver only admits rank-two polygons.
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     auto saved=g_pipeCtx;scope(exit) g_pipeCtx=saved;
     foreach(cell;0..6) {
         Mesh mesh=makeCube();mesh.resetSelection();EditMode mode=EditMode.Polygons;

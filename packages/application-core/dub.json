@@ -7,23 +7,23 @@
     "source"
   ],
   "dependencies": {
-    "vibe3d-camera-model": {
-      "path": "../camera-model"
+    "vibe3d:camera-model": {
+      "path": "../.."
     },
-    "vibe3d-document-model": {
-      "path": "../document-model"
+    "vibe3d:document-model": {
+      "path": "../.."
     },
     "vibe3d:edit-contracts": {
       "path": "../.."
     },
-    "vibe3d-mesh": {
-      "path": "../mesh"
+    "vibe3d:mesh": {
+      "path": "../.."
     },
     "vibe3d:mesh-change": {
       "path": "../.."
     },
-    "vibe3d-mesh-preview": {
-      "path": "../mesh-preview"
+    "vibe3d:mesh-preview": {
+      "path": "../.."
     },
     "vibe3d:spatial": {
       "path": "../.."
@@ -178,12 +178,12 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-camera-model": "modeling",
-        "vibe3d-document-model": "modeling",
+        "vibe3d:camera-model": "modeling",
+        "vibe3d:document-model": "modeling",
         "vibe3d:edit-contracts": "modeling",
-        "vibe3d-mesh": "modeling",
+        "vibe3d:mesh": "modeling",
         "vibe3d:mesh-change": "modeling",
-        "vibe3d-mesh-preview": "modeling",
+        "vibe3d:mesh-preview": "modeling",
         "vibe3d:spatial": "modeling",
         "vibe3d:json-number": "modeling",
         "vibe3d-command-runtime": "modeling"
@@ -193,12 +193,12 @@
       "name": "modeling-noai",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-camera-model": "modeling-noai",
-        "vibe3d-document-model": "modeling-noai",
+        "vibe3d:camera-model": "modeling-noai",
+        "vibe3d:document-model": "modeling-noai",
         "vibe3d:edit-contracts": "modeling-noai",
-        "vibe3d-mesh": "modeling-noai",
+        "vibe3d:mesh": "modeling-noai",
         "vibe3d:mesh-change": "modeling-noai",
-        "vibe3d-mesh-preview": "modeling-noai",
+        "vibe3d:mesh-preview": "modeling-noai",
         "vibe3d:spatial": "modeling-noai",
         "vibe3d:json-number": "modeling-noai",
         "vibe3d-command-runtime": "modeling-noai"
@@ -211,12 +211,12 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-camera-model": "with-render",
-        "vibe3d-document-model": "with-render",
+        "vibe3d:camera-model": "with-render",
+        "vibe3d:document-model": "with-render",
         "vibe3d:edit-contracts": "with-render",
-        "vibe3d-mesh": "with-render",
+        "vibe3d:mesh": "with-render",
         "vibe3d:mesh-change": "with-render",
-        "vibe3d-mesh-preview": "with-render",
+        "vibe3d:mesh-preview": "with-render",
         "vibe3d:spatial": "with-render",
         "vibe3d:json-number": "with-render",
         "vibe3d-command-runtime": "with-render"
@@ -228,12 +228,12 @@
         "web"
       ],
       "subConfigurations": {
-        "vibe3d-camera-model": "web",
-        "vibe3d-document-model": "web",
+        "vibe3d:camera-model": "web",
+        "vibe3d:document-model": "web",
         "vibe3d:edit-contracts": "web",
-        "vibe3d-mesh": "web",
+        "vibe3d:mesh": "web",
         "vibe3d:mesh-change": "web",
-        "vibe3d-mesh-preview": "web",
+        "vibe3d:mesh-preview": "web",
         "vibe3d:spatial": "web",
         "vibe3d:json-number": "web",
         "vibe3d-command-runtime": "web"
@@ -246,12 +246,12 @@
       ],
       "targetType": "sourceLibrary",
       "subConfigurations": {
-        "vibe3d-camera-model": "root-tests",
-        "vibe3d-document-model": "root-tests",
+        "vibe3d:camera-model": "root-tests",
+        "vibe3d:document-model": "root-tests",
         "vibe3d:edit-contracts": "root-tests",
-        "vibe3d-mesh": "root-tests",
+        "vibe3d:mesh": "root-tests",
         "vibe3d:mesh-change": "root-tests",
-        "vibe3d-mesh-preview": "root-tests",
+        "vibe3d:mesh-preview": "root-tests",
         "vibe3d:spatial": "root-tests",
         "vibe3d:json-number": "root-tests",
         "vibe3d-command-runtime": "root-tests"
@@ -262,12 +262,12 @@
       "versions": [],
       "targetType": "sourceLibrary",
       "subConfigurations": {
-        "vibe3d-camera-model": "isolated-tests",
-        "vibe3d-document-model": "isolated-tests",
+        "vibe3d:camera-model": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
         "vibe3d:mesh-change": "isolated-tests",
-        "vibe3d-mesh-preview": "isolated-tests",
+        "vibe3d:mesh-preview": "isolated-tests",
         "vibe3d:spatial": "isolated-tests",
         "vibe3d:json-number": "isolated-tests",
         "vibe3d-command-runtime": "isolated-tests"

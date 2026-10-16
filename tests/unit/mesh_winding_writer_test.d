@@ -29,16 +29,16 @@
 // the task card (2260).
 // ===========================================================================
 module tests.unit.mesh_winding_writer_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.algorithm.mutation : reverse;
 import std.exception : assertThrown;
 import std.format    : format;
 import core.exception : AssertError;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
-import mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
 
 private enum uint kTestScope = MeshEditScope.Geometry;
 

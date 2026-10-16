@@ -190,8 +190,8 @@ unittest { // normalization respects a stage override's refusal boundary
     import commands.tool.pipe : ToolPipeAttrCommand;
     import commands.tool.host : ToolHost;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
     import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
     import std.exception : assertThrown;
     import std.conv : to;
@@ -236,8 +236,8 @@ unittest { // numeric enum rows retain the wire tag the stage setter expects
     import commands.tool.pipe : ToolPipeAttrCommand;
     import commands.tool.host : ToolHost;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
-    import view : View;
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.camera.view : View;
     import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
     auto saved = g_pipeCtx;
     scope(exit) g_pipeCtx = saved;

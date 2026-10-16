@@ -1,10 +1,10 @@
 module prepared_radial_array_transition;
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.alignment.radial_array_tool : RadialArrayTool,
     RadialArrayTransitionImage, PreparedRadialArrayTransitionKind;
 import core.atomic : atomicOp;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedRadialArrayKind;
 
 struct PreparedRadialArrayTransitionToken {

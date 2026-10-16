@@ -29,11 +29,11 @@
 module tests.unit.select_set_commands_test;
 
 import command;
-import mesh : Mesh, makeCube;
-import view : View;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
+import vibe3d.viewport.camera.view : View;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import commands.select.sets : SelectSetStore, SelectSetEdit, SelectSetApply,
                                SelectSetRename, SelectSetDelete;
 

@@ -4,9 +4,9 @@ import vibe3d.mesh.change.change_bus : changeBus;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import tools.common.command_wrapper : XfrmQuantizeTool;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private void setStep(XfrmQuantizeTool tool, float value) {
     foreach (ref p; tool.params())

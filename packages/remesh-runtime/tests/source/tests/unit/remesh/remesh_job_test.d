@@ -13,7 +13,7 @@ import std.process : Pid, spawnProcess, tryWait, kill, wait, environment, thisPr
 import std.stdio   : File, stdin;
 import std.string  : strip;
 import core.time   : MonoTime, Duration;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import math : Vec3;
 import remesh.region_stitch : stitchRegion, StitchResult;
 import std.file : remove;

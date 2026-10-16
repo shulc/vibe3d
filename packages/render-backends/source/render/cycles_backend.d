@@ -36,9 +36,9 @@ import bindbc.opengl;
 import bindbc.sdl;
 import cycles.c;
 
-import render.backend;
+import vibe3d.render.model.render.backend;
 import math : Vec3;
-import sdl_error : sdlError;
+import vibe3d.platform.input.sdl_error : sdlError;
 
 // ---------------------------------------------------------------------------
 // Blueprint — D-side mirror of the scene, used to rebuild Cycles state

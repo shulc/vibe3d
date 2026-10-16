@@ -1,11 +1,11 @@
 module live_registration_roles;
 
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.seltype : SelType, currentSelType;
 import session_owner : Session;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 /// Shared registration roles retain only the Session pointer and live
 /// View/EditMode sources; every consumer resolves them at command creation.

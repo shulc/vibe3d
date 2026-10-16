@@ -31,8 +31,8 @@ import std.math : fabs, PI, sqrt;
 
 import math : Vec3, identityMatrix, lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace, ModelSpace;
-import mesh : Mesh;
-import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket;
 import tools.transform.transform : TransformTool;
 import tools.transform.xform_kernels : applyRotateIncremental, applyXformMatrix, BlendMode;
 import fixture_helpers : requireProvenance;

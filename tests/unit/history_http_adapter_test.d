@@ -11,7 +11,7 @@ import edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
 import http_server : BridgeResultKind, HttpServer;
 import http_providers : HistoryHttpAdapter;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.params.params : Param;
 import step_trace : StepTrace;
 import std.algorithm : canFind, count;
@@ -24,7 +24,7 @@ import std.socket : InternetAddress, Socket, SocketOption,
     SocketOptionLevel, TcpSocket;
 import std.string : indexOf, startsWith;
 import tool : Tool;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private final class RowCommand : Command {
     private string wireName_;

@@ -6,7 +6,7 @@
 // is the one the eye sees and the one a chord is aimed at.
 module tests.unit.zone_registry_test;
 
-import input_zones;
+import vibe3d.platform.input.input_zones;
 
 unittest {  // the plain case: disjoint rectangles, and a miss
     clearZones();

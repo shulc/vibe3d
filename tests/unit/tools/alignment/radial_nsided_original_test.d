@@ -5,7 +5,7 @@ import std.json : JSONValue, JSONType, parseJSON;
 import std.format : format;
 import math : Vec3;
 import tool;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import tools.alignment.align_kernels : radialAlignTargets, extractAlignChain;
 import falloff : weightedLerp;
@@ -223,7 +223,7 @@ unittest { // Actual registered session, same object/token and position delivery
     import tools.transform.transform : TransformTool;
     import command_history : RecordMode;
     import vibe3d.mesh.change.change_bus : changeBus, MeshEditScope;
-    import mesh : g_isDocumentMesh;
+    import vibe3d.mesh.core.mesh : g_isDocumentMesh;
     auto f=fixture(); auto rig=new LiveRegistrationRig;
     rig.session.editMesh()=original(f); rig.session.editMode=EditMode.Polygons;
     auto m=&rig.session.editMesh();

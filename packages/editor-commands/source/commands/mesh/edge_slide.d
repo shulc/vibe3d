@@ -1,8 +1,8 @@
 module commands.mesh.edge_slide;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
@@ -11,8 +11,8 @@ import vibe3d.mesh.change.change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
 import commands.mesh.vertex_position_result : VertexPositionResult,
     VertexPositionResultBuilder;
-import toolpipe.packets : SubjectPacket;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 
 /// Slide the endpoints of every selected edge along their "rail" neighbours —
 /// the vertices at the far end of the non-selected face-edges inside flanking

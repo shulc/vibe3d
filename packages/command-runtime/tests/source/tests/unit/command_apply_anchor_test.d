@@ -35,9 +35,9 @@
 module tests.unit.command_apply_anchor_test;
 
 import command;
-import operator : Operator;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.mesh.change.change_bus : changeBus, MeshEditScope;
 

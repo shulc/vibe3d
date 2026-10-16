@@ -1,9 +1,9 @@
 module commands.mesh.mesh_edit_payload;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
-import mesh : Mesh;
-import snapshot : MeshSnapshot;
-import mesh_edit_delta : MeshEditDelta;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta;
 
 // History owns the successful pair/delta; filled-empty and delta-only are
 // payloads, while an untouched carrier is absent. Replay reads only this data

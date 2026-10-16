@@ -100,7 +100,7 @@ import vibe3d.util.log.log : logWarn;
 
 import math;
 import io.scene_ir;
-import mesh : Surface;
+import vibe3d.mesh.core.mesh : Surface;
 import io.assimp_runtime : isAssimpAvailable;
 
 /// Post-process flags handed to aiImportFile. See the module header for the

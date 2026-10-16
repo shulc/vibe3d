@@ -14,8 +14,8 @@ module tests.unit.mesh_remove_own_orphans_test;
 
 import vibe3d.mesh.change.change_bus : changeBus;
 import math : Vec3;
-import mesh : Mesh;
-import mesh_topo : edgeKey;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.mesh.topology.mesh_topo : edgeKey;
 import std.format : format;
 
 private immutable Vec3[] kPos = [

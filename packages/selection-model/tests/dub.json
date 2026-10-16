@@ -139,14 +139,14 @@
     }
   },
   "dependencies": {
-    "vibe3d-document-model": {
-      "path": "../../document-model"
+    "vibe3d:document-model": {
+      "path": "../../.."
     },
     "vibe3d:edit-contracts": {
       "path": "../../.."
     },
-    "vibe3d-mesh": {
-      "path": "../../mesh"
+    "vibe3d:mesh": {
+      "path": "../../.."
     },
     "vibe3d:math": {
       "path": "../../.."
@@ -163,9 +163,9 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-document-model": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
         "vibe3d:math": "isolated-tests",
         "vibe3d-subpatch-preview": "isolated-tests"
       }

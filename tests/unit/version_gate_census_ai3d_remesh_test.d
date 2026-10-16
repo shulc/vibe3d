@@ -109,10 +109,10 @@ private DependencyGraph readDependencyGraph(string path)
                 || importerField.indexOf(" (packages/editor-ui/source/") >= 0
                 || importerField.indexOf(" (packages/command-runtime/source/") >= 0
                 || importerField.indexOf(" (packages/application-core/source/") >= 0
-                || importerField.indexOf(" (packages/document-model/source/") >= 0
+                || importerField.indexOf(" (libraries/documents/model/source/") >= 0
                 || importerField.indexOf(" (libraries/editing/params/source/") >= 0
                 || importerField.indexOf(" (packages/pipe-runtime/source/") >= 0
-                || importerField.indexOf(" (packages/mesh-ops/source/") >= 0
+                || importerField.indexOf(" (libraries/mesh/ops/source/") >= 0
                 || importerField.indexOf(" (packages/interchange/source/") >= 0
                 || importerField.indexOf(" (packages/interaction-query/source/") >= 0
                 || importerField.indexOf(" (packages/pipe-evaluation/source/") >= 0
@@ -120,23 +120,23 @@ private DependencyGraph readDependencyGraph(string path)
                 || importerField.indexOf(" (packages/transform-ops/source/") >= 0
                 || importerField.indexOf(" (packages/creation-ops/source/") >= 0
                 || importerField.indexOf(" (packages/alignment-ops/source/") >= 0
-                || importerField.indexOf(" (packages/camera-model/source/") >= 0
+                || importerField.indexOf(" (libraries/viewport/camera/source/") >= 0
                 || importerField.indexOf(" (packages/document-channels/source/") >= 0
-                || importerField.indexOf(" (packages/image-codec/source/") >= 0
+                || importerField.indexOf(" (libraries/documents/image-codec/source/") >= 0
                 || importerField.indexOf(" (packages/document-io/source/") >= 0
                 || importerField.indexOf(" (packages/display-policy/source/") >= 0
                 || importerField.indexOf(" (libraries/editing/contracts/source/") >= 0
-                || importerField.indexOf(" (packages/input-events/source/") >= 0
+                || importerField.indexOf(" (libraries/platform/input/source/") >= 0
                 || importerField.indexOf(" (libraries/mesh/change/source/") >= 0
                 || importerField.indexOf(" (libraries/mesh/contracts/source/") >= 0
-                || importerField.indexOf(" (packages/mesh-edit-log/source/") >= 0
-                || importerField.indexOf(" (packages/mesh-edit-replay/source/") >= 0
+                || importerField.indexOf(" (libraries/mesh/edit-log/source/") >= 0
+                || importerField.indexOf(" (libraries/mesh/edit-replay/source/") >= 0
                 || importerField.indexOf(" (packages/selection-model/source/") >= 0
                 || importerField.indexOf(" (packages/scene-query/source/") >= 0
                 || importerField.indexOf(" (packages/editor-commands/source/") >= 0
-                || importerField.indexOf(" (packages/mesh-snapshot/source/") >= 0
-                || importerField.indexOf(" (packages/mesh-topology/source/") >= 0
-                || importerField.indexOf(" (packages/mesh/source/") >= 0
+                || importerField.indexOf(" (libraries/mesh/snapshot/source/") >= 0
+                || importerField.indexOf(" (libraries/mesh/topology/source/") >= 0
+                || importerField.indexOf(" (libraries/mesh/core/source/") >= 0
                 || importerField.indexOf(" (libraries/util/profiling/source/") >= 0
                 || importerField.indexOf(" (libraries/util/spatial/source/") >= 0
                 || importerField.indexOf(" (packages/subpatch-preview/source/") >= 0
@@ -146,8 +146,8 @@ private DependencyGraph readDependencyGraph(string path)
                 || importerField.indexOf(" (libraries/util/parallel/source/") >= 0
                 || importerField.indexOf(" (libraries/util/plane-bytes/source/") >= 0
                 || importerField.indexOf(" (libraries/util/screen-buckets/source/") >= 0
-                || importerField.indexOf(" (packages/pipe-contracts/source/") >= 0
-                || importerField.indexOf(" (packages/mesh-preview/source/") >= 0
+                || importerField.indexOf(" (libraries/editing/pipeline/contracts/source/") >= 0
+                || importerField.indexOf(" (libraries/mesh/preview/source/") >= 0
                 || importerField.indexOf(" (libraries/util/json-number/source/") >= 0)
             result.ours[importer] = true;
         ++result.edgeCount;
@@ -338,7 +338,7 @@ if [ "$config" = web ]; then
     echo "FATAL: --config=web described no -version=web; the gates would be inert" >&2; exit 2 ;;
   esac
 fi
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/forms-model/source packages/editor-ui/source packages/http-runtime/source packages/ai-advisor/source packages/ai3d-runtime/source packages/remesh-runtime/source packages/platform-file/source packages/document-actions/source packages/interactive-tools/source packages/viewport-host/source libraries/editing/interaction/data/source packages/command-runtime/source packages/application-core/source packages/document-model/source libraries/editing/params/source packages/pipe-runtime/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source libraries/editing/contracts/source libraries/mesh/change/source libraries/mesh/contracts/source packages/mesh-edit-log/source packages/mesh-edit-replay/source packages/mesh-snapshot/source packages/mesh-topology/source packages/mesh/source libraries/util/profiling/source libraries/util/spatial/source libraries/util/log/source libraries/util/math/source/vibe3d/util/math libraries/util/parallel/source libraries/util/plane-bytes/source libraries/util/screen-buckets/source packages/camera-model/source packages/document-channels/source packages/image-codec/source packages/document-io/source packages/selection-model/source packages/scene-query/source packages/editor-commands/source packages/pipe-contracts/source packages/mesh-preview/source libraries/util/json-number/source -name '*.d' ! -path 'libraries/util/math/source/vibe3d/util/math/package.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/forms-model/source packages/editor-ui/source packages/http-runtime/source packages/ai-advisor/source packages/ai3d-runtime/source packages/remesh-runtime/source packages/platform-file/source packages/document-actions/source packages/interactive-tools/source packages/viewport-host/source libraries/editing/interaction/data/source packages/command-runtime/source packages/application-core/source libraries/documents/model/source libraries/editing/params/source packages/pipe-runtime/source libraries/mesh/ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source libraries/platform/input/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source libraries/editing/contracts/source libraries/mesh/change/source libraries/mesh/contracts/source libraries/mesh/edit-log/source libraries/mesh/edit-replay/source libraries/mesh/snapshot/source libraries/mesh/topology/source libraries/mesh/core/source libraries/util/profiling/source libraries/util/spatial/source libraries/util/log/source libraries/util/math/source/vibe3d/util/math libraries/util/parallel/source libraries/util/plane-bytes/source libraries/util/screen-buckets/source libraries/viewport/camera/source packages/document-channels/source libraries/documents/image-codec/source packages/document-io/source packages/selection-model/source packages/scene-query/source packages/editor-commands/source libraries/editing/pipeline/contracts/source libraries/mesh/preview/source libraries/util/json-number/source -name '*.d' ! -path 'libraries/util/math/source/vibe3d/util/math/package.d' -print)
 SH";
     enum graphConfigurations = ["web", "modeling"];
     const graphPaths = [webDepsPath, nativeDepsPath];
@@ -500,20 +500,20 @@ SH";
 module w16_a_web_inproc_probe;
 import commands.file.load : FileLoad;
 import commands.file.save : FileSave;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import vibe3d.editing.contracts.editmode : EditMode;
 import http_server : HttpServer, InProcessHttpTransport;
 import io.assimp_runtime : initAssimp, isAssimpAvailable, shutdownAssimp;
 import io.scene_export : exportDocumentViaAssimp, exportViaAssimp;
 import io.scene_import : importViaAssimp;
 import io.scene_ir : ImportedScene;
-import mesh : makeCube, Mesh;
+import vibe3d.mesh.core.mesh : makeCube, Mesh;
 import std.file : exists, remove;
 import std.format : format;
 import std.stdio : writefln;
 import vibe3d.util.parallel.tsan_annotate : parallelForWithCompletion;
 import ui.action_menu : popupActionNeedsAssimp;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 // Host-compiled web probe exercises the production native-web refusal path.
 void main(string[] args)
 {
@@ -601,22 +601,22 @@ out=$(mktemp -d "/var/tmp/w16-a-web-probe.XXXXXX")
 trap 'rm -rf "$out"' EXIT
 # Describe lists ordinary STATIC archives but does not build them. Prepare
 # their declared web configurations before linking this host transport probe.
-for package in packages/forms-model packages/editor-ui  packages/pipe-contracts packages/mesh-preview \
+for package in packages/forms-model packages/editor-ui    \
                packages/http-runtime packages/ai-advisor packages/ai3d-runtime packages/remesh-runtime packages/platform-file packages/document-actions \
                packages/interactive-tools packages/viewport-host  \
-               packages/command-runtime packages/application-core packages/document-model  packages/pipe-runtime packages/mesh-ops packages/interchange \
+               packages/command-runtime packages/application-core   packages/pipe-runtime  packages/interchange \
                packages/interaction-query packages/pipe-evaluation \
                packages/tool-state packages/transform-ops packages/creation-ops \
-               packages/alignment-ops packages/input-events \
+               packages/alignment-ops  \
                packages/display-policy packages/viewport-gpu packages/subpatch-preview \
                   \
-               packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-snapshot \
-               packages/mesh-topology packages/mesh   \
+                  \
                    \
-               packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/selection-model packages/scene-query packages/editor-commands packages/render-model packages/render-backends; do
+                   \
+                packages/document-channels  packages/document-io packages/selection-model packages/scene-query packages/editor-commands  packages/render-backends; do
   dub build --root="$package" --config=web --compiler=dmd
 done
-for selected in :edit-contracts :interaction-data :json-number :log :mesh-contracts :parallel :param-schema :plane-bytes :profiling :screen-buckets :spatial :mesh-change; do
+for selected in :edit-contracts :interaction-data :json-number :log :mesh-contracts :parallel :param-schema :plane-bytes :profiling :screen-buckets :spatial :mesh-change :camera-model :image-codec :input-events :mesh-edit-log :mesh-topology :render-model :mesh :document-model :mesh-edit-replay :mesh-ops :mesh-preview :mesh-snapshot :pipe-contracts; do
   dub build "$selected" --config=web --compiler=dmd
 done
 dub build :math --config=web --compiler=dmd

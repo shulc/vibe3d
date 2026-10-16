@@ -1,6 +1,6 @@
 module tests.unit.selection_product_source_public_test;
 
-import mesh : Mesh, edgeKey;
+import vibe3d.mesh.core.mesh : Mesh, edgeKey;
 import selection_product;
 
 // ---------------------------------------------------------------------------

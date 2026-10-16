@@ -6,15 +6,15 @@ module tests.unit.toolpipe.stages.actcenter_test;
 import std.format : format;
 import math : Vec3, rayPlaneIntersect, applyAffine;
 import vibe3d.util.spatial.spatial : Pin, Viewport, screenRay, screenPointToRay, ModelSpace;
-import mesh    : Mesh, MeshCacheKey;
+import vibe3d.mesh.core.mesh    : Mesh, MeshCacheKey;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAcen;
 import vibe3d.editing.params.params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
-import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath;
-import document          : Layer;
+import vibe3d.documents.model.document          : Layer;
 import toolpipe.stages.actcenter;
 
 // ---------------------------------------------------------------------------
@@ -24,7 +24,7 @@ import toolpipe.stages.actcenter;
 // never derefs the mesh, so a throwaway delegate + EditMode suffice.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     Mesh cube = makeCube();
     Mesh* meshPtr = &cube;
     EditMode em = EditMode.Vertices;
@@ -63,7 +63,7 @@ unittest {
 // the same live-query seam production uses instead of poking a field).
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh     : makeCube;
+    import vibe3d.mesh.core.mesh     : makeCube;
     import std.math : fabs;
     import std.conv : to;
 
@@ -154,9 +154,9 @@ unittest {
 // `localCenterAndClustersCached`, not merely `computeCenter`'s own switch.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh              : makeCube;
-    import operator          : VectorStack;
-    import toolpipe.packets  : SubjectPacket;
+    import vibe3d.mesh.core.mesh              : makeCube;
+    import vibe3d.editing.pipeline.contracts.operator          : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SubjectPacket;
 
     Mesh cube = makeCube();
     cube.resetSelection();
@@ -208,9 +208,9 @@ unittest {
 // the review names.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh              : makeCube;
-    import operator          : VectorStack;
-    import toolpipe.packets  : SubjectPacket;
+    import vibe3d.mesh.core.mesh              : makeCube;
+    import vibe3d.editing.pipeline.contracts.operator          : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SubjectPacket;
     import std.math          : fabs;
     import std.conv          : to;
 
@@ -299,9 +299,9 @@ unittest {
 // tested".
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh              : makeCube;
-    import operator          : VectorStack;
-    import toolpipe.packets  : SubjectPacket, SymmetryPacket;
+    import vibe3d.mesh.core.mesh              : makeCube;
+    import vibe3d.editing.pipeline.contracts.operator          : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SubjectPacket, SymmetryPacket;
     import std.math          : fabs;
     import std.conv          : to;
 
@@ -465,7 +465,7 @@ unittest {
 //       `samplePipeFromBaseline` exists to prevent (doc/measured_laws.md §2).
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import math : Vec3;
 import vibe3d.util.spatial.spatial : ModelSpace;
 
@@ -567,7 +567,7 @@ import vibe3d.util.spatial.spatial : ModelSpace;
 // never-rebuild no-op would read the same "1".
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : Mesh, makeGridPlane;
+    import vibe3d.mesh.core.mesh : Mesh, makeGridPlane;
     import toolpipe.stages.actcenter : g_acenBboxMembershipRebuilds;
 
     Mesh m = makeGridPlane(4);

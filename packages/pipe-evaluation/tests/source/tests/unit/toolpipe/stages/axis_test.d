@@ -7,20 +7,20 @@ import std.format : format;
 import std.math   : abs, sqrt;
 import math : Vec3, cross, dot, normalize, frameMatrix, frameMatrixInverse, applyAffine;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
-import mesh    : Mesh;
+import vibe3d.mesh.core.mesh    : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAxis;
-import toolpipe.packets  : AxisPacket;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : AxisPacket;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath;
-import document          : Layer;
+import vibe3d.documents.model.document          : Layer;
 import vibe3d.editing.params.params            : IntEnumEntry, wireTagForValue, valueForWireTag,
                            tableCoversEnumOf;
 import std.math : isClose, sin, cos, PI;
 import math : matMul4, applyAffine, identityMatrix;
-import operator : VectorStack;
-import toolpipe.packets : SubjectPacket, AxisPacket;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, AxisPacket;
 import toolpipe.stages.axis;
 
 unittest {
@@ -86,7 +86,7 @@ unittest {
 // already right" is only true until someone adds the redirect back.
 // ---------------------------------------------------------------------------
 unittest {
-    import document : Layer;
+    import vibe3d.documents.model.document : Layer;
     import vibe3d.editing.contracts.seltype  : SelType;
 
     bool vecEq(Vec3 a, Vec3 b) {
@@ -148,7 +148,7 @@ unittest {
 // not just the instance-method mirror of it.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh     : makeCube;
+    import vibe3d.mesh.core.mesh     : makeCube;
     import vibe3d.editing.contracts.seltype  : SelType;
     import std.conv : to;
 
@@ -206,8 +206,8 @@ unittest {
     // exactly how xfrm_transform.d's renderBasis reaches the value, via
     // `vts.get!AxisPacket().tracksSelection`) and check the published
     // packet field for Select (tracks) and its item-mode guard (does not).
-    import operator         : VectorStack;
-    import toolpipe.packets : SubjectPacket, AxisPacket;
+    import vibe3d.editing.pipeline.contracts.operator         : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, AxisPacket;
     st.mode = AxisStage.Mode.Select;
 
     SubjectPacket subjVertex;

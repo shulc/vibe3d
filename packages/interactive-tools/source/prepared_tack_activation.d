@@ -1,7 +1,7 @@
 module prepared_tack_activation;
 
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.edit.tack : TackTool, PreparedTackActivationImage;
 
 struct PreparedTackActivationToken {

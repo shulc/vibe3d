@@ -11,21 +11,21 @@ import command_history : CommandHistory;
 import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.morph_edit : MeshMorphEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
-import document : Document, Layer;
+import vibe3d.documents.model.document : Document, Layer;
 import editor_app : EditorApp;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import pipe_gizmo_host : PipeGizmoHost;
 import registration : buildRegisteredXfrmTransformForOwnershipTest;
 import registry : Registry;
 import vibe3d.editing.contracts.seltype : SelMode;
 import session_owner : Session;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import std.conv : to;
 import ai.exploration : AiExplorationController;
 import ai.interaction_log_writer : AiInteractionLogWriter;
 import tools.transform.xfrm_transform : XfrmTransformTool;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 unittest // executes in the module-unittest gate, before any HTTP driver starts
 {

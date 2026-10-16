@@ -18,7 +18,7 @@ import std.array     : array;
 
 import toolpipe.pipeline : Pipeline;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 
 void main() {}
 

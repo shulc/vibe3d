@@ -17,17 +17,17 @@ import commands.mesh.smooth : MeshSmooth, SurfaceLineIndex, preserveProjectsAt,
     projectOntoSurfaceBrute;
 version (PerfProbe) import commands.mesh.smooth : surfaceHitTests;
 import commands.mesh.vertex_position_result : VertexPositionResult;
-import document : primaryModelSpaceResolver;
+import vibe3d.documents.model.document : primaryModelSpaceResolver;
 import vibe3d.editing.contracts.editmode : EditMode;
 import falloff : evaluateFalloff;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : ModelSpace, aimSpace;
-import mesh : Mesh;
-import operator : VectorStack;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import vibe3d.editing.params.params : Param, ParamProvider;
-import toolpipe.packets : FalloffPacket, FalloffShape, FalloffType, SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffShape, FalloffType, SubjectPacket;
 import tools.edit.smooth_relax : RelaxVec3;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private JSONValue fixture() {
     static JSONValue cached;
@@ -228,7 +228,7 @@ unittest { // a non-finite strength is refused by the kernel: nothing moves
 }
 
 unittest { // a regular cube is a fixed point of the law: the builder result is EMPTY
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     Mesh m = makeCube();
     View cv = new View(0, 0, 800, 600);
     auto cmd = new MeshSmooth(&m, cv, EditMode.Vertices);

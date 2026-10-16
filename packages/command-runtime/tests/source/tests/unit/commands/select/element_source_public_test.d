@@ -1,8 +1,8 @@
 module tests.unit.commands.select.element_source_public_test;
 
 import commands.select.element : SelectElementCommand;
-import mesh : Mesh;
-import view : View;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.viewport.camera.view : View;
 import vibe3d.editing.contracts.editmode : EditMode;
 
 version (unittest) {

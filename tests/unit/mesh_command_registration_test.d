@@ -1,5 +1,5 @@
 module tests.unit.mesh_command_registration_test;
-import mesh_ops.triangulate : triangulateFacesByMask;
+import vibe3d.mesh.ops.mesh_ops.triangulate : triangulateFacesByMask;
 
 import command : Command;
 import commands.mesh.remesh : Remesh;
@@ -8,7 +8,7 @@ import commands.tool.headless : ToolHeadlessCommand;
 import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import vibe3d.editing.params.params : Param;
 import registration : registerMeshCommandsForOwnershipTest;
 import registry : ToolFactory;

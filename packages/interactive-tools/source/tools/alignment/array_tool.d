@@ -10,15 +10,15 @@ import vibe3d.editing.contracts.prepared_tool_effect : PreparedArrayParamEffect,
 import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
 import mesh_gpu : GpuUploadOwner;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
 import tools.topology_step;
 import command : Command;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
@@ -28,7 +28,7 @@ import viewgrid : vectorSnap, viewVectorQuantum;
 import overlay_space : OverlaySpace;
 import vibe3d.editing.params.params : Param, IntEnumEntry;
 import shader : Shader;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;

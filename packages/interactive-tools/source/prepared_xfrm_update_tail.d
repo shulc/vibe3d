@@ -1,7 +1,7 @@
 module prepared_xfrm_update_tail;
 
 import core.atomic : atomicOp;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import tools.transform.xfrm_transform : XfrmTransformTool,
     PreparedXfrmUpdateTailImage;
 

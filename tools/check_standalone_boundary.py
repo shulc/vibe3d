@@ -25,12 +25,10 @@ CORE_CELLS = ('document-primary', 'invocation-order', 'invocation-outcomes', 'in
 
 STB_REVISION = 'a66f6917718ea128076a2c5660e37f362a785144'
 # Canonical JSON pins include configuration/build-type grants and platform keys.
-DESCRIPTORS = {
-    'packages/command-runtime': '7e3f393e50c787470e615c0fa5fb51f8f55f75ba06d6ed27c20e462879a344ea',
-    'packages/application-core': 'a2a24d838625b785aef49ede8386e999b39f73d1236e367b828771e4ce81801a',
-    'tests/core': '3790a284610cea9738c1ebb2d3984b039ec69a66ac6c17e43bfb5cf10e6d3bb6',
-    'tools/cli': '82365b33a1aa67624cb8e51e903bedb128ec8287a8674cbc5f65cec4167f9f20',
-}
+DESCRIPTORS = {'packages/command-runtime': '94d79c84259b3591d0020a9dfe24cbfa2c9522c5f4ea7dd39f97fbbbbedb1770',
+ 'packages/application-core': '3a4500cbf4d229a885ea315625a36fa7477e2ff4ce272923ef2e4db9f2a8cde2',
+ 'tests/core': 'a642c349c5ff8c74060826a46b801641a2d0069de4254d26af92aed44cbaccd7',
+ 'tools/cli': 'ac4b90f821fd3800c66a883112e5a74a0819d179a2391d790ea8d578ec07ab8c'}
 HOOKS = ('preGenerateCommands', 'postGenerateCommands', 'preBuildCommands',
          'postBuildCommands', 'preRunCommands', 'postRunCommands')
 IMAGE_BUILD = ['cmake -B $PACKAGE_DIR/build -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $PACKAGE_DIR',
@@ -108,8 +106,8 @@ def validate_package_settings(description, root, compiler="dmd"):
         require(set(settings.get('linkerFiles',[]))==archives and len(settings.get('linkerFiles',[]))==len(archives),'resolved setting changed: '+name+':linkerFiles')
         expected_flags = ['--singleobj'] if (
             active[name]['configuration'] in ('modeling', 'modeling-noai', 'with-render', 'web') and
-            'vibe3d-mesh-ops' in seen and
-            active['vibe3d-mesh-ops']['configuration'] in ('modeling', 'modeling-noai', 'with-render', 'web') and
+            support.SPECS['mesh-ops']['name'] in seen and
+            active[support.SPECS['mesh-ops']['name']]['configuration'] in ('modeling', 'modeling-noai', 'with-render', 'web') and
             Path(compiler).name in ('ldc', 'ldc2')) else []
         for field,value in {'dflags':expected_flags, 'libs':['stb_image_c','m'] if 'd-stb-image' in seen else [],'lflags':['-L'+str(image/'build')] if 'd-stb-image' in seen else []}.items():
             actual=settings.get(field,[])

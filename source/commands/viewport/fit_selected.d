@@ -1,10 +1,10 @@
 module commands.viewport.fit_selected;
 
 import command;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.contracts.editmode;
-import view;
-import document : Document, Layer;
+import vibe3d.viewport.camera.view;
+import vibe3d.documents.model.document : Document, Layer;
 import vibe3d.editing.contracts.seltype  : SelType;
 
 import math;

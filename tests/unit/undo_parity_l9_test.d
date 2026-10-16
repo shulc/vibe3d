@@ -76,8 +76,8 @@ import std.format : format;
 import std.json   : JSONValue, parseJSON;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import http_json : meshPlanesJson, PlaneDumpMeta;
 
@@ -129,7 +129,7 @@ private Mesh* l9Stand()
 /// Which edges a cut seeded at `seed` would cross, as face indices.
 private size_t[] cutFaces(ref Mesh m, uint seed)
 {
-    import mesh_ops.loop_slice : collectEdgeRing;
+    import vibe3d.mesh.ops.mesh_ops.loop_slice : collectEdgeRing;
     bool closed;
     auto ring = collectEdgeRing(m, seed, closed);
     bool[size_t] seen;
@@ -154,7 +154,7 @@ unittest // the stand can exhibit everything the roster claims to measure
     // ---- 1. the cut must cross AT LEAST TWO faces, or the ring walk did
     // nothing and the fragment logic never ran. And the ring must be OPEN,
     // which is the arm a cube cannot reach.
-    import mesh_ops.loop_slice : collectEdgeRing;
+    import vibe3d.mesh.ops.mesh_ops.loop_slice : collectEdgeRing;
     foreach (uint seed; [kBoundarySeed, kInteriorSeed]) {
         bool closed;
         auto ring = collectEdgeRing(*m, seed, closed);

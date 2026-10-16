@@ -21,13 +21,13 @@ import guarded_action_controller : GuardObservationPorts,
 import http_command_adapter : AutomationResetContext, AutomationResetHook,
     CommandHttpAdapter;
 import http_server : HttpServer;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import pipe_gizmo_host : PipeGizmoHost;
 import registry : Registry;
 import step_trace : StepTrace;
 import tool : Tool;
 import ui.discard_guard : UiRunOutcome;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private size_t uiResetCalls;
 private size_t aiTraceResetCalls;

@@ -9,21 +9,21 @@ import prepared_private_state : PreparedPrivateStateOwner;
 import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
 import mesh_gpu : GpuMesh;
 import command_history : PreparedHistoryKind;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import snap_render : SnapOverlayOwner;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import vibe3d.mesh.core.mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import bindbc.sdl;
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
 import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize,
                  axisFacesViewer, ToolHandles;
 import viewport_scheme : axisColor, schemeColor, SchemeColor;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import drag;
 import shader : Shader, LitShader;
 import model_preview : ModelPreviewView;
@@ -31,7 +31,7 @@ import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.gesture_payload : GesturePayload;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.create.create_common : WorkplaneFrame,
                               primitivePlacementFrame, screenToPlacementLocal,
                               planeLocalViewport,
@@ -43,7 +43,7 @@ import vibe3d.editing.contracts.editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap;
 import vibe3d.editing.params.params : Param;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -56,7 +56,7 @@ import std.json : JSONValue;
 // they read no tool state and make no GL call. Re-exported so the five
 // modules and two test modules that `import tools.create.box;` keep
 // resolving `BoxParams` / `buildCuboidParametric` unchanged.
-public import mesh_ops.box_geom;
+public import vibe3d.mesh.ops.mesh_ops.box_geom;
 
 
 // ---------------------------------------------------------------------------

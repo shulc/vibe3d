@@ -1,7 +1,7 @@
 module prepared_vertex_extrude_activation;
 
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.edit.vertex_extrude_tool : VertexExtrudeTool,
     PreparedVertexExtrudeActivationImage;
 

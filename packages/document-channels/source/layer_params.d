@@ -1,7 +1,7 @@
 module layer_params;
 
 import vibe3d.editing.params.params   : Param, ParamProvider, MixedValueProvider, paramToJson;
-import document : Layer, Document, kindInfo, ItemKind, ItemXform,
+import vibe3d.documents.model.document : Layer, Document, kindInfo, ItemKind, ItemXform,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG, sanitizeItemXform;
 import vibe3d.editing.contracts.seltype  : SelType;
 
@@ -555,7 +555,7 @@ inout(Layer) itemPropsTarget(inout(Document)* doc) {
 /// channels silently outside the universe.
 string[] layerAttrUniverse()
 {
-    import document   : ImageData, ImagePlaneData;
+    import vibe3d.documents.model.document   : ImageData, ImagePlaneData;
     import std.traits : EnumMembers;
 
     string[] names;

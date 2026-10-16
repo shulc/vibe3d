@@ -4,7 +4,7 @@
 module tests.unit.path_test;
 
 import math : Vec3, normalize;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import path;
 
 unittest {

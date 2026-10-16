@@ -15,16 +15,16 @@ import commands.mesh.vertex_position_result : VertexPositionResult;
 import command_history : CommandHistory;
 import vibe3d.mesh.change.change_bus : MeshEditScope, changeBus;
 import display_sync : activeMeshResolver;
-import document : primaryModelSpaceResolver;
+import vibe3d.documents.model.document : primaryModelSpaceResolver;
 import vibe3d.editing.contracts.editmode : EditMode;
 import falloff : evaluateFalloff;
 import math : Vec3, cross, dot;
 import vibe3d.util.spatial.spatial : AimViewport, ModelSpace, aimSpace, projectToWindowFull;
-import mesh : Mesh, makeCube;
-import operator : VectorStack;
-import toolpipe.packets : FalloffPacket, FalloffShape, FalloffType,
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffShape, FalloffType,
                           SubjectPacket;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import tools.common.command_wrapper : XfrmSmoothTool;
 
 private Mesh openAsymmetricStand() {

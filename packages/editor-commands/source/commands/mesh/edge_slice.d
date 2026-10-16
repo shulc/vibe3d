@@ -1,14 +1,14 @@
 module commands.mesh.edge_slice;
-import mesh_edit_replay : apply, revert;
-import mesh_edge_slice : EdgeSliceResult, edgeSliceEx;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
+import vibe3d.mesh.ops.mesh_edge_slice : EdgeSliceResult, edgeSliceEx;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 
 // ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ class MeshEdgeSlice : Command, Operator {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         if (vts.get!SubjectPacket() is null) return false;
         if (edges_.length != 2) return false;
 

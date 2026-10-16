@@ -1,6 +1,6 @@
 module selection_product;
 
-import mesh : Mesh, edgeKey;
+import vibe3d.mesh.core.mesh : Mesh, edgeKey;
 
 // source/selection_product.d — "what does a command leave selected?"
 //

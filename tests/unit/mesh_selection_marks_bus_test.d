@@ -21,9 +21,9 @@
 // isolation.
 module tests.unit.mesh_selection_marks_bus_test;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import vibe3d.mesh.change.change_bus : changeBus;
 import tests.unit.mesh_by_value_gate;
 
@@ -35,7 +35,7 @@ mixin MeshByValueGate!(__traits(parent, byValueGateAnchor));
 
 unittest { // noteSelectionChange / marks-setter accumulation (change-bus Stage 5)
     import vibe3d.mesh.change.change_bus : SelDomain;
-    import mesh_edit_delta : MeshEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
     // Single setters accumulate Marks + the matching domain bit, and stay
     // version-stable (selection is not a version-bumping geometry change).

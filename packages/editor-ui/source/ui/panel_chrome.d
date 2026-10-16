@@ -2,7 +2,7 @@ module ui.panel_chrome;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
-import input_zones : publishZone;
+import vibe3d.platform.input.input_zones : publishZone;
 
 enum ImVec4 kChromeText = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
 

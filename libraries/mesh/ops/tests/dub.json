@@ -1,0 +1,252 @@
+{
+  "name": "vibe3d-mesh-ops-tests",
+  "description": "Independent mesh operation algorithm tests",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": [],
+  "importPaths": [
+    "../source",
+    "source",
+    "../../../.."
+  ],
+  "sourceFiles": [
+    "../source/vibe3d/mesh/ops/mesh_edge_slice.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/bevel_curves.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/bevel_fin.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/bevel_vertex.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/box_geom.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/bridge.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/bridge_patch.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/cleanup.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/connected_mask.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/cut.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/decimate.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/edge_bevel.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/extrude.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/face_alignment.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/face_merge.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/loop_slice.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/poly_bevel.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/revolve.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/select_loop.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/thicken.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/bevel_fin_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/bevel_vertex_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/box_geom_corner_provenance_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/bridge_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/cleanup_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/connected_mask_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/extrude_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/loop_slice_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/poly_bevel_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/revolve_seam_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/revolve_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/select_loop_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/vertex_pos_grid_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/seam_differential.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/edge_fixture.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_edge_slice_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_edge_slice_gate_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/face_alignment_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/face_merge_test.d",
+    "../../../../tests/unit/mesh_by_value_gate.d",
+    "../source/vibe3d/mesh/ops/mesh_ops/triangulate.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_ops/triangulate_test.d",
+    "../../../../tests/unit/fixtures.d",
+    "../source/vibe3d/mesh/ops/geometry_clipboard.d",
+    "../source/vibe3d/mesh/ops/mesh_analysis.d",
+    "../source/vibe3d/mesh/ops/mesh_stats.d",
+    "../source/vibe3d/mesh/ops/uv_island.d",
+    "../source/vibe3d/mesh/ops/uv_project.d",
+    "../source/vibe3d/mesh/ops/uv_relax.d",
+    "../source/vibe3d/mesh/ops/uv_transform.d",
+    "../source/vibe3d/mesh/ops/uv_unwrap.d",
+    "../source/vibe3d/mesh/ops/uv_weld.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_analysis_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/mesh_wire_analysis_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/uv_island_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/uv_project_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/uv_relax_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/uv_transform_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/uv_unwrap_test.d",
+    "source/vibe3d/mesh/ops/tests/unit/uv_weld_test.d"
+  ],
+  "dflags": [],
+  "dependencies": {
+    "vibe3d:mesh": {
+      "path": "../../../.."
+    },
+    "vibe3d:math": {
+      "path": "../../../.."
+    },
+    "vibe3d:spatial": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-contracts": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-topology": {
+      "path": "../../../.."
+    },
+    "vibe3d:log": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-edit-replay": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-snapshot": {
+      "path": "../../../.."
+    }
+  },
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "configurations": [
+    {
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:mesh-contracts": "isolated-tests",
+        "vibe3d:mesh-topology": "isolated-tests",
+        "vibe3d:log": "isolated-tests",
+        "vibe3d:mesh-edit-replay": "isolated-tests",
+        "vibe3d:mesh-snapshot": "isolated-tests"
+      }
+    }
+  ],
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  }
+}

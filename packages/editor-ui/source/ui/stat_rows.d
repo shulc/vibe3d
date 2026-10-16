@@ -82,9 +82,9 @@ module ui.stat_rows;
 //     such a mesh in Subdivs. One predicate never populates both rows.
 // ---------------------------------------------------------------------------
 
-import document  : Document, Layer, ItemKind, kindInfo, kNoEditTargetReason;
-import mesh      : Mesh, MapKind, MapDomain;
-import mesh_stats;
+import vibe3d.documents.model.document  : Document, Layer, ItemKind, kindInfo, kNoEditTargetReason;
+import vibe3d.mesh.core.mesh      : Mesh, MapKind, MapDomain;
+import vibe3d.mesh.ops.mesh_stats;
 import vibe3d.editing.contracts.seltype   : SelType;
 import ui.channel_rows : kindHeading;
 
@@ -484,8 +484,8 @@ private StatCount setCount(const(Mesh)* m, const(uint)[] members, size_t n,
 /// by edge index, and the command resolves membership per live edge — so this
 /// walks the live edges too, rather than trusting the stored pair count.
 private StatCount edgeSetCount(const(Mesh)* m, string name, bool wantSel) {
-    import mesh_selsets : selSetMembersEdge;
-    import mesh : edgeKey;
+    import vibe3d.mesh.core.mesh_selsets : selSetMembersEdge;
+    import vibe3d.mesh.core.mesh : edgeKey;
     StatCount c;
     c.selKnown = wantSel;
     if (m is null) { c.selKnown = false; return c; }
@@ -653,7 +653,7 @@ private StatSection verticesSection(const(Mesh)* m, ref const StatContext ctx,
 
     // ---- By Selection Set --------------------------------------------------
     {
-        import mesh_selsets : selSetNamesVertex, selSetMembersVertex;
+        import vibe3d.mesh.core.mesh_selsets : selSetNamesVertex, selSetMembersVertex;
         auto cat = makeCategory(kSection, "By Selection Set", exp);
         if (cat.expanded && m !is null) {
             foreach (name; selSetNamesVertex(*m)) {
@@ -754,7 +754,7 @@ private StatSection edgesSection(const(Mesh)* m, ref const StatContext ctx,
         auto cat = makeCategory(kSection, "By Vertex Map", exp);
         if (cat.expanded) {
             import std.traits : EnumMembers;
-            import mesh : mapKindInfo = kindInfo;
+            import vibe3d.mesh.core.mesh : mapKindInfo = kindInfo;
             // Owner decision 4: the EDGE-domain rows come from the map-kind
             // REGISTRY, not from a "can this map live on an edge" test we would
             // have had to invent. `EnumMembers` means a kind added to the
@@ -771,7 +771,7 @@ private StatSection edgesSection(const(Mesh)* m, ref const StatContext ctx,
 
     // ---- By Selection Set --------------------------------------------------
     {
-        import mesh_selsets : selSetNamesEdge;
+        import vibe3d.mesh.core.mesh_selsets : selSetNamesEdge;
         auto cat = makeCategory(kSection, "By Selection Set", exp);
         if (cat.expanded && m !is null) {
             foreach (name; selSetNamesEdge(*m)) {
@@ -900,7 +900,7 @@ private StatSection polygonsSection(const(Document)* doc, const(Mesh)* m,
 
     // ---- By Selection Set --------------------------------------------------
     {
-        import mesh_selsets : selSetNamesPolygon, selSetMembersPolygon;
+        import vibe3d.mesh.core.mesh_selsets : selSetNamesPolygon, selSetMembersPolygon;
         auto cat = makeCategory(kSection, "By Selection Set", exp);
         if (cat.expanded && m !is null) {
             foreach (name; selSetNamesPolygon(*m)) {

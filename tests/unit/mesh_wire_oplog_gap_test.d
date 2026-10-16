@@ -1,9 +1,9 @@
 module tests.unit.mesh_wire_oplog_gap_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import math : Vec3;
-import mesh : Mesh;
-import mesh_edit_delta : MeshEditScope, MeshEditTracker;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope, MeshEditTracker;
 
 private bool hasWireAt(in Mesh m, Vec3 a, Vec3 b) {
     foreach (ref e; m.edges) {

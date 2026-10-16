@@ -3,7 +3,7 @@ module morph_target;
 // Session owns the sole pre-refresh slot and teardown; this adapter registers
 // the lower preview owner's reset directly, preserving its function identity
 // (task 20262420; doc/application_layers_wave9_model_2026-10-11.md).
-public import morph_preview : morphTargetName, morphTargetKind, hasMorphTarget,
+public import vibe3d.mesh.preview.morph_preview : morphTargetName, morphTargetKind, hasMorphTarget,
     setMorphTarget, clearMorphTarget, resolveMorphTarget, forgetMorphTargetIfNamed,
     morphPreviewActive, displayPosition, displayVertices;
 

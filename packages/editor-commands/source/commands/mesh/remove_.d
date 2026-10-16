@@ -1,13 +1,13 @@
 module commands.mesh.remove_;
-import mesh_edit_replay : captureSelectedEdgeEnds, restoreSelectedEdgeEnds, apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : captureSelectedEdgeEnds, restoreSelectedEdgeEnds, apply, revert;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : SelectionSnapshot;
-import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope, acceptRecordedEdit;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope, acceptRecordedEdit;
 
 /// Tier 1.1: "Remove" for vertices / edges without dissolve /
 /// `poly.remove`, dispatched by edit mode). Remove and Delete are
@@ -148,7 +148,7 @@ class MeshRemove : Command, Operator {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         if (mesh.faces.length == 0) return false;

@@ -1,10 +1,10 @@
 module deform_magnet;
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace, ModelSpace;
 import falloff : evaluateFalloff;
-import toolpipe.packets : FalloffPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
 
 /// Pure attraction kernel: moves `pos` toward `target` by a fraction
 /// governed by `weight * strength` (clamped to [0, 1]).

@@ -60,7 +60,7 @@
 module commands.mesh.map_edit_undo;
 
 import command        : Command;
-import mesh            : Mesh, MeshEditBatch;
+import vibe3d.mesh.core.mesh            : Mesh, MeshEditBatch;
 import commands.mesh.position_undo : RecordedUndo;
 
 /// Run `kernel` under whichever of the two arms applies, and leave the

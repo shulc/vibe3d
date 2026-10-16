@@ -20,7 +20,7 @@
 module tests.unit.subpatch_level_policy_test;
 
 import math : Vec3;
-import mesh : Mesh, SubpatchTrace, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, SubpatchTrace, makeCube;
 import subpatch_osd;
 
 // ---------------------------------------------------------------------------

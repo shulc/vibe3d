@@ -1,10 +1,10 @@
 module commands.viewport.fit;
 
 import command;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.contracts.editmode;
-import view;
-import document : Document;
+import vibe3d.viewport.camera.view;
+import vibe3d.documents.model.document : Document;
 
 import math;
 

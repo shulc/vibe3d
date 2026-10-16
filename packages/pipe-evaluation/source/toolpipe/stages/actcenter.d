@@ -4,7 +4,7 @@ import std.format : format;
 
 import math : Vec3, rayPlaneIntersect, applyAffine;
 import vibe3d.util.spatial.spatial : Pin, Viewport, screenRay, screenPointToRay, ModelSpace;
-import mesh    : Mesh, edgeKey, MeshKey, MeshTermMarks;
+import vibe3d.mesh.core.mesh    : Mesh, edgeKey, MeshKey, MeshTermMarks;
 import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, MeshTermTopoEpoch, g_topoEpochs;  // task 1906 stage 2d (row 15)
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.tool_policy_values : Rollover;
@@ -13,11 +13,11 @@ import toolpipe.stage    : Stage, TaskCode, ordAcen, ToolSwitchTransient,
                            PresetClaimable;
 import vibe3d.editing.params.params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
 // pipeline imports moved to packet-only — Phase 6 cleanup
-import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
 import toolpipe.stages.symmetry : liveSymmetryStage;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath, installPreparedStatePath;
-import document          : Layer;
+import vibe3d.documents.model.document          : Layer;
 
 /// How many times `computeLocalClustersFull` has rebuilt the Local-mode
 /// cluster MEMBERSHIP partition — the O(V+E) walk, not the per-call centre
@@ -103,7 +103,7 @@ class ActionCenterStage : Stage, Operator, ToolSwitchTransient, PresetClaimable 
 
     bool evaluate(ref VectorStack vts) {
         if (!pipeEnabled) return false;
-        import toolpipe.packets : SubjectPacket, WorkplanePacket,
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, WorkplanePacket,
                                   SymmetryPacket;
         // Cache live viewport + upstream workplane so listAttrs
         // (called outside evaluation) and Screen mode can re-derive
@@ -401,14 +401,14 @@ private:
     /// this unrouted (the BVH already follows the draw) while the gizmo sits
     /// on the base. The two need separate assertions.
     private Vec3 acenVertex(size_t vi) const {
-        import morph_preview : displayPosition;
+        import vibe3d.mesh.preview.morph_preview : displayPosition;
         return displayPosition(mesh_, vi);
     }
 
     /// Is a morph preview live on this stage's mesh? Wrapper so the import
     /// sits in one place.
     private bool morphPreviewActive(const Mesh* m) const {
-        import morph_preview : mtActive = morphPreviewActive;
+        import vibe3d.mesh.preview.morph_preview : mtActive = morphPreviewActive;
         return mtActive(m);
     }
     EditMode* editMode_;
@@ -1360,7 +1360,7 @@ public:
     /// installed, which is every stage-level unittest — so those stay
     /// byte-identical.
     private ModelSpace itemSpace() const {
-        import document : primaryModelSpace;
+        import vibe3d.documents.model.document : primaryModelSpace;
         return primaryModelSpace();
     }
 
@@ -2384,7 +2384,7 @@ private:
 // tables are exhaustive over their enums.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import vibe3d.editing.params.params : tableCoversEnum;
 
     Mesh cube = makeCube();
@@ -2503,7 +2503,7 @@ unittest {
 // RAW ADDRESS and a stack local can reuse one a neighbouring block noted.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh       : Mesh;
+    import vibe3d.mesh.core.mesh       : Mesh;
     import vibe3d.mesh.change.mesh_dirty : g_topoEpochs;
 
     Mesh* a = new Mesh;
@@ -2570,9 +2570,9 @@ unittest {
 // have.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh            : Mesh;
+    import vibe3d.mesh.core.mesh            : Mesh;
     import vibe3d.mesh.change.mesh_dirty      : noteMeshChange;
-    import mesh_edit_delta : MeshEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
     Mesh* m = new Mesh;   // heap — see the M9 block above
     m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
@@ -2637,7 +2637,7 @@ unittest {
 // instead and this would catch it, whereas a same-count check would not.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh     : makeCube;
+    import vibe3d.mesh.core.mesh     : makeCube;
     import std.math : fabs;
 
     bool vecEq(Vec3 a, Vec3 b) {
@@ -2697,7 +2697,7 @@ unittest {
 // coverage only reaches Auto/None/Screen + a live drag settle).
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh     : makeCube;
+    import vibe3d.mesh.core.mesh     : makeCube;
     import std.math : fabs;
     import std.conv : to;
 

@@ -3,11 +3,11 @@ module tools.edit.bridge_tool_source_cells;
 import tools.edit.bridge_tool;
 import display_state : DrawPlan;
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import mesh_ops.bridge : BridgeOpenParams, openBridgeSegments, bridgeLoopsSpans, bridgeOpenRows, facesBoundedByLoop,
+import vibe3d.mesh.ops.mesh_ops.bridge : BridgeOpenParams, openBridgeSegments, bridgeLoopsSpans, bridgeOpenRows, facesBoundedByLoop,
                          kBridgeEditScope;
 import math;
 import vibe3d.editing.contracts.editmode : EditMode;
@@ -15,8 +15,8 @@ import vibe3d.editing.params.params : IntEnumEntry, Param;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import tools.common.session_mesh_key : SessionMeshKey;
-import snapshot : MeshSnapshot;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import shader : Shader, LitShader;
 import model_preview : ModelPreviewView;
 import std.json : JSONValue;
@@ -29,9 +29,9 @@ import prepared_bridge_activation : PreparedBridgeActivationOwner,
     PreparedBridgeDeactivateOwner;
 import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuUploadOwner,
     GpuResourceOwner;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import command_history : PreparedHistoryKind;
-import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import vibe3d.mesh.core.mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 version (unittest) import std.conv : to;
 
 
@@ -132,7 +132,7 @@ unittest { // rebuildBridgePreview is NON-CUMULATIVE — 5 repeat calls land
     auto sel = resolveBridgeSelection(baseMesh, EditMode.Polygons);
     assert(sel.valid);
 
-    import snapshot : MeshSnapshot;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
     MeshSnapshot baseSnap = MeshSnapshot.capture(baseMesh);
 
     BridgeParams p; p.segments = 3; p.twist = 1.0f; p.remove = true;

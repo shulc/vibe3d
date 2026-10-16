@@ -4,12 +4,12 @@ import bg_gpu_cache : BgGpuCache;
 import bindbc.opengl : GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT,
     glClear, glClearColor, glFlush, glViewport;
 import bindbc.sdl : SDL_Delay, SDL_GL_SwapWindow, SDL_Window;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
 import viewport_overlay_mode : OverlayMode;
 import snap_render : drawSnapOverlay, g_lastSnap;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import input_frame_state : InputFrameState;
 import ImGui = d_imgui;
 import imgui_impl_opengl3 : ImGui_ImplOpenGL3_RenderDrawData;

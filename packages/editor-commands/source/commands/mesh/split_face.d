@@ -1,16 +1,16 @@
 module commands.mesh.split_face;
-import mesh_edit_replay : apply, revert;
-import mesh_edge_slice : splitFaceByVertices;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
+import vibe3d.mesh.ops.mesh_edge_slice : splitFaceByVertices;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import shader;
 import vibe3d.editing.params.params : Param;
 import selection_product : dropConsumedFaces;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
 import commands.mesh.map_edit_undo  : runMapEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
@@ -102,7 +102,7 @@ class MeshSplitFace : Command, Operator {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         import std.algorithm : canFind;
 
         auto subj = vts.get!SubjectPacket();

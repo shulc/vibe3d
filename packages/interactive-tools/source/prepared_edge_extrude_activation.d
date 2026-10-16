@@ -1,7 +1,7 @@
 module prepared_edge_extrude_activation;
 
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.edit.edge_extrude : EdgeExtrudeTool,
     PreparedEdgeExtrudeActivationImage;
 

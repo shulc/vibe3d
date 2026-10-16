@@ -11,13 +11,13 @@ import command : Command, CommandOrigin, g_editTargetResolver;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import commands.mesh.move_vertex : MeshMoveVertex;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import math : Vec3;
-import mesh : Mesh, g_isDocumentMesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, g_isDocumentMesh, makeCube;
 import registry : Registry;
 import vibe3d.editing.contracts.seltype : SelType;
 import session_owner : Session;
@@ -25,7 +25,7 @@ import tests.unit.census_symbols : blankNonCode;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
 import ui.discard_guard : UiRunOutcome;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 static assert(!__traits(isCopyable, Session),
     "session ownership: Session must remain non-copyable");

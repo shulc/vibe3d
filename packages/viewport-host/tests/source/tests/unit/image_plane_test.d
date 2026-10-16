@@ -3,11 +3,11 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.image_plane_test;
 
-import document : Document, Layer, LinkState, ImagePlaneData, ItemXform;
+import vibe3d.documents.model.document : Document, Layer, LinkState, ImagePlaneData, ItemXform;
 import math;
-import view : ViewPreset, presetBasis;
-import document : ItemKind, ImageData, ImagePlaneData;
-import mesh : makeCube;
+import vibe3d.viewport.camera.view : ViewPreset, presetBasis;
+import vibe3d.documents.model.document : ItemKind, ImageData, ImagePlaneData;
+import vibe3d.mesh.core.mesh : makeCube;
 import std.math : abs, isFinite;
 import std.format : format;
 import image_plane;
@@ -182,7 +182,7 @@ unittest {
 // picker position.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import std.format : format;
 
     auto doc = Document.bootstrap(makeCube());     // 0: mesh

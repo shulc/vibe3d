@@ -8,20 +8,20 @@ import std.math : abs;
 public import vibe3d.util.spatial.workplane_basis : BuildPlane, mostFacingAxis, pickMostFacingPlane;
 import viewgrid : vectorSnap, viewVectorQuantum, viewWorkPlaneAnchor;
 import toolpipe.pipeline       : g_pipeCtx;
-import toolpipe.packets        : SubjectPacket, WorkplanePacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets        : SubjectPacket, WorkplanePacket;
 import toolpipe.stage          : TaskCode;
 import toolpipe.stages.workplane : WorkplaneStage;
-import operator                : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator                : VectorStack;
 import drag                    : HandleDrag, DragFrame, DragKind, planeDragDelta;
 import handler                 : MoveHandler;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.subject : evaluateSubject, viewOnlySubject, SubjectSource;
 import snap : SnapResult, snapCursor, snapPacketOf;
 import toolpipe.stages.snap : liveSnapGuides;
 import snap_render : publishLastSnap, clearLastSnap;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 
 // ---------------------------------------------------------------------------
 // workplaneCursorPlaneHit — the ortho arm, and the equality that makes it the

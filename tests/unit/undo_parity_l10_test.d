@@ -55,14 +55,14 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — run the cells in
 // isolation when scoring a mutation.
 module tests.unit.undo_parity_l10_test;
-import mesh_ops.triangulate : triangulateFacesByMask;
+import vibe3d.mesh.ops.mesh_ops.triangulate : triangulateFacesByMask;
 
 import std.format : format;
 import std.json   : JSONValue, parseJSON;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math      : Vec3;
 import http_json : meshPlanesJson, PlaneDumpMeta;
@@ -140,7 +140,7 @@ private uint vColOf (in Mesh m) { return cast(uint) m.vertices.length - 2; }
 
 unittest // the stand can exhibit everything the roster claims to measure
 {
-    import mesh_selsets : selSetMembersVertex, selSetMembersEdge;
+    import vibe3d.mesh.core.mesh_selsets : selSetMembersVertex, selSetMembersEdge;
 
     auto m = l10Stand();
     immutable vCoin = vCoinOf(*m);

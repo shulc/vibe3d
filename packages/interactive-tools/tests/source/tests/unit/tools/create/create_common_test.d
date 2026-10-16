@@ -7,15 +7,15 @@ import math : Vec3, dot, matrixMirrorsWinding, rayPlaneIntersect;
 import vibe3d.util.spatial.spatial : Viewport, isOrtho, screenPointToRay;
 import std.math : abs, cos, sin;
 import toolpipe.pipeline       : g_pipeCtx;
-import toolpipe.packets        : SubjectPacket, WorkplanePacket, SnapPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets        : SubjectPacket, WorkplanePacket, SnapPacket;
 import toolpipe.stage          : TaskCode;
 import toolpipe.stages.workplane : WorkplaneStage;
-import operator                : VectorStack;
-import mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.operator                : VectorStack;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import snap : SnapResult, snapCursor;
 import snap_render : publishLastSnap, clearLastSnap;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import tools.create.create_common;
 
 unittest {
@@ -290,7 +290,7 @@ unittest { // centre-mover-oblique: the centre box is the planar map anchored at
     import math : lookAt, perspectiveMatrix;
     import viewgrid : viewVectorQuantum, viewGridSizeFor, g_viewGrid;
     import toolpipe.pipeline : ToolPipeContext;
-    import toolpipe.packets : SnapType;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
     import toolpipe.stages.snap : SnapStage;
     auto saved = g_pipeCtx;
     g_pipeCtx = null;

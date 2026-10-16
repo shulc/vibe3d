@@ -29,7 +29,7 @@
 // isolation.
 module tests.unit.mesh_vertex_remap_test;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
 import tests.unit.mesh_by_value_gate;
 
@@ -207,7 +207,7 @@ unittest { // wrap-around duplicate trimmed, coincidence-weld family
 
 unittest { // coincidence weld: the wrap-trimmed face's dropped corner shifts no later face's UVs
     import std.format : format;
-    import mesh : MapDomain, kUvMapName;
+    import vibe3d.mesh.core.mesh : MapDomain, kUvMapName;
     // `wrapStand_` plus a second, untouched quad: the trim must drop the
     // trimmed corner's source too, or the second face reads its UVs one
     // corner late (rotated by one).
@@ -235,7 +235,7 @@ unittest { // coincidence weld: the wrap-trimmed face's dropped corner shifts no
 
 unittest { // coincidence weld: per-corner UVs follow their OLD face past a dropped one
     import std.format : format;
-    import mesh : MapDomain, kUvMapName;
+    import vibe3d.mesh.core.mesh : MapDomain, kUvMapName;
     // A strip of three quads; the middle one collapses (2 onto 1, 6 onto 5),
     // so old face 2 becomes new face 1 and must keep old face 2's corners.
     Mesh m;

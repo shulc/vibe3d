@@ -4,9 +4,9 @@ import commands.mesh.vertex_set;
 
 import std.array : uninitializedArray;
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import shader;
 import math : Vec3;
@@ -21,8 +21,8 @@ import commands.mesh.position_undo : PositionUndo;
 // are not touched, and that `all` still collapses.
 // ---------------------------------------------------------------------------
 version (unittest) {
-    import operator : VectorStack;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     private Vec3[] runSetPosition(string axis, float value, Vec3 pos,
                                   int[] selectVerts) {

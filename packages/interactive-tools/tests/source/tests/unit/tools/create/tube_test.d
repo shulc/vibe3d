@@ -4,8 +4,8 @@
 module tests.unit.tools.create.tube_test;
 
 import bindbc.sdl;
-import operator : VectorStack;
-import mesh;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.mesh.core.mesh;
 import math;
 import vibe3d.editing.params.params : Param;
 import shader : LitShader;

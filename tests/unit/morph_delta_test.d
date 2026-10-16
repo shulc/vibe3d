@@ -48,19 +48,19 @@
 // cell, in isolation.
 // ===========================================================================
 module tests.unit.morph_delta_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.format : format;
 import std.json   : parseJSON, JSONValue;
 
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math       : Vec3;
 import vibe3d.mesh.change.change_bus : changeBus;
 import http_json  : meshPlanesJson, PlaneDumpMeta;
-import mesh_edit_delta : MeshOpEntry;
-import mesh_morph : morphApply;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshOpEntry;
+import vibe3d.mesh.core.mesh_morph : morphApply;
 import morph_target;
 
 import commands.mesh.morph : MorphCreate, MorphRemove, MorphRename,

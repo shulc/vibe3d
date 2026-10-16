@@ -2,7 +2,7 @@ module tests.unit.toolpipe.pipeline_registration_test;
 
 import toolpipe.pipeline : Pipeline, resetToolSwitchTransientStages;
 import toolpipe.stage : Stage, TaskCode;
-import operator : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind;
 
 // ---------------------------------------------------------------------------
 // Pipeline unit tests — registration invariant.

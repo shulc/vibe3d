@@ -1,9 +1,9 @@
 module tests.unit.assimp_wire_test;
 
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import io.assimp_wire : decodeAssimpWire, encodeAssimpWire;
 import io.scene_ir : ImportedScene;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 
 unittest {
     auto doc = Document.bootstrap(makeCube());

@@ -11,8 +11,8 @@ import commands.history.undo : HistoryUndo;
 import commands.history.redo : HistoryRedo;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.util.spatial.spatial : Viewport;
-import mesh : Mesh;
-import view : View;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.viewport.camera.view : View;
 
 alias PilotMesh = ref Mesh delegate();
 alias PilotView = ref View delegate();

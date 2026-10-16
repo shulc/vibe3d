@@ -11,7 +11,7 @@ import std.format : format;
 import std.math : cos, sin, PI, sqrt;
 
 import math : Vec3;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import retopology_dot_cull : CullEye, cullEyeOf, DotCullKey, DotList, visibleDots;
 
 private enum float kS10 = cast(float) sin(10.0 * PI / 180.0);
@@ -182,7 +182,7 @@ unittest { // 8. the key: each term moves it, and only when it changes
     // moves) must invalidate the list through the geometry epoch.
     {
         import vibe3d.mesh.change.mesh_dirty : g_geomEpochs;
-        import mesh_edit_delta : MeshEditScope;
+        import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
         immutable ulong tv0 = m.topologyVersion;
         g_geomEpochs.note(cast(size_t)&m, MeshEditScope.Position);
         assert(m.topologyVersion == tv0, "8 premise: a position note moved no counter");

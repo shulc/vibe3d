@@ -61,7 +61,7 @@ module ui.item_rows;
 // draws, which is not.
 // ---------------------------------------------------------------------------
 
-import document : Document, Layer, ItemKind, kindInfo;
+import vibe3d.documents.model.document : Document, Layer, ItemKind, kindInfo;
 import ui.retained_item : ConstItem;
 
 /// The glyph a row draws in its TYPE cell.
@@ -564,7 +564,7 @@ immutable AddItemChoice[] kAddItemChoices = [
 // ===========================================================================
 
 version (unittest) {
-    import mesh     : makeCube;
+    import vibe3d.mesh.core.mesh     : makeCube;
     import vibe3d.editing.contracts.seltype  : SelMode;
 
     struct ItemFixture {

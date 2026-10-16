@@ -18,10 +18,10 @@ import commands.file.load : FileLoad;
 import commands.file.save : FileSave;
 import file_io_registration : registerFileIoCommands;
 import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import registry : Registry;
 import session_owner : Session;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 

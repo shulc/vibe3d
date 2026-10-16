@@ -1,13 +1,13 @@
 module commands.mesh.morph;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
-import view;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import mesh_edit_delta : MeshEditScope, MeshOpEntry;
-import mesh_morph : morphApply;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope, MeshOpEntry;
+import vibe3d.mesh.core.mesh_morph : morphApply;
 import morph_target;
 import vibe3d.editing.params.params : Param;
 import commands.mesh.position_undo : RecordedUndo, PositionUndo;

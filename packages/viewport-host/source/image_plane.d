@@ -23,9 +23,9 @@ module image_plane;
 // actually run.
 // ---------------------------------------------------------------------------
 
-import document : Document, Layer, LinkState, ImagePlaneData, ItemXform;
+import vibe3d.documents.model.document : Document, Layer, LinkState, ImagePlaneData, ItemXform;
 import math;
-import view : ViewPreset, presetBasis;
+import vibe3d.viewport.camera.view : ViewPreset, presetBasis;
 version (unittest) public import image_plane_source_cells : planeFixture;
 
 /// The slot name a plane's image link lives under.

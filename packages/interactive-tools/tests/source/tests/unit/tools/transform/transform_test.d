@@ -4,8 +4,8 @@
 module tests.unit.tools.transform.transform_test;
 
 import tool;
-import operator : VectorStack;
-import mesh;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype : SelType;
 import math : Vec3;
@@ -15,14 +15,14 @@ import command : Command;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snap : SnapResult;
-import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
 import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror;
 import pipe_gizmo_host : PipeGizmoHost;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import tools.transform.transform;
 
 // ---------------------------------------------------------------------------

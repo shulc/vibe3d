@@ -26,9 +26,9 @@ struct PreparedCommandWrapperActivationImage {
 import bindbc.sdl;
 
 import command : Command;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_gpu : GpuMesh;
-import view    : View;
+import vibe3d.viewport.camera.view    : View;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype  : SelType;
 import display_sync : refreshDisplay;
@@ -44,10 +44,10 @@ import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.mesh.vertex_position_result : VertexPositionResult,
     VertexPositionResultBuilder;
-import toolpipe.packets : FalloffPacket, SubjectPacket;
-import operator        : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, SubjectPacket;
+import vibe3d.editing.pipeline.contracts.operator        : VectorStack;
 import pipe_gizmo_host : PipeGizmoHost;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 
 import commands.mesh.smooth   : MeshSmooth;
 import commands.mesh.jitter   : MeshJitter;
@@ -933,7 +933,7 @@ public:
 
     private void installPilotPreview() {
         import vibe3d.mesh.change.change_bus : MeshEditScope;
-        import mesh : MeshEditBatch;
+        import vibe3d.mesh.core.mesh : MeshEditBatch;
         auto ed = MeshEditBatch.unrecorded(*meshPtr, MeshEditScope.Position);
         ed.setVertexPositions(latestResult_.indices, latestResult_.after);
         ed.commitChange(MeshEditScope.Position);
@@ -1084,7 +1084,7 @@ final class XfrmQuantizeTool : CommandWrapperTool {
 }
 
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     Mesh m = makeCube();
     View view = new View(0, 0, 800, 600);
     auto tool = new XfrmJitterTool(&m, view, EditMode.Vertices, null);
@@ -1134,7 +1134,7 @@ static assert(!__traits(compiles, {
 // (`return false`), silently no-op'ing the gesture for XfrmSmooth /
 // XfrmJitter / XfrmQuantize / EdgeSlide while 16 non-wrapper tools honour it.
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import command_history : CommandHistory;
     import commands.mesh.vertex_edit : MeshVertexEdit;
 
@@ -1237,7 +1237,7 @@ unittest {
 // compile-time file above, and the gap is named in card 3330 rather than
 // pretended away.
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import command_history : CommandHistory;
     import commands.mesh.vertex_edit : MeshVertexEdit;
     import std.meta : AliasSeq;

@@ -33,8 +33,8 @@
 //   2. outcome   — replaying that true history as literal clicks on a fresh
 //      mesh and re-running the walk must reproduce the command path's result.
 
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import commands.select.loop : SelectLoop;
 

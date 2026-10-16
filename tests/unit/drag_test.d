@@ -7,7 +7,7 @@ import std.math : sqrt, isNaN, abs;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
 import handler : MoveHandler, gizmoSize, getGizmoPixels;
-import toolpipe.packets : GesturePacket, GestureTrack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : GesturePacket, GestureTrack;
 import coord_rounding : CoordinateRounding, kFixedIncrementDefault;
 import std.math : PI, sin, cos, tan, atan;
 import drag;

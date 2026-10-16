@@ -141,8 +141,8 @@
     }
   },
   "dependencies": {
-    "vibe3d-document-model": {
-      "path": "../document-model"
+    "vibe3d:document-model": {
+      "path": "../.."
     },
     "vibe3d-document-channels": {
       "path": "../document-channels"
@@ -150,8 +150,8 @@
     "vibe3d:param-schema": {
       "path": "../.."
     },
-    "vibe3d-mesh": {
-      "path": "../mesh"
+    "vibe3d:mesh": {
+      "path": "../.."
     },
     "vibe3d:spatial": {
       "path": "../.."
@@ -165,8 +165,8 @@
     "vibe3d:log": {
       "path": "../.."
     },
-    "vibe3d-image-codec": {
-      "path": "../image-codec"
+    "vibe3d:image-codec": {
+      "path": "../.."
     }
   },
   "configurations": [
@@ -176,30 +176,30 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "modeling",
+        "vibe3d:document-model": "modeling",
         "vibe3d-document-channels": "modeling",
         "vibe3d:param-schema": "modeling",
-        "vibe3d-mesh": "modeling",
+        "vibe3d:mesh": "modeling",
         "vibe3d:spatial": "modeling",
         "vibe3d:math": "modeling",
         "vibe3d:edit-contracts": "modeling",
         "vibe3d:log": "modeling",
-        "vibe3d-image-codec": "modeling"
+        "vibe3d:image-codec": "modeling"
       }
     },
     {
       "name": "modeling-noai",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-document-model": "modeling-noai",
+        "vibe3d:document-model": "modeling-noai",
         "vibe3d-document-channels": "modeling-noai",
         "vibe3d:param-schema": "modeling-noai",
-        "vibe3d-mesh": "modeling-noai",
+        "vibe3d:mesh": "modeling-noai",
         "vibe3d:spatial": "modeling-noai",
         "vibe3d:math": "modeling-noai",
         "vibe3d:edit-contracts": "modeling-noai",
         "vibe3d:log": "modeling-noai",
-        "vibe3d-image-codec": "modeling-noai"
+        "vibe3d:image-codec": "modeling-noai"
       }
     },
     {
@@ -209,15 +209,15 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "with-render",
+        "vibe3d:document-model": "with-render",
         "vibe3d-document-channels": "with-render",
         "vibe3d:param-schema": "with-render",
-        "vibe3d-mesh": "with-render",
+        "vibe3d:mesh": "with-render",
         "vibe3d:spatial": "with-render",
         "vibe3d:math": "with-render",
         "vibe3d:edit-contracts": "with-render",
         "vibe3d:log": "with-render",
-        "vibe3d-image-codec": "with-render"
+        "vibe3d:image-codec": "with-render"
       }
     },
     {
@@ -226,15 +226,15 @@
         "web"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "web",
+        "vibe3d:document-model": "web",
         "vibe3d-document-channels": "web",
         "vibe3d:param-schema": "web",
-        "vibe3d-mesh": "web",
+        "vibe3d:mesh": "web",
         "vibe3d:spatial": "web",
         "vibe3d:math": "web",
         "vibe3d:edit-contracts": "web",
         "vibe3d:log": "web",
-        "vibe3d-image-codec": "web"
+        "vibe3d:image-codec": "web"
       }
     },
     {
@@ -243,15 +243,15 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "root-tests",
+        "vibe3d:document-model": "root-tests",
         "vibe3d-document-channels": "root-tests",
         "vibe3d:param-schema": "root-tests",
-        "vibe3d-mesh": "root-tests",
+        "vibe3d:mesh": "root-tests",
         "vibe3d:spatial": "root-tests",
         "vibe3d:math": "root-tests",
         "vibe3d:edit-contracts": "root-tests",
         "vibe3d:log": "root-tests",
-        "vibe3d-image-codec": "root-tests"
+        "vibe3d:image-codec": "root-tests"
       },
       "targetType": "sourceLibrary"
     },
@@ -259,15 +259,15 @@
       "name": "isolated-tests",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-document-model": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
         "vibe3d-document-channels": "isolated-tests",
         "vibe3d:param-schema": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
         "vibe3d:spatial": "isolated-tests",
         "vibe3d:math": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d:log": "isolated-tests",
-        "vibe3d-image-codec": "isolated-tests"
+        "vibe3d:image-codec": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

@@ -18,9 +18,9 @@ package(tests.unit) string[4][] productionPolicies(out size_t ids,
     import commands.layer.xform_edit : LayerXformEdit;
     import commands.mesh.morph_edit : MeshMorphEdit;
     import commands.mesh.vertex_edit : MeshVertexEdit;
-    import document : Document, Layer;
+    import vibe3d.documents.model.document : Document, Layer;
     import editor_app : EditorApp;
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
     import pipe_gizmo_host : PipeGizmoHost;
     import registration : registerTools;
@@ -31,7 +31,7 @@ package(tests.unit) string[4][] productionPolicies(out size_t ids,
         postmodeStartsOnPressFor;
     import tool_presets : loadToolPresets, registerToolPresets;
     import tools.edit.topology_pen.defs : TopoPenFactories;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import std.traits : FieldNameTuple;
     static struct Rig { Registry registry; GpuMesh gpu; Session* session; Layer layer;
                         View view; EditorApp app; }

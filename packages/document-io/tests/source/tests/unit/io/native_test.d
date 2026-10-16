@@ -7,9 +7,9 @@ import std.file      : exists, read, remove, write;
 import std.json      : JSONValue, JSONType, parseJSON, JSONException;
 import std.conv      : to;
 import std.format    : format;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
-import document : Document, Layer, ItemXform, sanitizeItemXform,
+import vibe3d.documents.model.document : Document, Layer, ItemXform, sanitizeItemXform,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
                   ItemKind, ImageData, ImagePlaneData,
                   kindInfo, kindFromToken, tokenOf;
@@ -21,7 +21,7 @@ import vibe3d.util.log.log : logWarn, logInfo;
 import std.file       : tempDir, mkdirRecurse, rmdirRecurse, readText;
 import std.path       : buildPath, dirName, buildNormalizedPath;
 import io.image_path  : writeTestBmp;
-import document       : LinkState;
+import vibe3d.documents.model.document       : LinkState;
 import io.native;
 
 // Task 3910 phase 0 control. A conventional face-built mesh has no authored
@@ -29,7 +29,7 @@ import io.native;
 // save -> load -> save bytes.
 unittest {
     import std.random : uniform;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     auto p1 = buildPath(tempDir(), format("vibe3d_3910_control_a_%d.v3d",
                                          uniform(0, int.max)));
@@ -68,7 +68,7 @@ unittest {
     import std.path   : buildPath;
     import std.format : format;
     import std.random : uniform;
-    import mesh        : makeCube;
+    import vibe3d.mesh.core.mesh        : makeCube;
 
     auto path = buildPath(tempDir(),
         format("vibe3d_native_ut_%d.v3d", uniform(0, int.max)));
@@ -159,8 +159,8 @@ unittest {
     import std.format : format;
     import std.random : uniform;
     import std.math   : fabs, fmod;
-    import mesh       : makeCube;
-    import document   : ItemKind;
+    import vibe3d.mesh.core.mesh       : makeCube;
+    import vibe3d.documents.model.document   : ItemKind;
 
     auto path = buildPath(tempDir(),
         format("vibe3d_native_xform_rt_%d.v3d", uniform(0, int.max)));
@@ -484,7 +484,7 @@ unittest { // a POINTS-ONLY mesh opens at all
 // only.
 unittest {
     import std.random : uniform;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     auto p = buildPath(tempDir(), format("vibe3d_s1e_v3d_%d.v3d", uniform(0, int.max)));
     scope(exit) if (exists(p)) remove(p);
     Mesh m = makeCube();
@@ -519,7 +519,7 @@ unittest {
 // number is not a JSON boolean (read as the default, false).
 unittest {
     import std.random : uniform;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     auto p = buildPath(tempDir(), format("vibe3d_s1d_v3d_%d.v3d", uniform(0, int.max)));
     scope(exit) if (exists(p)) remove(p);
     Mesh m = makeCube();

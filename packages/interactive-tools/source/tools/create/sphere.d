@@ -5,7 +5,7 @@ private struct SpherePreparedParamHandle {
     @disable this(this);
 }
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
@@ -17,7 +17,7 @@ import tools.create.create_common : primitivePlacementFrame, ringCount;
 /// Kernel cap on the quad-ball / tessellation order (the captured maximum, K-A3).
 enum int MAX_SPHERE_ORDER = 32;
 import prepared_record_context : PreparedRecordContext, PreparedToolParamDoorClient;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 
 import std.math : sin, cos, acos, PI, abs, sqrt;
 

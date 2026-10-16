@@ -16,9 +16,9 @@
 module tests.unit.tools.transform.morph_route_test;
 
 import math : Vec3;
-import mesh;
-import mesh_morph : morphApply;
-import toolpipe.packets : SymmetryPacket;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.core.mesh_morph : morphApply;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
 import tools.transform.morph_route;
 
 // ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ unittest { // the ON-PLANE branch projects the DRAWN point and stores it -- it
     // displacement whatsoever.
     {
         import symmetry     : projectOnPlane;
-        import mesh_morph   : morphRoutedStore;
+        import vibe3d.mesh.core.mesh_morph   : morphRoutedStore;
         const Vec3 naive = morphRoutedStore(route.base[2],
                                             projectOnPlane(sp, route.base[2]),
                                             MapKind.morphRelative);

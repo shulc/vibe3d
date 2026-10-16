@@ -150,11 +150,11 @@
     "vibe3d:math": {
       "path": "../.."
     },
-    "vibe3d-mesh": {
-      "path": "../mesh"
+    "vibe3d:mesh": {
+      "path": "../.."
     },
-    "vibe3d-mesh-ops": {
-      "path": "../mesh-ops"
+    "vibe3d:mesh-ops": {
+      "path": "../.."
     },
     "vibe3d-pipe-evaluation": {
       "path": "../pipe-evaluation"
@@ -169,8 +169,8 @@
       "subConfigurations": {
         "vibe3d:interaction-data": "modeling",
         "vibe3d:math": "modeling",
-        "vibe3d-mesh": "modeling",
-        "vibe3d-mesh-ops": "modeling",
+        "vibe3d:mesh": "modeling",
+        "vibe3d:mesh-ops": "modeling",
         "vibe3d-pipe-evaluation": "modeling"
       },
       "dependencies": {
@@ -186,8 +186,8 @@
       "subConfigurations": {
         "vibe3d:interaction-data": "modeling-noai",
         "vibe3d:math": "modeling-noai",
-        "vibe3d-mesh": "modeling-noai",
-        "vibe3d-mesh-ops": "modeling-noai",
+        "vibe3d:mesh": "modeling-noai",
+        "vibe3d:mesh-ops": "modeling-noai",
         "vibe3d-pipe-evaluation": "modeling-noai"
       }
     },
@@ -200,8 +200,8 @@
       "subConfigurations": {
         "vibe3d:interaction-data": "with-render",
         "vibe3d:math": "with-render",
-        "vibe3d-mesh": "with-render",
-        "vibe3d-mesh-ops": "with-render",
+        "vibe3d:mesh": "with-render",
+        "vibe3d:mesh-ops": "with-render",
         "vibe3d-pipe-evaluation": "with-render"
       },
       "dependencies": {
@@ -219,8 +219,8 @@
       "subConfigurations": {
         "vibe3d:interaction-data": "web",
         "vibe3d:math": "web",
-        "vibe3d-mesh": "web",
-        "vibe3d-mesh-ops": "web",
+        "vibe3d:mesh": "web",
+        "vibe3d:mesh-ops": "web",
         "vibe3d-pipe-evaluation": "web"
       }
     },
@@ -233,8 +233,8 @@
       "subConfigurations": {
         "vibe3d:interaction-data": "root-tests",
         "vibe3d:math": "root-tests",
-        "vibe3d-mesh": "root-tests",
-        "vibe3d-mesh-ops": "root-tests",
+        "vibe3d:mesh": "root-tests",
+        "vibe3d:mesh-ops": "root-tests",
         "vibe3d-pipe-evaluation": "root-tests"
       },
       "targetType": "sourceLibrary",
@@ -251,8 +251,8 @@
       "subConfigurations": {
         "vibe3d:interaction-data": "isolated-tests",
         "vibe3d:math": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests",
-        "vibe3d-mesh-ops": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:mesh-ops": "isolated-tests",
         "vibe3d-pipe-evaluation": "isolated-tests"
       },
       "targetType": "sourceLibrary"

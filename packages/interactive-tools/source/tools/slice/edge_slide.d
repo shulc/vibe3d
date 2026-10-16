@@ -1,8 +1,8 @@
 module tools.slice.edge_slide;
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_gpu : GpuMesh;
-import view    : View;
+import vibe3d.viewport.camera.view    : View;
 import vibe3d.editing.contracts.editmode : EditMode;
 import tools.common.command_wrapper : CommandWrapperTool;
 import tool : ToolSessionPolicy, CommandClose;

@@ -21,9 +21,9 @@ import std.array     : array;
 import std.format    : format;
 
 import math : Vec3;
-import mesh;
-import mesh_ops.extrude;
-import mesh_ops.select_loop : isEdgeBorder, borderEdgeCountAtVertex;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.extrude;
+import vibe3d.mesh.ops.mesh_ops.select_loop : isEdgeBorder, borderEdgeCountAtVertex;
 
 // ---------------------------------------------------------------------------
 // Fixtures

@@ -2,8 +2,8 @@ module tests.unit.toolpipe.snap_stage_regression_test;
 
 import toolpipe.stages.snap : SnapStage;
 import toolpipe.guide : SnapGuide;
-import toolpipe.packets : SnapPacket, SnapType, SnapMode, SnapHitPacket;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType, SnapMode, SnapHitPacket;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 
 // ---------------------------------------------------------------------------
@@ -36,8 +36,8 @@ import operator : VectorStack;
 unittest {
     import math : Vec3, lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
-    import mesh             : Mesh;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.mesh.core.mesh             : Mesh;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import snap             : invalidateSnapGrids;
     import vibe3d.editing.contracts.editmode         : EditMode;
     import std.math         : PI, round;
@@ -223,7 +223,7 @@ unittest {
     st.outerRangePx = 44.0f;
     st.enabled      = true;
     {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         SubjectPacket subj;               // cursorValid stays false: no query
         VectorStack vts;
         vts.put(&subj);

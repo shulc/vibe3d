@@ -59,11 +59,11 @@ import commands.mesh.gesture_payload : GesturePayload;
 import commands.mesh.session_edit    : MeshSessionEdit;
 import vibe3d.editing.contracts.editmode         : EditMode;
 import math             : Vec3;
-import mesh             : Mesh;
-import mesh_edit_delta  : MeshEditScope;
-import snapshot         : MeshSnapshot;
+import vibe3d.mesh.core.mesh             : Mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta  : MeshEditScope;
+import vibe3d.mesh.snapshot.snapshot         : MeshSnapshot;
 import tool             : Tool, GestureRecordMode;
-import view             : View;
+import vibe3d.viewport.camera.view             : View;
 
 import std.conv : to;
 

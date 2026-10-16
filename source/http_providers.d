@@ -21,7 +21,7 @@ import command_history : CommandHistory, HistoryEntry, HistoryFlags, RecordMode,
     UndoState;
 import edit_session : EditSession;
 import input_frame_state : InputFrameState;
-import input_context : inputContextJson;
+import vibe3d.platform.input.input_context : inputContextJson;
 // Task 1650 — `/api/viewport/display` reports the per-cell overlay decision
 // the N-cell render loop STAMPED (`Viewport3D.lastOverlayMode`), so only the
 // enum's name is needed here, not the resolver.
@@ -46,21 +46,21 @@ import imgui_impl_sdl2;
 import imgui_impl_opengl3;
 import math;
 import vibe3d.util.spatial.spatial : ModelSpace, Orientation, Viewport, aimSpace, isOrtho;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : DisplayPayloadBasis, kFaceStride, kFaceFlatNormalOffset,
     kFaceSmoothNormalOffset;
-import eventlog;
+import vibe3d.platform.input.eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
 import tool;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype;
 import toolpipe;
-import operator         : VectorStack;
-import toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.contracts.operator         : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
-import view;
+import vibe3d.viewport.camera.view;
 import shader;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
@@ -217,7 +217,7 @@ import commands.history.save_as_script : HistorySaveAsScript;
 import commands.macros.record : MacroRecord;
 import commands.macros.save_recorded : MacroSaveRecorded;
 import macro_recorder : MacroRecorder;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 import commands.tool.host     : ToolHost;
 import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
@@ -246,7 +246,7 @@ import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
                                 WorkplaneAlignToSelectionCommand;
 import command;
 import registry;
-import shortcuts;
+import vibe3d.platform.input.shortcuts;
 import buttonset;
 import vibe3d.editing.interaction.data.ai.debug_trace : latestHandleDebugTraceJson;
 import ai.element_candidates : publishElementCandidates,
@@ -283,7 +283,7 @@ import ui.pie_record : pieFrameJson;
 import ui.stat_record : statRowsJson;
 import forms_render;
 import layer_params   : LayerPropsProvider;
-import document       : Layer;
+import vibe3d.documents.model.document       : Layer;
 import snap           : ItemSnapFrame;
 import viewport : LayoutPreset;
 // Phase-B additions beyond editor_app.d's mirrored surface: the moved block
@@ -299,7 +299,7 @@ import commands.prefs.trackball     : TrackballPrefCommand;
 
 // Locally-scoped in app.d's main() (not top-level there), but EditorApp is a
 // module-scope struct so these two need to be top-level here (0415).
-import document       : Document;
+import vibe3d.documents.model.document       : Document;
 import viewport        : ViewportFbo, ViewportManager, Viewport3D;
 import selection_projection : SelectionProjectionInput,
     SelectionProjectionReadModel;
@@ -307,7 +307,7 @@ import selection_projection : SelectionProjectionInput,
 // `EditorApp app`'s pointer-backed properties via `with(app)`); the primary
 // layer's ModelSpace is resolved through the same global app.d's main()
 // installs for every other cross-module picking call site.
-import document       : primaryModelSpace;
+import vibe3d.documents.model.document       : primaryModelSpace;
 
 // TASK 4062 — `oneStringArg`, `injectViewportCommandPositional` and
 // `scalarArgToString` stood here: 250 lines that read the ten `viewport.*`
@@ -434,7 +434,7 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
         // /api/model?layer=N — N<0 (default) → active layer; otherwise clamp
         // into range. Same detailed JSON shape, just a different source layer.
         httpServer.setLayerModelProvider((int layer) {
-            import document : tokenOf, kNoEditTargetReason;
+            import vibe3d.documents.model.document : tokenOf, kNoEditTargetReason;
             // Task 0654: `layer=-1` (the default) means "the active layer",
             // and with an empty item selection there is none. REFUSE by name.
             // The clamp below is for an explicit out-of-range index and must
@@ -504,7 +504,7 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
             import std.array  : appender;
             import std.format : format;
             import std.json   : JSONValue;
-            import document   : Document, tokenOf, LinkState;  // Document.background (derived, 2b)
+            import vibe3d.documents.model.document   : Document, tokenOf, LinkState;  // Document.background (derived, 2b)
             import image_plane : imagePlaneSource, sourceToken;
             import hover_state : g_hoveredItem;
             auto a = appender!string();
@@ -762,7 +762,7 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
             import std.conv   : to;
             import image_plane : resolvePlacementFor, imagePlaneSource,
                                  sourceToken, kImageLinkSlot, ImagePlaneSource;
-            import view : ProjKind;
+            import vibe3d.viewport.camera.view : ProjKind;
 
             if (index < 0 || index >= cast(int) document.layers.length)
                 return `{"error":"no layer ` ~ index.to!string ~ `"}`;
@@ -772,7 +772,7 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
             // caller with only this response could not tell them apart if both
             // came back as zeros.
             if (!lyr.hasImagePlane) {
-                import document : tokenOf;
+                import vibe3d.documents.model.document : tokenOf;
                 return `{"error":"layer ` ~ index.to!string
                      ~ ` is not an image plane (kind ` ~ tokenOf(lyr.kind) ~ `)"}`;
             }
@@ -1645,7 +1645,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
         // exercises multi-viewport topology-pen.
         httpServer.setSurfaceRaycastProvider((int x, int y, float thresholdPx) {
             import std.format        : format;
-            import toolpipe.packets  : ConstrainHitPacket, HoverTargetKind;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets  : ConstrainHitPacket, HoverTargetKind;
             import toolpipe.subject  : SubjectSource, evaluateSubject;
             import constraint        : resolveHoverTarget, topoPenPressPickPx;
             import snap : backgroundSourcesFull;
@@ -1971,7 +1971,7 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             import std.format      : format;
             import toolpipe.pipeline : g_pipeCtx;
             import toolpipe.subject  : SubjectSource, evaluateSubject;
-            import toolpipe.packets  : SubjectPacket;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SubjectPacket;
             import math              : Vec3;
 
             auto buf = appender!string;
@@ -1987,8 +1987,8 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
                                       currentSelType(selTypeOrder),
                                       vpm.activeSnapshot());
 
-            import operator             : VectorStack;
-            import toolpipe.packets     : ActionCenterPacket, AxisPacket,
+            import vibe3d.editing.pipeline.contracts.operator             : VectorStack;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets     : ActionCenterPacket, AxisPacket,
                                           SymmetryPacket, SnapPacket;
             SubjectPacket subj;
             VectorStack vts;
@@ -2151,7 +2151,7 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             // key = "falloffWeights", one weight per vertex in mesh
             // vertex-index order, values in [0, 1].
             {
-                import toolpipe.packets : FalloffPacket;
+                import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
                 import falloff          : evaluateFalloff;
                 import std.math         : isFinite;
                 if (auto fpp = vts.get!FalloffPacket()) {
@@ -2247,7 +2247,7 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             import std.format      : format;
             import std.json        : parseJSON, JSONType, JSONValue;
             import std.conv        : to;
-            import toolpipe.packets        : SnapPacket, SubjectPacket;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets        : SnapPacket, SubjectPacket;
             import snap                    : snapCursor, SnapResult, snapPacketOf;
             import toolpipe.stages.snap    : liveSnapGuides;
             import math                    : Vec3;
@@ -2297,7 +2297,7 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             SnapPacket cfg;
             {
                 import toolpipe.subject : SubjectSource, evaluateSubject;
-                import operator        : VectorStack;
+                import vibe3d.editing.pipeline.contracts.operator        : VectorStack;
                 auto src = SubjectSource(&mesh(), editMode,
                                           currentSelType(selTypeOrder), vp);
                 SubjectPacket subj;
@@ -2379,7 +2379,7 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             import std.format      : format;
             import std.json        : parseJSON, JSONType, JSONValue;
             import std.conv        : to;
-            import toolpipe.packets    : ConstrainPacket, SubjectPacket;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets    : ConstrainPacket, SubjectPacket;
             import snap                : backgroundSourcesFull;
             import constraint          : constrainPoint;
             import math                : Vec3;
@@ -2419,7 +2419,7 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             ConstrainPacket cfg;
             {
                 import toolpipe.subject : SubjectSource, evaluateSubject;
-                import operator : VectorStack;
+                import vibe3d.editing.pipeline.contracts.operator : VectorStack;
                 auto src = SubjectSource(&mesh(), editMode,
                                           currentSelType(selTypeOrder), vp);
                 SubjectPacket subj;
@@ -2455,8 +2455,8 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             import std.format        : format;
             import toolpipe.pipeline : g_pipeCtx;
             import toolpipe.subject  : SubjectSource, evaluateSubject;
-            import toolpipe.packets  : SubjectPacket, PathPacket;
-            import operator          : VectorStack;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SubjectPacket, PathPacket;
+            import vibe3d.editing.pipeline.contracts.operator          : VectorStack;
             import path              : pathValue, pathTangent, pathLength;
 
             // N1 (task 1904): null check stays BEFORE the subject is built,
@@ -2732,7 +2732,7 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
         if (!command.g_testMode) optionalSlots ~= "injectLayerHandler";
         if (command.g_testMode) {
         httpServer.setInjectLayerHandler((JSONValue params) {
-            import document : ItemKind, kindFromToken;
+            import vibe3d.documents.model.document : ItemKind, kindFromToken;
             import std.conv : to;
 
             if ("kind" !in params || params["kind"].type != JSONType.string)

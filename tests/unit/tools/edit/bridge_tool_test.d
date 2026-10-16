@@ -2,19 +2,19 @@
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.tools.edit.bridge_tool_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import bindbc.opengl;
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.params.params : Param;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import shader : Shader, LitShader, drawLitPreview;
 import std.json : JSONValue, JSONType;
 import std.conv : to;
@@ -154,7 +154,7 @@ unittest {
     import commands.tool.host : ToolHost;
     import vibe3d.editing.params.params : injectParamsInto;
     import edit_session : EditSession;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     Mesh m; View v;
     Tool t = new BridgeTool(null, null, null, null);
     auto history = new CommandHistory;
@@ -312,15 +312,15 @@ unittest {
 }
 
 unittest { // Prepared result metadata publishes only with its owning commit.
-    import document : Layer;
+    import vibe3d.documents.model.document : Layer;
     import mesh_gpu : GpuMesh, GpuUploadOwner, GpuResourceOwner;
     import prepared_record_context : PreparedRecordContext;
     import prepared_bridge_activation : PreparedBridgeDeactivateOwner;
     import record_observer_hub : RecordObserverHub;
     import vibe3d.editing.params.params : injectParamsInto;
-    import view : View;
-    import mesh_ops.bridge : kBridgeEditScope;
-    import mesh_edit_delta : MeshEditScope;
+    import vibe3d.viewport.camera.view : View;
+    import vibe3d.mesh.ops.mesh_ops.bridge : kBridgeEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
     class Rig {
         Layer layer;
         GpuMesh gpu;
@@ -421,7 +421,7 @@ unittest { // K3 typed guard, cached reason reset and inherited target precedenc
     import command : g_editTargetResolver, kNoEditTargetReason;
     import commands.tool.bridge_headless : BridgeHeadlessCommand;
     import mesh_gpu : GpuMesh;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     Mesh m;
     foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0),
                  Vec3(0,0,1), Vec3(1,0,1), Vec3(1,1,1)]) m.addVertex(p);

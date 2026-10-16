@@ -1,7 +1,7 @@
 module prepared_edge_bevel_activation;
 
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.edit.edge_bevel : EdgeBevelTool, PreparedEdgeBevelActivationImage;
 
 struct PreparedEdgeBevelActivationToken {

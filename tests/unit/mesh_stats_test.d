@@ -26,10 +26,10 @@
 //      the command and looking at the selection" cannot be WRITTEN here. The
 //      mutation is to delete the `const` — a one-line diff a reviewer sees.
 
-import mesh;
-import mesh_stats;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_stats;
 import math : Vec3;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import vibe3d.editing.contracts.editmode : EditMode;
 import command : Command;
 import commands.select.by_stat : SelectByStatVertex, SelectByStatEdge,

@@ -8,9 +8,9 @@ import std.algorithm : canFind;
 
 import toolpipe.stage    : Stage, TaskCode, ordSnap;
 // pipeline imports moved to packet-only — Phase 6 cleanup
-import toolpipe.packets  : SnapPacket, SnapConfig, SnapHitPacket, SnapType, SnapMode;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SnapPacket, SnapConfig, SnapHitPacket, SnapType, SnapMode;
 import toolpipe.guide    : SnapGuide, GuideDrawState;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath, installPreparedStatePath;
 import vibe3d.editing.params.params            : Param, IntEnumEntry;
 
@@ -114,7 +114,7 @@ class SnapStage : Stage, Operator {
         // NB: SnapStage shadows Stage.enabled with its own field
         // (default false). `this.enabled` resolves to the SnapStage one.
         if (!this.enabled) return false;
-        import toolpipe.packets : WorkplanePacket, SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : WorkplanePacket, SubjectPacket;
         import viewgrid : viewGridSizeFor, g_viewGrid;
         SnapPacket pkt;
         pkt.config = config;
@@ -274,7 +274,7 @@ class SnapStage : Stage, Operator {
         // the whole of the fix for the cost measured in task 0526. A query
         // whose answer nobody asked for is not run at all.
         if (_hitDemand <= 0) return;
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         import snap             : snapCursor, SnapResult,
                                   backgroundSourceLayerIndices;
         import math : Vec3;
@@ -284,7 +284,7 @@ import vibe3d.util.spatial.spatial : projectToWindowFull;
         // (the toolpipe addresses the foreground mesh transparently, per
         // CLAUDE.md), so its ModelSpace is the SAME resolver every other
         // cross-module picking call site uses.
-        import document         : primaryModelSpace;
+        import vibe3d.documents.model.document         : primaryModelSpace;
 
         auto subj = vts.get!SubjectPacket();
         if (subj is null || !subj.cursorValid) return;

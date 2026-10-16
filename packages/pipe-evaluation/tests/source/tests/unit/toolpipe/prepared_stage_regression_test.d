@@ -5,7 +5,7 @@ import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
 import toolpipe.stages.constrain : ConstrainStage, Remembered;
 import toolpipe.stages.falloff : FalloffStage;
-import toolpipe.packets : ConstrainGeom, FalloffType, FalloffShape, ElementMode;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainGeom, FalloffType, FalloffShape, ElementMode;
 import toolpipe.stage : Stage;
 
 version (unittest) {

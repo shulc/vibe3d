@@ -150,8 +150,8 @@ public:
 void registerMeshCommands(ref Registry reg, LiveSessionRole owner,
         LiveViewModeRole live, MeshCommandDeps deps) {
     auto regPtr = &reg;
-    import mesh : Mesh;
-    import view : View;
+    import vibe3d.mesh.core.mesh : Mesh;
+    import vibe3d.viewport.camera.view : View;
     ref Mesh pilotMesh() { return owner.activeMesh(); }
     ref View pilotView() { return live.view(); }
     auto pilot = PilotCommandDeps(&pilotMesh, &pilotView, live.modeCell(),

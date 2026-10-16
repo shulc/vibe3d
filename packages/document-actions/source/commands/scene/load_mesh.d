@@ -2,11 +2,11 @@ module commands.scene.load_mesh;
 
 import command;
 import math : Vec3;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 // GpuMesh lives in mesh.d, already imported above.
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import vibe3d.mesh.change.change_bus : MeshChangeAll;
 import vibe3d.editing.params.params : Param, wireArgs;
 import std.json : JSONValue, JSONType, parseJSON;

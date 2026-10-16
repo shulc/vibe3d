@@ -231,10 +231,10 @@ unittest { // (w1) an AUTO (view-turned) work plane maps the axis by the IDENTIT
     // mx; Front view axis Y offset 0.3 -> plane y = 0.3, partner my+. Flag off
     // reads the same plane bit for bit. The published pair table names the partner.
     import math : Vec3, identityMatrix;
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import operator : VectorStack;
-    import toolpipe.packets : SubjectPacket, SymmetryPacket, WorkplanePacket;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, SymmetryPacket, WorkplanePacket;
     import toolpipe.stages.symmetry : SymmetryStage;
     import toolpipe.stages.workplane : WorkplaneStage;
 
@@ -291,10 +291,10 @@ unittest { // (w1) an AUTO (view-turned) work plane maps the axis by the IDENTIT
 
 unittest { // (w1e) an EMPTY mesh: no pair table is built, currentPlane still reads the applied plane
     import math : Vec3, identityMatrix;
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import operator : VectorStack;
-    import toolpipe.packets : SubjectPacket, SymmetryPacket;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, SymmetryPacket;
     import toolpipe.stages.symmetry : SymmetryStage;
     import toolpipe.stages.workplane : WorkplaneStage;
 
@@ -334,10 +334,10 @@ unittest { // (w1e) an EMPTY mesh: no pair table is built, currentPlane still re
 
 unittest { // (w6) the plane maps the axis and the offset through W once (K-S2 S2z)
     import math : Vec3, identityMatrix;
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import operator : VectorStack;
-    import toolpipe.packets : SubjectPacket, SymmetryPacket;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, SymmetryPacket;
     import toolpipe.stages.symmetry : SymmetryStage;
     import toolpipe.stages.workplane : WorkplaneStage;
 
@@ -381,8 +381,8 @@ unittest { // (w6) the plane maps the axis and the offset through W once (K-S2 S
 unittest { // (w2) the walker's refusals: a disabled packet, a pair table or a
     // baseline of another length write nothing (a positive control writes).
     import math : Vec3;
-    import mesh : Mesh;
-    import toolpipe.packets : SymmetryPacket;
+    import vibe3d.mesh.core.mesh : Mesh;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
     import symmetry : applySymmetryMirror, applySymmetryMirrorDelta;
     Mesh m;
     m.vertices = [Vec3(1, 0, 0), Vec3(-0.5f, 0, 0), Vec3(0.2f, 1, 0)];   // 0 <-> 1, 2 on the plane
@@ -415,8 +415,8 @@ unittest { // (w2) the walker's refusals: a disabled packet, a pair table or a
 
 unittest { // (w3) both pairings classify a vertex inside epsilonWorld as on the plane
     import math : Vec3;
-    import mesh : Mesh;
-    import toolpipe.packets : SymmetryPacket;
+    import vibe3d.mesh.core.mesh : Mesh;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
     import symmetry : rebuildPairing, rebuildPairingTopological;
     Mesh m;
     m.vertices = [Vec3(1, 0, 0), Vec3(-1, 0, 0), Vec3(5e-5f, 1, 0)];
@@ -434,9 +434,9 @@ unittest { // (w3) both pairings classify a vertex inside epsilonWorld as on the
 
 unittest { // (w4) a routed walk that stores announces ONE Maps change
     import math : Vec3;
-    import mesh : Mesh, MapKind;
-    import mesh_edit_delta : MeshEditScope;
-    import toolpipe.packets : SymmetryPacket;
+    import vibe3d.mesh.core.mesh : Mesh, MapKind;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
     import tools.transform.morph_route : MorphRoute, applySymmetryMirrorRouted,
                                          applySymmetryMirrorDeltaRouted;
     Mesh m;
@@ -465,9 +465,9 @@ unittest { // (w5) the routed POSITION walk stores the EXACT mirror of the drawn
     // driver, even when the partner's run position is not the driver's mirror
     // (the delta rule would keep the partner's own morph; this walk must not).
     import math : Vec3;
-    import mesh : Mesh, MapKind;
-    import mesh_morph : morphApply;
-    import toolpipe.packets : SymmetryPacket;
+    import vibe3d.mesh.core.mesh : Mesh, MapKind;
+    import vibe3d.mesh.core.mesh_morph : morphApply;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
     import symmetry : mirrorPosition;
     import tools.transform.morph_route : MorphRoute, applySymmetryMirrorRouted;
     Mesh m;

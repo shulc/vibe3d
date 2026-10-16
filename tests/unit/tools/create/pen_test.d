@@ -4,21 +4,21 @@
 module tests.unit.tools.create.pen_test;
 
 import bindbc.opengl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import bindbc.sdl;
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import vibe3d.editing.params.params : Param;
 import handler : BoxHandler, gizmoSize, ToolHandles;
 import viewport_scheme : schemeColor, SchemeColor;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import toolpipe.packets : SnapType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
 import vibe3d.editing.contracts.editmode : EditMode;
 import snap : SnapResult;
 import std.math : abs;
@@ -191,7 +191,7 @@ version (PerfProbe) unittest {
     import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
     import toolpipe.stages.snap : SnapStage;
     import mesh_gpu : GpuMesh;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     const hadDriver = "SDL_VIDEODRIVER" in environment;
     const oldDriver = environment.get("SDL_VIDEODRIVER", "");

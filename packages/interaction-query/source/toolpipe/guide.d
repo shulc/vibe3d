@@ -3,7 +3,7 @@ static import spatial = vibe3d.util.spatial.spatial;
 
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
-import toolpipe.packets : SnapPacket, SnapType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType;
 
 // ---------------------------------------------------------------------------
 // The snapping guide — S4 of doc/toolpipe_architecture_plan.md.

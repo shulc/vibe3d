@@ -15,7 +15,7 @@
 // doc/vertex_fan_walk_foreign_edge_plan.md §Phase 0 / §8.
 
 import subpatch_factories : subdivideCube;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import std.algorithm : sort;
 

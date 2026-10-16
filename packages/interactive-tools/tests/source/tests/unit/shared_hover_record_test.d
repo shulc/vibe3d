@@ -1,10 +1,10 @@
 module tests.unit.shared_hover_record_test;
 import hover_state;
-import mesh : Mesh, makeGridPlane;
+import vibe3d.mesh.core.mesh : Mesh, makeGridPlane;
 import math : Vec3, lookAt, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
 import constraint : resolveHoverTarget, BackgroundSource;
-import toolpipe.packets : ConstrainHitPacket, HoverTargetKind, SnapType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainHitPacket, HoverTargetKind, SnapType;
 import snap : SnapResult, elementPlaced, kMergeSnappedEdgeEndPx, kMergeAfterSnapPx;
 
 private Viewport viewport() {
@@ -121,8 +121,8 @@ unittest {
 
 unittest {
     import tools.edit.topology_pen : TopologyPenTool;
-    import operator : VectorStack;
-    import toolpipe.packets : SubjectPacket, HoverTarget;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, HoverTarget;
     import snap : setBackgroundSnapSources, backgroundSourcesSnapshot,
         backgroundSourcesModelSpaces, backgroundSourceLayerIndices;
     const oldMeshes = backgroundSourcesSnapshot();

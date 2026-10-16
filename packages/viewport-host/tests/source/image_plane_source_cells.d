@@ -1,12 +1,12 @@
 module image_plane_source_cells;
 
 import image_plane;
-import document : Document, Layer, LinkState, ImagePlaneData, ItemXform;
+import vibe3d.documents.model.document : Document, Layer, LinkState, ImagePlaneData, ItemXform;
 import math;
-import view : ViewPreset, presetBasis;
+import vibe3d.viewport.camera.view : ViewPreset, presetBasis;
 
 version (unittest) {
-    import document : ItemKind, ImageData, ImagePlaneData;
+    import vibe3d.documents.model.document : ItemKind, ImageData, ImagePlaneData;
 
     /// [mesh, clipA, clipB(middle target), clipC, plane] — three clips, the
     /// plane bound to the MIDDLE one, and clipA / clipC sharing ONE file path
@@ -15,7 +15,7 @@ version (unittest) {
     /// link; with two decoys on the same path it resolves to the WRONG clip
     /// and every count still adds up.
     Document planeFixture(out Layer plane, out Layer target) {
-        import mesh : makeCube;
+        import vibe3d.mesh.core.mesh : makeCube;
         auto doc = Document.bootstrap(makeCube());
 
         Layer clip(string name, string path, bool missing) {

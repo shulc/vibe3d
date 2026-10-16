@@ -14,19 +14,19 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — score a mutation that
 // reddens two of these cells by running them in isolation.
 module tests.unit.l8_extrude_delta_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.conv   : to;
 import std.format : format;
 
 import vibe3d.mesh.change.change_bus : changeBus;
 import command;
-import mesh;
-import mesh_ops.extrude;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.extrude;
 import math    : Vec3;
-import view;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import mesh_edit_delta : MeshEditDelta, MeshOpEntry;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry;
 
 import tests.unit.fixtures : makeTaggedGridBent, dumpMeshPlanes,
                              diffMeshPlanes, explainMeshPlaneDiff;
@@ -343,8 +343,8 @@ unittest // half A: the SNAPSHOT path restores the per-corner map exactly
 
 unittest // half B: the DELTA path would NOT — which is why the two are declined
 {
-    import mesh_edit_delta : MeshEditScope;
-    import mesh_ops.extrude : kExtrudeEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
+    import vibe3d.mesh.ops.mesh_ops.extrude : kExtrudeEditScope;
 
     foreach (which; 0 .. 2) {
         Mesh* m = stand();

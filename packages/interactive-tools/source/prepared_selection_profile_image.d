@@ -1,6 +1,6 @@
 module prepared_selection_profile_image;
 
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.common.session_mesh_key : SessionMeshKey;
 
 struct RadialSweepProfileImage {

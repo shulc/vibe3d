@@ -3,11 +3,11 @@ module snap_render_source_cells;
 import snap_render;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, ModelSpace;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import snap : SnapResult;
-import toolpipe.packets : SnapType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
 import d_imgui.imgui_h : ImVec2;
-version (unittest) import document : ItemXform, primaryModelSpaceResolver;
+version (unittest) import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
 version (unittest) import std.format : format;
 version (unittest) import snap_render_source_helpers : t0619Matrix, t0619Viewport, t0619Mesh, t0619DrawnPx, t0619IdentityPx, t0619Dist, t0619Xf, t0619PxUnder, t0619BgMeshA, t0619BgMeshB, t0619InstallPrimary;
 

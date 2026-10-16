@@ -12,8 +12,8 @@
 // so that six copies of an eight-layer document cannot drift apart.
 module tests.unit.primary_memo_fixture;
 
-import document;
-import mesh   : Mesh;
+import vibe3d.documents.model.document;
+import vibe3d.mesh.core.mesh   : Mesh;
 import vibe3d.editing.params.params : Param;
 import std.format : format;
 

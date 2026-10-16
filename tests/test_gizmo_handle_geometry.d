@@ -43,7 +43,7 @@ import handler : MoveHandler, ScaleHandler, gizmoSize, setGizmoPixels,
                  getGizmoPixels, setGizmoHandleScale, Handler;
 import math : Vec3, cross, normalize;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, Orientation;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 void main() {}
 

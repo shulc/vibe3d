@@ -3,10 +3,10 @@ module tests.unit.commands.select.boundary_source_public_test;
 import commands.select.boundary;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 
 // ---------------------------------------------------------------------------
 // Unit tests. The reference-parity cases live in

@@ -19,14 +19,14 @@ import std.string : indexOf, lastIndexOf, strip;
 import command : Command;
 import command_history : RecordMode;
 import commands.file.load : FileLoad;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import vibe3d.editing.contracts.editmode : EditMode;
 import io.browser_pick_resume;
 import io.formats : FilterSpec;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import tests.unit.census_symbols : balancedSpan, blankNonCode, countOccurrences;
 import ui.discard_guard : UiRunOutcome;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private:
 

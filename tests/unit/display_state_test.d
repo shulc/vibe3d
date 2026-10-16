@@ -475,7 +475,7 @@ unittest {
     import command_args : bindArgs;
     import commands.viewport.display : ViewportDisplayStyle;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import std.format : format;
     import viewport : ViewportManager;
     auto vpm = new ViewportManager(0, 0, 800, 600);
@@ -620,7 +620,7 @@ unittest {
     import command_args : bindArgs;
     import commands.viewport.display : ViewportCompositeTestGain, kCompositeTestGainMax;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import viewport : ViewportManager;
     immutable bool prior = g_testMode;
     scope (exit) g_testMode = prior;

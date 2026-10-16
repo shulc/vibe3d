@@ -24,8 +24,8 @@ import http_client : getJson, postJson, testBaseUrl;
 import http_command_helpers : commandBody;
 import std.conv : to;
 import std.math : abs, sin, cos, PI;
-import mesh;
-import mesh_ops.revolve : kRevolveEditScope, revolveProfileEx;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.revolve : kRevolveEditScope, revolveProfileEx;
 import math : Vec3;
 import tools.alignment.radial_sweep_tool;
 
@@ -176,7 +176,7 @@ unittest {
 // grow by 8 verts / 4 faces each time.
 // ---------------------------------------------------------------------------
 unittest {
-    import snapshot : MeshSnapshot;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 
     Mesh cube = makeCube();
     MeshSnapshot baseSnap = MeshSnapshot.capture(cube);

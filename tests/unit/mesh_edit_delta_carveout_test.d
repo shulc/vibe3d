@@ -24,17 +24,17 @@
 // here, through the same instrument, or W1's zeros are a dead cell.
 // ===========================================================================
 module tests.unit.mesh_edit_delta_carveout_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.algorithm.searching : count, canFind;
 import std.file   : readText;
 import std.format : format;
 import std.path   : buildPath, dirName;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
-import mesh_edit_delta;
-import mesh_planes : rewriteFaces, FaceSource, kNoSource;
+import vibe3d.mesh.edit_log.mesh_edit_delta;
+import vibe3d.mesh.core.mesh_planes : rewriteFaces, FaceSource, kNoSource;
 
 // ---------------------------------------------------------------------------
 // Shared instruments.

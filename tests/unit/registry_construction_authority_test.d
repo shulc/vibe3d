@@ -18,14 +18,14 @@ import application_command_binding : CommandInvocationContext;
 import command : Command, CommandOrigin;
 import vibe3d.editing.contracts.editmode : EditMode;
 import live_registration_roles : LiveSessionRole;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import registry : CommandFactory, Registry;
 import command_registry : CommandRegistry;
 import vibe3d.editing.contracts.seltype : SelType;
 import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes,
     symbolTokenHits;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..");
@@ -624,7 +624,7 @@ unittest { // The desktop receiver instantiates the same operation-only helpers.
     import command_history : CommandHistory;
     import command_invocation;
     import vibe3d.mesh.change.change_bus : changeBus, ChangeBus;
-    import mesh : makeCube, g_isDocumentMesh;
+    import vibe3d.mesh.core.mesh : makeCube, g_isDocumentMesh;
     import pilot_command_registration;
     import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;

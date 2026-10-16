@@ -119,15 +119,15 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — run the cells in
 // isolation when scoring a mutation.
 module tests.unit.undo_parity_l4_test;
-import mesh_edit_replay : apply, revert;
-import mesh_edge_slice : edgeIndexOfVerts, edgeSliceEx;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
+import vibe3d.mesh.ops.mesh_edge_slice : edgeIndexOfVerts, edgeSliceEx;
 
 import std.format : format;
 import std.json   : JSONValue, parseJSON;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math      : Vec3;
 import http_json : meshPlanesJson, PlaneDumpMeta;
@@ -682,8 +682,8 @@ unittest
 // ===========================================================================
 unittest
 {
-    import mesh_edit_delta : MeshEditDelta;
-    import mesh_ops.cut    : kCutEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta;
+    import vibe3d.mesh.ops.mesh_ops.cut    : kCutEditScope;
 
     // ---- 2 (taken first, so the "before" exists) --------------------------
     auto m = l4Stand();

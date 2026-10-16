@@ -21,9 +21,9 @@
 // isolation.
 module tests.unit.mesh_hide_derive_batch_test;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import tests.unit.mesh_by_value_gate;
 
 // The seam's compile-time gate: nothing in this module may take a `Mesh` by

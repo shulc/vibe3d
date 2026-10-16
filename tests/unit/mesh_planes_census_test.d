@@ -20,8 +20,8 @@
 // entirely (replay path, a distinct role — plan §6 Stage F).
 module tests.unit.mesh_planes_census_test;
 
-import mesh          : Mesh;
-import mesh_planes    : kFacePlanes, kVertPlanes, kEdgePlanes, kExemptPlanes,
+import vibe3d.mesh.core.mesh          : Mesh;
+import vibe3d.mesh.core.mesh_planes    : kFacePlanes, kVertPlanes, kEdgePlanes, kExemptPlanes,
                         kFacePlaneEntryField;
 import std.array      : appender, join;
 import std.ascii      : isAlphaNum, isWhite;
@@ -209,7 +209,7 @@ alias kFacePlaneToEntryField = kFacePlaneEntryField;
 
 unittest // L1/L2 for MeshOpEntry: every kFacePlanes name maps to a real MeshOpEntry field
 {
-    import mesh_edit_delta : MeshOpEntry;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshOpEntry;
 
     // Non-vacuity: the map itself must name every kFacePlanes entry — a plane
     // added to kFacePlanes with no corresponding line here is exactly the gap

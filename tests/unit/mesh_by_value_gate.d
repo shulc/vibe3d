@@ -34,7 +34,7 @@
 //     asserts the answer is exactly `["byValue"]`.
 module tests.unit.mesh_by_value_gate;
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 
 /// The names in `scope_` (a module or an aggregate) that take a `Mesh` BY
 /// VALUE in any parameter position. Empty is the only acceptable answer.

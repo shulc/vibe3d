@@ -1,8 +1,8 @@
 module commands.tool.panel_edit;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math : Vec3;
 import commands.tool.host : ToolHost;

@@ -12,7 +12,7 @@ import std.algorithm.searching : canFind, startsWith;
 
 import tests.unit.census_symbols : readText = wave15ReadText;
 import std.string : indexOf, strip;
-import held_gesture_buttons : HeldGestureButtons, g_heldGestureButtons;
+import vibe3d.platform.input.held_gesture_buttons : HeldGestureButtons, g_heldGestureButtons;
 import tests.unit.census_symbols : blankNonCode;
 
 unittest { // u1: per-button release — the set empties only when every button is up
@@ -151,7 +151,7 @@ unittest { // u5: the history chokepoint refuses while a button is held
     // former SessionLiveRedo stand-in left with the interface).
     final class RedoCmd : Command {
         import vibe3d.editing.contracts.editmode : EditMode;
-        import view : View;
+        import vibe3d.viewport.camera.view : View;
         size_t* redos;
         View view_;
         this(size_t* r) {

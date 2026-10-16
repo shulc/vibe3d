@@ -4,14 +4,14 @@ import display_state : DrawPlan;
 import bindbc.sdl;
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.editing.params.params : Param;
 import shader : Shader, LitShader;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame,
                               transformPoint, snapLocalHit, screenToPlacementLocal,
@@ -22,10 +22,10 @@ import drag : HandleDrag;
 import vibe3d.editing.contracts.editmode : EditMode;
 import snap : SnapResult;
 import snap_render : publishLastSnap, clearLastSnap, SnapOverlayOwner;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import command_history : PreparedHistoryKind;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 
 // ---------------------------------------------------------------------------
 // VertexTool — interactive single-vertex placement.

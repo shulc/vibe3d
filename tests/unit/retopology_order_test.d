@@ -10,8 +10,8 @@ module tests.unit.retopology_order_test;
 
 import std.format : format;
 
-import document;
-import mesh    : Mesh;
+import vibe3d.documents.model.document;
+import vibe3d.mesh.core.mesh    : Mesh;
 import vibe3d.editing.contracts.seltype : SelMode;
 import retopology_order : entersItemSequence, retopologyDrawSequence, SeqEntry;
 

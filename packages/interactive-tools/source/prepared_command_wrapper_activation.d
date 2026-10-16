@@ -1,7 +1,7 @@
 module prepared_command_wrapper_activation;
 
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.common.command_wrapper : CommandWrapperTool,
     PreparedCommandWrapperActivationImage, XfrmSmoothTool, XfrmJitterTool,
     XfrmQuantizeTool;

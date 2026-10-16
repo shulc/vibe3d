@@ -42,8 +42,8 @@ import std.process : thisProcessID;
 import std.conv    : to;
 
 import math            : Vec3;
-import mesh            : Mesh, kUvMapName;
-import document        : Document;
+import vibe3d.mesh.core.mesh            : Mesh, kUvMapName;
+import vibe3d.documents.model.document        : Document;
 import io.scene_ir     : ImportedScene, flattenToMesh, toLayers;
 import io.scene_import : importViaAssimp;
 import io.assimp_runtime : initAssimp, isAssimpAvailable;

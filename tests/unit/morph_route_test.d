@@ -16,7 +16,7 @@
 module tests.unit.morph_route_test;
 
 import math : Vec3;
-import mesh;
+import vibe3d.mesh.core.mesh;
 
 // ---------------------------------------------------------------------------
 // A two-vertex rig: v0 at +X, v1 its mirror at -X, plus a third ON the plane.
@@ -50,7 +50,7 @@ private Mesh rig() {
 unittest {
     import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
     import command : Command, CompareResult, RunMergeable;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     Mesh m = rig();
@@ -96,7 +96,7 @@ unittest {
 unittest { // compareOp must compare the MAP NAME
     import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
     import command : CompareResult;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     Mesh m = rig();
@@ -118,7 +118,7 @@ unittest { // compareOp must compare the MAP NAME
 unittest { // mergeRunTail: first-touch BEFORE, latest AFTER, union by vertex
     import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
     import command : Command;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     Mesh m = rig();

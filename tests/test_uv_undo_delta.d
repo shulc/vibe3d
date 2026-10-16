@@ -29,10 +29,10 @@
 
 import std.conv : to;
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName, FaceIdx;
+import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName, FaceIdx;
 import math : Vec3;
-import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshOpEntry, MeshEditScope;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshOpEntry, MeshEditScope;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 void main() {}
 
@@ -512,7 +512,7 @@ unittest {
 // must not crash) — the carry path has to be a no-op, not a null dereference.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     Mesh m = makeCube();
     m.buildLoops();
     m.syncSelection();

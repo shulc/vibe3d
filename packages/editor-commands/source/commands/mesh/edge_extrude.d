@@ -1,13 +1,13 @@
 module commands.mesh.edge_extrude;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import mesh_ops.extrude;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.extrude;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 
 /// Edge Extrude (one-shot, undoable): shift the selected edges outward along
 /// the average normal of their neighbor polygon(s) by `extrude`, inset those
@@ -87,7 +87,7 @@ class MeshEdgeExtrude : Command, Operator {
     void setWidth(float v)   { width_   = v; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         if (editMode != EditMode.Edges) return false;

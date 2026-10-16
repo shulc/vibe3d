@@ -8,10 +8,10 @@ import vibe3d.util.spatial.spatial : Viewport;
 import toolpipe.stage   : Stage, TaskCode;
 import vibe3d.editing.contracts.editmode : EditMode;
 static import tool_policy_values = vibe3d.editing.contracts.tool_policy_values;
-import toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket,
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket,
                           WorkplanePacket, FalloffPacket, SymmetryPacket,
                           SnapPacket, ConstrainPacket;
-import operator : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc;
 
 // ---------------------------------------------------------------------------

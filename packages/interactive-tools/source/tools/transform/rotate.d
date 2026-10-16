@@ -1,7 +1,7 @@
 module tools.transform.rotate;
 import display_state : DrawPlan;
 
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import bindbc.sdl;
 
 import tools.transform.transform;
@@ -15,16 +15,16 @@ struct PreparedRotateActivationImage {
     void clear() nothrow @nogc { this = PreparedRotateActivationImage.init; }
 }
 import handler;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import vibe3d.editing.contracts.editmode;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.seltype : SelType;
 import tool : Tool;
 import math;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, screenPointToRay;
 import shader;
-import toolpipe.packets : FalloffPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
 
 import std.math;
 
@@ -35,7 +35,7 @@ import tools.transform.arcball : ARCBALL_RADIUS_PX, arcballRotation,
                                  arcballAxisToWorld;
 import snap : SnapResult;
 import snap_render : clearLastSnap;
-import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import vibe3d.editing.params.params : Param;
 import prepared_record_context : PreparedRecordContext;
 import vibe3d.editing.contracts.prepared_tool_effect :

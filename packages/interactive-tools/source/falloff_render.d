@@ -4,7 +4,7 @@ import std.math : sin, cos, sqrt, PI;
 
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
-import toolpipe.packets : FalloffPacket, FalloffType, LassoStyle;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType, LassoStyle;
 import falloff : applyShape;
 
 import ImGui = d_imgui;

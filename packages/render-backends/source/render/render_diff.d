@@ -25,9 +25,9 @@ import core.thread   : Thread, msecs, seconds;
 import vibe3d.util.log.log           : logError;
 import core.time     : MonoTime, dur;
 
-import render.backend;
+import vibe3d.render.model.render.backend;
 import render.backend_bridge : BackendBridge;
-import render.scene          : Scene;
+import vibe3d.render.model.render.scene          : Scene;
 import math : Vec3;
 
 // ---------------------------------------------------------------------------

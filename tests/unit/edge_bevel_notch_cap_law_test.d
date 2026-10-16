@@ -76,8 +76,8 @@ module tests.unit.edge_bevel_notch_cap_law_test;
 import std.format : format;
 import std.math   : cos, sin, sqrt, abs, PI;
 
-import mesh;
-import mesh_ops.edge_bevel;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.edge_bevel;
 import math;
 
 private enum float  kWidth   = 0.1f;

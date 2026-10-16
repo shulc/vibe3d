@@ -110,7 +110,7 @@
 // byteSize by a single byte: `faceMarks` is a whole array in the snapshot and
 // the Hide bit is one bit inside a word the delta carries anyway.
 module tools.odelta.run;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import core.memory   : GC;
 import core.time     : MonoTime, Duration;
@@ -118,10 +118,10 @@ import std.stdio     : writefln, writeln;
 import std.array     : appender;
 import std.file      : write;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math            : Vec3;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope;
-import snapshot        : MeshSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope;
+import vibe3d.mesh.snapshot.snapshot        : MeshSnapshot;
 
 import tests.unit.fixtures : makeTaggedGridFull;
 

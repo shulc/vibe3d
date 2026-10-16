@@ -59,7 +59,7 @@ private Form layerPropsForm()
 
 private Param[] planeParams(out Object keepAlive)
 {
-    import document : Layer, ItemKind, ImagePlaneData;
+    import vibe3d.documents.model.document : Layer, ItemKind, ImagePlaneData;
     auto plane = new Layer;
     plane.name = "backdrop";
     plane.kind = ItemKind.ImagePlane;
@@ -70,8 +70,8 @@ private Param[] planeParams(out Object keepAlive)
 
 private Param[] meshParams(out Object keepAlive)
 {
-    import document : Layer;
-    import mesh     : makeCube;
+    import vibe3d.documents.model.document : Layer;
+    import vibe3d.mesh.core.mesh     : makeCube;
     auto m = new Layer;
     m.name = "the mesh";
     m.meshRef() = makeCube();       // kind defaults to Mesh
@@ -322,8 +322,8 @@ unittest {
 // makes, so the assertion is on the argstring the panel actually emits.
 // ---------------------------------------------------------------------------
 unittest {
-    import document : Document, Layer, ItemKind, ImagePlaneData;
-    import mesh     : makeCube;
+    import vibe3d.documents.model.document : Document, Layer, ItemKind, ImagePlaneData;
+    import vibe3d.mesh.core.mesh     : makeCube;
     import vibe3d.editing.contracts.seltype  : SelMode;
 
     auto doc = Document.bootstrap(makeCube());

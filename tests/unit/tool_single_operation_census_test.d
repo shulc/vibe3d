@@ -24,7 +24,7 @@ import tests.unit.census_symbols : exists = wave15Exists, readText = wave15ReadT
 import std.format : format;
 import std.path : buildPath, dirName;
 
-static import mesh_ops.cut;
+static import vibe3d.mesh.ops.mesh_ops.cut;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
     countIdent, countOccurrences, enclosingSymbols;
 
@@ -47,7 +47,7 @@ private size_t[string] identOwners(string code, const string[] idents) {
 /// The rule for the slice row: every `mesh_ops.cut` member named `cutByPlane…`.
 private string[] planeCutKernels() {
     string[] names;
-    static foreach (m; __traits(allMembers, mesh_ops.cut))
+    static foreach (m; __traits(allMembers, vibe3d.mesh.ops.mesh_ops.cut))
         static if (m.length >= 10 && m[0 .. 10] == "cutByPlane") names ~= m;
     return names;
 }

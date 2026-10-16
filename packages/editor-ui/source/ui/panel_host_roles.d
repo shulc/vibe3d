@@ -3,13 +3,13 @@ module ui.panel_host_roles;
 import buttonset : Panel, Group;
 import command : g_testMode;
 import d_imgui.imgui_h : ImVec2;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import registry : Registry;
 import vibe3d.editing.contracts.seltype : SelTypeOrder;
 import session_owner : Session;
-import shortcuts : ShortcutTable;
+import vibe3d.platform.input.shortcuts : ShortcutTable;
 
 // These roles borrow the original live slots and callbacks; none owns a second
 // application, layout or modal state (task 20262940; evidence: private body custody).

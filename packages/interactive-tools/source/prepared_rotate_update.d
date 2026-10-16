@@ -1,9 +1,9 @@
 module prepared_rotate_update;
 
 import core.atomic : atomicOp;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import prepared_record_context : PreparedRecordContext;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedRotateUpdateKind;
 import math : Vec3;

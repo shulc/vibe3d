@@ -10,8 +10,8 @@ module render.backend_bridge;
 
 version (WithRender):
 
-import render.backend;
-import render.scene;
+import vibe3d.render.model.render.backend;
+import vibe3d.render.model.render.scene;
 import render.cycles_backend : CyclesBackend;
 import render.rpr_backend    : RPRBackend;
 

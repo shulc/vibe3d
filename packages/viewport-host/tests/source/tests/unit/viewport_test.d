@@ -3,7 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.viewport_test;
 
-import view          : View, ProjKind, ViewPreset;
+import vibe3d.viewport.camera.view          : View, ProjKind, ViewPreset;
 import gpu_select    : GpuSelectBuffer;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, Orientation;

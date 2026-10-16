@@ -5,8 +5,8 @@ module tests.unit.tools.transform.item_xform_kernels_test;
 
 import math : Vec3, matMul4, matrixFromEulerZYX, eulerZYXFromMatrix,
               applyAffine, scaleAlongBasis, identityMatrix;
-import document : Layer, ItemXform;
-public import document : MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
+import vibe3d.documents.model.document : Layer, ItemXform;
+public import vibe3d.documents.model.document : MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
 import std.math : fabs;
 import tools.transform.item_xform_kernels;
 

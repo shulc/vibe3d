@@ -5,11 +5,11 @@
 // module and its contract is written down -- a fixture layer that accumulates
 // one-off helpers is just a second god-file.
 module tests.unit.fixtures;
-import mesh_ops.face_alignment : alignFacesByMask;
+import vibe3d.mesh.ops.mesh_ops.face_alignment : alignFacesByMask;
 import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 
-import mesh;
-import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
 import math;
 
 /// Index in `m.edges[]` of the edge joining `a` and `b`, or **-1** when there
@@ -127,7 +127,7 @@ unittest // findEdge: symmetric in its arguments, and -1 (not ~0u) when absent
 /// `rewriteVertices` half).
 Mesh makeTaggedGrid()
 {
-    import mesh_selsets : selSetEditPolygon, selSetEditVertex, SetEditMode;
+    import vibe3d.mesh.core.mesh_selsets : selSetEditPolygon, selSetEditVertex, SetEditMode;
 
     Mesh m = makeGridPlane(3);
     m.resetSelection();   // size every per-face/per-vertex plane to match
@@ -280,7 +280,7 @@ unittest // makeTaggedGrid: shape + every plane distinct/non-uniform, as adverti
 /// least 3 — the tagging names faces up to index 7 and vertices up to 5.
 Mesh makeTaggedGridFull(int n = 3)
 {
-    import mesh_selsets : selSetEditPolygon, selSetEditVertex, selSetEditEdge,
+    import vibe3d.mesh.core.mesh_selsets : selSetEditPolygon, selSetEditVertex, selSetEditEdge,
                           SetEditMode;
 
     assert(n >= 3, "makeTaggedGridFull: the tagging names face 7, so n >= 3");
@@ -526,7 +526,7 @@ unittest // makeTaggedGridFull scales, and the tagging survives the scaling
 ///    restored onto the WRONG corner would compare EQUAL.
 Mesh makeTaggedGridDirty(int n = 3)
 {
-    import mesh_selsets : selSetEditVertex, selSetEditEdge, SetEditMode;
+    import vibe3d.mesh.core.mesh_selsets : selSetEditVertex, selSetEditEdge, SetEditMode;
 
     Mesh m = makeTaggedGridFull(n);
 
@@ -605,8 +605,8 @@ Mesh makeTaggedGridDirty(int n = 3)
 unittest // makeTaggedGridDirty: all four injections FIRE, and the fourth by its consequence
 {
     import std.format : format;
-    import mesh_ops.cleanup : cleanupMesh;
-    import mesh_edit_delta  : MeshEditDelta, MeshOpEntry;
+    import vibe3d.mesh.ops.mesh_ops.cleanup : cleanupMesh;
+    import vibe3d.mesh.edit_log.mesh_edit_delta  : MeshEditDelta, MeshOpEntry;
 
     auto m = makeTaggedGridDirty(3);
     assert(m.vertices.length == 19 && m.faces.length == 12,
@@ -660,7 +660,7 @@ unittest // makeTaggedGridDirty carries the four NON-geometry things its cells r
     auto m = makeTaggedGridDirty(3);
 
     // ---- set membership on vertices the sweep removes (L5-b's vertex half).
-    import mesh_selsets : selSetMembersVertex, selSetMembersEdge;
+    import vibe3d.mesh.core.mesh_selsets : selSetMembersVertex, selSetMembersEdge;
     auto vm = selSetMembersVertex(m, "V");
     assert(vm == [0u, 5u, 16u, 18u],
         format("vertex set \"V\" is %s, expected [0, 5, 16, 18] — 16 is the "
@@ -825,7 +825,7 @@ Mesh makeTaggedGridBent(int n = 3)
 
 unittest // makeTaggedGridBent: BOTH additions are live, asserted BY NAME
 {
-    import mesh_ops.cleanup : computeOrientationFlipMask;
+    import vibe3d.mesh.ops.mesh_ops.cleanup : computeOrientationFlipMask;
     import std.format : format;
 
     // The control first: the SHIPPED stand exhibits NEITHER phenomenon. This
@@ -982,7 +982,7 @@ unittest // makeTaggedGridBent: BOTH additions are live, asserted BY NAME
 /// dense/payload measurement passes 316 (99 856 faces).
 Mesh makeTaggedGridMaps(int n = 3)
 {
-    import mesh_selsets : selSetEditPolygon, selSetEditVertex, selSetEditEdge,
+    import vibe3d.mesh.core.mesh_selsets : selSetEditPolygon, selSetEditVertex, selSetEditEdge,
                           SetEditMode;
 
     assert(n >= 3, "makeTaggedGridMaps: inherits makeTaggedGridFull's n >= 3");
@@ -1343,7 +1343,7 @@ string[string] dumpMeshPlanes(ref Mesh m)
 {
     import std.format : format;
     import std.conv : to;
-    import snapshot : MeshSnapshot;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 
     // A NEW `MeshSnapshot` PLANE CANNOT BE BORN UNCOVERED. This dump's whole
     // contract is "every plane a snapshot would have restored", and the one
@@ -1521,7 +1521,7 @@ private string clip(string s) { return s.length > 400 ? s[0 .. 400] ~ " …" : s
 /// instead of quietly making this one weaker.
 Mesh makeTaggedGridWeldSets(int n = 3)
 {
-    import mesh_selsets : selSetEditEdge, SetEditMode;
+    import vibe3d.mesh.core.mesh_selsets : selSetEditEdge, SetEditMode;
 
     Mesh m = makeTaggedGridDirty(n);
 
@@ -1569,7 +1569,7 @@ Mesh makeTaggedGridWeldSets(int n = 3)
 /// agree with the registry rather than with each other.
 private ulong edgeKeyOf(uint a, uint b)
 {
-    import mesh : edgeKey;
+    import vibe3d.mesh.core.mesh : edgeKey;
     return edgeKey(a, b);
 }
 

@@ -22,14 +22,14 @@ import edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import vibe3d.editing.params.params : Param;
 import registry : Registry;
 import session_owner : Session;
 import tests.unit.ui.headless_panel : openPanel;
 import tool : Tool;
 import tool_activation_ownership : ToolTransition;
-import toolpipe.packets : FalloffType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType;
 import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
 import toolpipe.stage : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;
@@ -38,7 +38,7 @@ import ui.action_menu : ActionMenuRoles, bindActionMenu, dispatchAction,
     renderPopupItems, selectButtonVariant;
 import ui.availability : beginButtonAvailabilityFrame,
     buttonAvailabilityJson, endButtonAvailabilityFrame;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import ImGui = d_imgui;
 static import ui.action_menu;
 

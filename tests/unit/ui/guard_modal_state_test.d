@@ -6,13 +6,13 @@ import command_history : RecordMode;
 import vibe3d.editing.contracts.editmode : EditMode;
 import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import ui.discard_guard : GuardAnswer, UiRunOutcome;
 import ui.guard_modal_state : GuardModalState;
 import ui.panels : drawQuitGuardModal, guardModalDrawSnapshot,
     resetGuardModalDrawSnapshot;
 import tests.unit.ui.headless_panel : openPanel;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
 
 private Mesh probeMesh;

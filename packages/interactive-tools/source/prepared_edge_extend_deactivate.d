@@ -2,8 +2,8 @@ module prepared_edge_extend_deactivate;
 
 import core.atomic : atomicOp;
 import commands.mesh.session_edit : MeshSessionEdit;
-import document : Layer;
-import mesh : Mesh;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.edit.edge_extend : EdgeExtendTool, PreparedEdgeExtendDeactivateImage;
 
 struct PreparedEdgeExtendDeactivateToken {

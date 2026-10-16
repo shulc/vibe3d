@@ -49,8 +49,8 @@ module tests.unit.duplicate_face_scan_alloc_test;
 
 import core.memory : GC;
 import math : Vec3;
-import mesh;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
 // The mesh is small on purpose: the defect is O(F²) and shows a 20× ceiling
 // breach already at 10 000 faces, so a bigger cell would only cost the lane

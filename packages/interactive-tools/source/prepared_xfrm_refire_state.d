@@ -1,7 +1,7 @@
 module prepared_xfrm_refire_state;
 
 import math : Vec3;
-import toolpipe.packets : FalloffPacket, SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, SymmetryPacket;
 
 /// Detached wrapper-private half of an idle Rotate/Scale pipe refire. History
 /// owns the prepared command separately; this image owns only the exact scalar

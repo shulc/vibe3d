@@ -7,10 +7,10 @@ import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.memory : GC;
 import core.thread : Thread;
 import core.time : MonoTime, msecs, seconds;
-import document : Document, Layer, beginPreparedLayerRead;
+import vibe3d.documents.model.document : Document, Layer, beginPreparedLayerRead;
 import vibe3d.editing.contracts.editmode : EditMode;
 import http_server : HttpServer, InProcessHttpTransport;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import selection_projection : SelectionProjectionInput,
     SelectionProjectionReadModel, encodeSelectionProjection;
 import vibe3d.editing.contracts.seltype : SelMode, SelType, SelTypeOrder;

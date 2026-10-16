@@ -39,7 +39,7 @@ module tests.unit.accept_recorded_edit_test;
 import std.format : format;
 
 import vibe3d.mesh.change.change_bus     : changeBus;
-import mesh_edit_delta : MeshEditDelta, MeshOpEntry, acceptRecordedEdit;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry, acceptRecordedEdit;
 
 /// A delta with one entry in its log — the shape a healthy kernel produces.
 /// The entry's KIND does not matter to `acceptRecordedEdit`, which reads only

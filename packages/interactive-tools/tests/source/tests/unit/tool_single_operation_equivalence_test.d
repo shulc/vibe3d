@@ -6,14 +6,14 @@
 // reaches it, not only their equality; then the modes are compared bit for bit.
 // The text half (one kernel site per tool) is tool_single_operation_census_test.
 module tests.unit.tool_single_operation_equivalence_test;
-import mesh_ops.triangulate : triangulateFacesByMask;
+import vibe3d.mesh.ops.mesh_ops.triangulate : triangulateFacesByMask;
 
 import std.format : format;
 import std.math : abs;
 
 import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
-import mesh : Mesh, makeCube, makeGridPlane;
+import vibe3d.mesh.core.mesh : Mesh, makeCube, makeGridPlane;
 import mesh_gpu : GpuMesh;
 import vibe3d.editing.params.params : Param;
 import tool : Tool;

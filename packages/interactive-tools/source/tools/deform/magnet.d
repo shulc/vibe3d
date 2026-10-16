@@ -13,10 +13,10 @@ import prepared_param_update : PreparedParamUpdateOwner,
 import command_history : PreparedHistoryKind;
 
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : AimViewport, Viewport, aimSpace, screenPointToLocalRay;
@@ -25,15 +25,15 @@ import vibe3d.editing.params.params : Param;
 import shader : Shader;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.common.session_mesh_key : SessionMeshKey;
 import display_sync : refreshDisplay;
 import deform_magnet : applyMagnet;
-import toolpipe.packets : FalloffPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
 import falloff : elementAnchoredAt;
 import hover_state : hoverAtPress;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
-import document : primaryModelSpace, Layer;
+import vibe3d.documents.model.document : primaryModelSpace, Layer;
 import mesh_gpu : GpuUploadOwner;
 import core.stdc.string : memcmp;
 

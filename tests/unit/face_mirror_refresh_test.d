@@ -10,7 +10,7 @@ module tests.unit.face_mirror_refresh_test;
 import std.format : format;
 
 import math : Vec3;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_gpu : GpuMesh, GpuUploadOwner, GpuResourceOwner, PreparedGpuUploadToken,
     ValidatedGpuUploadToken, PreparedGpuResourceToken, ValidatedGpuResourceToken;
 import tests.unit.vertex_normals_test : hingedPatch;

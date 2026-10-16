@@ -1,5 +1,5 @@
 module commands.mesh.uv_transform;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 /// Commands `uv.flip`, `uv.mirror`, `uv.rotate` — batch affine transforms
 /// on the active UV map (`kUvMapName`, MapDomain.PolyVertex, dim==2).
@@ -38,14 +38,14 @@ import mesh_edit_replay : apply, revert;
 /// commands twice as slow (task 2160, plan §K.5 rule 2).
 
 import command;
-import mesh           : Mesh, MapDomain, MeshEditBatch, kUvMapName;
-import view           : View;
+import vibe3d.mesh.core.mesh           : Mesh, MapDomain, MeshEditBatch, kUvMapName;
+import vibe3d.viewport.camera.view           : View;
 import vibe3d.editing.contracts.editmode       : EditMode;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import vibe3d.editing.params.params         : Param;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit;
-import uv_transform;
+import vibe3d.mesh.ops.uv_transform;
 
 // ---------------------------------------------------------------------------
 // uv.flip — flip (negate) UV coords on one axis about a fixed pivot.

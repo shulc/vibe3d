@@ -4,7 +4,7 @@
 module tests.unit.layer_params_test;
 
 import vibe3d.editing.params.params   : Param, ParamProvider;
-import document : Layer, Document, kindInfo, ItemKind, ItemXform,
+import vibe3d.documents.model.document : Layer, Document, kindInfo, ItemKind, ItemXform,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG, sanitizeItemXform;
 import vibe3d.editing.contracts.seltype  : SelType;
 import layer_params;
@@ -58,8 +58,8 @@ unittest {
 // is the control that proves the change is inert where it must be.
 // ---------------------------------------------------------------------------
 unittest {
-    import document : Document, ItemKind, ImageData;
-    import mesh     : makeCube;
+    import vibe3d.documents.model.document : Document, ItemKind, ImageData;
+    import vibe3d.mesh.core.mesh     : makeCube;
     import vibe3d.editing.contracts.seltype  : SelMode;
 
     auto doc = Document.bootstrap(makeCube());
@@ -117,8 +117,8 @@ unittest {
 // count line at the end never gets to speak).
 // ---------------------------------------------------------------------------
 unittest {
-    import document : Document, ItemKind, ImagePlaneData;
-    import mesh     : makeCube;
+    import vibe3d.documents.model.document : Document, ItemKind, ImagePlaneData;
+    import vibe3d.mesh.core.mesh     : makeCube;
     import vibe3d.editing.contracts.seltype  : SelMode;
     import std.conv : to;
 
@@ -181,8 +181,8 @@ unittest {
 // assertion here reads it — `is` identity, not "not null".
 // ---------------------------------------------------------------------------
 unittest {
-    import document : Document, Layer;
-    import mesh     : makeCube;
+    import vibe3d.documents.model.document : Document, Layer;
+    import vibe3d.mesh.core.mesh     : makeCube;
 
     auto doc = Document.bootstrap(makeCube());
     doc.layers[0].name = "the document that was open before";
@@ -518,7 +518,7 @@ unittest {
 // wrong shape, not merely "some kind of gating exists".
 // ---------------------------------------------------------------------------
 unittest {
-    import document : ItemKind;
+    import vibe3d.documents.model.document : ItemKind;
 
     auto mesh = new Layer;
     mesh.name = "Mesh";
@@ -589,7 +589,7 @@ unittest {
 unittest {
     import std.json  : JSONValue;
     import vibe3d.editing.params.params    : paramToJson, injectParamsInto;
-    import document  : ImageData;
+    import vibe3d.documents.model.document  : ImageData;
 
     auto img = new Layer;
     img.name = "logo";
@@ -742,7 +742,7 @@ unittest {
 unittest {
     import std.json  : JSONValue, parseJSON;
     import vibe3d.editing.params.params    : paramToJson, injectParamsInto;
-    import document  : ImagePlaneData;
+    import vibe3d.documents.model.document  : ImagePlaneData;
 
     auto lyr = new Layer;
     lyr.name = "front sheet";

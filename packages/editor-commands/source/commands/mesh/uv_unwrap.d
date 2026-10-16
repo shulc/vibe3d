@@ -1,5 +1,5 @@
 module commands.mesh.uv_unwrap;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 /// `uv.unwrap` — cotangent-weighted harmonic UV layout.
 ///
@@ -49,18 +49,18 @@ import mesh_edit_replay : apply, revert;
 ///   - iter=0                      → seed only; committed, returns true
 
 import command;
-import mesh            : Mesh, MeshMap, MapDomain, MeshEditBatch, kUvMapName,
+import vibe3d.mesh.core.mesh            : Mesh, MeshMap, MapDomain, MeshEditBatch, kUvMapName,
                          MAX_MESH_MAPS;
 import math            : Vec3;
-import view            : View;
+import vibe3d.viewport.camera.view            : View;
 import vibe3d.editing.contracts.editmode        : EditMode;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import vibe3d.editing.params.params          : Param;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit;
 import commands.mesh.uv_project    : UvLoopRef;
-import uv_project      : UvProjMode, UvProjAxis, projectUv;
-import uv_unwrap       : uvUnwrap;
+import vibe3d.mesh.ops.uv_project      : UvProjMode, UvProjAxis, projectUv;
+import vibe3d.mesh.ops.uv_unwrap       : uvUnwrap;
 
 class UvUnwrap : Command {
     private string mode_   = "planar";  // default planar, NOT box (see plan)

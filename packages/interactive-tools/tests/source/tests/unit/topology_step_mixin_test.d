@@ -7,10 +7,10 @@ module tests.unit.topology_step_mixin_test;
 
 import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import shader : LitShader;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.alignment.mirror : MirrorTool;
 import tools.deform.smooth_shift_tool : SmoothShiftTool;
 import tools.edit.edge_bevel : EdgeBevelTool;
@@ -36,7 +36,7 @@ unittest { // the gizmo rebase over the live mesh: frame on it, drag state clear
            && !tool.previewResetForTest(), "9429 rig VOID: the seed does not differ from the rebase");
     tool.handlesForTest().setHaul(2);
     {
-        import mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
+        import vibe3d.mesh.core.mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
         beginDeliveryBatchGlobal();             // a publish registers, not delivers
         scope(exit) endDeliveryBatchGlobal();
         mesh.undeliveredChanges_ = 0;

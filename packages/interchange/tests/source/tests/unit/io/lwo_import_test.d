@@ -6,7 +6,7 @@ module tests.unit.io.lwo_import_test;
 import std.file      : read, exists, getSize;
 import std.algorithm : min;
 import std.format    : format;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import io.scene_ir;
 import vibe3d.util.log.log : logWarn, logInfo;
@@ -23,7 +23,7 @@ unittest {
     import std.file : tempDir, remove, exists;
     import std.path : buildPath;
     import std.math : abs;
-    import mesh : Mesh, Surface;
+    import vibe3d.mesh.core.mesh : Mesh, Surface;
     import io.lwo_export : exportLwo;
 
     // Four separate tris, tri k at x offset k*10 so each imported poly's

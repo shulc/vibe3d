@@ -43,7 +43,7 @@ import subpatch_factories : subdivideCube;
 import std.math : PI, sin, sqrt;
 import math : Vec3, lookAt, perspectiveMatrix, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
-import mesh : Mesh, makeGridPlane, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeGridPlane, makeCube;
 import mesh_visibility : g_visCounters;
 
 // ---------------------------------------------------------------------------

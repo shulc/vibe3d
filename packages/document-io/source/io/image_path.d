@@ -65,9 +65,9 @@ import std.file : read, exists, getSize, isFile;
 import std.path : isAbsolute, absolutePath, buildNormalizedPath, dirName,
                   relativePath, isDirSeparator;
 
-import document       : ImageData;
+import vibe3d.documents.model.document       : ImageData;
 import io.file_model   : browserFileModel;
-import io.image_decode : ImageInfo, imageInfo, MAX_IMAGE_BYTES;
+import vibe3d.documents.image_codec.io.image_decode : ImageInfo, imageInfo, MAX_IMAGE_BYTES;
 import vibe3d.util.log.log            : logWarn;
 
 /// Upper bound on the number of bytes read off disk to answer a header query.

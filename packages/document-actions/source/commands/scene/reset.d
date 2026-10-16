@@ -3,12 +3,12 @@ module commands.scene.reset;
 import subpatch_factories : subdivideCube;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import document : Document, Layer, ItemXform;
+import vibe3d.documents.model.document : Document, Layer, ItemXform;
 // GpuMesh lives in mesh.d, already imported above.
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import vibe3d.mesh.change.change_bus : MeshChangeAll;
 import io.doc_state : clearCurrentDoc, requestDocRebaseline;
 import vibe3d.editing.params.params : Param, wireArgs;
@@ -348,7 +348,7 @@ class SceneReset : Command {
         // copy in one test must not survive into the next test's paste.
         // The clipboard is NOT restored in revert() — it is non-undoable
         // session state, same policy as the camera position.
-        import geometry_clipboard : geometryClipboard;
+        import vibe3d.mesh.ops.geometry_clipboard : geometryClipboard;
         geometryClipboard.clear();
         // Bulk transition: the whole mesh was REPLACED — every cache must
         // invalidate. The All class is published after the `*mesh = ...` above

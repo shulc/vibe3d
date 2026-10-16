@@ -41,15 +41,15 @@ import command_history : CommandHistory, HistoryFlags, UndoState;
 import commands.tool.lifecycle : ToolActivationCommand, ToolTaskClearCommand;
 import edit_session : DropRowSpec, EditSession, ParameterChangeSource, ParameterChangePhase;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import math : Vec3;
 import vibe3d.editing.params.params;
 import tool : AttrImage, OpensAt, PressActivation, PressKind, StepOrigin, Tool, ToolSessionPolicy,
     TopologyStepClient;
 import command : Command;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tool_activation_ownership;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 import std.algorithm : canFind, count;
 import std.file : SpanMode;
@@ -235,7 +235,7 @@ unittest { // a key-door row of THIS arm joins the group; the navigate redo repl
 
 private class Stub : imported!"command".Command {
     import command : CmdFlags;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     View v;
     this(View view) { v = view; super(null, v, EditMode.Vertices); }
     override string name() const { return "stub"; }
@@ -1883,7 +1883,7 @@ unittest {
 // button refusal of the command close that follows must not let the funnel's
 // `finishClose` write it late, and the door's own `abandonDropRow` drops it.
 unittest {
-    import held_gesture_buttons : g_heldGestureButtons;
+    import vibe3d.platform.input.held_gesture_buttons : g_heldGestureButtons;
     auto r = rig();
     size_t drops, tasks;
     r.session.installDropRows(
@@ -2107,7 +2107,7 @@ unittest { // S7a u3: a press whose walk meets a foreign-token row marks none
 
 unittest { // a navigation before any arm: no tool, nothing bound — the settle asks no tool
     import edit_session : EditSession;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     auto h = new CommandHistory();
     Tool none = null;
     auto s = new EditSession(() => none, h, () {});

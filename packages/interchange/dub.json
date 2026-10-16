@@ -150,11 +150,11 @@
     "vibe3d:log": {
       "path": "../.."
     },
-    "vibe3d-mesh": {
-      "path": "../mesh"
+    "vibe3d:mesh": {
+      "path": "../.."
     },
-    "vibe3d-document-model": {
-      "path": "../document-model"
+    "vibe3d:document-model": {
+      "path": "../.."
     }
   },
   "subConfigurations": {
@@ -167,8 +167,8 @@
         "bindbc-assimp6": "static",
         "vibe3d:math": "modeling",
         "vibe3d:log": "modeling",
-        "vibe3d-mesh": "modeling",
-        "vibe3d-document-model": "modeling"
+        "vibe3d:mesh": "modeling",
+        "vibe3d:document-model": "modeling"
       },
       "dependencies": {
         "bindbc-assimp6": {
@@ -183,8 +183,8 @@
         "bindbc-assimp6": "static",
         "vibe3d:math": "modeling-noai",
         "vibe3d:log": "modeling-noai",
-        "vibe3d-mesh": "modeling-noai",
-        "vibe3d-document-model": "modeling-noai"
+        "vibe3d:mesh": "modeling-noai",
+        "vibe3d:document-model": "modeling-noai"
       },
       "dependencies": {
         "bindbc-assimp6": {
@@ -199,8 +199,8 @@
         "bindbc-assimp6": "static",
         "vibe3d:math": "with-render",
         "vibe3d:log": "with-render",
-        "vibe3d-mesh": "with-render",
-        "vibe3d-document-model": "with-render"
+        "vibe3d:mesh": "with-render",
+        "vibe3d:document-model": "with-render"
       },
       "dependencies": {
         "bindbc-assimp6": {
@@ -214,8 +214,8 @@
       "subConfigurations": {
         "vibe3d:math": "web",
         "vibe3d:log": "web",
-        "vibe3d-mesh": "web",
-        "vibe3d-document-model": "web"
+        "vibe3d:mesh": "web",
+        "vibe3d:document-model": "web"
       },
       "versions": [
         "web"
@@ -227,8 +227,8 @@
         "bindbc-assimp6": "static",
         "vibe3d:math": "root-tests",
         "vibe3d:log": "root-tests",
-        "vibe3d-mesh": "root-tests",
-        "vibe3d-document-model": "root-tests"
+        "vibe3d:mesh": "root-tests",
+        "vibe3d:document-model": "root-tests"
       },
       "dependencies": {
         "bindbc-assimp6": {
@@ -244,8 +244,8 @@
         "bindbc-assimp6": "static",
         "vibe3d:math": "isolated-tests",
         "vibe3d:log": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests",
-        "vibe3d-document-model": "isolated-tests"
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests"
       },
       "dependencies": {
         "bindbc-assimp6": {

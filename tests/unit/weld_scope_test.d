@@ -15,11 +15,11 @@ import std.json   : JSONValue, parseJSON;
 import std.math   : PI, abs;
 import std.path   : buildPath, dirName;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : ModelSpace;
 import tools.alignment.mirror : MirrorParams, mirrorInPlace;
-import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
+import vibe3d.mesh.ops.mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -279,7 +279,7 @@ unittest { // the mask restricts both ends of a pair
 }
 
 unittest { // the cleanup detector reports exactly what cleanup welds (W1e_bracket)
-    import mesh_analysis : coincidentVertexClusters;
+    import vibe3d.mesh.ops.mesh_analysis : coincidentVertexClusters;
     JSONValue cell;
     foreach (c; fixture()["cells"].array) if (c["cell"].str == "W1e_bracket") cell = c;
     Mesh m = inputOf(cell);

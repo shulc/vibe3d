@@ -3,21 +3,21 @@ module prepared_edge_extend_deactivate_source_cells;
 import prepared_edge_extend_deactivate;
 import core.atomic : atomicOp;
 import commands.mesh.session_edit : MeshSessionEdit;
-import document : Layer;
-import mesh : Mesh;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.edit.edge_extend : EdgeExtendTool, PreparedEdgeExtendDeactivateImage;
 
 unittest {
     import command_history : CommandHistory;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuUploadOwner;
     import prepared_record_context : PreparedRecordContext;
     import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     EditMode mode = EditMode.Edges; auto view = new View(0,0,1,1);
     auto layer = new Layer; layer.meshRef() = makeCube();

@@ -17,7 +17,7 @@ import commands.workplane : WorkplaneResetCommand, WorkplaneEditCommand,
 import edit_session : EditSession, LiveEvalClient, ParameterChangeBatch;
 import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import pipe_command_registration : registerPipeStageCommands;
 import std.algorithm : count, sort, uniq;
 import std.array : array;

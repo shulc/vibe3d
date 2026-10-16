@@ -29,9 +29,9 @@
 //   2. the OUTCOMES that actually diverged, via a click-replay oracle whose
 //      history is likewise derived from membership alone.
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
-import view;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import commands.select.connect : SelectConnect;
 import commands.select.fill    : SelectFillHoles, SelectFillInsideLoop;

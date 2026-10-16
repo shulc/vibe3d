@@ -2,7 +2,7 @@ module prepared_command_wrapper_activation_source_cells;
 
 import prepared_command_wrapper_activation;
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.common.command_wrapper : CommandWrapperTool,
     PreparedCommandWrapperActivationImage, XfrmSmoothTool, XfrmJitterTool,
     XfrmQuantizeTool;
@@ -12,11 +12,11 @@ unittest {
     import commands.mesh.vertex_position_result : VertexPositionResultBuilder;
     import command_history : CommandHistory;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
     import record_observer_hub : RecordObserverHub;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     auto mesh = makeCube(); GpuMesh gpu; View view;
     auto tool = new XfrmSmoothTool(&mesh, view, EditMode.Vertices, &gpu);

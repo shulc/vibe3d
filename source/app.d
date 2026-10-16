@@ -1,6 +1,6 @@
 module app;
 import mesh_visibility : visibleVertices;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import subpatch_preview : SubpatchPreview;
 import bindbc.sdl;
@@ -73,7 +73,7 @@ version (web) {
 }
 import vibe3d.util.log.log : logInfo, logWarn;
 import prefs;
-import sdl_error : sdlError;
+import vibe3d.platform.input.sdl_error : sdlError;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -91,13 +91,13 @@ import imgui_impl_opengl3;
 import app_version      : appAboutLines;
 import math;
 import vibe3d.util.spatial.spatial : ModelSpace, Viewport;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : DisplayPayloadBasis, DisplayPayloadWriter, GpuMesh;
-import mesh_ops.loop_slice : loopSliceRingEdges;
+import vibe3d.mesh.ops.mesh_ops.loop_slice : loopSliceRingEdges;
 // Task 1906 stage 2 — the bus-driven per-mesh-address dirty epochs the display
 // and cage/preview upload families key on (see mesh_dirty.d's header).
 import vibe3d.mesh.change.mesh_dirty       : MeshDirtyKey, g_displayEpochs, g_geomEpochs;
-import eventlog;
+import vibe3d.platform.input.eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
 import tool;
@@ -105,11 +105,11 @@ import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype;
 import session_owner : Session;
 import toolpipe;
-import operator         : VectorStack;
-import toolpipe.packets : SubjectPacket, GesturePacket, GestureTrack;
+import vibe3d.editing.pipeline.contracts.operator         : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, GesturePacket, GestureTrack;
 import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
-import view;
+import vibe3d.viewport.camera.view;
 import shader;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot, g_fc,
                     currentThreadId, markMainLoopThread;
@@ -192,7 +192,7 @@ import commands.scene.reset;
 import commands.scene.load_mesh;
 import macro_recorder : MacroRecorder;
 import step_trace : StepTrace;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 
 import commands.tool.host     : ToolHost, ToolHostReadView;
 import commands.tool.set      : ToolSetCommand;
@@ -247,7 +247,7 @@ import command_executor : CommandExecutor;
 import command_history : RecordMode;
 import application_command_binding : ApplicationCommandBinding;
 import http_command_adapter : AutomationResetContext, CommandHttpAdapter;
-import held_gesture_buttons : clearHeldGestureButtonsForAutomation;
+import vibe3d.platform.input.held_gesture_buttons : clearHeldGestureButtonsForAutomation;
 import prefs : clearPipelineAttrCacheForAutomation, restoreNonTemplateDisplay;
 import scene_reset_effects : clearViewDisplayForAutomation;
 import registry;
@@ -275,7 +275,7 @@ import ui.item_rename : ItemRenameState;
 import ui.dock_drag : viewportOverlayWindowFlags, windowDockDragActive;
 import registration : registerTools, registerCommands;
 import http_providers : wireHttpProviders;
-import shortcuts;
+import vibe3d.platform.input.shortcuts;
 import buttonset;
 // Pie menus (task 1800): state + aim live in their own module so the command,
 // the event pump and the drawer all read one place.
@@ -309,7 +309,7 @@ import remesh.remesh_job : RemeshJob, RemeshParams,
 import commands.mesh.remesh : Remesh, RemeshStart;
 import property_panel : PropertyPanel;
 import forms_render;
-import document       : Layer;
+import vibe3d.documents.model.document       : Layer;
 
 version (WithRender) import render.render_mvp   : initIPR, drawIPRPanel, shutdownIPR;
 version (WithRender) import render.render_diff  : runRenderDiff;
@@ -1872,7 +1872,7 @@ void main(string[] args) {
     // fire time) — see the seam conversions below. Exactly ONE layer ever
     // exists in 0b (no layer.* commands until Stage 2), so this is provably
     // byte-neutral with the prior global mesh.
-    import document : Document, primaryModelSpaceResolver, primaryModelSpace;
+    import vibe3d.documents.model.document : Document, primaryModelSpaceResolver, primaryModelSpace;
     Session* sessionOwner = Session.bootstrap(makeCube());
     import morph_target : registerMorphTargetLifecycle;
     registerMorphTargetLifecycle(sessionOwner);
@@ -1944,7 +1944,7 @@ void main(string[] args) {
     // six deliveries reach nobody. They do advance `changeBus.deliveryCount`,
     // which is why every test on this counter reads a DELTA.
     {
-        import mesh : g_isDocumentMesh;
+        import vibe3d.mesh.core.mesh : g_isDocumentMesh;
         g_isDocumentMesh = (const(Mesh)* m) => document.ownsMesh(m);
     }
     // Task 0617 — install the primary-layer ModelSpace resolver (mirrors
@@ -3582,7 +3582,7 @@ void main(string[] args) {
     //   * `bevelEditFactory` is bound by TWENTY-FOUR separate tool
     //     registrations under the ONE wire name `mesh.bevel_edit`, so anything
     //     done to that row lands on all twenty-four at once.
-    import mesh_edit_delta : MeshEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
     enum sessionGeomMarks = MeshEditScope.Geometry | MeshEditScope.Marks;
     // The builder. `&mesh()` / `cameraView` / `editMode` are read when the
     // RETURNED delegate is called, not when it is built — the same live-context
@@ -4217,7 +4217,7 @@ void main(string[] args) {
     // anything live — and without a second implementation that could drift
     // from the one the keyboard actually runs.
     {
-        import input_context : setBindingSnapshot;
+        import vibe3d.platform.input.input_context : setBindingSnapshot;
         setBindingSnapshot(shortcuts.bindings);
     }
 
@@ -5838,7 +5838,7 @@ void main(string[] args) {
         // exists to be hovered at all. Published FIRST so that any panel
         // overlapping a cell wins the last-published rule below it.
         {
-            import input_zones : beginZoneFrame, publishZone;
+            import vibe3d.platform.input.input_zones : beginZoneFrame, publishZone;
             beginZoneFrame();
             foreach (k; 0 .. vpm.cellCount) {
                 auto vv = vpm.views[k];
@@ -6079,10 +6079,10 @@ void main(string[] args) {
         // The last PANEL is the boundary, deliberately: what follows is modals
         // and viewport overlays, and neither is a place a chord is aimed at.
         {
-            import input_zones   : endZoneFrame, publishedZones;
-            import input_context : publishInputContext;
+            import vibe3d.platform.input.input_zones   : endZoneFrame, publishedZones;
+            import vibe3d.platform.input.input_context : publishInputContext;
             import vibe3d.editing.contracts.seltype       : selTypeToken;
-            import eventlog      : queryMouse;
+            import vibe3d.platform.input.eventlog      : queryMouse;
             endZoneFrame();
             int _cx, _cy;
             queryMouse(_cx, _cy);
@@ -6979,7 +6979,7 @@ void main(string[] args) {
         ifs.viewportWindowHovered = false;
         if (!testMode || testViewportWindows) {
             import std.conv : to;
-            import toolpipe.packets : FalloffPacket;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
             import falloff_render : drawFalloffOverlay;
             immutable bool dockDragActive = windowDockDragActive();
             // Task 0223: cells are plain top-level windows, procedurally
@@ -7251,7 +7251,7 @@ void main(string[] args) {
 
                     // Per-cell view-selector dropdown.
                     {
-                        import view : ProjKind, ViewPreset;
+                        import vibe3d.viewport.camera.view : ProjKind, ViewPreset;
                         import viewport : applyCellViewPreset;
                         immutable string[8] presetNames = [
                             "Perspective", "Top", "Bottom", "Front",
@@ -7931,7 +7931,7 @@ void main(string[] args) {
             // preview pass depends on. Zero means no active tool.
             immutable ulong _toolPreviewKey = currentToolPreviewKey();
             if (!testMode && (activeTool !is null || anyFalloffActive())) {
-                import toolpipe.packets : ActionCenterPacket, FalloffPacket, FalloffType;
+                import vibe3d.editing.pipeline.contracts.toolpipe.packets : ActionCenterPacket, FalloffPacket, FalloffType;
                 SubjectPacket _osubj; VectorStack _ovts; ifs.buildToolVts(_osubj, _ovts);
                 if (activeTool !is null) {
                     _ovlKind |= 1;
@@ -8084,7 +8084,7 @@ void main(string[] args) {
                         // stale highlight the moment the pointer left it.
                         {
                             import hover_state : g_hoveredItem;
-                            import document    : kindInfo;
+                            import vibe3d.documents.model.document    : kindInfo;
                             ulong _ih = 0xcbf2_9ce4_8422_2325UL;
                             void _fold(ulong v) {
                                 _ih ^= v;

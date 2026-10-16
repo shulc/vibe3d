@@ -1,0 +1,265 @@
+{
+  "license": "MIT",
+  "targetType": "staticLibrary",
+  "sourcePaths": [
+    "source"
+  ],
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    },
+    "unittest": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags": []
+    }
+  },
+  "name": "mesh-ops",
+  "description": "Mesh operation kernels",
+  "dependencies": {
+    "vibe3d:mesh": {
+      "path": "../../.."
+    },
+    "vibe3d:math": {
+      "path": "../../.."
+    },
+    "vibe3d:spatial": {
+      "path": "../../.."
+    },
+    "vibe3d:mesh-contracts": {
+      "path": "../../.."
+    },
+    "vibe3d:mesh-topology": {
+      "path": "../../.."
+    },
+    "vibe3d:log": {
+      "path": "../../.."
+    }
+  },
+  "configurations": [
+    {
+      "name": "modeling",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:mesh": "modeling",
+        "vibe3d:math": "modeling",
+        "vibe3d:spatial": "modeling",
+        "vibe3d:mesh-contracts": "modeling",
+        "vibe3d:mesh-topology": "modeling",
+        "vibe3d:log": "modeling"
+      },
+      "dflags-ldc": [
+        "--singleobj"
+      ]
+    },
+    {
+      "name": "modeling-noai",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:mesh": "modeling-noai",
+        "vibe3d:math": "modeling-noai",
+        "vibe3d:spatial": "modeling-noai",
+        "vibe3d:mesh-contracts": "modeling-noai",
+        "vibe3d:mesh-topology": "modeling-noai",
+        "vibe3d:log": "modeling-noai"
+      },
+      "dflags-ldc": [
+        "--singleobj"
+      ]
+    },
+    {
+      "name": "with-render",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:mesh": "with-render",
+        "vibe3d:math": "with-render",
+        "vibe3d:spatial": "with-render",
+        "vibe3d:mesh-contracts": "with-render",
+        "vibe3d:mesh-topology": "with-render",
+        "vibe3d:log": "with-render"
+      },
+      "dflags-ldc": [
+        "--singleobj"
+      ]
+    },
+    {
+      "name": "web",
+      "versions": [
+        "web"
+      ],
+      "subConfigurations": {
+        "vibe3d:mesh": "web",
+        "vibe3d:math": "web",
+        "vibe3d:spatial": "web",
+        "vibe3d:mesh-contracts": "web",
+        "vibe3d:mesh-topology": "web",
+        "vibe3d:log": "web"
+      },
+      "dflags-ldc": [
+        "--singleobj"
+      ]
+    },
+    {
+      "name": "root-tests",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:mesh": "root-tests",
+        "vibe3d:math": "root-tests",
+        "vibe3d:spatial": "root-tests",
+        "vibe3d:mesh-contracts": "root-tests",
+        "vibe3d:mesh-topology": "root-tests",
+        "vibe3d:log": "root-tests"
+      },
+      "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "targetType": "sourceLibrary",
+      "subConfigurations": {
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:mesh-contracts": "isolated-tests",
+        "vibe3d:mesh-topology": "isolated-tests",
+        "vibe3d:log": "isolated-tests"
+      }
+    }
+  ],
+  "targetName": "vibe3d-mesh-ops",
+  "targetPath": ".",
+  "importPaths": [
+    "source"
+  ]
+}

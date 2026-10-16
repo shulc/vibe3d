@@ -1,9 +1,9 @@
 module prepared_param_update;
 
 import core.atomic : atomicOp;
-import document : Layer;
-import mesh : Mesh;
-import snapshot : MeshSnapshot;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 
 struct PreparedParamToken { @disable this(this); private: ulong owner, generation; }
 struct ValidatedParamToken { @disable this(this); private: ulong owner, generation; }

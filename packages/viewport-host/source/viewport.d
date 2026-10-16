@@ -1,6 +1,6 @@
 module viewport;
 
-import view          : View, ProjKind, ViewPreset;
+import vibe3d.viewport.camera.view          : View, ProjKind, ViewPreset;
 import gpu_select    : GpuSelectBuffer;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, Orientation;
@@ -14,7 +14,7 @@ import image_cache   : imagePixelCache;
 // Task 1970 — DirtyKey's camera pose term (see the struct field below).
 import camera_stamp  : CameraStamp;
 import gpu_pass_timer : GpuPassTimer;
-import toolpipe.packets : WorkplanePacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : WorkplanePacket;
 // ViewportFbo's GL calls and the enums its recorded `TexSpec` carries.
 import bindbc.opengl;
 

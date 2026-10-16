@@ -37,9 +37,9 @@
 // clean — including the two the stage refuses to arm.
 // ===========================================================================
 module tests.unit.face_reindex_arming_test;
-import mesh_ops.triangulate : triangulateFacesByMask;
-import mesh_edit_replay : apply, revert;
-import mesh_edge_slice : splitFaceByVertices;
+import vibe3d.mesh.ops.mesh_ops.triangulate : triangulateFacesByMask;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
+import vibe3d.mesh.ops.mesh_edge_slice : splitFaceByVertices;
 
 import std.algorithm.sorting   : sort;
 import std.array               : join, split;
@@ -49,15 +49,15 @@ import std.format              : format;
 import std.path                : buildPath, dirName, relativePath;
 import std.string              : indexOf, strip, startsWith;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
-import mesh_edit_delta;
-import snapshot : MeshSnapshot;
-import mesh_ops.extrude;
-import mesh_ops.loop_slice;
-import mesh_ops.cleanup;
-import mesh_ops.revolve;
-import mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.ops.mesh_ops.extrude;
+import vibe3d.mesh.ops.mesh_ops.loop_slice;
+import vibe3d.mesh.ops.mesh_ops.cleanup;
+import vibe3d.mesh.ops.mesh_ops.revolve;
+import vibe3d.mesh.ops.mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
 import vibe3d.editing.contracts.editmode : EditMode;
 // Task 3280 — the one attribute-chain predicate; see
 // tests/unit/decl_needle.d for the four lanes that each rediscovered

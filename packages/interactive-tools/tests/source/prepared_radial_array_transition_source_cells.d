@@ -1,15 +1,15 @@
 module prepared_radial_array_transition_source_cells;
 
 import prepared_radial_array_transition;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.alignment.radial_array_tool : RadialArrayTool,
     RadialArrayTransitionImage, PreparedRadialArrayTransitionKind;
 import core.atomic : atomicOp;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedRadialArrayKind;
 
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import vibe3d.editing.contracts.editmode : EditMode;
     import shader : LitShader;
@@ -94,7 +94,7 @@ unittest {
         deactivateContext.installTraceForTest() == [8, 13]);
 
     import commands.mesh.session_edit : MeshSessionEdit;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     auto historyTool = new RadialArrayTool(() => &source, &gpu, &mode,
         LitShader.init);
     historyTool.seedPreparedBuiltTransitionForTest(source);
@@ -198,7 +198,7 @@ unittest {
     assert(!missingTool.prepareActivate(missingContext).accepted &&
         !missingContext.validate());
 
-    import document : Layer;
+    import vibe3d.documents.model.document : Layer;
     import mesh_gpu : GpuUploadOwner;
     auto paramLayer = new Layer; paramLayer.meshRef() = makeCube();
     paramLayer.meshRef().syncSelection(); paramLayer.meshRef().selectFace(0);

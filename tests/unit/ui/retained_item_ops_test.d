@@ -19,12 +19,12 @@ import command_history : CommandHistory, RecordMode;
 import commands.image.commands : ImageRemove;
 import commands.image_plane.commands : ImagePlaneAdd, ImagePlaneSetImage;
 import commands.layer.commands : LayerDelete, LayerRename, LayerSelect;
-import document : Document, ImageData, ImagePlaneData, ItemKind, Layer;
+import vibe3d.documents.model.document : Document, ImageData, ImagePlaneData, ItemKind, Layer;
 import edit_session : EditSession;
 import forms_render : FormsPanel;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import registry : Registry;
 import session_owner : Session;
 import tests.unit.census_symbols : blankNonCode;
@@ -39,7 +39,7 @@ import ui.item_rename : ItemRenameController, ItemRenameState;
 import ui.layer_list_panel : LayerListDrawSnapshot, LayerListPanelRoles,
     bindLayerListPanel, drawLayerListPanel, layerListDrawSnapshot,
     resetLayerListDrawSnapshot;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
 

@@ -5,15 +5,15 @@ import core.sync.mutex : Mutex;
 
 import math : Vec3, frontFacingLocal, rayPlaneIntersect, pointInPolygon2D, closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot, perpendicularFrame, rayTriangleIntersect, closestPointOnTriangle2D, triangulatePolygonEarClip;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull, screenRay, screenPointToRay, isOrtho, viewPixelScale;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_visibility : VisibilityProbe, visibilityProbe;
 import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, g_geomEpochs, g_settledGeomEpochs;
-import toolpipe.packets : SnapPacket, SnapType, SnapMode;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import constraint : BackgroundSource;
 import snap_election : SnapElection;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 // ---------------------------------------------------------------------------
 // Snap math — Phase 7.3 of doc/phase7_plan.md / doc/snap_plan.md.
@@ -842,7 +842,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         // least agree with EACH OTHER. If snap is ever measured and answers
         // differently, THIS is the assumption to revisit.
         Vec3 vAt(size_t vi) {
-            import morph_preview : displayPosition;
+            import vibe3d.mesh.preview.morph_preview : displayPosition;
             return toWorld(displayPosition(&m, vi));
         }
 
@@ -2283,7 +2283,7 @@ private void clearExcludeMembership(const(uint)[] exclude) {
 // filter in `Mesh.deliverPending` and this block would pass vacuously.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh                      : makeCube;
+    import vibe3d.mesh.core.mesh                      : makeCube;
     import vibe3d.mesh.change.change_bus                : MeshEditScope;
     import math                      : lookAt, perspectiveMatrix;
     import std.math                  : PI;
@@ -2424,7 +2424,7 @@ unittest {
 // task's other half exercises.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh                    : makeCube;
+    import vibe3d.mesh.core.mesh                    : makeCube;
     import math                    : lookAt, perspectiveMatrix;
     import std.math                : PI, sqrt;
     import std.algorithm.searching : canFind;

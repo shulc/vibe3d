@@ -11,7 +11,7 @@ import std.format : format;
 import std.math   : abs, cos, sin, sqrt, isFinite, PI;
 
 import math : Vec3, normalMatrix;
-import mesh : Mesh, Surface, kDefaultSmoothingAngleDeg, kSurfaceSlots;
+import vibe3d.mesh.core.mesh : Mesh, Surface, kDefaultSmoothingAngleDeg, kSurfaceSlots;
 import vertex_normals : FaceAdjacency, buildFaceAdjacency, cornerSmoothNormals,
     faceCornerTotal, smoothingCosine, MAX_SMOOTH_VALENCE, SmoothPolicy,
     buildSmoothPolicy, kSmoothOff;

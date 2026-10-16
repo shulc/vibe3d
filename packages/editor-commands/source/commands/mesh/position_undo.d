@@ -38,11 +38,11 @@
 // any command body. The per-command arm is gone with the predicate that
 // reached it.
 module commands.mesh.position_undo;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command         : Command;
-import mesh            : Mesh;
-import mesh_edit_delta : MeshEditDelta;
+import vibe3d.mesh.core.mesh            : Mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta;
 
 /// The `delta_` / `armed_` pair plus its inverse.
 ///

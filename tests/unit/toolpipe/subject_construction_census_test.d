@@ -116,7 +116,7 @@ import std.path      : buildPath, dirName, relativePath;
 import std.string    : indexOf, strip;
 import std.traits    : FieldNameTuple;
 
-import toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 import tests.unit.census_symbols : LedgerHit, LedgerRow,
     stripCommentsAndStrings = blankNonCode, enclosingSymbols, reconcile,
     symbolAt, symbolTokenHits;

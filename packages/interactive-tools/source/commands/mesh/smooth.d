@@ -1,21 +1,21 @@
 module commands.mesh.smooth;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math : Vec3, cross, dot, triangulatePolygonEarClip;
 import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import vibe3d.editing.params.params : Param;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
 import commands.mesh.position_undo : PositionUndo;
 import commands.mesh.vertex_position_result : VertexPositionResult,
     VertexPositionResultBuilder;
-import toolpipe.packets : FalloffPacket, SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware, FalloffInput,
     weightedLerp;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, RelaxScratch,
     deriveBoundary, relaxable, relaxStep;
 

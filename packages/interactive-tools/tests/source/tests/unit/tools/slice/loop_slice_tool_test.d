@@ -6,9 +6,9 @@ module tests.unit.tools.slice.loop_slice_tool_test;
 import bindbc.sdl;
 import std.json : JSONValue;
 import std.algorithm : sort;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.params.params : Param, IntEnumEntry, wireTagForValue;
@@ -16,10 +16,10 @@ import hover_state : g_hoveredEdge;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import mesh_gpu : GpuMesh;
 import display_sync : refreshDisplay;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import tools.slice.loop_slice_tool;
 
 unittest {
@@ -248,7 +248,7 @@ unittest {
 // path such as `tool.set … count:N` does not), so the prepared activation caps
 // it at the kernel's MAX_LOOP_SLICE_COUNT before it allocates the offsets.
 unittest {
-    import mesh_ops.loop_slice : MAX_LOOP_SLICE_COUNT;
+    import vibe3d.mesh.ops.mesh_ops.loop_slice : MAX_LOOP_SLICE_COUNT;
     Mesh m = makeCube();
     EditMode em = EditMode.Edges;
     auto tool = new LoopSliceTool(() => &m, null, &em, null);

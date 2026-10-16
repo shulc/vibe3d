@@ -23,14 +23,14 @@
 /// (what the pre-op mesh had and the revert did not bring back, and what the
 /// revert put there instead). The forward carry says nothing about the reverse.
 module tests.unit.removeverts_pointmap_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.format : format;
 import std.math : isNaN;
 
 import math : Vec3;
-import mesh : Mesh, MeshMap, MapDomain, MapKind;
-import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshOpEntry, MeshEditScope;
+import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, MapKind;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshOpEntry, MeshEditScope;
 
 // ---------------------------------------------------------------------------
 // The stand
@@ -635,7 +635,7 @@ unittest // W-7-P3-f: the tail-append arm restores values and presence too
 
 unittest // W-7-P3-g: mesh.cleanup, one undo step, depth delta exactly one
 {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import command_history : CommandHistory;
     import commands.mesh.cleanup : MeshCleanup;

@@ -1,6 +1,6 @@
 module tools.create.capsule;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.editing.params.params : Param;

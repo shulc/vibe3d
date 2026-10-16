@@ -6,9 +6,9 @@ import command_history : CommandHistory, HistoryFlags;
 import commands.mesh.session_edit : MeshSessionEdit;
 import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
-import mesh : Mesh, makeCube;
-import snapshot : MeshSnapshot;
-import view : View;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.viewport.camera.view : View;
 
 private void probe(bool inSession) {
     Mesh m = makeCube();

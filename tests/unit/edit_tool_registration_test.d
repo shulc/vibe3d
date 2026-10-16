@@ -4,7 +4,7 @@ import command : Command;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import registration : registerTools;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import tool : Tool;

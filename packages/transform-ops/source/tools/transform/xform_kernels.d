@@ -25,11 +25,11 @@ import math : Vec3, dot, cross, rotateAboutPivot;
 import vibe3d.util.spatial.spatial : Viewport, AimViewport;
 import math : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine, matMul4, identityMatrix, pivotRotationMatrix;
 import vibe3d.util.spatial.spatial : ModelSpace;
-import mesh    : Mesh, MeshMap;
+import vibe3d.mesh.core.mesh    : Mesh, MeshMap;
 import tools.transform.morph_route : MorphRoute, storeRouted;
 import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror, authored, frameSource;
-import toolpipe.packets : FalloffPacket, SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform.cluster_values : ClusterPivots, ClusterAxes;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 
@@ -738,7 +738,7 @@ tail:
     // event -- and mid-drag version stability is deliberate: the symmetry,
     // falloff and snap caches key on it (see applyFold's own note).
     if (routeWrote) {
-        import mesh_edit_delta : MeshEditScope;
+        import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
         mesh.noteChange(MeshEditScope.Maps);
     }
     // NOTE: the kernel reads `dragSymmetry` ONLY for the authoring frame

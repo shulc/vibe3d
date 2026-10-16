@@ -1,7 +1,7 @@
 module commands.mesh.vertex_position_result;
 
 import math : Vec3;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 /// Sparse, already-computed vertex positions. Building this value must not
 /// mutate the scene mesh; callers choose whether to preview, record, or replay

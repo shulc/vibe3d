@@ -1,13 +1,13 @@
 module tools.alignment.radial_align_tool;
 import display_state : DrawPlan;
 
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tools.transform.transform;
 import tools.alignment.align_kernels : extractAlignChain, radialAlignTargets, alignOutsideNeighbours,
                               MAX_ALIGN_SIDES;
 import falloff : weightedLerp;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import vibe3d.editing.contracts.editmode;
 import math : Vec3;
@@ -16,11 +16,11 @@ import shader;
 import vibe3d.editing.params.params : Param;
 import tool : ToolSessionPolicy, HeadlessSourcePolicy, InputBindable;
 import bindbc.sdl : SDL_MouseButtonEvent, SDL_GetModState;
-import tool_input : InputBinding, InputButton, InputMod, InputPhase, ToolAction,
+import vibe3d.platform.input.tool_input : InputBinding, InputButton, InputMod, InputPhase, ToolAction,
     toButton, toMods;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import prepared_transform_activation : PreparedTransformActivationOwner;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedTransformActivationEffect,
     PreparedTransformActivationKind;
@@ -145,7 +145,7 @@ public:
 
     /// Headless apply — see class doc comment for the full law.
     override bool applyHeadless() {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
         VectorStack vts;
         beginHeadlessDeform(subj, vts);

@@ -27,11 +27,11 @@ import std.file   : write, remove, exists, readText;
 import std.format : format;
 import std.json   : parseJSON, JSONValue;
 
-import mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
-import view       : View;
+import vibe3d.mesh.core.mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
+import vibe3d.viewport.camera.view       : View;
 import vibe3d.editing.contracts.editmode   : EditMode;
-import snapshot   : MeshSnapshot;
-import uv_relax   : uvRelax;
+import vibe3d.mesh.snapshot.snapshot   : MeshSnapshot;
+import vibe3d.mesh.ops.uv_relax   : uvRelax;
 import commands.mesh.uv_relax : UvRelax;
 import std.net.curl : post, get;
 

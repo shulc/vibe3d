@@ -32,10 +32,10 @@ import std.conv      : to;
 import std.json      : JSONValue;
 import std.math      : isFinite;
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import ai.support_loop_candidates : SupportLoopCandidate,
     generateSupportLoopCandidates;
-import mesh_analysis : AnalyzeContext, buildAnalyzeContext,
+import vibe3d.mesh.ops.mesh_analysis : AnalyzeContext, buildAnalyzeContext,
     coincidentVertexClusters, degenerateFaceIndices, duplicateFaceIndices,
     orphanVertexIndices, inconsistentWindingFaces, nonManifoldEdgeIndices,
     nakedBoundaryLoopEdges, retopoHotspotClusters;
@@ -421,6 +421,6 @@ private void putUintArrayJson(B)(ref B buf, const(uint)[] values) {
 // =======================================================================
 
 version(unittest) {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import math : Vec3;
 }

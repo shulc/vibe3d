@@ -1,14 +1,14 @@
 module commands.mesh.weld_vertex_pair;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
-import mesh_edit_delta : MeshEditDelta, acceptRecordedEdit;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Weld vertex `source` into vertex `target`: Drag Weld's pair weld by index,
@@ -57,7 +57,7 @@ class MeshWeldVertexPair : Command, Operator {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         if (vts.get!SubjectPacket() is null) return false;
         if (source_ < 0 || target_ < 0)      return false;
         if (source_ == target_)               return false;

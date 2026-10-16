@@ -16,7 +16,7 @@ import std.math   : fabs;
 import bvh_pick   : SurfaceHit;
 import math : Vec3, lookAt, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, screenPointToRay;
-import mesh       : Mesh;
+import vibe3d.mesh.core.mesh       : Mesh;
 import snap       : setBackgroundSnapSources;
 import toolpipe.stages.constrain : ConstrainStage;
 
@@ -107,8 +107,8 @@ version (PerspectiveGuideFocused) {} else unittest {
     // (6) The hover publish (Point mode, the topology pen's): the centre
     // pixel's hit offset 0.1 along the normal, then a miss publishes NO hit
     // (the packet is rebuilt per event, never the last hit kept).
-    import toolpipe.packets : ConstrainGeom, ConstrainHitPacket, SubjectPacket;
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainGeom, ConstrainHitPacket, SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     cs.geom   = ConstrainGeom.Point;
     cs.offset = 0.1f;
     ConstrainHitPacket publish(int x, int y) {
@@ -314,10 +314,10 @@ version (PerspectiveGuideFocused) {} else unittest {
 
 // Perspective point guide: original rolled camera and faceted surface (9528).
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.util.spatial.spatial : Orientation;
     import drag : HandleDrag, DragFrame, DragKind;
-    import toolpipe.packets : ConstrainGeom;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainGeom;
     import std.file : readText;
     import std.json : parseJSON;
     const fixture=parseJSON(readText("tests/fixtures/topology_pen_session_rig.v3d"));

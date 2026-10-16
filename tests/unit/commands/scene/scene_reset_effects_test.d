@@ -10,7 +10,7 @@ import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact;
 import tests.unit.census_symbols : exists = wave15Exists;
 
 import core.exception : AssertError;
-import mesh : MapKind, Mesh, SubpatchTrace, makeCube;
+import vibe3d.mesh.core.mesh : MapKind, Mesh, SubpatchTrace, makeCube;
 import prefs : Prefs;
 import scene_reset_effects : SceneResetEffects;
 import std.conv : to;

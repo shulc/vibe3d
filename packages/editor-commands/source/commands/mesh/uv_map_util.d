@@ -1,12 +1,12 @@
 module commands.mesh.uv_map_util;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command;
-import mesh            : Mesh, MapDomain, MapKind, MeshMap, MeshEditBatch,
+import vibe3d.mesh.core.mesh            : Mesh, MapDomain, MapKind, MeshMap, MeshEditBatch,
                          kindInfo, kUvMapName, MAX_MESH_MAPS;
-import view            : View;
+import vibe3d.viewport.camera.view            : View;
 import vibe3d.editing.contracts.editmode        : EditMode;
-import mesh_edit_delta : MeshEditScope, MeshOpEntry;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope, MeshOpEntry;
 import vibe3d.editing.params.params          : Param;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit, mapSlotOf;

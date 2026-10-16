@@ -7,12 +7,12 @@ import prepared_private_state : PreparedPrivateStateOwner;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import mesh_ops.decimate : reduceToTarget, kReduceEditScope;
+import vibe3d.mesh.ops.mesh_ops.decimate : reduceToTarget, kReduceEditScope;
 import math;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.params.params : Param;
@@ -20,8 +20,8 @@ import display_sync : refreshDisplay;
 import shader : LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
 import std.math : lround;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;
@@ -32,7 +32,7 @@ import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedReductionParamEffect,
     PreparedReductionParamKind;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import mesh_gpu : GpuUploadOwner;
 import core.stdc.string : memcmp;
 

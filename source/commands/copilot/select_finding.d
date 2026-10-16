@@ -4,8 +4,8 @@ module commands.copilot.select_finding;
 version (WithAI):
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params        : Param;
 import copilot_panel : CopilotPanel;

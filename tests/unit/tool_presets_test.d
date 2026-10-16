@@ -76,7 +76,7 @@ unittest {
     import tools.edit.topology_pen : TopologyPenTool;
     import registry : typedToolFactory;
     import mesh_gpu : GpuMesh;
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import std.file : write, remove;
     import std.conv : to;
     import std.process : thisProcessID;

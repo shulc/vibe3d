@@ -1,9 +1,9 @@
 module commands.viewport.command_base;
 
 import command;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.contracts.editmode;
-import view;
+import vibe3d.viewport.camera.view;
 import viewport : ViewportManager;
 
 /// Shared base for the ten `viewport.*` commands moved out of the HTTP

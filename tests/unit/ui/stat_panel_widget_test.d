@@ -37,10 +37,10 @@
 //      them — the one relationship no row-model assertion can express.
 
 import command   : Command, g_testMode;
-import document  : Document, Layer;
+import vibe3d.documents.model.document  : Document, Layer;
 import vibe3d.editing.contracts.editmode  : EditMode;
-import mesh;
-import mesh_edit_delta : MeshEditTracker, MeshEditScope;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker, MeshEditScope;
 import vibe3d.editing.contracts.seltype   : SelType, SelMode;
 import ui.panels : drawStatisticsBody;
 import ui.stat_rows;

@@ -24,10 +24,10 @@
 
 import std.math : fabs;
 
-import mesh : Mesh, MeshMap, MapDomain, makeCube, kUvMapName,
+import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, makeCube, kUvMapName,
               MeshEditBatch;
-import mesh_ops.extrude : extrudeEdgesByMask, kExtrudeEditScope;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.ops.mesh_ops.extrude : extrudeEdgesByMask, kExtrudeEditScope;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 
 // task 1903 Stage H: extrudeEdgesByMask takes `ref MeshEditBatch` now; this
 // fixture reads no op-log, so the batch is unrecorded.
@@ -607,7 +607,7 @@ unittest {
 // inherently covered because factories produce a brand-new mesh with no map.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     auto m = makeGridPlane(1); // single quad
     auto uv = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
     assert(uv !is null);

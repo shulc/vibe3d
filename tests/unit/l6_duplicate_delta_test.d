@@ -12,7 +12,7 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — score a mutation that
 // reddens two of these cells by running them in isolation.
 module tests.unit.l6_duplicate_delta_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.conv   : to;
 import std.format : format;
@@ -20,9 +20,9 @@ import std.format : format;
 import vibe3d.mesh.change.change_bus : changeBus;
 import command;
 import math    : Vec3;
-import mesh;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope, MeshOpEntry;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope, MeshOpEntry;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 
 import tests.unit.fixtures : makeTaggedGridFull;

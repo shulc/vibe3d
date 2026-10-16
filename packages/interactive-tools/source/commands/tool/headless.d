@@ -1,14 +1,14 @@
 module commands.tool.headless;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import tool : Tool;
 import registry : ToolFactory;
 import vibe3d.editing.params.params : Param;
 import tool_attr_bounds : applyToolAttrBound;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import commands.mesh.mesh_edit_payload : MeshEditPayload;
 
 // ---------------------------------------------------------------------------

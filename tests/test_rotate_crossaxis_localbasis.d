@@ -50,14 +50,14 @@ import drag_helpers : Vec3, dot, cross, normalize, gizmoSize,
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import math : NativeVec3 = Vec3;
 import vibe3d.util.spatial.spatial : NativeViewport = Viewport, ModelSpace;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
-import operator : VectorStack;
-import document : primaryModelSpaceResolver;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.documents.model.document : primaryModelSpaceResolver;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
-import toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
 
 void main() {}

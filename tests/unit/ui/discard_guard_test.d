@@ -13,8 +13,8 @@ import guarded_action_controller : GuardedActionController,
 import command : Command, g_testMode;
 import command_history : RecordMode;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh;
-import view : View;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.viewport.camera.view : View;
 
 private Mesh guardProbeMesh;
 private View guardProbeView;

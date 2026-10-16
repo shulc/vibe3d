@@ -3,8 +3,8 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.ui.item_rows_test;
 
-import document : Document, Layer, ItemKind, kindInfo;
-import mesh     : makeCube;
+import vibe3d.documents.model.document : Document, Layer, ItemKind, kindInfo;
+import vibe3d.mesh.core.mesh     : makeCube;
 import vibe3d.editing.contracts.seltype  : SelMode;
 import ui.item_rows;
 
@@ -510,7 +510,7 @@ unittest {
 unittest {
     import commands.layer.commands       : LayerAdd;
     import commands.image_plane.commands : ImagePlaneAdd;
-    import view     : View;
+    import vibe3d.viewport.camera.view     : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto f = makeItemFixture();

@@ -1,14 +1,14 @@
 module commands.mesh.edge_extend;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import mesh_ops.extrude;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.extrude;
 import math : Vec3;
-import view;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 
 /// Edge Extend (one-shot, undoable): ADDITIVE, non-manifold. Per selected edge
 /// (with ≥1 adjacent face) spawn 2 ridge verts + 1 bridge quad WITHOUT modifying
@@ -113,7 +113,7 @@ class MeshEdgeExtend : Command, Operator {
     void setSegments(int v) { segments_ = v; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         if (editMode != EditMode.Edges) return false;

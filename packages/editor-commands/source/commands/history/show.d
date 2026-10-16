@@ -1,8 +1,8 @@
 module commands.history.show;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 
 /// Toggle the floating Command-History panel. Wired to a button in

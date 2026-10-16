@@ -4,13 +4,13 @@ import std.format : format;
 import std.typecons : Flag, Yes;
 
 import math    : Vec3;
-import mesh    : Mesh;
+import vibe3d.mesh.core.mesh    : Mesh;
 import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, g_settledGeomEpochs;
 import vibe3d.editing.contracts.editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordSymm;
 // pipeline imports moved to packet-only — Phase 6 cleanup
-import toolpipe.packets  : SymmetryPacket, SymmetryConfig;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SymmetryPacket, SymmetryConfig;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath;
 import symmetry          : rebuildPairing, rebuildPairingTopological, symmetrySide;
 import vibe3d.util.profiling.perf_probe        : g_perf, Cat;
@@ -94,7 +94,7 @@ class SymmetryStage : Stage, Operator {
 
     bool evaluate(ref VectorStack vts) {
         if (!this.enabled) return false;
-        import toolpipe.packets : WorkplanePacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : WorkplanePacket;
         SymmetryPacket pkt;
         pkt.config = config;
 

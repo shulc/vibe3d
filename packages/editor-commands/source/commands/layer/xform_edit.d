@@ -12,10 +12,10 @@ module commands.layer.xform_edit;
 // (see the plan's "Do NOT reuse layer.attr for the drag").
 
 import command : Command, CmdFlags, CompareResult, RunMergeable;
-import mesh : Mesh;
-import view : View;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.viewport.camera.view : View;
 import vibe3d.editing.contracts.editmode : EditMode;
-import document : Layer, ItemXform;
+import vibe3d.documents.model.document : Layer, ItemXform;
 import vibe3d.mesh.change.change_bus : noteLayerChange, LayerChange;
 
 /// One target's before/after `ItemXform` pair. A plain array (not an

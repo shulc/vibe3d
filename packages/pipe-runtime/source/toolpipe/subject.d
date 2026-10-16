@@ -36,12 +36,12 @@ module toolpipe.subject;
 // caller here keeps owning its own `SubjectPacket` in its own frame; this
 // module only writes into it.
 
-import mesh             : Mesh, MapKind;
+import vibe3d.mesh.core.mesh             : Mesh, MapKind;
 import vibe3d.editing.contracts.editmode          : EditMode;
 import vibe3d.editing.contracts.seltype            : SelType;
 import vibe3d.util.spatial.spatial : Viewport;
-import toolpipe.packets    : SubjectPacket, GesturePacket;
-import operator            : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets    : SubjectPacket, GesturePacket;
+import vibe3d.editing.pipeline.contracts.operator            : VectorStack;
 import toolpipe.pipeline   : g_pipeCtx;
 
 /// Everything about a subject that ONLY the caller can know.
@@ -128,7 +128,7 @@ void fillSubject(out SubjectPacket subj, in SubjectSource src) {
     // (plan §1.3); every other migrated site leaves the packet's own
     // `MapKind.unclassified` / empty-string defaults alone.
     if (src.resolveMorphTarget && src.mesh !is null) {
-        import morph_preview : resolveMorphTarget;
+        import vibe3d.mesh.preview.morph_preview : resolveMorphTarget;
         string  mtName;
         MapKind mtKind;
         if (resolveMorphTarget(src.mesh, mtName, mtKind)) {

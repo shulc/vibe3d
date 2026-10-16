@@ -5,21 +5,21 @@ module tests.unit.tools.alignment.mirror_test;
 
 import bindbc.opengl;
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import std.math : PI;
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import vibe3d.editing.params.params : Param, IntEnumEntry;
 import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import vibe3d.editing.contracts.editmode : EditMode;
 import shader : Shader, LitShader, drawLitPreview;
 import handler : MoveHandler, ToolHandles, Arrow, BoxHandler, gizmoSize, drawThickLinesExt;
 import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import std.conv : to;
 import tools.alignment.mirror;
 

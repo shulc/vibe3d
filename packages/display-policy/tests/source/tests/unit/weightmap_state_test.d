@@ -1,7 +1,7 @@
 module tests.unit.weightmap_state_test;
 
 import weightmap_view : currentWeightMapName, setCurrentWeightMap, resolveWeightMap;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 
 // ---------------------------------------------------------------------------
 // Unittests — the current-map selection and its resolver (Stage 1).
@@ -13,7 +13,7 @@ import mesh : Mesh;
 // ---------------------------------------------------------------------------
 
 unittest {
-    import mesh : makeCube, MapDomain;
+    import vibe3d.mesh.core.mesh : makeCube, MapDomain;
 
     // Save/restore: this is process-global session state and the unittest
     // runner shares a process with every other module's blocks.

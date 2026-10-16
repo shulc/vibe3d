@@ -48,8 +48,8 @@ import std.format : format;
 import std.algorithm : canFind, sort;
 
 import math         : Vec3;
-import mesh;
-import mesh_selsets;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.core.mesh_selsets;
 import weightmap_view : resolveWeightMap;
 
 private enum string kWeld   = "tests/fixtures/selset_weld_membership.json";

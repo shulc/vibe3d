@@ -44,7 +44,7 @@
 // the tree's own behaviour, not a planted mutation.
 // ===========================================================================
 module tests.unit.commands.mesh.split_edge_provenance_test;
-import mesh_edge_slice : addEdgePoint;
+import vibe3d.mesh.ops.mesh_edge_slice : addEdgePoint;
 
 import std.format : format;
 import std.math   : abs;
@@ -52,8 +52,8 @@ import std.math   : abs;
 import command;
 import vibe3d.editing.contracts.editmode;
 import math : Vec3;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 
 import commands.mesh.split_edge : MeshSplitEdge;
 

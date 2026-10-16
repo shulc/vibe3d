@@ -1,10 +1,10 @@
 module commands.select.connect;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 
 private void bfsSelect(bool[] selection, int[][] adj, int seed) {
     bool[] visited = new bool[](selection.length);

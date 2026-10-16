@@ -1,6 +1,6 @@
 module subpatch_factories;
 
-import mesh : Mesh, makeCube, SubpatchTrace;
+import vibe3d.mesh.core.mesh : Mesh, makeCube, SubpatchTrace;
 
 // Catmull-Clark subdivision of a cube, `levels` deep — a dense rounded perf
 // mesh with smoothing (complements the flat makeGridPlane). 7 levels →

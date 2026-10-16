@@ -3,10 +3,10 @@ module io.lwo_export;
 import lwo2;   // lwo2-writer (core config): Lwo2Object / Lwo2Layer / Lwo2Polygon
                //   Lwo2Surface / Lwo2VertexMap / Lwo2VertexMapD / writeLwo2File
 
-import mesh;
-import document : Document, Layer;
+import vibe3d.mesh.core.mesh;
+import vibe3d.documents.model.document : Document, Layer;
 import math     : Vec3, matrixMirrorsWinding, transformPoint;
-import mesh_selsets : selSetsAnyLive;
+import vibe3d.mesh.core.mesh_selsets : selSetsAnyLive;
 import vibe3d.util.log.log : logWarn;
 
 // ---------------------------------------------------------------------------

@@ -22,11 +22,11 @@ import command : CmdFlags, Command, endsLiveEditBeforeUiCommand;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import edit_session : EditSession;
-import held_gesture_buttons : g_heldGestureButtons;
+import vibe3d.platform.input.held_gesture_buttons : g_heldGestureButtons;
 import vibe3d.editing.contracts.editmode : EditMode;
 import tool : CommandClose, Tool, ToolSessionPolicy;
 import tool_activation_ownership;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 import std.format : format;
 import std.traits : EnumMembers;

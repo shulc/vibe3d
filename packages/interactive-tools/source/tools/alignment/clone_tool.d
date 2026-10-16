@@ -6,14 +6,14 @@ import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
 import prepared_private_state : PreparedPrivateStateOwner;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import tool;
 import tools.topology_step;
 import command : Command;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
@@ -22,7 +22,7 @@ import drag : HandleDrag, DragFrame, DragKind;
 import overlay_space : OverlaySpace;
 import vibe3d.editing.params.params : Param, IntEnumEntry;
 import shader : Shader;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import toolpipe.stages.snap : snappingOn;
 

@@ -4,12 +4,12 @@
 module tests.unit.tools.transform.move_test;
 
 import bindbc.opengl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import bindbc.sdl;
 import tools.transform.transform;
 import handler;
 import viewport_scheme : schemeColor, SchemeColor;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype : SelType;
 import math;
@@ -21,7 +21,7 @@ import drag;
 import coord_rounding : coordRounding, coordRoundingFixedIncrement;
 import snap : snapCursor, SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import falloff_handles : screenFalloffActive, screenFalloffSetCenter, screenFalloffLMBBegin;
 import tools.transform.move;
 

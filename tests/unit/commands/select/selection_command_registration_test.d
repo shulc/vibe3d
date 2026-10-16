@@ -27,10 +27,10 @@ import commands.select.sets : SelectSetApply, SelectSetDelete, SelectSetEdit,
     SelectSetRename, SelectSetStore;
 import commands.select.type_from : SelectTypeFromCommand;
 import core.exception : AssertError;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh, makeGridPlane;
-import mesh_selsets : selSetOwnsPolygon;
+import vibe3d.mesh.core.mesh : Mesh, makeGridPlane;
+import vibe3d.mesh.core.mesh_selsets : selSetOwnsPolygon;
 import vibe3d.editing.contracts.seltype : SelMode, SelType, currentSelType, geometryEditMode;
 import selection_command_registration : SelectionTypeDoors,
     registerSelectionCommands;

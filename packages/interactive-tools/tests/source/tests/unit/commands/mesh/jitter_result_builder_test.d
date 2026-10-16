@@ -13,17 +13,17 @@ import commands.mesh.jitter : MeshJitter;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.mesh.vertex_position_result : VertexPositionResult;
 import display_sync : activeMeshResolver;
-import document : primaryModelSpaceResolver;
+import vibe3d.documents.model.document : primaryModelSpaceResolver;
 import vibe3d.editing.contracts.editmode : EditMode;
 import falloff : evaluateFalloff;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : ModelSpace, aimSpace, projectToWindowFull;
-import mesh : Mesh, makeCube;
-import operator : VectorStack;
-import toolpipe.packets : FalloffPacket, FalloffShape, FalloffType,
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffShape, FalloffType,
                           SubjectPacket;
 import tools.common.command_wrapper : XfrmJitterTool;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private immutable Vec3[8] kAnchorBaseline = [
     Vec3(-0.5f, -0.5f, -0.5f), Vec3( 0.5f, -0.5f, -0.5f),

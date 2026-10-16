@@ -7,7 +7,7 @@ module tests.unit.viewport_env_test;
 
 import viewport_env;
 import display_state : ReflectionKind, ReflectionSource;
-import io.image_decode : decodePng16;
+import vibe3d.documents.image_codec.io.image_decode : decodePng16;
 import math : Vec3;
 import std.format : format;
 import std.math : abs;
@@ -126,7 +126,7 @@ unittest {
     // a valid header (the dimension check passes it first).
     immutable icon = cast(immutable(ubyte)[]) import("png/vibe3d_16.png");
     int iw, ih;
-    import io.image_decode : ImageInfo, imageInfo;
+    import vibe3d.documents.image_codec.io.image_decode : ImageInfo, imageInfo;
     ImageInfo info;
     assert(imageInfo(icon, info) && info.width == 16, "control: the 8-bit icon header must read");
     assert(decodePng16(icon, iw, ih) is null, "an 8-bit PNG must be refused, not widened");

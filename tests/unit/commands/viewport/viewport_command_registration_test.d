@@ -40,7 +40,7 @@ import math : Vec3;
 import prefs : g_prefs;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, registrationFamilyBytes;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import viewport : LayoutPreset, ViewportManager;
 import viewport_command_registration : registerViewportCommands;
 
@@ -703,7 +703,7 @@ unittest { // U7: the cavity commands (task 9190) reach exactly the addressed ce
 }
 
 unittest { // initiating lens, historical scale-owner aspect and write targets
-    import view : ProjKind;
+    import vibe3d.viewport.camera.view : ProjKind;
     import std.math : sqrt,tan,PI;
     foreach(id;["viewport.fit","viewport.fit_selected"]) {
         auto f=new Fixture;f.registry.bindSelTypeAuthority(LiveSessionRole(f.session));f.registerViewport();f.vpm.activeId=0;

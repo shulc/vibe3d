@@ -1,9 +1,9 @@
 module commands.mesh.hide;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype : SelType, isGeometryType, geometryEditMode;
 import vibe3d.mesh.change.change_bus : MeshEditScope, SelDomain;
@@ -368,7 +368,7 @@ class MeshHide : Command, Operator {
     override string label() const { return "Hide Selected"; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
 
@@ -432,7 +432,7 @@ class MeshHideUnselected : Command, Operator {
     override string label() const { return "Hide Unselected"; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
 
@@ -535,7 +535,7 @@ class MeshHideInvert : Command, Operator {
     override string label() const { return "Invert Hidden"; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
 
@@ -623,7 +623,7 @@ class MeshUnhideAll : Command, Operator {
     override string label() const { return "Unhide All"; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         // No-op rejection: nothing is hidden on ANY plane. Faces alone is

@@ -1822,7 +1822,7 @@ void cmdTsanParallelCompletion() {
     // The behavioural probe imports the production wrapper. This source census
     // closes the other half: a green helper test must not survive production
     // being rewired around it.
-    auto meshSource = readText("packages/mesh/source/mesh.d");
+    auto meshSource = readText("libraries/mesh/core/source/vibe3d/mesh/core/mesh.d");
     auto begin = meshSource.indexOf("    void buildLoops() {");
     auto end = meshSource.indexOf("    // Make Polygon", begin);
     if (begin < 0 || end < 0 || end <= begin)

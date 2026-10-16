@@ -13,9 +13,9 @@ module io.scene_ir;
 // normalize or lose); only the lossy interchange bridges (our LWO reader, and
 // assimp in Phase 4) build an `ImportedScene`.
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
-import document : Document, Layer;
+import vibe3d.documents.model.document : Document, Layer;
 
 /// A material as recovered from an interchange file, before mapping onto the
 /// vibe3d `Surface`. Every default IS the `Surface.init` field of the same
@@ -149,7 +149,7 @@ private void populateUvMap(ref Mesh m, const float[] uv, bool hasUv) {
 /// one bad byte cost the whole import).
 private void populateMorphMaps(ref Mesh m, const PartMorph[] morphs,
                                size_t vertexOffset = 0) {
-    import mesh : MapKind;
+    import vibe3d.mesh.core.mesh : MapKind;
     import vibe3d.util.log.log  : logWarn;
     foreach (ref pm; morphs) {
         if (pm.name.length == 0) continue;

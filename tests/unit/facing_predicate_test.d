@@ -31,7 +31,7 @@ import std.math : PI;
 
 import math : Vec3, lookAt, perspectiveMatrix, frontFacingLocal;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 
 // ---------------------------------------------------------------------------
 // The three candidate rules, spelled out here so the assertions can name them.

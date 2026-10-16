@@ -3,8 +3,8 @@ module tests.unit.snap_regression_test;
 import snap;
 import math : Vec3, closestOnSegment2DSquared;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
-import mesh : Mesh;
-import toolpipe.packets : SnapPacket, SnapType, SnapMode;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide : SnapGuide, kGuidePrioritySeed;
 import std.math : sqrt, round;
 

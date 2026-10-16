@@ -162,20 +162,20 @@
     "vibe3d:math": {
       "path": "../../.."
     },
-    "vibe3d-mesh": {
-      "path": "../../mesh"
+    "vibe3d:mesh": {
+      "path": "../../.."
     },
     "vibe3d:mesh-change": {
       "path": "../../.."
     },
-    "vibe3d-mesh-edit-log": {
-      "path": "../../mesh-edit-log"
+    "vibe3d:mesh-edit-log": {
+      "path": "../../.."
     },
-    "vibe3d-mesh-edit-replay": {
-      "path": "../../mesh-edit-replay"
+    "vibe3d:mesh-edit-replay": {
+      "path": "../../.."
     },
-    "vibe3d-mesh-snapshot": {
-      "path": "../../mesh-snapshot"
+    "vibe3d:mesh-snapshot": {
+      "path": "../../.."
     },
     "vibe3d:profiling": {
       "path": "../../.."
@@ -201,11 +201,11 @@
         "vibe3d-interaction-query": "isolated-tests",
         "vibe3d:log": "isolated-tests",
         "vibe3d:math": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
         "vibe3d:mesh-change": "isolated-tests",
-        "vibe3d-mesh-edit-log": "isolated-tests",
-        "vibe3d-mesh-edit-replay": "isolated-tests",
-        "vibe3d-mesh-snapshot": "isolated-tests",
+        "vibe3d:mesh-edit-log": "isolated-tests",
+        "vibe3d:mesh-edit-replay": "isolated-tests",
+        "vibe3d:mesh-snapshot": "isolated-tests",
         "vibe3d:profiling": "isolated-tests",
         "vibe3d:spatial": "isolated-tests"
       }

@@ -1,6 +1,6 @@
 module prepared_radial_sweep_transition;
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import prepared_selection_profile : PreparedSelectionProfileOwner;
 import prepared_selection_profile_image : RadialSweepProfileImage;
 import tools.alignment.radial_sweep_tool : RadialSweepTool,

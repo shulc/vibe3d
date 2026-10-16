@@ -9,7 +9,7 @@ import tools.deform.bend : BendTool;
 import tools.deform.push : PushTool;
 
 unittest {
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
     import vibe3d.editing.contracts.editmode : EditMode;
     import prepared_record_context : PreparedRecordContext;

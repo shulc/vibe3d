@@ -9,15 +9,15 @@ import std.string    : split, strip;
 import std.math      : abs;
 import math : Vec3, dot;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, aimSpace, ModelSpace;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import std.math : sqrt;
-import mesh : Mesh, MapDomain, MeshCacheKey;
+import vibe3d.mesh.core.mesh : Mesh, MapDomain, MeshCacheKey;
 import vibe3d.editing.contracts.editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght;
 import toolpipe.pipeline : g_pipeCtx;
-import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffShape,
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffShape,
                             FalloffMix, LassoStyle, ElementConnect, ElementMode;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.stages.workplane : WorkplaneStage;
 import toolpipe.state_paths       : setStatePath;
 import vibe3d.editing.params.params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
@@ -41,7 +41,7 @@ import toolpipe.stages.falloff;
 // all-true mask.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh   : edgeLoopRing;
+    import vibe3d.mesh.core.mesh   : edgeLoopRing;
     import falloff : evaluateFalloff;
 
     // --- verbatim reconstructions of the DELETED drag-side resolution ------
@@ -270,7 +270,7 @@ unittest { // THE WITNESS: FalloffStage.resolveConnectMask must not allocate
     // order to freeze.
     import core.memory : GC;
     import std.format  : format;
-    import mesh         : makeGridPlane;
+    import vibe3d.mesh.core.mesh         : makeGridPlane;
 
     Mesh mesh = makeGridPlane(200); // 201x201 = 40401 verts, ONE component
     EditMode em = EditMode.Vertices;
@@ -330,7 +330,7 @@ unittest { // THE WITNESS: FalloffStage.resolveConnectMask must not allocate
 // `case "steps"` arm (`tool.pipe.attr falloff steps`) still bypasses it.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import std.format : format;
 
     Mesh cube = makeCube();

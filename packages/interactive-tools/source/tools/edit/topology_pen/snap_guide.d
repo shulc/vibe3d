@@ -17,12 +17,12 @@ import mesh_visibility : visibleVertices;
 import toolpipe.guide : SnapPurpose;
 import std.math          : hypot;
 
-import mesh              : Mesh, MeshTopoKey;
+import vibe3d.mesh.core.mesh              : Mesh, MeshTopoKey;
 import math : Vec3, dot;
 import vibe3d.util.spatial.spatial : Viewport, screenPointToRay, projectToWindowFull;
-import document          : primaryModelSpace;
+import vibe3d.documents.model.document          : primaryModelSpace;
 import toolpipe.guide    : SnapGuide, GuideDrawState, kGuidePrioritySeed;
-import toolpipe.packets  : SnapType, SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SnapType, SymmetryPacket;
 import evaluated_move_weld : moveFaceNormal, movePolygonNeighbors, moveConnectedGeometryAdmits;
 
 /// True if edge `ei` is INTERIOR — shared by two or more polygons.
@@ -414,7 +414,7 @@ final class PenSnapGuide : SnapGuide {
 package bool admitsMoveElement(ref Mesh m, SnapType type, int index,
         const(uint)[] source, bool held, bool interior, bool backFace,
         Vec3 ray, const(SymmetryPacket)* symmetry = null, const(uint)[] marks = null) {
-    import toolpipe.packets : SymmetryPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
     if (index < 0) return false;
     uint[] corners;
     if (type == SnapType.Edge) {

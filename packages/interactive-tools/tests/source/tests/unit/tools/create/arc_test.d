@@ -4,16 +4,16 @@
 module tests.unit.tools.create.arc_test;
 
 import bindbc.opengl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import bindbc.sdl;
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import vibe3d.editing.params.params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame, transformPoint;
 import vibe3d.editing.contracts.editmode : EditMode;
 import std.math : sin, cos, PI;

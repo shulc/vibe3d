@@ -9,7 +9,7 @@ import toolpipe.stages.axis : AxisStage;
 import toolpipe.stages.constrain : ConstrainStage,
     PreparedConstrainCompositionProjection;
 import toolpipe.stages.falloff : FalloffStage, PreparedFalloffAutoFit;
-import toolpipe.packets : FalloffType, FalloffShape, ElementMode;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType, FalloffShape, ElementMode;
 import tool_activation_ownership : PipeArmScope;
 import toolpipe.attr_cache : NodeAttrs, recallNodeAttrs;
 import toolpipe.stage : Stage, TaskCode;

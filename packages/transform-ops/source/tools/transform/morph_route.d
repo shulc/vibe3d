@@ -5,9 +5,9 @@ module tools.transform.morph_route;
 // The executable ownership census lives in tests/unit/morph_route_census_test.d.
 
 import math    : Vec3;
-import mesh    : Mesh, MeshMap, MapKind, isMorphKind;
-import mesh_morph : morphApply, morphRoutedStore;
-import toolpipe.packets : SymmetryPacket;
+import vibe3d.mesh.core.mesh    : Mesh, MeshMap, MapKind, isMorphKind;
+import vibe3d.mesh.core.mesh_morph : morphApply, morphRoutedStore;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
 import symmetry : mirrorPosition, mirroredEdit, walkMirrorPairs,
                   applySymmetryMirror, applySymmetryMirrorDelta;
 
@@ -114,7 +114,7 @@ void applySymmetryMirrorRouted(Mesh* mesh, const ref SymmetryPacket sp,
     // ONE note per pass, never per vertex — mid-drag version stability is
     // intentional (the symmetry / falloff / snap caches key on it).
     if (wrote) {
-        import mesh_edit_delta : MeshEditScope;
+        import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
         mesh.noteChange(MeshEditScope.Maps);
     }
 }
@@ -139,7 +139,7 @@ void applySymmetryMirrorDeltaRouted(Mesh* mesh, const ref SymmetryPacket sp,
                      (i, p) { wrote |= storeRouted(map, route, i, p); },
                      (i, mi, p) => mirroredEdit(sp, route.runPos, i, mi, p))(mesh, sp, selected, outAlsoTouched);
     if (wrote) {
-        import mesh_edit_delta : MeshEditScope;
+        import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
         mesh.noteChange(MeshEditScope.Maps);
     }
 }

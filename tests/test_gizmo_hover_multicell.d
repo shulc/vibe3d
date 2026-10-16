@@ -41,7 +41,7 @@ import std.math : PI, abs, cos, sin;
 import handler : RotateHandler, ScaleHandler;
 import math : Vec3, cross, normalize;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, Orientation;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 void main() {}
 

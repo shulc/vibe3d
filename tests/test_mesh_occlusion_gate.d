@@ -31,7 +31,7 @@ import std.math : PI, sqrt, fabs;
 
 import math : Vec3, lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_visibility : visibleVertices;
 
 void main() {}
@@ -295,7 +295,7 @@ unittest {
     // the snap service's polygon leg culls the away quad, its vertex leg does
     // not. Driven through `snapCursor` itself, cursor on the quad's centre.
     import snap : snapCursor, SnapResult, invalidateSnapGrids;
-    import toolpipe.packets : SnapPacket, SnapType, SnapMode;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType, SnapMode;
     import vibe3d.util.spatial.spatial : projectToWindowFull;
     float cx, cy, cz;
     assert(projectToWindowFull(Vec3(0.2f, 0.1f, 0), vp, cx, cy, cz),

@@ -33,9 +33,9 @@ import forms : BindingException, Form, Row, g_forms, g_formsPanelEnabled,
 import forms_render : DispatchFn, FormsPanel, InteractiveDispatchFn;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import input_zones : clearZones;
+import vibe3d.platform.input.input_zones : clearZones;
 import math : Vec3;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import vibe3d.editing.params.params : Param, ParamProvider;
 import property_panel : PanelIdKind, PropertyPanel, toolPropsIdsJson;
@@ -53,7 +53,7 @@ import ui.tool_properties_panel : ToolPropertiesActions,
     ToolPropertiesPanelRoles, ToolPropertiesReadRole,
     ToolPropertiesStageInfo, bindToolPropertiesPanel,
     drawToolPropertiesPanel;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private string memberList(T)() {
     string result = "[";

@@ -15,7 +15,7 @@ module vertex_normals;
 // C8a). The pair rule covers every face at the vertex, edge-sharing or not.
 
 import math : Vec3, faceNormalFirst3;
-import mesh : Mesh, Surface, kSurfaceSlots, surfaceOfSlot, effectiveSurfaceSlot;
+import vibe3d.mesh.core.mesh : Mesh, Surface, kSurfaceSlots, surfaceOfSlot, effectiveSurfaceSlot;
 
 /// Kernel cap on the faces one vertex averages: a vertex of higher valence
 /// averages its first `MAX_SMOOTH_VALENCE` incident faces (plus the corner's

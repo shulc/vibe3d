@@ -5,8 +5,8 @@ import command_history : CommandHistory;
 
 version (unittest) {
     private final class _EpochTestCmd : Command {
-        import mesh    : Mesh;
-        import view    : View;
+        import vibe3d.mesh.core.mesh    : Mesh;
+        import vibe3d.viewport.camera.view    : View;
         import vibe3d.editing.contracts.editmode : EditMode;
         private Mesh  _mesh;
         private View  _view = new View(0, 0, 1, 1);
@@ -39,8 +39,8 @@ unittest { // record→undo bumps undoEpoch by 1; redo does NOT bump
 }
 
 unittest { // consolidate does NOT bump undoEpoch
-    import mesh    : Mesh;
-    import view    : View;
+    import vibe3d.mesh.core.mesh    : Mesh;
+    import vibe3d.viewport.camera.view    : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import commands.mesh.vertex_edit : MeshVertexEdit;
     import math : Vec3;

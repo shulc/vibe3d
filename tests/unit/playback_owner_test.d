@@ -7,7 +7,7 @@ import bindbc.sdl : KMOD_NONE, SDL_Event, SDL_Keymod, SDL_KEYDOWN,
 import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
-import eventlog : clearEventPlayerControlsForTest,
+import vibe3d.platform.input.eventlog : clearEventPlayerControlsForTest,
     eventPlayerModifierForTest, setEventPlayerClockForTest,
     setEventPlayerCounterForTest, setEventPlayerModifierForTest;
 import http_server : HttpServer;

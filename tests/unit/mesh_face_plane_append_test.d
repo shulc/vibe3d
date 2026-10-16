@@ -19,8 +19,8 @@
 // run that reddens the fifth.
 module tests.unit.mesh_face_plane_append_test;
 
-import mesh        : Mesh, makeCube;
-import mesh_planes : appendFacePlanes, PlaneFit;
+import vibe3d.mesh.core.mesh        : Mesh, makeCube;
+import vibe3d.mesh.core.mesh_planes : appendFacePlanes, PlaneFit;
 import std.format  : format;
 
 // ---------------------------------------------------------------------------

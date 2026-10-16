@@ -4,13 +4,13 @@
 module tests.unit.commands.test_undo_flags_test;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import commands.test_undo_flags;
 
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     Mesh m;
     View v;
     auto sup = new UndoSuppressNoop(&m, v, EditMode.Vertices);

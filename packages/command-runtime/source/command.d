@@ -1,13 +1,13 @@
 module command;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype : SelType, geometrySelType;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.editing.params.params : Param, ParamHints;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import std.json : JSONValue;
 
 // Test-automation gate (re-eval plan D5). Set true ONLY when the editor is
@@ -31,7 +31,7 @@ __gshared bool g_testMode = false;
 // mesh it wants written, and there is no selection to consult).
 __gshared bool delegate() g_editTargetResolver;
 
-public import edit_target_contract : kNoEditTargetReason;
+public import vibe3d.documents.model.edit_target_contract : kNoEditTargetReason;
 
 // ---------------------------------------------------------------------------
 // Command — base class for every user-visible action.
@@ -244,8 +244,8 @@ class Command {
     // base. `grep -rn 'applyImpl(' source tests --include=*.d` outside this
     // file is comments only.
     protected bool applyImpl() {
-        import operator        : Operator, VectorStack;
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.operator        : Operator, VectorStack;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         if (auto op = cast(Operator)this) {
             // TASK 0654 — THE mesh-write refusal, for every Operator command at
             // once. An empty item selection means there is no mesh edit target,
@@ -530,7 +530,7 @@ class Command {
     // reason: a factory call is GL work that may not happen on the HTTP
     // thread). A state-dependent answer would stale that cache.
     bool needsEditTarget() const {
-        import operator : Operator;
+        import vibe3d.editing.pipeline.contracts.operator : Operator;
         return (cast(const(Operator)) this) !is null;
     }
 

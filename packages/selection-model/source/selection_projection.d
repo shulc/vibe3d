@@ -6,9 +6,9 @@
 /// deliberately so main-thread servicing is visible in the payload bytes.
 module selection_projection;
 
-import document : Document, tokenOf;
+import vibe3d.documents.model.document : Document, tokenOf;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.seltype : SelTypeOrder, geometryEditMode, selTypeToken;
 import std.json : JSONValue;
 

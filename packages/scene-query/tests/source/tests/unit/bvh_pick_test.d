@@ -6,7 +6,7 @@ module tests.unit.bvh_pick_test;
 import bvh.c;
 import math : Vec3, cross;
 import vibe3d.util.spatial.spatial : Viewport, screenRay, screenPointToRay, ModelSpace;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_gpu : GpuMesh;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc;
 import bvh_pick;
@@ -112,7 +112,7 @@ unittest {
     // this use — the same arrangement `snap.invalidateSnapGrids()` has.
     import std.math      : fabs;
     import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
-    import mesh_edit_delta : MeshEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
     Mesh src;
     src.vertices = [

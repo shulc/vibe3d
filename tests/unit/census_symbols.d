@@ -2726,6 +2726,19 @@ private immutable Wave19Owner[] wave19Owners = [
     Wave19Owner("profiling", "packages/profiling", "libraries/util/profiling"),
     Wave19Owner("screen-buckets", "util/screen-buckets", "libraries/util/screen-buckets"),
     Wave19Owner("spatial", "packages/spatial", "libraries/util/spatial"),
+    Wave19Owner("camera-model", "packages/camera-model", "libraries/viewport/camera"),
+    Wave19Owner("image-codec", "packages/image-codec", "libraries/documents/image-codec"),
+    Wave19Owner("input-events", "packages/input-events", "libraries/platform/input"),
+    Wave19Owner("mesh-edit-log", "packages/mesh-edit-log", "libraries/mesh/edit-log"),
+    Wave19Owner("mesh-topology", "packages/mesh-topology", "libraries/mesh/topology"),
+    Wave19Owner("render-model", "packages/render-model", "libraries/render/model"),
+    Wave19Owner("mesh", "packages/mesh", "libraries/mesh/core"),
+    Wave19Owner("document-model", "packages/document-model", "libraries/documents/model"),
+    Wave19Owner("mesh-edit-replay", "packages/mesh-edit-replay", "libraries/mesh/edit-replay"),
+    Wave19Owner("mesh-ops", "packages/mesh-ops", "libraries/mesh/ops"),
+    Wave19Owner("mesh-preview", "packages/mesh-preview", "libraries/mesh/preview"),
+    Wave19Owner("mesh-snapshot", "packages/mesh-snapshot", "libraries/mesh/snapshot"),
+    Wave19Owner("pipe-contracts", "packages/pipe-contracts", "libraries/editing/pipeline/contracts"),
 ];
 private struct Wave19Module { string owner, oldPath, newPath, oldModule, newModule; }
 private immutable Wave19Module[] wave19Modules = [
@@ -2771,6 +2784,122 @@ private immutable Wave19Module[] wave19Modules = [
     Wave19Module("parallel", "util/parallel/source/tsan_annotate.d", "libraries/util/parallel/source/vibe3d/util/parallel/tsan_annotate.d", "tsan_annotate", "vibe3d.util.parallel.tsan_annotate"),
     Wave19Module("plane-bytes", "util/plane-bytes/source/plane_bytes.d", "libraries/util/plane-bytes/source/vibe3d/util/plane_bytes/plane_bytes.d", "plane_bytes", "vibe3d.util.plane_bytes.plane_bytes"),
     Wave19Module("screen-buckets", "util/screen-buckets/source/screen_buckets.d", "libraries/util/screen-buckets/source/vibe3d/util/screen_buckets/screen_buckets.d", "screen_buckets", "vibe3d.util.screen_buckets.screen_buckets"),
+    Wave19Module("camera-model", "packages/camera-model/source/view.d", "libraries/viewport/camera/source/vibe3d/viewport/camera/view.d", "view", "vibe3d.viewport.camera.view"),
+    Wave19Module("camera-model", "packages/camera-model/tests/source/tests/unit/camera_model_population_test.d", "libraries/viewport/camera/tests/source/vibe3d/viewport/camera/tests/unit/camera_model_population_test.d", "tests.unit.camera_model_population_test", "vibe3d.viewport.camera.tests.unit.camera_model_population_test"),
+    Wave19Module("camera-model", "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d", "libraries/viewport/camera/tests/source/vibe3d/viewport/camera/tests/unit/view_source_cells_test.d", "tests.unit.view_source_cells_test", "vibe3d.viewport.camera.tests.unit.view_source_cells_test"),
+    Wave19Module("camera-model", "packages/camera-model/tests/source/tests/unit/view_test.d", "libraries/viewport/camera/tests/source/vibe3d/viewport/camera/tests/unit/view_test.d", "tests.unit.view_test", "vibe3d.viewport.camera.tests.unit.view_test"),
+    Wave19Module("document-model", "packages/document-model/source/document.d", "libraries/documents/model/source/vibe3d/documents/model/document.d", "document", "vibe3d.documents.model.document"),
+    Wave19Module("document-model", "packages/document-model/source/document_selection.d", "libraries/documents/model/source/vibe3d/documents/model/document_selection.d", "document_selection", "vibe3d.documents.model.document_selection"),
+    Wave19Module("document-model", "packages/document-model/source/edit_target_contract.d", "libraries/documents/model/source/vibe3d/documents/model/edit_target_contract.d", "edit_target_contract", "vibe3d.documents.model.edit_target_contract"),
+    Wave19Module("document-model", "packages/document-model/source/image_data.d", "libraries/documents/model/source/vibe3d/documents/model/image_data.d", "image_data", "vibe3d.documents.model.image_data"),
+    Wave19Module("document-model", "packages/document-model/source/item_kinds.d", "libraries/documents/model/source/vibe3d/documents/model/item_kinds.d", "item_kinds", "vibe3d.documents.model.item_kinds"),
+    Wave19Module("document-model", "packages/document-model/tests/source/tests/unit/document_test.d", "libraries/documents/model/tests/source/vibe3d/documents/model/tests/unit/document_test.d", "tests.unit.document_test", "vibe3d.documents.model.tests.unit.document_test"),
+    Wave19Module("image-codec", "packages/image-codec/source/io/image_decode.d", "libraries/documents/image-codec/source/vibe3d/documents/image_codec/io/image_decode.d", "io.image_decode", "vibe3d.documents.image_codec.io.image_decode"),
+    Wave19Module("image-codec", "packages/image-codec/tests/source/tests/unit/image_codec_population_test.d", "libraries/documents/image-codec/tests/source/vibe3d/documents/image_codec/tests/unit/image_codec_population_test.d", "tests.unit.image_codec_population_test", "vibe3d.documents.image_codec.tests.unit.image_codec_population_test"),
+    Wave19Module("image-codec", "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d", "libraries/documents/image-codec/tests/source/vibe3d/documents/image_codec/tests/unit/io/image_decode_source_cells_test.d", "tests.unit.io.image_decode_source_cells_test", "vibe3d.documents.image_codec.tests.unit.io.image_decode_source_cells_test"),
+    Wave19Module("image-codec", "packages/image-codec/tests/source/tests/unit/io/image_decode_test.d", "libraries/documents/image-codec/tests/source/vibe3d/documents/image_codec/tests/unit/io/image_decode_test.d", "tests.unit.io.image_decode_test", "vibe3d.documents.image_codec.tests.unit.io.image_decode_test"),
+    Wave19Module("input-events", "packages/input-events/source/eventlog.d", "libraries/platform/input/source/vibe3d/platform/input/eventlog.d", "eventlog", "vibe3d.platform.input.eventlog"),
+    Wave19Module("input-events", "packages/input-events/source/held_gesture_buttons.d", "libraries/platform/input/source/vibe3d/platform/input/held_gesture_buttons.d", "held_gesture_buttons", "vibe3d.platform.input.held_gesture_buttons"),
+    Wave19Module("input-events", "packages/input-events/source/input_context.d", "libraries/platform/input/source/vibe3d/platform/input/input_context.d", "input_context", "vibe3d.platform.input.input_context"),
+    Wave19Module("input-events", "packages/input-events/source/input_zones.d", "libraries/platform/input/source/vibe3d/platform/input/input_zones.d", "input_zones", "vibe3d.platform.input.input_zones"),
+    Wave19Module("input-events", "packages/input-events/source/sdl_error.d", "libraries/platform/input/source/vibe3d/platform/input/sdl_error.d", "sdl_error", "vibe3d.platform.input.sdl_error"),
+    Wave19Module("input-events", "packages/input-events/source/shortcuts.d", "libraries/platform/input/source/vibe3d/platform/input/shortcuts.d", "shortcuts", "vibe3d.platform.input.shortcuts"),
+    Wave19Module("input-events", "packages/input-events/source/tool_input.d", "libraries/platform/input/source/vibe3d/platform/input/tool_input.d", "tool_input", "vibe3d.platform.input.tool_input"),
+    Wave19Module("input-events", "packages/input-events/tests/source/tests/unit/binding_resolve_test.d", "libraries/platform/input/tests/source/vibe3d/platform/input/tests/unit/binding_resolve_test.d", "tests.unit.binding_resolve_test", "vibe3d.platform.input.tests.unit.binding_resolve_test"),
+    Wave19Module("input-events", "packages/input-events/tests/source/tests/unit/eventlog_parser_test.d", "libraries/platform/input/tests/source/vibe3d/platform/input/tests/unit/eventlog_parser_test.d", "tests.unit.eventlog_parser_test", "vibe3d.platform.input.tests.unit.eventlog_parser_test"),
+    Wave19Module("input-events", "packages/input-events/tests/source/tests/unit/eventlog_test.d", "libraries/platform/input/tests/source/vibe3d/platform/input/tests/unit/eventlog_test.d", "tests.unit.eventlog_test", "vibe3d.platform.input.tests.unit.eventlog_test"),
+    Wave19Module("input-events", "packages/input-events/tests/source/tests/unit/input_events_population_test.d", "libraries/platform/input/tests/source/vibe3d/platform/input/tests/unit/input_events_population_test.d", "tests.unit.input_events_population_test", "vibe3d.platform.input.tests.unit.input_events_population_test"),
+    Wave19Module("input-events", "packages/input-events/tests/source/tests/unit/sdl_error_test.d", "libraries/platform/input/tests/source/vibe3d/platform/input/tests/unit/sdl_error_test.d", "tests.unit.sdl_error_test", "vibe3d.platform.input.tests.unit.sdl_error_test"),
+    Wave19Module("input-events", "packages/input-events/tests/source/tests/unit/tool_input_test.d", "libraries/platform/input/tests/source/vibe3d/platform/input/tests/unit/tool_input_test.d", "tests.unit.tool_input_test", "vibe3d.platform.input.tests.unit.tool_input_test"),
+    Wave19Module("mesh-edit-log", "packages/mesh-edit-log/source/mesh_edit_delta.d", "libraries/mesh/edit-log/source/vibe3d/mesh/edit_log/mesh_edit_delta.d", "mesh_edit_delta", "vibe3d.mesh.edit_log.mesh_edit_delta"),
+    Wave19Module("mesh-edit-log", "packages/mesh-edit-log/tests/source/mesh_edit_log_protocol_test.d", "libraries/mesh/edit-log/tests/source/vibe3d/mesh/edit_log/mesh_edit_log_protocol_test.d", "mesh_edit_log_protocol_test", "vibe3d.mesh.edit_log.mesh_edit_log_protocol_test"),
+    Wave19Module("mesh-edit-replay", "packages/mesh-edit-replay/source/mesh_edit_replay.d", "libraries/mesh/edit-replay/source/vibe3d/mesh/edit_replay/mesh_edit_replay.d", "mesh_edit_replay", "vibe3d.mesh.edit_replay.mesh_edit_replay"),
+    Wave19Module("mesh-edit-replay", "packages/mesh-edit-replay/tests/source/mesh_edit_replay_roundtrip_test.d", "libraries/mesh/edit-replay/tests/source/vibe3d/mesh/edit_replay/mesh_edit_replay_roundtrip_test.d", "mesh_edit_replay_roundtrip_test", "vibe3d.mesh.edit_replay.mesh_edit_replay_roundtrip_test"),
+    Wave19Module("mesh-edit-replay", "packages/mesh-edit-replay/tests/source/tests/unit/mesh_edit_delta_test.d", "libraries/mesh/edit-replay/tests/source/vibe3d/mesh/edit_replay/tests/unit/mesh_edit_delta_test.d", "tests.unit.mesh_edit_delta_test", "vibe3d.mesh.edit_replay.tests.unit.mesh_edit_delta_test"),
+    Wave19Module("mesh-edit-replay", "packages/mesh-edit-replay/tests/source/tests/unit/mesh_selsets_replay_test.d", "libraries/mesh/edit-replay/tests/source/vibe3d/mesh/edit_replay/tests/unit/mesh_selsets_replay_test.d", "tests.unit.mesh_selsets_replay_test", "vibe3d.mesh.edit_replay.tests.unit.mesh_selsets_replay_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/geometry_clipboard.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/geometry_clipboard.d", "geometry_clipboard", "vibe3d.mesh.ops.geometry_clipboard"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_analysis.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_analysis.d", "mesh_analysis", "vibe3d.mesh.ops.mesh_analysis"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_edge_slice.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_edge_slice.d", "mesh_edge_slice", "vibe3d.mesh.ops.mesh_edge_slice"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/bevel_curves.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/bevel_curves.d", "mesh_ops.bevel_curves", "vibe3d.mesh.ops.mesh_ops.bevel_curves"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/bevel_fin.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/bevel_fin.d", "mesh_ops.bevel_fin", "vibe3d.mesh.ops.mesh_ops.bevel_fin"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/bevel_vertex.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/bevel_vertex.d", "mesh_ops.bevel_vertex", "vibe3d.mesh.ops.mesh_ops.bevel_vertex"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/box_geom.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/box_geom.d", "mesh_ops.box_geom", "vibe3d.mesh.ops.mesh_ops.box_geom"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/bridge.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/bridge.d", "mesh_ops.bridge", "vibe3d.mesh.ops.mesh_ops.bridge"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/bridge_patch.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/bridge_patch.d", "mesh_ops.bridge_patch", "vibe3d.mesh.ops.mesh_ops.bridge_patch"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/cleanup.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/cleanup.d", "mesh_ops.cleanup", "vibe3d.mesh.ops.mesh_ops.cleanup"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/connected_mask.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/connected_mask.d", "mesh_ops.connected_mask", "vibe3d.mesh.ops.mesh_ops.connected_mask"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/cut.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/cut.d", "mesh_ops.cut", "vibe3d.mesh.ops.mesh_ops.cut"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/decimate.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/decimate.d", "mesh_ops.decimate", "vibe3d.mesh.ops.mesh_ops.decimate"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/edge_bevel.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/edge_bevel.d", "mesh_ops.edge_bevel", "vibe3d.mesh.ops.mesh_ops.edge_bevel"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/extrude.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/extrude.d", "mesh_ops.extrude", "vibe3d.mesh.ops.mesh_ops.extrude"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/face_alignment.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/face_alignment.d", "mesh_ops.face_alignment", "vibe3d.mesh.ops.mesh_ops.face_alignment"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/face_merge.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/face_merge.d", "mesh_ops.face_merge", "vibe3d.mesh.ops.mesh_ops.face_merge"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/loop_slice.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/loop_slice.d", "mesh_ops.loop_slice", "vibe3d.mesh.ops.mesh_ops.loop_slice"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/poly_bevel.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/poly_bevel.d", "mesh_ops.poly_bevel", "vibe3d.mesh.ops.mesh_ops.poly_bevel"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/revolve.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/revolve.d", "mesh_ops.revolve", "vibe3d.mesh.ops.mesh_ops.revolve"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/select_loop.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/select_loop.d", "mesh_ops.select_loop", "vibe3d.mesh.ops.mesh_ops.select_loop"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/thicken.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/thicken.d", "mesh_ops.thicken", "vibe3d.mesh.ops.mesh_ops.thicken"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_ops/triangulate.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/triangulate.d", "mesh_ops.triangulate", "vibe3d.mesh.ops.mesh_ops.triangulate"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/mesh_stats.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_stats.d", "mesh_stats", "vibe3d.mesh.ops.mesh_stats"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/uv_island.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/uv_island.d", "uv_island", "vibe3d.mesh.ops.uv_island"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/uv_project.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/uv_project.d", "uv_project", "vibe3d.mesh.ops.uv_project"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/uv_relax.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/uv_relax.d", "uv_relax", "vibe3d.mesh.ops.uv_relax"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/uv_transform.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/uv_transform.d", "uv_transform", "vibe3d.mesh.ops.uv_transform"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/uv_unwrap.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/uv_unwrap.d", "uv_unwrap", "vibe3d.mesh.ops.uv_unwrap"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/source/uv_weld.d", "libraries/mesh/ops/source/vibe3d/mesh/ops/uv_weld.d", "uv_weld", "vibe3d.mesh.ops.uv_weld"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_analysis_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_analysis_test.d", "tests.unit.mesh_analysis_test", "vibe3d.mesh.ops.tests.unit.mesh_analysis_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_edge_slice_gate_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_edge_slice_gate_test.d", "tests.unit.mesh_edge_slice_gate_test", "vibe3d.mesh.ops.tests.unit.mesh_edge_slice_gate_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_edge_slice_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_edge_slice_test.d", "tests.unit.mesh_edge_slice_test", "vibe3d.mesh.ops.tests.unit.mesh_edge_slice_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/bevel_fin_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/bevel_fin_test.d", "tests.unit.mesh_ops.bevel_fin_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.bevel_fin_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/bevel_vertex_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/bevel_vertex_test.d", "tests.unit.mesh_ops.bevel_vertex_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.bevel_vertex_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/box_geom_corner_provenance_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/box_geom_corner_provenance_test.d", "tests.unit.mesh_ops.box_geom_corner_provenance_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.box_geom_corner_provenance_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/bridge_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/bridge_test.d", "tests.unit.mesh_ops.bridge_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.bridge_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/cleanup_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/cleanup_test.d", "tests.unit.mesh_ops.cleanup_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.cleanup_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/connected_mask_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/connected_mask_test.d", "tests.unit.mesh_ops.connected_mask_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.connected_mask_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/cut_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/cut_test.d", "tests.unit.mesh_ops.cut_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.cut_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/edge_fixture.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/edge_fixture.d", "tests.unit.mesh_ops.edge_fixture", "vibe3d.mesh.ops.tests.unit.mesh_ops.edge_fixture"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/extrude_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/extrude_test.d", "tests.unit.mesh_ops.extrude_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.extrude_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/face_alignment_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/face_alignment_test.d", "tests.unit.mesh_ops.face_alignment_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.face_alignment_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/face_merge_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/face_merge_test.d", "tests.unit.mesh_ops.face_merge_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.face_merge_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/loop_slice_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/loop_slice_test.d", "tests.unit.mesh_ops.loop_slice_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.loop_slice_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/poly_bevel_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/poly_bevel_test.d", "tests.unit.mesh_ops.poly_bevel_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.poly_bevel_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/revolve_seam_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/revolve_seam_test.d", "tests.unit.mesh_ops.revolve_seam_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.revolve_seam_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/revolve_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/revolve_test.d", "tests.unit.mesh_ops.revolve_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.revolve_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/seam_differential.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/seam_differential.d", "tests.unit.mesh_ops.seam_differential", "vibe3d.mesh.ops.tests.unit.mesh_ops.seam_differential"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/select_loop_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/select_loop_test.d", "tests.unit.mesh_ops.select_loop_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.select_loop_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/triangulate_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/triangulate_test.d", "tests.unit.mesh_ops.triangulate_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.triangulate_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_ops/vertex_pos_grid_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_ops/vertex_pos_grid_test.d", "tests.unit.mesh_ops.vertex_pos_grid_test", "vibe3d.mesh.ops.tests.unit.mesh_ops.vertex_pos_grid_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/mesh_wire_analysis_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/mesh_wire_analysis_test.d", "tests.unit.mesh_wire_analysis_test", "vibe3d.mesh.ops.tests.unit.mesh_wire_analysis_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/uv_island_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/uv_island_test.d", "tests.unit.uv_island_test", "vibe3d.mesh.ops.tests.unit.uv_island_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/uv_project_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/uv_project_test.d", "tests.unit.uv_project_test", "vibe3d.mesh.ops.tests.unit.uv_project_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/uv_relax_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/uv_relax_test.d", "tests.unit.uv_relax_test", "vibe3d.mesh.ops.tests.unit.uv_relax_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/uv_transform_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/uv_transform_test.d", "tests.unit.uv_transform_test", "vibe3d.mesh.ops.tests.unit.uv_transform_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/uv_unwrap_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/uv_unwrap_test.d", "tests.unit.uv_unwrap_test", "vibe3d.mesh.ops.tests.unit.uv_unwrap_test"),
+    Wave19Module("mesh-ops", "packages/mesh-ops/tests/source/tests/unit/uv_weld_test.d", "libraries/mesh/ops/tests/source/vibe3d/mesh/ops/tests/unit/uv_weld_test.d", "tests.unit.uv_weld_test", "vibe3d.mesh.ops.tests.unit.uv_weld_test"),
+    Wave19Module("mesh-preview", "packages/mesh-preview/source/active_mesh_resolver.d", "libraries/mesh/preview/source/vibe3d/mesh/preview/active_mesh_resolver.d", "active_mesh_resolver", "vibe3d.mesh.preview.active_mesh_resolver"),
+    Wave19Module("mesh-preview", "packages/mesh-preview/source/morph_preview.d", "libraries/mesh/preview/source/vibe3d/mesh/preview/morph_preview.d", "morph_preview", "vibe3d.mesh.preview.morph_preview"),
+    Wave19Module("mesh-preview", "packages/mesh-preview/tests/source/tests/unit/morph_routing_law_test.d", "libraries/mesh/preview/tests/source/vibe3d/mesh/preview/tests/unit/morph_routing_law_test.d", "tests.unit.morph_routing_law_test", "vibe3d.mesh.preview.tests.unit.morph_routing_law_test"),
+    Wave19Module("mesh-snapshot", "packages/mesh-snapshot/source/snapshot.d", "libraries/mesh/snapshot/source/vibe3d/mesh/snapshot/snapshot.d", "snapshot", "vibe3d.mesh.snapshot.snapshot"),
+    Wave19Module("mesh-snapshot", "packages/mesh-snapshot/tests/source/tests/unit/mesh_map_kind_snapshot_test.d", "libraries/mesh/snapshot/tests/source/vibe3d/mesh/snapshot/tests/unit/mesh_map_kind_snapshot_test.d", "tests.unit.mesh_map_kind_snapshot_test", "vibe3d.mesh.snapshot.tests.unit.mesh_map_kind_snapshot_test"),
+    Wave19Module("mesh-snapshot", "packages/mesh-snapshot/tests/source/tests/unit/mesh_selsets_snapshot_test.d", "libraries/mesh/snapshot/tests/source/vibe3d/mesh/snapshot/tests/unit/mesh_selsets_snapshot_test.d", "tests.unit.mesh_selsets_snapshot_test", "vibe3d.mesh.snapshot.tests.unit.mesh_selsets_snapshot_test"),
+    Wave19Module("mesh-snapshot", "packages/mesh-snapshot/tests/source/tests/unit/mesh_wire_snapshot_test.d", "libraries/mesh/snapshot/tests/source/vibe3d/mesh/snapshot/tests/unit/mesh_wire_snapshot_test.d", "tests.unit.mesh_wire_snapshot_test", "vibe3d.mesh.snapshot.tests.unit.mesh_wire_snapshot_test"),
+    Wave19Module("mesh-snapshot", "packages/mesh-snapshot/tests/source/tests/unit/snapshot_test.d", "libraries/mesh/snapshot/tests/source/vibe3d/mesh/snapshot/tests/unit/snapshot_test.d", "tests.unit.snapshot_test", "vibe3d.mesh.snapshot.tests.unit.snapshot_test"),
+    Wave19Module("mesh-topology", "packages/mesh-topology/source/mesh_topo.d", "libraries/mesh/topology/source/vibe3d/mesh/topology/mesh_topo.d", "mesh_topo", "vibe3d.mesh.topology.mesh_topo"),
+    Wave19Module("mesh", "packages/mesh/source/mesh.d", "libraries/mesh/core/source/vibe3d/mesh/core/mesh.d", "mesh", "vibe3d.mesh.core.mesh"),
+    Wave19Module("mesh", "packages/mesh/source/mesh_morph.d", "libraries/mesh/core/source/vibe3d/mesh/core/mesh_morph.d", "mesh_morph", "vibe3d.mesh.core.mesh_morph"),
+    Wave19Module("mesh", "packages/mesh/source/mesh_planes.d", "libraries/mesh/core/source/vibe3d/mesh/core/mesh_planes.d", "mesh_planes", "vibe3d.mesh.core.mesh_planes"),
+    Wave19Module("mesh", "packages/mesh/source/mesh_selsets.d", "libraries/mesh/core/source/vibe3d/mesh/core/mesh_selsets.d", "mesh_selsets", "vibe3d.mesh.core.mesh_selsets"),
+    Wave19Module("mesh", "packages/mesh/tests/source/tests/unit/mesh_key_test.d", "libraries/mesh/core/tests/source/vibe3d/mesh/core/tests/unit/mesh_key_test.d", "tests.unit.mesh_key_test", "vibe3d.mesh.core.tests.unit.mesh_key_test"),
+    Wave19Module("mesh", "packages/mesh/tests/source/tests/unit/mesh_map_kind_test.d", "libraries/mesh/core/tests/source/vibe3d/mesh/core/tests/unit/mesh_map_kind_test.d", "tests.unit.mesh_map_kind_test", "vibe3d.mesh.core.tests.unit.mesh_map_kind_test"),
+    Wave19Module("mesh", "packages/mesh/tests/source/tests/unit/mesh_selsets_test.d", "libraries/mesh/core/tests/source/vibe3d/mesh/core/tests/unit/mesh_selsets_test.d", "tests.unit.mesh_selsets_test", "vibe3d.mesh.core.tests.unit.mesh_selsets_test"),
+    Wave19Module("mesh", "packages/mesh/tests/source/tests/unit/mesh_topology_integration_test.d", "libraries/mesh/core/tests/source/vibe3d/mesh/core/tests/unit/mesh_topology_integration_test.d", "tests.unit.mesh_topology_integration_test", "vibe3d.mesh.core.tests.unit.mesh_topology_integration_test"),
+    Wave19Module("pipe-contracts", "packages/pipe-contracts/source/operator.d", "libraries/editing/pipeline/contracts/source/vibe3d/editing/pipeline/contracts/operator.d", "operator", "vibe3d.editing.pipeline.contracts.operator"),
+    Wave19Module("pipe-contracts", "packages/pipe-contracts/source/toolpipe/packets.d", "libraries/editing/pipeline/contracts/source/vibe3d/editing/pipeline/contracts/toolpipe/packets.d", "toolpipe.packets", "vibe3d.editing.pipeline.contracts.toolpipe.packets"),
+    Wave19Module("pipe-contracts", "packages/pipe-contracts/tests/source/tests/unit/operator_test.d", "libraries/editing/pipeline/contracts/tests/source/vibe3d/editing/pipeline/contracts/tests/unit/operator_test.d", "tests.unit.operator_test", "vibe3d.editing.pipeline.contracts.tests.unit.operator_test"),
+    Wave19Module("pipe-contracts", "packages/pipe-contracts/tests/source/tests/unit/toolpipe/packets_test.d", "libraries/editing/pipeline/contracts/tests/source/vibe3d/editing/pipeline/contracts/tests/unit/toolpipe/packets_test.d", "tests.unit.toolpipe.packets_test", "vibe3d.editing.pipeline.contracts.tests.unit.toolpipe.packets_test"),
+    Wave19Module("render-model", "packages/render-model/source/render/backend.d", "libraries/render/model/source/vibe3d/render/model/render/backend.d", "render.backend", "vibe3d.render.model.render.backend"),
+    Wave19Module("render-model", "packages/render-model/source/render/scene.d", "libraries/render/model/source/vibe3d/render/model/render/scene.d", "render.scene", "vibe3d.render.model.render.scene"),
+    Wave19Module("render-model", "packages/render-model/tests/source/render_model_population_test.d", "libraries/render/model/tests/source/vibe3d/render/model/render_model_population_test.d", "render_model_population_test", "vibe3d.render.model.render_model_population_test"),
 ];
 public enum wave19MathOldRoot = "util/math";
 public enum wave19MathNewRoot = "libraries/util/math";
@@ -2903,9 +3032,106 @@ package(tests.unit) string wave19MathLogicalText(string source) {
 
 // Raw current D input, before historical body reconstruction. This also
 // preserves historical import bytes in unmoved consumers and fragment carriers.
-private string wave19ReadCurrent(string path) {
+
+// Approved finite26 of453 non-import live identities. Referenced-owner state
+// controls spelling; source/module custody remains the original158-row table.
+private struct Wave19Identity {
+    string id, path, owner, target, anchor;
+    size_t offset;
+    string oldText, newText;
+    bool literal;
+}
+private immutable Wave19Identity[] wave19Identities = [
+    Wave19Identity("ID006", "packages/camera-model/tests/source/tests/unit/camera_model_population_test.d", "camera-model", "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d", "        \"tests.unit.view_source_cells_test\",", 9, "tests.unit.view_source_cells_test", "vibe3d.viewport.camera.tests.unit.view_source_cells_test", true),
+    Wave19Identity("ID007", "packages/camera-model/tests/source/tests/unit/camera_model_population_test.d", "camera-model", "packages/camera-model/tests/source/tests/unit/view_test.d", "        \"tests.unit.view_test\",", 9, "tests.unit.view_test", "vibe3d.viewport.camera.tests.unit.view_test", true),
+    Wave19Identity("ID053", "packages/image-codec/tests/source/tests/unit/image_codec_population_test.d", "image-codec", "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d", "        \"tests.unit.io.image_decode_source_cells_test\",", 9, "tests.unit.io.image_decode_source_cells_test", "vibe3d.documents.image_codec.tests.unit.io.image_decode_source_cells_test", true),
+    Wave19Identity("ID054", "packages/image-codec/tests/source/tests/unit/image_codec_population_test.d", "image-codec", "packages/image-codec/tests/source/tests/unit/io/image_decode_test.d", "        \"tests.unit.io.image_decode_test\",", 9, "tests.unit.io.image_decode_test", "vibe3d.documents.image_codec.tests.unit.io.image_decode_test", true),
+    Wave19Identity("ID055", "packages/input-events/tests/source/tests/unit/input_events_population_test.d", "input-events", "packages/input-events/source/eventlog.d", "        \"eventlog\",", 9, "eventlog", "vibe3d.platform.input.eventlog", true),
+    Wave19Identity("ID056", "packages/input-events/tests/source/tests/unit/input_events_population_test.d", "input-events", "packages/input-events/tests/source/tests/unit/binding_resolve_test.d", "        \"tests.unit.binding_resolve_test\",", 9, "tests.unit.binding_resolve_test", "vibe3d.platform.input.tests.unit.binding_resolve_test", true),
+    Wave19Identity("ID057", "packages/input-events/tests/source/tests/unit/input_events_population_test.d", "input-events", "packages/input-events/tests/source/tests/unit/eventlog_parser_test.d", "        \"tests.unit.eventlog_parser_test\",", 9, "tests.unit.eventlog_parser_test", "vibe3d.platform.input.tests.unit.eventlog_parser_test", true),
+    Wave19Identity("ID058", "packages/input-events/tests/source/tests/unit/input_events_population_test.d", "input-events", "packages/input-events/tests/source/tests/unit/eventlog_test.d", "        \"tests.unit.eventlog_test\",", 9, "tests.unit.eventlog_test", "vibe3d.platform.input.tests.unit.eventlog_test", true),
+    Wave19Identity("ID059", "packages/input-events/tests/source/tests/unit/input_events_population_test.d", "input-events", "packages/input-events/tests/source/tests/unit/tool_input_test.d", "        \"tests.unit.tool_input_test\",", 9, "tests.unit.tool_input_test", "vibe3d.platform.input.tests.unit.tool_input_test", true),
+    Wave19Identity("ID060", "packages/input-events/tests/source/tests/unit/input_events_population_test.d", "input-events", "packages/input-events/source/tool_input.d", "        \"tool_input\",", 9, "tool_input", "vibe3d.platform.input.tool_input", true),
+    Wave19Identity("ID279", "packages/interactive-tools/tests/source/tests/unit/prepared_tool_transition_test.d", "document-model", "packages/document-model/source/document.d", "    \"document\",", 5, "document", "vibe3d.documents.model.document", true),
+    Wave19Identity("ID331", "packages/render-model/tests/source/render_model_population_test.d", "render-model", "packages/render-model/source/render/backend.d", "    immutable string[] expected = [\"render.backend\", \"render.scene\"];", 36, "render.backend", "vibe3d.render.model.render.backend", true),
+    Wave19Identity("ID332", "packages/render-model/tests/source/render_model_population_test.d", "render-model", "packages/render-model/source/render/scene.d", "    immutable string[] expected = [\"render.backend\", \"render.scene\"];", 54, "render.scene", "vibe3d.render.model.render.scene", true),
+    Wave19Identity("ID395", "tests/test_liveness_gate.d", "mesh", "packages/mesh/source/mesh.d", "        \"import mesh;\\n\"", 16, "mesh", "vibe3d.mesh.core.mesh", true),
+    Wave19Identity("ID397", "tests/unit/edge_crease_weight_test.d", "mesh", "packages/mesh/source/mesh.d", "    import mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;", 11, "mesh", "vibe3d.mesh.core.mesh", true),
+    Wave19Identity("ID404", "tests/unit/mesh_thicken_surface_test.d", "mesh-ops", "packages/mesh-ops/source/mesh_ops/thicken.d", "mixin MeshByValueGate!(mesh_ops.thicken);", 23, "mesh_ops.thicken", "vibe3d.mesh.ops.mesh_ops.thicken", false),
+    Wave19Identity("ID405", "tests/unit/root_test_package_population_test.d", "mesh", "packages/mesh/source/mesh.d", "    enum coreCells = __traits(getUnitTests, mesh).length;", 44, "mesh", "vibe3d.mesh.core.mesh", false),
+    Wave19Identity("ID406", "tests/unit/root_test_package_population_test.d", "mesh", "packages/mesh/source/mesh.d", "        static foreach (cell; __traits(getUnitTests, mesh)) {", 53, "mesh", "vibe3d.mesh.core.mesh", false),
+    Wave19Identity("ID414", "tests/unit/tool_single_operation_census_test.d", "mesh-ops", "packages/mesh-ops/source/mesh_ops/cut.d", "    static foreach (m; __traits(allMembers, mesh_ops.cut))", 44, "mesh_ops.cut", "vibe3d.mesh.ops.mesh_ops.cut", false),
+    Wave19Identity("ID423", "tests/unit/ui/history_panel_test.d", "mesh-snapshot", "packages/mesh-snapshot/source/snapshot.d", "    override snapshot.MeshSnapshot topologyStepBasis() { return snapshot.MeshSnapshot.capture(*mesh); }", 13, "snapshot", "vibe3d.mesh.snapshot.snapshot", false),
+    Wave19Identity("ID424", "tests/unit/ui/history_panel_test.d", "mesh-snapshot", "packages/mesh-snapshot/source/snapshot.d", "    override snapshot.MeshSnapshot topologyStepBasis() { return snapshot.MeshSnapshot.capture(*mesh); }", 64, "snapshot", "vibe3d.mesh.snapshot.snapshot", false),
+    Wave19Identity("ID425", "tests/unit/ui/history_panel_test.d", "mesh-snapshot", "packages/mesh-snapshot/source/snapshot.d", "    override void rebaseTopologyStep(snapshot.MeshSnapshot) { ++rebases; }", 37, "snapshot", "vibe3d.mesh.snapshot.snapshot", false),
+    Wave19Identity("ID427", "tests/unit/ui/history_panel_test.d", "mesh-snapshot", "packages/mesh-snapshot/source/snapshot.d", "    override void restoreTopologyStep(in tool.AttrImage, snapshot.MeshSnapshot) { assert(false); }", 57, "snapshot", "vibe3d.mesh.snapshot.snapshot", false),
+    Wave19Identity("ID434", "tests/unit/version_gate_census_ai3d_remesh_test.d", "document-model", "packages/document-model/source/document.d", "import document : Document;", 7, "document", "vibe3d.documents.model.document", true),
+    Wave19Identity("ID441", "tests/unit/version_gate_census_ai3d_remesh_test.d", "mesh", "packages/mesh/source/mesh.d", "import mesh : makeCube, Mesh;", 7, "mesh", "vibe3d.mesh.core.mesh", true),
+    Wave19Identity("ID444", "tests/unit/version_gate_census_ai3d_remesh_test.d", "camera-model", "packages/camera-model/source/view.d", "import view : View;", 7, "view", "vibe3d.viewport.camera.view", true),
+];
+private string wave19IdentityLogicalText(string source, string path, string root = repoRoot) {
+    import std.digest.sha : sha256Of;
+    import std.digest : toHexString;
+    import std.string : toLower, lastIndexOf;
+    string manifest;
+    foreach (i, row; wave19Identities) {
+        foreach (other; wave19Identities[i + 1 .. $])
+            assert(row.id != other.id, "Wave19 duplicate approved identity");
+        manifest ~= row.id ~ "\t" ~ row.path ~ "\t" ~ row.owner ~ "\t" ~ row.target ~ "\t"
+            ~ row.anchor ~ "\t" ~ row.offset.to!string ~ "\t" ~ row.oldText ~ "\t" ~ row.newText
+            ~ "\t" ~ (row.literal ? "1" : "0") ~ "\n";
+    }
+    assert(wave19Identities.length == 26 && sha256Of(manifest).toHexString.toLower == "392f9d5e95cc13cdd576d22fde03ae9d1e62295f2bd66bfdd7b09d88a451514b",
+        "Wave19 frozen approved identity population");
+    const normal = wave19LogicalPath(path, root), base = wave15Normalize(root);
+    const code = blankNonCode(source), literals = blankNonCode(source, true);
+    struct Edit { size_t begin, end; string text; }
+    Edit[] edits;
+    foreach (row; wave19Identities) {
+        if (normal != buildPath(base, row.path)) continue;
+        const moved = wave19OwnerMoved(root, row.owner);
+        string expected;
+        size_t cursor, delta;
+        foreach (member; wave19Identities) {
+            if (member.path != row.path || member.anchor != row.anchor) continue;
+            assert(member.offset >= cursor && member.anchor[member.offset .. member.offset + member.oldText.length] == member.oldText,
+                "Wave19 approved original anchor: " ~ member.id);
+            const selected = wave19OwnerMoved(root, member.owner);
+            expected ~= row.anchor[cursor .. member.offset] ~ (selected ? member.newText : member.oldText);
+            cursor = member.offset + member.oldText.length;
+            if (member.offset < row.offset && selected) delta += member.newText.length - member.oldText.length;
+        }
+        expected ~= row.anchor[cursor .. $];
+        const at = source.indexOf(expected);
+        assert(at >= 0 && at == source.lastIndexOf(expected), "Wave19 raw approved identity anchor: " ~ row.id);
+        const begin = cast(size_t) at;
+        assert((begin == 0 || source[begin - 1] == '\n')
+            && (begin + expected.length == source.length || source[begin + expected.length] == '\n'),
+            "Wave19 approved complete anchor: " ~ row.id);
+        const start = begin + row.offset + delta;
+        const chosen = moved ? row.newText : row.oldText;
+        const end = start + chosen.length;
+        assert(source[start .. end] == chosen
+            && (row.literal ? literals[start .. end].strip.length == 0 : code[start .. end] == chosen),
+            "Wave19 raw approved identity lexical kind: " ~ row.id);
+        if (moved) edits ~= Edit(start, end, row.oldText);
+    }
+    import std.algorithm : sort;
+    edits.sort!((a, b) => a.begin < b.begin);
+    string result;
+    size_t cursor;
+    foreach (edit; edits) {
+        assert(edit.begin >= cursor, "Wave19 overlapping approved identity custody");
+        result ~= source[cursor .. edit.begin] ~ edit.text;
+        cursor = edit.end;
+    }
+    return result ~ source[cursor .. $];
+}
+
+private string wave19ReadCurrent(string path, string root = repoRoot) {
     import std.file : readText;
-    return wave19MathLogicalText(readText(wave19PhysicalPath(wave19LogicalPath(path))));
+    return wave19MathLogicalText(wave19IdentityLogicalText(
+        readText(wave19PhysicalPath(wave19LogicalPath(path, root), root)), path, root));
 }
 
 private bool wave15MoveRowIntact(const Wave15Move pin) {
@@ -3624,8 +3850,8 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
     import std.digest : toHexString;
     import std.string : toLower;
     static import std.file;
-    assert(wave19Owners.length == 13 && wave19Modules.length == 42,
-        "Wave19 math+D1 original owners13 / real rows42, excluding transitions");
+    assert(wave19Owners.length == 26 && wave19Modules.length == 158,
+        "Wave19 math+D1+D2 original owners26 / real rows158, excluding transitions");
     string frozen;
     foreach (i, row; wave19Modules) {
         frozen ~= row.owner ~ "\t" ~ row.oldPath ~ "\t" ~ row.newPath ~ "\t"
@@ -3636,9 +3862,9 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
                 "Wave19 frozen real source/module coordinates must be bijective");
     }
     assert(sha256Of(frozen).toHexString.toLower ==
-        "2a597ee58b2ad2a542d55a18df54de7e8c6df313a4a18304e53a85e03260551b",
+        "89b514598485ce8c6a18a7b7ea83e0b134340b8bb7bac0e15a6e2ed72f627789",
         "Wave19 exact frozen math+D1 real rows, including every owner/carrier");
-    enum ownerPopulations = [5, 6, 2, 1, 6, 2, 5, 1, 5, 1, 1, 1, 6];
+    enum ownerPopulations = [5, 6, 2, 1, 6, 2, 5, 1, 5, 1, 1, 1, 6, 4, 4, 13, 2, 1, 3, 8, 6, 4, 59, 3, 5, 4];
     const scratch = buildPath(tempDir(), "wave19-d1-reader-" ~ thisProcessID.to!string);
     mkdirRecurse(scratch);
     scope(exit) rmdirRecurse(scratch);
@@ -3773,6 +3999,111 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
             assert(wave19LogicalPath(physical) == logical
                 && wave19MathLogicalText(std.file.readText(physical)).canFind("module " ~ row.oldModule ~ ";"),
                 "Wave19 actual selected real source/carrier reaches original module: " ~ row.oldPath);
+        }
+    }
+    // Approved453-inventory subset:26 raw live operands, same original cell.
+    string identityFixture(string path, bool moved, bool literalContext = true) {
+        string result;
+        bool[string] seen;
+        foreach (row; wave19Identities) {
+            if (row.path != path || row.anchor in seen) continue;
+            seen[row.anchor] = true;
+            string line;
+            size_t cursor;
+            foreach (member; wave19Identities) {
+                if (member.path != path || member.anchor != row.anchor) continue;
+                line ~= row.anchor[cursor .. member.offset]
+                    ~ (moved ? member.newText : member.oldText);
+                cursor = member.offset + member.oldText.length;
+            }
+            line ~= row.anchor[cursor .. $];
+            result ~= row.literal && literalContext ? "enum payload" ~ seen.length.to!string
+                ~ " = q{\n" ~ line ~ "\n};\n" : line ~ "\n";
+        }
+        return result;
+    }
+    // Existing fixture is fully moved at this point. Rebuild its finite real
+    // rows in each state; no shim can replace a referenced real definition.
+    foreach (moved; [false, true]) {
+        foreach (owner; wave19Owners) {
+            foreach (root; [owner.oldRoot, owner.newRoot]) {
+                const recipe = buildPath(scratch, root, "dub.json");
+                if (std.file.exists(recipe)) remove(recipe);
+            }
+            put(buildPath(moved ? owner.newRoot : owner.oldRoot, "dub.json"),
+                `{"name":"` ~ (moved ? owner.name : "vibe3d-" ~ owner.name) ~ `"}`);
+        }
+        foreach (row; wave19Modules) {
+            foreach (relative; [row.oldPath, row.newPath]) {
+                const physical = buildPath(scratch, relative);
+                if (std.file.exists(physical)) remove(physical);
+            }
+            put(moved ? row.newPath : row.oldPath,
+                "module " ~ (moved ? row.newModule : row.oldModule) ~ ";\n");
+        }
+        bool[string] seen;
+        foreach (row; wave19Identities) {
+            if (row.path in seen) continue;
+            seen[row.path] = true;
+            const path = buildPath(scratch, row.path);
+            const good = identityFixture(row.path, moved);
+            const original = identityFixture(row.path, false);
+            assert(wave19IdentityLogicalText(good, path, scratch) == original,
+                "Wave19 approved raw identity inverse in both owner states: " ~ row.path);
+            assert(wave19IdentityLogicalText(good ~ "// body delta\n", path, scratch)
+                == original ~ "// body delta\n", "Wave19 approved identity preserves outside body");
+            assertThrown!AssertError(wave19IdentityLogicalText(identityFixture(row.path, !moved), path, scratch));
+            assertThrown!AssertError(wave19IdentityLogicalText(good ~ good, path, scratch));
+            assertThrown!AssertError(wave19IdentityLogicalText("/*\n" ~ good ~ "\n*/\n", path, scratch));
+        }
+        if (moved) {
+            void rejectedIdentity(string raw, string relative, string reason) {
+                string refusal;
+                try { wave19IdentityLogicalText(raw, buildPath(scratch, relative), scratch); }
+                catch (AssertError error) { refusal = error.msg; }
+                assert(refusal.canFind(reason), "Wave19 named raw identity guard refusal: " ~ reason ~ " " ~ refusal);
+            }
+            enum codePath = "tests/unit/mesh_thicken_surface_test.d";
+            const code = identityFixture(codePath, true);
+            rejectedIdentity("X" ~ code, codePath, "Wave19 approved complete anchor:");
+            rejectedIdentity(code[0 .. $ - 1] ~ " X\n", codePath, "Wave19 approved complete anchor:");
+            rejectedIdentity("enum payload = q{\n" ~ code ~ "\n};\n", codePath,
+                "Wave19 raw approved identity lexical kind:");
+            enum payloadPath = "tests/unit/version_gate_census_ai3d_remesh_test.d";
+            rejectedIdentity(identityFixture(payloadPath, true, false), payloadPath,
+                "Wave19 raw approved identity lexical kind:");
+            size_t referencedControls;
+            foreach (identity; wave19Identities) {
+                if (identity.id != "ID006") continue;
+                ++referencedControls;
+                const target = wave19PhysicalPath(buildPath(scratch, identity.target), scratch);
+                const saved = std.file.readText(target);
+                write(target, "module wrong;\n");
+                rejectedIdentity(identityFixture(identity.path, true), identity.path,
+                    "Wave19 real module identity:");
+                write(target, saved);
+            }
+            assert(referencedControls == 1, "Wave19 referenced-target raw guard control population");
+            // Full selected source reaches the production read/guard/inverse
+            // chain; a duplicate raw anchor leaves the module declaration real.
+            size_t callerControls;
+            foreach (row; wave19Modules) {
+                if (row.oldPath != "packages/camera-model/tests/source/tests/unit/camera_model_population_test.d") continue;
+                ++callerControls;
+                const path = buildPath(scratch, row.oldPath);
+                const raw = std.file.readText(wave19PhysicalPath(buildPath(repoRoot, row.oldPath)));
+                put(row.newPath, raw);
+                assert(wave19ReadCurrent(path, scratch).canFind("module " ~ row.oldModule ~ ";"),
+                    "Wave19 read-current selected source reaches original module");
+                put(row.newPath, raw ~ "\n" ~ identityFixture(row.oldPath, true));
+                string refusal;
+                try { wave19ReadCurrent(path, scratch); }
+                catch (AssertError error) { refusal = error.msg; }
+                assert(refusal.canFind("Wave19 raw approved identity anchor:"),
+                    "Wave19 read-current named raw identity refusal before syntax inverse: " ~ refusal);
+                put(row.newPath, raw);
+            }
+            assert(callerControls == 1, "Wave19 read-current raw caller control population");
         }
     }
     assertThrown!AssertError(wave19OwnerMoved(scratch, "unselected-owner"));

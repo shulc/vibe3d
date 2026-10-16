@@ -24,9 +24,9 @@ import bindbc.opengl;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
-import mesh : Mesh, Surface;
+import vibe3d.mesh.core.mesh : Mesh, Surface;
 import subpatch_preview : SubpatchPreview;
-import view : View, ProjKind;
+import vibe3d.viewport.camera.view : View, ProjKind;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
 // Modeling-side bus constants and the watcher masks (boundary-safe: render
@@ -34,8 +34,8 @@ import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.mesh.change.change_bus : MeshChangeAll, MeshEditScope;
 import vibe3d.mesh.change.mesh_dirty : DisplayEpochMask, GeomEpochMask, TopoEpochMask;
 
-import render.backend;
-import render.scene;
+import vibe3d.render.model.render.backend;
+import vibe3d.render.model.render.scene;
 import render.backend_bridge : BackendBridge;
 
 // ---------------------------------------------------------------------------

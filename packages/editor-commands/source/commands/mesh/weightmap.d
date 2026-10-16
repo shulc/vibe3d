@@ -1,11 +1,11 @@
 module commands.mesh.weightmap;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import mesh_edit_delta : MeshEditScope, MeshOpEntry;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope, MeshOpEntry;
 import vibe3d.editing.params.params : Param;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit, mapSlotOf;

@@ -81,8 +81,8 @@ import std.algorithm : max, min;
 
 import math : Vec3, normalize, dot;
 import vibe3d.util.spatial.spatial : ModelSpace;
-import mesh     : Mesh;
-import document : ItemXform;
+import vibe3d.mesh.core.mesh     : Mesh;
+import vibe3d.documents.model.document : ItemXform;
 import toolpipe.obbox : ObbFrame, ObbSource, obbFromPoints;
 
 void main() {}

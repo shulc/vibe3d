@@ -9,7 +9,7 @@
 // visible top face and expects exactly ONE clone, of the top face.
 module tests.unit.array_hidden_operand_test;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
 import std.math : PI;
 

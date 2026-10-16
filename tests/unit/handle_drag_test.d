@@ -371,7 +371,7 @@ unittest {
 // Task9528 phase-zero transport observation; the independent lens is kept
 // separate from the real View so a projection discrepancy remains visible.
 unittest {
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import vibe3d.util.spatial.spatial : Orientation, projectToWindowFull, screenPointToRay;
     import drag : preparePlaneDrag;
     import viewgrid : viewWorldPerPixel, viewVectorQuantum;

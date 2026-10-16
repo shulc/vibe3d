@@ -4,9 +4,9 @@ module prepared_tool_transition;
 // the candidate is unpublished. The live suffix below is statically nothrow.
 import command_history : CommandHistory;
 import commands.tool.lifecycle : ToolActivationCommand;
-import document : Layer, beginPreparedLayerRead;
-import mesh : Mesh;
-import operator : VectorStack;
+import vibe3d.documents.model.document : Layer, beginPreparedLayerRead;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import vibe3d.editing.params.params : injectPreparedParamsInto;
 import pipe_gizmo_host : PipeGizmoHost;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
@@ -15,7 +15,7 @@ import record_observer_hub : RecordObserverHub;
 import registry : PreparedPipeAttrs, ToolFactory;
 import std.json : JSONType, JSONValue;
 import tool : Tool, firstStepCarriesActivation;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import vibe3d.editing.contracts.editmode : EditMode;
 import tool_presets : prepareStickyToolDefaults;
 import tool_attr_bounds : applyToolAttrBound;

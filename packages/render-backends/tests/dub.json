@@ -139,8 +139,8 @@
   },
   "name": "vibe3d-render-backends-tests",
   "dependencies": {
-    "vibe3d-input-events": {
-      "path": "../../../packages/input-events"
+    "vibe3d:input-events": {
+      "path": "../../.."
     },
     "vibe3d:log": {
       "path": "../../.."
@@ -148,8 +148,8 @@
     "vibe3d:math": {
       "path": "../../.."
     },
-    "vibe3d-render-model": {
-      "path": "../../../packages/render-model"
+    "vibe3d:render-model": {
+      "path": "../../.."
     },
     "bindbc-sdl": "~>1.5.2",
     "bindbc-opengl": "~>1.1.1",
@@ -175,10 +175,10 @@
     {
       "name": "algorithm",
       "subConfigurations": {
-        "vibe3d-input-events": "isolated-tests",
+        "vibe3d:input-events": "isolated-tests",
         "vibe3d:log": "isolated-tests",
         "vibe3d:math": "isolated-tests",
-        "vibe3d-render-model": "isolated-tests"
+        "vibe3d:render-model": "isolated-tests"
       }
     }
   ],

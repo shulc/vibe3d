@@ -4,11 +4,11 @@ import std.path : extension;
 import std.uni  : toLower;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param, wireArgs;
-import document : Document, Layer;
+import vibe3d.documents.model.document : Document, Layer;
 import io.lwo_import    : sceneFromLwo;
 import io.scene_import  : importViaAssimp;
 import io.scene_ir      : ImportedScene, flattenToMesh, toLayers;
@@ -18,7 +18,7 @@ import io.file_dialog : pickOpenPath, PickResult, PickOutcome, browserFileModel;
 import io.doc_state : setCurrentDocPath, requestDocRebaseline;
 import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import vibe3d.mesh.change.change_bus : MeshChangeAll, noteLayerChange, LayerChangeAll;
 
 /// How the load dialog is framed (asset-I/O Phase 6).

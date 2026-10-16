@@ -3,11 +3,11 @@ module commands.mesh.vertex_edit;
 import std.conv : to;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.params.params : Param;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
-import view;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math : Vec3;
 import commands.mesh.gesture_payload : GesturePayload;
@@ -218,7 +218,7 @@ class MeshVertexEdit : Command, Operator, GesturePayload {
     }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         if (before.length != indices.length || after.length != indices.length)

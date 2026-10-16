@@ -1,8 +1,8 @@
 module commands.tool.begin_session;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import commands.tool.host : ToolHost;
 import tools.transform.xfrm_transform : XfrmTransformTool;

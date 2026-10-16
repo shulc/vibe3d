@@ -2,14 +2,14 @@ module prepared_bridge_activation_source_cells;
 
 import prepared_bridge_activation;
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.edit.bridge_tool : BridgeTool, PreparedBridgeActivationImage,
     PreparedBridgeDeactivateImage;
 
 unittest {
     import command_history : CommandHistory;
     import commands.mesh.session_edit : MeshSessionEdit;
-    import document : Layer;
+    import vibe3d.documents.model.document : Layer;
     import vibe3d.editing.contracts.editmode : EditMode;
     import math : Vec3;
     import mesh_gpu : GpuMesh;
@@ -19,8 +19,8 @@ unittest {
     import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind, PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
-    import snapshot : MeshSnapshot;
-    import view : View;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+    import vibe3d.viewport.camera.view : View;
 
     Mesh twoCaps() {
         Mesh m;

@@ -69,7 +69,7 @@ mixin template XfrmApplyImpl() {
     bool applyTRS(Vec3[] baseline, Vec3 viewAxis = Vec3(0, 0, 0),
                   float viewAngleDeg = 0,
                   bool samplePipeFromBaseline = false) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
         VectorStack vts;
 
@@ -206,8 +206,8 @@ mixin template XfrmApplyImpl() {
         // verts at baseline; projecting them would yank them to the bg
         // surface even though they didn't participate in the transform.
         {
-            import toolpipe.packets : ConstrainPacket;
-            import toolpipe.packets : ConstrainGeom;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainPacket;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainGeom;
             import snap : backgroundSourcesFull;
             import constraint : constrainPoint;
             if (auto consPkt = vts.get!ConstrainPacket()) {

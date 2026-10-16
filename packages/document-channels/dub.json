@@ -141,8 +141,8 @@
     }
   },
   "dependencies": {
-    "vibe3d-document-model": {
-      "path": "../document-model"
+    "vibe3d:document-model": {
+      "path": "../.."
     },
     "vibe3d:param-schema": {
       "path": "../.."
@@ -158,7 +158,7 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "modeling",
+        "vibe3d:document-model": "modeling",
         "vibe3d:param-schema": "modeling",
         "vibe3d:edit-contracts": "modeling"
       }
@@ -167,7 +167,7 @@
       "name": "modeling-noai",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-document-model": "modeling-noai",
+        "vibe3d:document-model": "modeling-noai",
         "vibe3d:param-schema": "modeling-noai",
         "vibe3d:edit-contracts": "modeling-noai"
       }
@@ -179,7 +179,7 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "with-render",
+        "vibe3d:document-model": "with-render",
         "vibe3d:param-schema": "with-render",
         "vibe3d:edit-contracts": "with-render"
       }
@@ -190,7 +190,7 @@
         "web"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "web",
+        "vibe3d:document-model": "web",
         "vibe3d:param-schema": "web",
         "vibe3d:edit-contracts": "web"
       }
@@ -201,7 +201,7 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "root-tests",
+        "vibe3d:document-model": "root-tests",
         "vibe3d:param-schema": "root-tests",
         "vibe3d:edit-contracts": "root-tests"
       },
@@ -211,7 +211,7 @@
       "name": "isolated-tests",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-document-model": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
         "vibe3d:param-schema": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests"
       },

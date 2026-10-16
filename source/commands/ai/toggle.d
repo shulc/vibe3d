@@ -1,8 +1,8 @@
 module commands.ai.toggle;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import ai.state : EditorAiState;
 

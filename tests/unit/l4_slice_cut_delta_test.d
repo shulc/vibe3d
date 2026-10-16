@@ -19,17 +19,17 @@ module tests.unit.l4_slice_cut_delta_test;
 
 import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.conv   : to;
 import std.format : format;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math : Vec3;
-import mesh_edit_delta : MeshEditDelta, MeshOpEntry;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry;
 
 import tests.unit.fixtures : makeTaggedGridFull;
 // Task 3280 — the one attribute-chain predicate; see
@@ -365,7 +365,7 @@ unittest // mesh.cut — the delete kernel, both halves
 
 unittest
 {
-    import geometry_clipboard : geometryClipboard, GeometryClip;
+    import vibe3d.mesh.ops.geometry_clipboard : geometryClipboard, GeometryClip;
 
     // A sentinel the command must overwrite, so "the clip survived" and "the
     // clip was never written" are different pictures.

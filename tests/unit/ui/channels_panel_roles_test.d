@@ -22,16 +22,16 @@ import command : Command;
 import command_executor : CommandExecutor;
 import command_history : CommandHistory, RecordMode;
 import commands.layer.commands : LayerAttr, LayerRename, LayerReorder, LayerSelect;
-import document : Document, ItemKind, Layer;
+import vibe3d.documents.model.document : Document, ItemKind, Layer;
 import edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
 import forms_render : FormsPanel;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import image_data : ImagePlaneData;
+import vibe3d.documents.model.image_data : ImagePlaneData;
 import layer_params : LayerPropsProvider, itemPropsTarget;
 import math : Vec3;
-import mesh : MapKind, Mesh, makeCube;
+import vibe3d.mesh.core.mesh : MapKind, Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import morph_target : clearMorphTarget, setMorphTarget;
 import vibe3d.editing.params.params : Param;
@@ -54,7 +54,7 @@ import ui.channels_panel : ChannelsActions, ChannelsDrawSnapshot,
     resetChannelsDrawSnapshot;
 import ui.discard_guard : GuardRecord;
 import ui.retained_item : ConstItem;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import d_imgui.imgui_h : ImVec2;
 
 private template memberTypes(T) {
@@ -770,7 +770,7 @@ unittest { // I3: reorder rebuilds rows so the write follows the item
 unittest { // I4: an empty document releases the provider and rows
     clearMorphTarget();
     scope (exit) clearMorphTarget();
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     auto h = new ChannelsHarness;
     auto roles = h.bind();
     auto ui = openChannels(roles);
@@ -799,7 +799,7 @@ unittest { // I4: an empty document releases the provider and rows
 }
 
 unittest { // I5: a payload appearing under the same item and index is a memo miss
-    import image_data : ImageData;
+    import vibe3d.documents.model.image_data : ImageData;
     clearMorphTarget();
     scope (exit) clearMorphTarget();
     auto h = new ChannelsHarness;
@@ -840,7 +840,7 @@ unittest { // I5: a payload appearing under the same item and index is a memo mi
 private extern (C) void igSetNextWindowCollapsed(bool collapsed, int cond);
 
 unittest { // I6: a collapsed (hidden-tab) panel keeps only the current focus
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     clearMorphTarget();
     scope (exit) clearMorphTarget();
     auto h = new ChannelsHarness;
@@ -991,7 +991,7 @@ unittest { // B2: two bindings own distinct providers bound to their sessions
 }
 
 unittest { // B3: equal-looking items remain distinct memo identities
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     auto h = new ChannelsHarness;
     h.alpha.name = "Same";
     auto roles = h.bind();

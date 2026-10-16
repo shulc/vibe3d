@@ -28,15 +28,15 @@ module tests.unit.l9_loop_slice_delta_test;
 
 import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.conv   : to;
 import std.format : format;
 
 import command;
-import mesh;
-import mesh_edit_delta : MeshEditDelta;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.mesh.change.change_bus : changeBus;
 
@@ -343,7 +343,7 @@ unittest
 // ---------------------------------------------------------------------------
 unittest
 {
-    import mesh_ops.loop_slice : insertEdgeLoops, kLoopSliceEditScope;
+    import vibe3d.mesh.ops.mesh_ops.loop_slice : insertEdgeLoops, kLoopSliceEditScope;
 
     auto m = standSeeded(kInteriorSeed);
     auto pre = dumpMeshPlanes(*m);

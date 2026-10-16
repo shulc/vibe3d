@@ -1,7 +1,7 @@
 module tests.unit.tools.edit.preview_rebuild_test;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import math : Vec3;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.edit.preview_rebuild;
 
 private PreviewTopologyKey key(ref Mesh m) {

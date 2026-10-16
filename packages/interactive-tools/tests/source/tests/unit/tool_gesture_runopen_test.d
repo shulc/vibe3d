@@ -48,13 +48,13 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_gpu : GpuMesh;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import shader : LitShader;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.create.primitive_create_tool : PrimitiveCreateTool;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 /// The smallest concrete `PrimitiveCreateTool`: every abstract hook stubbed,
 /// nothing overridden, and `commitEdit` — the production body — re-exposed so a

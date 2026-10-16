@@ -154,8 +154,106 @@ class BoundaryControls(unittest.TestCase):
                                 census._wave19_coordinate(root / old, root)
                     physical.unlink()
                     recipe.unlink()
-        self.assertEqual(len(census._WAVE19_CLIENT_IMPORTS), 791)
-        self.assertEqual(sum(map(len, census._WAVE19_CLIENT_IMPORTS.values())), 1943)
+        self.assertEqual(len(census._WAVE19_CLIENT_IMPORTS), 943)
+        self.assertEqual(sum(map(len, census._WAVE19_CLIENT_IMPORTS.values())), 5098)
+        # Approved26 non-import identities: both referenced-owner states use
+        # the real production raw guard with the ordinary native lexer.
+        def identity_fixture(relative, moved, *, literal_context=True):
+            parts = []
+            seen = set()
+            for row in census._WAVE19_IDENTITIES:
+                ident, path, owner, target, original, offset, old, new, literal = row
+                if path != relative or original in seen:
+                    continue
+                seen.add(original)
+                line = original
+                group = [member for member in census._WAVE19_IDENTITIES
+                         if member[1] == path and member[4] == original]
+                if moved:
+                    for member in sorted(group, key=lambda member: member[5], reverse=True):
+                        at, before, after = member[5:8]
+                        line = line[:at] + after + line[at + len(before):]
+                parts.append(('enum payload' + str(len(parts)) + ' = q{\n' + line + '\n};\n')
+                             if literal and literal_context else line + '\n')
+            return ''.join(parts)
+        with tempfile.TemporaryDirectory(prefix='boundary-identity-') as directory:
+            root = Path(directory)
+            for moved in (False, True):
+                for owner, old_root, new_root in census._WAVE19_OWNERS:
+                    recipe = root / (new_root if moved else old_root) / 'dub.json'
+                    recipe.parent.mkdir(parents=True, exist_ok=True)
+                    recipe.write_text(json.dumps({'name': owner if moved else 'vibe3d-' + owner}))
+                for owner, old, new, spans in census._WAVE19_COORDINATES:
+                    offset, current, original = spans[0]
+                    physical = root / (new if moved else old)
+                    physical.parent.mkdir(parents=True, exist_ok=True)
+                    physical.write_text(' ' * (offset - 7) + 'module '
+                                        + (current if moved else original) + ';\n')
+                for relative in sorted({row[1] for row in census._WAVE19_IDENTITIES}):
+                    good = identity_fixture(relative, moved)
+                    census._wave19_identity_intact(root / relative, good, root)
+                    for label, changed in (
+                            ('wrong state', identity_fixture(relative, not moved)),
+                            ('duplicate', good + good),
+                            ('comment decoy', '/*\n' + good + '\n*/\n')):
+                        with self.subTest(identity=relative, moved=moved, case=label):
+                            with self.assertRaisesRegex(ValueError, 'Wave19 raw approved identity'):
+                                census._wave19_identity_intact(root / relative, changed, root)
+                if moved:
+                    code_path = 'tests/unit/mesh_thicken_surface_test.d'
+                    code = identity_fixture(code_path, True)
+                    for label, changed in (
+                            ('complete anchor prefix', 'X' + code),
+                            ('complete anchor suffix', code.rstrip('\n') + ' X\n'),
+                            ('code operand in string', 'enum payload = q{\n' + code + '\n};\n')):
+                        with self.subTest(raw_guard=label):
+                            with self.assertRaisesRegex(ValueError, 'Wave19 raw approved identity (anchor|lexical kind):'):
+                                census._wave19_identity_intact(root / code_path, changed, root)
+                    payload = 'tests/unit/version_gate_census_ai3d_remesh_test.d'
+                    with self.assertRaisesRegex(ValueError, 'Wave19 raw approved identity lexical kind:'):
+                        census._wave19_identity_intact(root / payload,
+                            identity_fixture(payload, True, literal_context=False), root)
+                    identity = next(row for row in census._WAVE19_IDENTITIES if row[0] == 'ID006')
+                    referenced = next(row for row in census._WAVE19_COORDINATES if row[1] == identity[3])
+                    target = root / referenced[2]
+                    saved = target.read_text()
+                    target.write_text('module wrong;\n')
+                    with self.assertRaisesRegex(ValueError, 'Wave19 real declaration identity:'):
+                        census._wave19_identity_intact(root / identity[1],
+                            identity_fixture(identity[1], True), root)
+                    target.write_text(saved)
+                    # Complete current bodies reach the real caller seams. The
+                    # appended duplicate leaves every syntax inverse offset intact.
+                    selected = next(row for row in census._WAVE19_COORDINATES
+                                    if row[1] == 'packages/camera-model/tests/source/tests/unit/camera_model_population_test.d')
+                    _, logical, physical, spans = selected
+                    raw = (actual / physical).read_text()
+                    target = root / physical
+                    target.write_text(raw)
+                    expected = census._wave19_original(raw, spans)
+                    self.assertEqual(census.read_source_text(root / logical, root=root), expected)
+                    duplicate = raw + '\n' + identity_fixture(logical, True)
+                    target.write_text(duplicate)
+                    with self.assertRaisesRegex(ValueError, 'Wave19 raw approved identity anchor:'):
+                        census.read_source_text(root / logical, root=root)
+                    target.write_text(raw)
+                    relative = 'packages/interactive-tools/tests/source/tests/unit/prepared_tool_transition_test.d'
+                    raw = (actual / relative).read_text()
+                    expected = census._wave19_import_original(actual / relative, raw, actual)
+                    self.assertEqual(census._wave19_import_original(root / relative, raw, root), expected)
+                    duplicate = raw + '\n' + identity_fixture(relative, True)
+                    with self.assertRaisesRegex(ValueError, 'Wave19 raw approved identity anchor:'):
+                        census._wave19_import_original(root / relative, duplicate, root)
+                for owner, old_root, new_root in census._WAVE19_OWNERS:
+                    (root / (new_root if moved else old_root) / 'dub.json').unlink()
+                for owner, old, new, spans in census._WAVE19_COORDINATES:
+                    (root / (new if moved else old)).unlink()
+        identity_rows = census._WAVE19_IDENTITIES
+        for label, malformed in (('missing', identity_rows[:-1]),
+                                 ('duplicate', identity_rows[:-1] + identity_rows[:1])):
+            with self.subTest(identity_population=label), patch.object(census, '_WAVE19_IDENTITIES', malformed):
+                with self.assertRaisesRegex(ValueError, 'Wave19 frozen approved identity population'):
+                    census._wave19_identity_intact(actual / 'tests/unit/identity-control.d', '', actual)
         control_path = actual / 'tests/unit/wave19-coordinate-control.d'
         self.assertNotIn(control_path.relative_to(actual).as_posix(), census._WAVE19_CLIENT_IMPORTS)
         self.assertEqual(census._wave19_import_original(control_path, '', actual), '')
@@ -168,37 +266,98 @@ class BoundaryControls(unittest.TestCase):
             with self.subTest(case=label), patch.object(census, '_WAVE19_CLIENT_IMPORTS', malformed):
                 with self.assertRaisesRegex(ValueError, 'Wave19 frozen client/import coordinate population'):
                     census._wave19_import_original(control_path, '', actual)
+        prior = census._WAVE19_COORDINATE_PRIOR_IMPORTS
+        extra_prior = dict(prior)
+        extra_prior['tests/unit/wave19-prior-extra.d'] = ()
+        extra_prior_span = dict(prior)
+        first_prior = next(iter(prior))
+        extra_prior_span[first_prior] += extra_prior_span[first_prior][:1]
+        overlapping_prior = dict(prior)
+        overlapping_prior[next(iter(census._WAVE19_CLIENT_IMPORTS))] = overlapping_prior.pop(first_prior)
+        for label, malformed in (('prior population', extra_prior),
+                                 ('prior spans', extra_prior_span),
+                                 ('prior custody overlap', overlapping_prior)):
+            with self.subTest(case=label), patch.object(census, '_WAVE19_COORDINATE_PRIOR_IMPORTS', malformed):
+                with self.assertRaisesRegex(ValueError, 'Wave19 old-coordinate prior import population'):
+                    census._wave19_import_original(control_path, '', actual)
 
     def test_current_captured_client_import_projection(self):
         import hashlib
+        import sys
+        with patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1] / 'tools/dspans'), *sys.path]):
+            import census_contracts as census
         actual = Path(__file__).resolve().parents[1]
         source = actual / 'tools/dspans/census_contracts.py'
         tree = ast.parse(source.read_text())
-        names = ('_WAVE19_OWNERS', '_WAVE19_COORDINATES', '_WAVE19_CLIENT_IMPORTS')
-        namespace = {'_source_validity': []}
+        names = ('_WAVE19_OWNERS', '_WAVE19_COORDINATES', '_WAVE19_CLIENT_IMPORTS',
+                 '_WAVE19_COORDINATE_PRIOR_IMPORTS', '_WAVE19_IDENTITIES', '_WAVE19_IDENTITY_PIN')
+        namespace = {'_source_validity': [], 'dspans_client': census.dspans_client}
         for node in tree.body:
             if (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
                     and node.targets[0].id in names):
                 namespace[node.targets[0].id] = ast.literal_eval(node.value)
-        functions = ('_wave19_moved', '_wave19_original', '_wave19_import_original')
+        functions = ('_wave19_moved', '_wave19_original', '_wave19_coordinate',
+                     '_wave19_identity_intact', '_wave19_import_original')
         nodes = [node for node in tree.body
                  if isinstance(node, ast.FunctionDef) and node.name in functions]
         self.assertEqual({node.name for node in nodes}, set(functions))
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), namespace)
         clients = namespace['_WAVE19_CLIENT_IMPORTS']
-        self.assertEqual(len(clients), 791)
-        self.assertEqual(sum(map(len, clients.values())), 1943)
+        self.assertEqual(len(clients), 943)
+        self.assertEqual(sum(map(len, clients.values())), 5098)
         inverse = namespace['_wave19_import_original']
         hashes = []
         for relative in sorted(clients):
             with self.subTest(path=relative):
                 logical = inverse(actual / relative, (actual / relative).read_text(), actual)
                 hashes.append((relative, hashlib.sha256(logical.encode()).hexdigest()))
-        # Independent lexical audit at 5d269154: all current logical bodies,
-        # including the three legitimate post-90c4e693 body changes.
+        # Independently reconstructed immutable90 bodies plus five explicitly
+        # reviewed D1 body deltas and three finite D2 reader/control transforms.
+        # Expected construction never reads candidate client source for hashes.
         digest = hashlib.sha256(json.dumps(hashes, separators=(',', ':')).encode()).hexdigest()
-        self.assertEqual(digest, '6f42efb7db4adbbaf13ff1fb94c74d3e9afed34f48a2b61ec79bac5daf4116bb',
-                         'Wave19 all791 current logical client bodies')
+        self.assertEqual(digest, '87d49ffa875c991f6d7452c138e1c298686617e0ad753853ac6164807f73e009',
+                         'Wave19 all943 current logical client bodies')
+        # Newly owned sources retain their prior-D1 imported spelling only
+        # while the D2 owner itself remains at the old coordinate. Exercise the
+        # actual read_source_text old-coordinate branch for every37 source/84
+        # imports, with independently frozen90 full-body hashes.
+        prior = namespace['_WAVE19_COORDINATE_PRIOR_IMPORTS']
+        self.assertEqual(len(prior), 37)
+        self.assertEqual(sum(map(len, prior.values())), 84)
+        self.assertFalse(set(prior) & set(clients))
+        d2_owners = ('camera-model', 'image-codec', 'input-events', 'mesh-edit-log', 'mesh-topology', 'render-model', 'mesh', 'document-model', 'mesh-edit-replay', 'mesh-ops', 'mesh-preview', 'mesh-snapshot', 'pipe-contracts')
+        owned_hashes = []
+        with tempfile.TemporaryDirectory(prefix='boundary-prior-client-') as directory:
+            root = Path(directory)
+            for owner, old_root, new_root in census._WAVE19_OWNERS:
+                moved = owner not in d2_owners
+                recipe = root / (new_root if moved else old_root) / 'dub.json'
+                recipe.parent.mkdir(parents=True, exist_ok=True)
+                recipe.write_text(json.dumps({'name': owner if moved else 'vibe3d-' + owner}))
+            for owner, old, new, spans in census._WAVE19_COORDINATES:
+                moved = owner not in d2_owners
+                offset, current, original = spans[0]
+                physical = root / (new if moved else old)
+                physical.parent.mkdir(parents=True, exist_ok=True)
+                physical.write_text(' ' * (offset - 7) + 'module '
+                                    + (current if moved else original) + ';\n')
+            for relative in sorted(prior):
+                owner, old, new, spans = next(row for row in census._WAVE19_COORDINATES
+                                             if row[1] == relative)
+                logical = namespace['_wave19_original']((actual / new).read_text(), spans)
+                # Reapply only the captured prior-D1 imports to an original
+                # body; D2 referenced owners remain old in this fixture.
+                current = logical
+                for offset, chosen, original, referenced_owner in reversed(prior[relative]):
+                    self.assertNotIn(referenced_owner, d2_owners)
+                    self.assertEqual(current[offset:offset + len(original)], original)
+                    current = current[:offset] + chosen + current[offset + len(original):]
+                (root / relative).write_text(current)
+                projected = census.read_source_text(root / relative, root=root)
+                owned_hashes.append((relative, hashlib.sha256(projected.encode()).hexdigest()))
+        owned_digest = hashlib.sha256(json.dumps(owned_hashes, separators=(',', ':')).encode()).hexdigest()
+        self.assertEqual(owned_digest, 'f38ab2d9fccfbcc20a8fb4f5593da678517c03bec2a0968e4cca23f7346dfa67',
+                         'Wave19 all37 old-coordinate prior-import original90 bodies')
         relative = 'tests/unit/mesh_test.d'
         text = (actual / relative).read_text()
         for corrected, stale in ((44323, 44292), (223235, 223204)):
@@ -212,40 +371,130 @@ class BoundaryControls(unittest.TestCase):
                     inverse(actual / relative, text, actual)
 
     def test_current_support_runtime_identities(self):
-        # Independently frozen D1 enabled cells plus the unchanged math pilot.
-        owners = ('math', 'edit-contracts', 'interaction-data', 'json-number', 'log', 'mesh-contracts', 'parallel', 'plane-bytes', 'profiling', 'screen-buckets', 'spatial', 'param-schema', 'mesh-change')
-        enabled = {
-            'vibe3d.editing.contracts.tests.unit.seltype_test',
-            'vibe3d.editing.interaction.data.tests.unit.ai.advisor_test',
-            'vibe3d.editing.interaction.data.tests.unit.ai.debug_trace_test',
-            'vibe3d.editing.interaction.data.tests.unit.ai.interaction_test',
-            'vibe3d.editing.params.argstring',
-            'vibe3d.editing.params.tests.unit.argstring_test',
-            'vibe3d.editing.params.tests.unit.param_cast_overflow_test',
-            'vibe3d.editing.params.tests.unit.params_test',
-            'vibe3d.mesh.change.mesh_dirty',
-            'vibe3d.mesh.contracts.mesh_corner_maps',
-            'vibe3d.mesh.contracts.tests.unit.mesh_plane_types_test',
-            'vibe3d.util.json_number.tests.unit.json_num_test',
-            'vibe3d.util.log.log',
-            'vibe3d.util.math.math_geometry',
-            'vibe3d.util.math.math_quaternion',
-            'vibe3d.util.math.tests.unit.math_test',
-            'vibe3d.util.plane_bytes.plane_bytes',
-            'vibe3d.util.screen_buckets.screen_buckets',
-            'vibe3d.util.spatial.spatial',
-            'vibe3d.util.spatial.tests.unit.spatial_test',
-            'vibe3d.util.spatial.trackball',
-        }
-        self.assertEqual(len(enabled), 21)
+        # Independently frozen D1+D2 enabled cells plus the unchanged math pilot.
+        owners = ('math',
+ 'edit-contracts',
+ 'interaction-data',
+ 'json-number',
+ 'log',
+ 'mesh-contracts',
+ 'parallel',
+ 'param-schema',
+ 'plane-bytes',
+ 'profiling',
+ 'screen-buckets',
+ 'spatial',
+ 'mesh-change',
+ 'camera-model',
+ 'image-codec',
+ 'input-events',
+ 'mesh-edit-log',
+ 'mesh-topology',
+ 'render-model',
+ 'mesh',
+ 'document-model',
+ 'mesh-edit-replay',
+ 'mesh-ops',
+ 'mesh-preview',
+ 'mesh-snapshot',
+ 'pipe-contracts')
+        enabled = {'vibe3d.documents.image_codec.tests.unit.image_codec_population_test',
+ 'vibe3d.documents.image_codec.tests.unit.io.image_decode_source_cells_test',
+ 'vibe3d.documents.image_codec.tests.unit.io.image_decode_test',
+ 'vibe3d.documents.model.tests.unit.document_test',
+ 'vibe3d.editing.contracts.tests.unit.seltype_test',
+ 'vibe3d.editing.interaction.data.tests.unit.ai.advisor_test',
+ 'vibe3d.editing.interaction.data.tests.unit.ai.debug_trace_test',
+ 'vibe3d.editing.interaction.data.tests.unit.ai.interaction_test',
+ 'vibe3d.editing.params.argstring',
+ 'vibe3d.editing.params.tests.unit.argstring_test',
+ 'vibe3d.editing.params.tests.unit.param_cast_overflow_test',
+ 'vibe3d.editing.params.tests.unit.params_test',
+ 'vibe3d.editing.pipeline.contracts.tests.unit.operator_test',
+ 'vibe3d.editing.pipeline.contracts.tests.unit.toolpipe.packets_test',
+ 'vibe3d.mesh.change.mesh_dirty',
+ 'vibe3d.mesh.contracts.mesh_corner_maps',
+ 'vibe3d.mesh.contracts.tests.unit.mesh_plane_types_test',
+ 'vibe3d.mesh.core.mesh',
+ 'vibe3d.mesh.core.mesh_planes',
+ 'vibe3d.mesh.core.tests.unit.mesh_key_test',
+ 'vibe3d.mesh.core.tests.unit.mesh_map_kind_test',
+ 'vibe3d.mesh.core.tests.unit.mesh_selsets_test',
+ 'vibe3d.mesh.core.tests.unit.mesh_topology_integration_test',
+ 'vibe3d.mesh.edit_log.mesh_edit_delta',
+ 'vibe3d.mesh.edit_log.mesh_edit_log_protocol_test',
+ 'vibe3d.mesh.edit_replay.mesh_edit_replay',
+ 'vibe3d.mesh.edit_replay.mesh_edit_replay_roundtrip_test',
+ 'vibe3d.mesh.edit_replay.tests.unit.mesh_edit_delta_test',
+ 'vibe3d.mesh.edit_replay.tests.unit.mesh_selsets_replay_test',
+ 'vibe3d.mesh.ops.mesh_ops.extrude',
+ 'vibe3d.mesh.ops.mesh_ops.loop_slice',
+ 'vibe3d.mesh.ops.mesh_ops.poly_bevel',
+ 'vibe3d.mesh.ops.mesh_ops.triangulate',
+ 'vibe3d.mesh.ops.tests.unit.mesh_analysis_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_edge_slice_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.bevel_fin_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.bevel_vertex_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.box_geom_corner_provenance_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.bridge_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.cleanup_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.connected_mask_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.cut_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.extrude_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.face_alignment_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.face_merge_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.loop_slice_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.poly_bevel_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.revolve_seam_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.revolve_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.seam_differential',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.select_loop_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.triangulate_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.vertex_pos_grid_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_wire_analysis_test',
+ 'vibe3d.mesh.ops.tests.unit.uv_island_test',
+ 'vibe3d.mesh.ops.tests.unit.uv_project_test',
+ 'vibe3d.mesh.ops.tests.unit.uv_relax_test',
+ 'vibe3d.mesh.ops.tests.unit.uv_transform_test',
+ 'vibe3d.mesh.ops.tests.unit.uv_unwrap_test',
+ 'vibe3d.mesh.ops.tests.unit.uv_weld_test',
+ 'vibe3d.mesh.preview.tests.unit.morph_routing_law_test',
+ 'vibe3d.mesh.snapshot.tests.unit.mesh_map_kind_snapshot_test',
+ 'vibe3d.mesh.snapshot.tests.unit.mesh_selsets_snapshot_test',
+ 'vibe3d.mesh.snapshot.tests.unit.mesh_wire_snapshot_test',
+ 'vibe3d.mesh.snapshot.tests.unit.snapshot_test',
+ 'vibe3d.mesh.topology.mesh_topo',
+ 'vibe3d.platform.input.eventlog',
+ 'vibe3d.platform.input.tests.unit.binding_resolve_test',
+ 'vibe3d.platform.input.tests.unit.eventlog_parser_test',
+ 'vibe3d.platform.input.tests.unit.eventlog_test',
+ 'vibe3d.platform.input.tests.unit.input_events_population_test',
+ 'vibe3d.platform.input.tests.unit.sdl_error_test',
+ 'vibe3d.platform.input.tests.unit.tool_input_test',
+ 'vibe3d.platform.input.tool_input',
+ 'vibe3d.render.model.render_model_population_test',
+ 'vibe3d.util.json_number.tests.unit.json_num_test',
+ 'vibe3d.util.log.log',
+ 'vibe3d.util.math.math_geometry',
+ 'vibe3d.util.math.math_quaternion',
+ 'vibe3d.util.math.tests.unit.math_test',
+ 'vibe3d.util.plane_bytes.plane_bytes',
+ 'vibe3d.util.screen_buckets.screen_buckets',
+ 'vibe3d.util.spatial.spatial',
+ 'vibe3d.util.spatial.tests.unit.spatial_test',
+ 'vibe3d.util.spatial.trackball',
+ 'vibe3d.viewport.camera.tests.unit.camera_model_population_test',
+ 'vibe3d.viewport.camera.tests.unit.view_source_cells_test',
+ 'vibe3d.viewport.camera.tests.unit.view_test'}
+        self.assertEqual(len(enabled), 88)
         modules = {support.compiler_module(path) for owner in owners
                    for field in ('sources', 'testSources', 'testHelpers', 'transitionalSources')
                    for path in support.SPECS[owner].get(field, []) if path.endswith('.d')}
         self.assertEqual(modules & support.ENABLED_MODULES, enabled,
-                         'D1 independently frozen enabled module identity')
+                         'D1+D2 independently frozen enabled module identity')
         output = ''.join('PKG-MODULE name=' + name + ' unittest='
                          + str(int(name in enabled)) + '\n' for name in sorted(modules))
-        output += '21 modules passed unittests\n'
+        output += '88 modules passed unittests\n'
         for owner in owners:
             with self.subTest(owner=owner):
                 support.validate_runtime(output, owner)
@@ -415,7 +664,7 @@ class BoundaryControls(unittest.TestCase):
                 alias.symlink_to(Path(image['path']).resolve(), target_is_directory=True)
                 try:
                     affected=[t['rootPackage'] for t in original['targets'] if t['buildSettings'].get('lflags')]
-                    self.assertEqual(set(affected), {'vibe3d-cli','vibe3d-document-io','vibe3d-image-codec','d-stb-image'})
+                    self.assertEqual(set(affected), {'vibe3d-cli','vibe3d-document-io',support.SPECS['image-codec']['name'],'d-stb-image'})
                     canonical=copy.deepcopy(original)
                     for target in canonical['targets']:
                         if target['rootPackage'] in affected:
@@ -506,7 +755,7 @@ class BoundaryControls(unittest.TestCase):
             boundary.validate_package_settings(description, root, compiler)
             if relative != 'tests/core':
                 owner = json.loads((root / 'dub.json').read_text())['name']
-                for name in (owner, 'vibe3d-mesh-ops'):
+                for name in (owner, support.SPECS['mesh-ops']['name']):
                     changed = copy.deepcopy(description)
                     target = next(t for t in changed['targets'] if t['rootPackage'] == name)
                     self.assertEqual(target['buildSettings']['dflags'], ['--singleobj'])
@@ -518,7 +767,7 @@ class BoundaryControls(unittest.TestCase):
                         boundary.validate_package_settings(changed, root, compiler)
                 with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: ' + owner + ':dflags'):
                     boundary.validate_package_settings(description, root, 'dmd')
-                for name in (owner, 'vibe3d-mesh-ops'):
+                for name in (owner, support.SPECS['mesh-ops']['name']):
                     changed = copy.deepcopy(description)
                     next(p for p in changed['packages'] if p['name'] == name)['configuration'] = 'isolated-tests'
                     with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: ' + owner + ':dflags'):

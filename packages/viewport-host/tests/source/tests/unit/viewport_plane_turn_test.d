@@ -12,10 +12,10 @@
 module tests.unit.viewport_plane_turn_test;
 
 import viewport;
-import view : View, ProjKind, ViewPreset;
+import vibe3d.viewport.camera.view : View, ProjKind, ViewPreset;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
-import toolpipe.packets : WorkplanePacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : WorkplanePacket;
 import toolpipe.stages.workplane : WorkplaneStage;
 import std.math : abs;
 import std.format : format;

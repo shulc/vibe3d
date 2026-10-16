@@ -2,7 +2,7 @@ module tests.unit.model_preview_test;
 
 import model_preview;
 import tool : Tool;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh;
 import tools.edit.bridge_tool : BridgeTool;
 import tools.create.cylinder : CylinderParams, buildCylinder;
@@ -133,7 +133,7 @@ unittest {
 }
 
 private Mesh primitiveSource() {
-    import mesh : Surface, MeshMap, MapDomain;
+    import vibe3d.mesh.core.mesh : Surface, MeshMap, MapDomain;
     auto m = makeCube();
     foreach (ref v; m.vertices) v += Vec3(9, 3, -4);
     m.resizeVertexSelection(); m.resizeEdgeSelection(); m.resizeFaceSelection();
@@ -157,7 +157,7 @@ private void drawIdle(Tool tool) {
 import vibe3d.util.spatial.spatial : Viewport;
     import shader : Shader;
     import display_state : DrawPlan;
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     Viewport vp; vp.width = vp.height = 400;
     vp.eye = Vec3(4, 3, 6); vp.focus = Vec3(0,0,0);
     vp.view = lookAt(vp.eye, Vec3(0,0,0), Vec3(0,1,0));
@@ -168,7 +168,7 @@ import vibe3d.util.spatial.spatial : Viewport;
 
 private void baseGesture(Tool tool, bool release = true) {
     import bindbc.sdl : SDL_MouseButtonEvent, SDL_MouseMotionEvent, SDL_BUTTON_LEFT;
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     VectorStack vts;
     SDL_MouseButtonEvent press; press.button = SDL_BUTTON_LEFT; press.x = 175; press.y = 175;
     assert(tool.onMouseButtonDown(press, vts), "primitive press reaches drawing stage");
@@ -206,7 +206,7 @@ private void assertPrimitivePrefix(ref Mesh source, ModelPreviewView view) {
 unittest {
     import tools.create.cylinder : CylinderTool;
     import tools.create.box : BoxTool;
-    import snapshot : MeshSnapshot;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
     import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
     import toolpipe.stages.workplane : WorkplaneStage;
     import bindbc.sdl : loadSDL, sdlSupport, SDL_GetModState, SDL_SetModState, KMOD_NONE;
@@ -245,7 +245,7 @@ unittest {
         if (!box) {
             auto concrete = cast(CylinderTool) tool;
             import bindbc.sdl : SDL_MouseButtonEvent, SDL_BUTTON_LEFT;
-            import operator : VectorStack;
+            import vibe3d.editing.pipeline.contracts.operator : VectorStack;
             import vibe3d.editing.params.params : parseInto;
             foreach (p; concrete.params())
                 if (p.name == "sizeX" || p.name == "sizeY" || p.name == "sizeZ")
@@ -318,7 +318,7 @@ private class InterruptedCylinder : SizedRadialCreateTool!CylinderParams {
 unittest {
     import bindbc.sdl : loadSDL, sdlSupport, SDL_GetModState, SDL_SetModState, KMOD_NONE;
     import std.exception : assertThrown;
-    import snapshot : MeshSnapshot;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
     import toolpipe.pipeline : g_pipeCtx;
     auto oldPipe = g_pipeCtx; scope(exit) g_pipeCtx = oldPipe; g_pipeCtx = null;
     assert(loadSDL() == sdlSupport, "exceptional primitive gesture loads SDL");

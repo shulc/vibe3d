@@ -25,15 +25,15 @@
 // `session_edit.d`'s own unittest used to claim the opposite and steered the
 // next reader away from writing this file; it has been corrected.
 module tests.unit.session_edit_payload_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
-import mesh      : Mesh, makeCube;
-import view      : View;
+import vibe3d.mesh.core.mesh      : Mesh, makeCube;
+import vibe3d.viewport.camera.view      : View;
 import vibe3d.editing.contracts.editmode  : EditMode;
-import snapshot  : MeshSnapshot;
-import operator  : VectorStack;
-import toolpipe.packets : SubjectPacket;
-import mesh_edit_delta  : MeshEditDelta, MeshEditScope, MeshEditTracker;
+import vibe3d.mesh.snapshot.snapshot  : MeshSnapshot;
+import vibe3d.editing.pipeline.contracts.operator  : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+import vibe3d.mesh.edit_log.mesh_edit_delta  : MeshEditDelta, MeshEditScope, MeshEditTracker;
 import commands.mesh.session_edit : MeshSessionEdit, kNoSessionReason;
 
 import std.algorithm : canFind;
@@ -161,15 +161,15 @@ unittest { // U-5 — the DELTA path is not touched by the snapshot gate
 }
 
 private void checkpointMap(ref MeshEditTracker t) {
-    import mesh : MapDomain, MapKind;
-    import mesh_edit_delta : MeshOpEntry;
+    import vibe3d.mesh.core.mesh : MapDomain, MapKind;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshOpEntry;
     t.recordMapValuesOwned("checkpoint-map", 1, MapDomain.Point,
         MapKind.unclassified, MeshOpEntry.MapAddressing.Listed,
         [0u], [1.0f], [2.0f], null, null);
 }
 
 unittest { // Declaration, preference and owned noncoalescing prefix survive.
-    import mesh_edit_delta : MeshEditTracker;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker;
     import math : Vec3;
     import std.math : isIdentical;
     MeshEditTracker t;
@@ -192,7 +192,7 @@ unittest { // Declaration, preference and owned noncoalescing prefix survive.
 }
 
 unittest { // Rolled-back MAP latch must not poison a subsequent index write.
-    import mesh_edit_delta : MeshEditTracker;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker;
     import math : Vec3;
     import vibe3d.mesh.change.change_bus : changeBus;
     MeshEditTracker t;
@@ -208,7 +208,7 @@ unittest { // Rolled-back MAP latch must not poison a subsequent index write.
 }
 
 unittest { // Rolled-back INDEX latch must not poison a subsequent map write.
-    import mesh_edit_delta : MeshEditTracker;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker;
     import math : Vec3;
     import vibe3d.mesh.change.change_bus : changeBus;
     MeshEditTracker t;
@@ -224,7 +224,7 @@ unittest { // Rolled-back INDEX latch must not poison a subsequent map write.
 }
 
 unittest { // Both preexisting latches remain effective after rollback.
-    import mesh_edit_delta : MeshEditTracker;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker;
     import math : Vec3;
     import vibe3d.mesh.change.change_bus : changeBus;
     foreach (mapFirst; [true, false]) {

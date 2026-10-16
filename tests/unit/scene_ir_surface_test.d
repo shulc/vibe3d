@@ -8,7 +8,7 @@ module tests.unit.scene_ir_surface_test;
 import std.format : format;
 
 import math        : Vec3;
-import mesh        : Mesh, Surface;
+import vibe3d.mesh.core.mesh        : Mesh, Surface;
 import io.scene_ir : ImportedScene, ImportedPart, ImportedSurface, flattenToMesh;
 
 unittest {

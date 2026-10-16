@@ -34,11 +34,11 @@ module commands.mesh.morph_edit;
 // different POSITION.
 
 import command   : Command, CmdFlags, CompareResult, RunMergeable;
-import mesh      : Mesh, MapKind, isMorphKind;
-import view      : View;
+import vibe3d.mesh.core.mesh      : Mesh, MapKind, isMorphKind;
+import vibe3d.viewport.camera.view      : View;
 import vibe3d.editing.contracts.editmode  : EditMode;
 import math      : Vec3;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
 /// One vertex's before/after map state.
 struct MorphEntryEdit {

@@ -6,11 +6,11 @@ import std.conv      : to;
 import std.format    : format;
 import std.algorithm : sort;
 
-import mesh;
-static import mesh_ = mesh;   // disambiguates mesh.kindInfo(MapKind) from document.kindInfo(LayerKind)
+import vibe3d.mesh.core.mesh;
+static import mesh_ = vibe3d.mesh.core.mesh;   // disambiguates mesh.kindInfo(MapKind) from document.kindInfo(LayerKind)
 import math;
 import vibe3d.util.spatial.spatial : ModelSpace;
-import document : Document, Layer, ItemXform, sanitizeItemXform,
+import vibe3d.documents.model.document : Document, Layer, ItemXform, sanitizeItemXform,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
                   ItemKind, ImageData, ImagePlaneData,
                   kindInfo, kindFromToken, tokenOf;
@@ -19,7 +19,7 @@ import vibe3d.editing.params.params   : Param, paramToJson, injectParamsTolerant
 import io.image_path : storePathFor, resolveStoredPath, refreshImageMeta;
 import vibe3d.editing.contracts.seltype  : SelMode;
 import vibe3d.util.log.log : logWarn, logInfo;
-import mesh_selsets : selSetNamesVertex, selSetNamesEdge, selSetNamesPolygon,
+import vibe3d.mesh.core.mesh_selsets : selSetNamesVertex, selSetNamesEdge, selSetNamesPolygon,
     selSetMembersVertex, selSetMembersEdge, selSetMembersPolygon,
     selSetEditVertex, selSetEditEdge, selSetEditPolygon, SetEditMode,
     validateSetName;
@@ -437,7 +437,7 @@ unittest
 // is the test that turns that silent loss into a red assertion instead of a
 // material coming back wrong after a save/load cycle.
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     Mesh m = makeCube();
     Surface s;
@@ -2522,7 +2522,7 @@ unittest {
     import std.format : format;
     import std.random : uniform;
     import std.math   : isFinite, fabs;
-    import mesh       : makeCube;
+    import vibe3d.mesh.core.mesh       : makeCube;
 
     auto path = buildPath(tempDir(),
         format("vibe3d_native_scl_ut_%d.v3d", uniform(0, int.max)));
@@ -2613,7 +2613,7 @@ unittest {
 // (wrong) name and both assertions below redden (verified 2026-08-17).
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     Mesh m = makeCube();
     immutable uint ei = m.edgeIndex(0, 1);

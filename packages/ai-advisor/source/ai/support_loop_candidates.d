@@ -46,7 +46,7 @@ import std.algorithm : max;
 import std.conv : to;
 import std.math : isFinite;
 
-import mesh : Mesh, EdgeSharpness;
+import vibe3d.mesh.core.mesh : Mesh, EdgeSharpness;
 import math : Vec3;
 
 enum int supportLoopFeatureSchemaVersion = 1;
@@ -466,5 +466,5 @@ private float clamp01(float value) {
 // =======================================================================
 
 version(unittest) {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 }

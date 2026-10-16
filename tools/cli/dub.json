@@ -12,8 +12,8 @@
     "vibe3d:log": {
       "path": "../.."
     },
-    "vibe3d-document-model": {
-      "path": "../../packages/document-model"
+    "vibe3d:document-model": {
+      "path": "../.."
     },
     "vibe3d-document-io": {
       "path": "../../packages/document-io"
@@ -30,7 +30,7 @@
   },
   "subConfigurations": {
     "vibe3d:log": "modeling-noai",
-    "vibe3d-document-model": "modeling-noai",
+    "vibe3d:document-model": "modeling-noai",
     "vibe3d-document-io": "modeling-noai",
     "vibe3d-command-runtime": "modeling-noai",
     "vibe3d-application-core": "modeling-noai"

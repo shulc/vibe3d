@@ -3,20 +3,20 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.ui.image_rows_test;
 
-import document        : Document, Layer, ImageData;
+import vibe3d.documents.model.document        : Document, Layer, ImageData;
 // `storePathForItem` used to be imported from `io.image_path` here; task 0771
 // moved it (with its whole memo) into `ui.image_rows`, imported wholesale
 // below, so this file reaches it the same way production code now does.
 import std.file : exists, remove;
 import std.path : buildPath;
 import std.json : parseJSON;
-import document                : ItemKind, Document, Layer;
+import vibe3d.documents.model.document                : ItemKind, Document, Layer;
 import io.image_path           : writeTestBmp, imageTestDir, refreshImageMeta;
 import commands.image.commands : ImageLoad, ImageReplace, ImageReload;
 import commands.layer.commands : LayerAdd;
 import vibe3d.editing.params.params                  : injectParamsInto;
-import mesh                    : makeCube;
-import view                    : View;
+import vibe3d.mesh.core.mesh                    : makeCube;
+import vibe3d.viewport.camera.view                    : View;
 import vibe3d.editing.contracts.editmode                : EditMode;
 import vibe3d.editing.contracts.seltype                 : SelMode;
 import std.json : JSONValue;

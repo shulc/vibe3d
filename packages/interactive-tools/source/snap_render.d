@@ -2,19 +2,19 @@ module snap_render;
 
 version (unittest) {
     import math     : lookAt, perspectiveMatrix, transformPoint;
-    import document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
     import std.format : format;
 }
 version (unittest) import snap_render_source_helpers : t0619Matrix, t0619Viewport, t0619Mesh, t0619DrawnPx, t0619IdentityPx, t0619Dist, t0619Xf, t0619PxUnder, t0619BgMeshA, t0619BgMeshB, t0619InstallPrimary;
 
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, ModelSpace, AimViewport, aimSpace;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import snap : SnapResult, snapSource, snapSourceSpace;
-import document : primaryModelSpace;
-import toolpipe.packets : SnapType;
+import vibe3d.documents.model.document : primaryModelSpace;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
 import viewport_scheme : SchemeColor, schemeColor, packImCol;
-import held_gesture_buttons : g_heldGestureButtons;
+import vibe3d.platform.input.held_gesture_buttons : g_heldGestureButtons;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;

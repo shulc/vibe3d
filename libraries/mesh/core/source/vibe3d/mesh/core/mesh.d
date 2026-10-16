@@ -1,0 +1,16798 @@
+module vibe3d.mesh.core.mesh;
+
+public import vibe3d.mesh.contracts.mesh_types;
+
+import std.math : sqrt, isIdentical;
+import std.array : uninitializedArray;
+import std.algorithm : sort;
+import std.traits : Unqual, isDynamicArray, isAssociativeArray, isStaticArray,
+                    KeyType, ValueType;
+import std.range.primitives : ElementType;
+import vibe3d.util.math.math;
+import vibe3d.util.spatial.spatial : ModelSpace;
+import std.array : insertInPlace;
+import vibe3d.mesh.core.mesh_selsets : selSetGatherVertexMaskReverse, selSetDropFilterVertexMask;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta, MeshOpEntry;
+import vibe3d.mesh.change.change_bus : SelDomain, changeBus;
+// Tasks 4600-4602 close one reverse dependency at a time: every migrated
+// family's callers import its `mesh_ops` module directly, so this base module
+// has no edge back to that operation family.
+import vibe3d.mesh.core.mesh_selsets : selSetResizeVertex, selSetRekeyEdges,
+    selSetGatherVertexMaskForward, WireKeyPolicy;
+import vibe3d.mesh.core.mesh_planes : rewriteFaces, FaceSource, kNoSource,
+                     appendFacePlanes, PlaneFit,
+                     EdgeCarry, EdgePlaneCarry, captureEdgePlanes, applyEdgePlanes,
+                     FaceReindexRecord;
+// Snap-visibility instrumentation (task 1350/1351). `perf_probe` imports only
+// core.time, so this is a leaf dependency and cannot cycle; every call compiles
+// to nothing unless the `perf`/`perf-count` build defines PerfProbe.
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
+import vibe3d.util.parallel.tsan_annotate : parallelForWithCompletion;
+
+// Half-edge dart type + the topology ranges → extracted to source/mesh_topo.d
+// (task 0717). Re-exported so every `import mesh : Loop;` / `mesh.EdgeFaceRange`
+// call site resolves unchanged.
+public import vibe3d.mesh.topology.mesh_topo;
+
+// The per-CORNER map vocabulary — `PolyVertexBlend` / `PolyVertexGen` /
+// `UvWallLaw`, and since task 0830 the obligation type `CornerProvenance` +
+// its reason enum `CornerDrop` → extracted to source/mesh_corner_maps.d.
+// Re-exported for the same reason `mesh_topo` is: every existing
+// `import mesh : PolyVertexBlend;` / `import mesh : UvWallLaw;` resolves
+// unchanged. The Mesh-COUPLED half of the obligation (`CornerRewrite`, which
+// captures the old corner space and arms the drop) stays here — it holds a
+// `Mesh*`, so it cannot live in a module Mesh imports.
+public import vibe3d.mesh.contracts.mesh_corner_maps;
+
+// ---------------------------------------------------------------------------
+// Mesh
+// ---------------------------------------------------------------------------
+
+/// Face vertex-index list, wrapping the underlying `uint[][]`
+/// storage. Stage A of doc/mesh_faces_flat_refactor_plan.md —
+/// `alias this` forwards every operation to the inner array, so this
+/// commit changes types in declarations only; every read/write/append/
+/// foreach call site keeps working unchanged. Later stages (C, D)
+/// will replace `_store` with CSR-style flat storage + an explicit
+/// API surface.
+///
+/// **Mutation contract** for stages C+: slices returned by `[fi]`
+/// will become read-only views into shared storage and will be
+/// invalidated by any FaceList mutator. Today the wrapper is
+/// transparent — callers still get a mutable `uint[]`. The audit pass
+/// for Stage B is documented in the plan doc.
+struct FaceList {
+    uint[][] _store;
+    alias _store this;
+
+    /// Underlying `uint[][]` view. Stage A's `alias this` covers the
+    /// common operator forms (length, [], ~=, foreach), but doesn't
+    /// always carry const-ness through templates like
+    /// `std.algorithm.map`. Use `.range` for those call sites — Stage
+    /// C / D will hold the CSR-backed equivalent stable here.
+    inout(uint[][]) range() inout return { return _store; }
+}
+
+/// Closer than this, two vertices are one point: every weld distance is
+/// floored here. Capture K-W1 (task 9436, `tests/fixtures/weld_scope.json`):
+/// cleanup and the automatic vertex merge take no distance and weld at 1e-9
+/// but not at 1.01e-9, absolute; a weld distance of 0 still joins 5e-10.
+enum double kCoincidentDistance = 1e-9;
+
+/// The clone effector's vertex weld, shared by Array, Clone, Mirror and Radial
+/// Array (K-A3 PF-4): a merge switch and a distance, apart, so merge on at
+/// distance 0 still welds at `kCoincidentDistance` (K-W1 W1f_mir).
+struct CloneWeld {
+    bool  merge;
+    float distance = 0;
+    /// The former single float, where 0 meant off: the one-shot commands'
+    /// `weld` argument and old saved tool attributes read through it.
+    static CloneWeld fromLegacy(float weld) {
+        return weld > 0 ? CloneWeld(true, weld) : CloneWeld.init;
+    }
+    double epsSq() const { return cast(double)distance * distance; }
+}
+
+/// Candidate pairs `Mesh.computeWeldRemap` has looked at, ever: the work count
+/// the `--perf-unit` weld cell pins, a measure that cannot vary.
+version (PerfProbe) __gshared size_t weldPairVisits;
+
+/// The three ways `vert.join` welds differently from every other weld, and the
+/// ONLY caller that sets any of them (task 1210; dogfood ledger rows 11 + 21,
+/// frozen in `tests/fixtures/vert_join_survivor.json` and
+/// `tests/fixtures/vert_join_degenerate.json`).
+///
+/// A default-constructed value reproduces the behaviour `weldVerticesByMask`
+/// and `applyVertexRemapAndRebuild` had before this struct existed, so no
+/// other weld producer — vert.merge, collapse, decimate, drag-weld, the mirror
+/// seam pass — changes by a coordinate.
+///
+/// Each field is a MEASURED law, not a knob:
+///   * `survivor`            — the reference keeps the LAST-SELECTED vertex of
+///                             a join, where the plain weld keeps the lowest
+///                             index. Discriminated by running the same pair in
+///                             the opposite order: there the two rules name the
+///                             same vertex and the two engines agree, which is
+///                             what rules out "highest index".
+///   * `keepOrphanSurvivor`  — joining EVERY vertex of a plate leaves the
+///                             reference one free vertex; without the pin the
+///                             tail compaction takes the mesh to empty.
+///   * `keepTwoPointFaces`   — `keep:1` on a hub-and-spoke fan leaves the
+///                             reference two TWO-POINT polygons (8 faces, not
+///                             6). Our kernel used to drop them, and said so:
+///                             "keep is recognized but not yet honored".
+struct JoinWeldPolicy {
+    /// Prefer this vertex as its weld cluster's survivor. -1 = no preference
+    /// (lowest index wins, the plain weld rule). Ignored when the vertex is
+    /// outside the weld mask.
+    int  survivor = -1;
+    /// Keep `survivor` even when the rewrite left no face referencing it.
+    bool keepOrphanSurvivor;
+    /// Lower the face-arity floor from 3 to 2 for this rewrite.
+    bool keepTwoPointFaces;
+}
+
+/// `Mesh.collapseFacesThroughRemap`'s answer: `oldOfNew[n]` is new face n's
+/// old index; `srcCorner[k]` is new corner k's index within its OLD face, in
+/// `newFaces` order.
+private struct CollapsedFaces {
+    uint[][] newFaces;
+    uint[]   oldOfNew;
+    uint[]   srcCorner;
+}
+
+/// The edit scope every member of the DUPLICATION family declares on its batch
+/// (task 1903 Stage L6): `mesh.array`, `mesh.clone`, `mesh.duplicate`,
+/// `mesh.mirror`, `mesh.radial_array`.
+///
+/// `Marks` AND `Geometry`, not `Geometry` alone. All five kernels move the
+/// SELECTION as part of their contract — they deselect every original and
+/// select the copies (`arrayFaces`, `radialArrayFaces`, `mirrorFacesPlane`,
+/// `duplicateSelectedFaces` all do), and every one of them clears the vertex
+/// and edge selections. Selection is the `Marks` class, so declaring
+/// `Geometry` alone would declare LESS than the command does. Same reading
+/// stage L10's axis 0 took for its own nine, for the same reason.
+///
+/// The name is `mesh.d`'s rather than a `mesh_ops/` file's because these five
+/// kernels are `Mesh` MEMBERS — there is no `mesh_ops/duplicate.d` to hang it
+/// off, and a per-command literal in five files is the shape a shared constant
+/// exists to stop.
+enum uint kDuplicateEditScope = MeshEditScope.Geometry | MeshEditScope.Marks;
+
+/// Flat per-mesh surface (a "material"). One face references
+/// exactly one Surface by index into `Mesh.surfaces`. Designed to absorb
+/// the LWO `SURF` chunk fields verbatim and to act as the compile target
+/// for Phase 3+ ShaderTree IR — see `doc/material_groups_plan.md`.
+///
+/// `Surface.init` IS the reference's default material (captured:
+/// doc/captures/viewport_shading_material_defaults_capture_2026-10-02.md Q2)
+/// and the ONE value every "surface nobody authored" reads: an implicit slot
+/// (`surfaceOfSlot`), the shader's padding slots (`shader.packSurfaceSlots`),
+/// the importers' IR defaults (`ImportedSurface`) and a slot a command
+/// materialises.
+struct Surface {
+    string name           = "Default";
+    Vec3   baseColor      = Vec3(0.6f, 0.6f, 0.6f);   // LWO COLR
+    float  diffuseAmount  = 0.8f;    // LWO DIFF
+    float  specularAmount = 0.04f;   // LWO SPEC
+    float  glossiness     = 0.6f;    // LWO GLOS; roughness = 1 − glossiness (exact)
+    float  opacity        = 1.0f;    // 1 - LWO TRAN
+    // Forward-compat hook: when a ShaderTree compiles to this Surface,
+    // points back to the source graph id so subsequent edits don't lose
+    // node-graph state. Empty for surfaces sourced directly from LWO or
+    // hand-edited.
+    //
+    // Deliberately NOT carried by the `.v3d` codec — see `kSurfaceFields` in
+    // io/native.d for why, and its paired unittest for the reproduction
+    // (task 0762). Nothing in the tree writes this field today.
+    string compiledFromTreeId;
+    // Smoothing (model M3): a face corner averages the neighbours within
+    // `smoothingAngleDeg` of its face; the pair of faces at a vertex is decided
+    // by the surface of the LOWER effective slot (`vertex_normals.SmoothPolicy`).
+    // LWO: SMAN > 0 ⇒ on with angle = SMAN (rad); SMAN absent ⇒ off.
+    bool   smoothing         = true;
+    float  smoothingAngleDeg = kDefaultSmoothingAngleDeg;   // degrees
+    // Sidedness (model M6): a lit face pass culls the back faces of a surface
+    // unless it is double-sided, whose back side is lit with the flipped
+    // normal. Display only — picking never reads it. LWO: SIDE 3 ⇔ true.
+    bool   twoSided       = false;
+}
+
+/// The default smoothing angle of a surface (captured material default).
+enum float kDefaultSmoothingAngleDeg = 40.0f;
+
+/// Surface slots the renderer addresses: a face whose `faceMaterial` is at or
+/// beyond this reads slot 0 (the shader's `surfaceSlotOf`, mirrored on the CPU
+/// by `effectiveSurfaceSlot`). Every GLSL slot site is spliced from it.
+enum uint kSurfaceSlots = 64;
+
+/// The surface slot face `fi` renders with — colour AND smoothing come from
+/// this one slot: `faceMaterial[fi]` (0 past the array), 0 when ≥ `kSurfaceSlots`.
+size_t effectiveSurfaceSlot(const(uint)[] faceMaterial, size_t fi) @safe pure nothrow @nogc {
+    immutable uint mid = fi < faceMaterial.length ? faceMaterial[fi] : 0;
+    return mid < kSurfaceSlots ? mid : 0;
+}
+
+/// ditto
+size_t effectiveSurfaceSlot(const ref Mesh m, size_t fi) @safe pure nothrow @nogc {
+    return effectiveSurfaceSlot(m.faceMaterial, fi);
+}
+
+/// The implicit surface of a slot nobody authored.
+immutable Surface kImplicitSurface = Surface.init;
+
+/// The surface slot `slot` reads: `surfaces[slot]`, or `Surface.init` past the table.
+ref const(Surface) surfaceOfSlot(const(Surface)[] surfaces, size_t slot) @safe pure nothrow @nogc {
+    return slot < surfaces.length ? surfaces[slot] : kImplicitSurface;
+}
+
+/// ditto
+ref const(Surface) surfaceOfSlot(const ref Mesh m, size_t slot) @safe pure nothrow @nogc {
+    return surfaceOfSlot(m.surfaces, slot);
+}
+
+/// Upper bound on radial-sweep ring count (`RevolveParams.count`, after the
+/// tool's Count→ring-count translation). Shared by TWO callers: this
+/// module's own `revolveProfileEx` kernel-level backstop (its durable
+/// defense against a direct/scripted caller — Param `.min()/.max()` hints
+/// are UI-only and do not clamp the headless write path) and
+/// `tools.alignment.radial_sweep_tool`'s Param `.max()`/`toKernelParams` clamp.
+/// Lives here — not in the tool module it originally shipped in — because
+/// `mesh.d` is a core module that must not import `tools/*`; this is the
+/// one definition both sides read (task 0365 P1 relocation).
+enum int MAX_SWEEP_SIDES = 1024;
+
+/// DoS backstops for `bevelEdgesByMask`'s Round Level (`2^L+1` arc points,
+/// exponential) and `bevelFacesByMask`'s Segments (`N` linear rings) —
+/// shared between the kernel (authoritative, clamps any caller including a
+/// direct/scripted one) and the command/tool layer's Param `.max()` hint
+/// (shallower, UI/HTTP-only). Same relocation rationale as
+/// `MAX_SWEEP_SIDES` above (task 0365 P1) — `mesh.d` must not import
+/// `commands/*`/`tools/*`, so this is the one definition both sides read.
+enum int MAX_ROUND_LEVEL     = 10;  // 2·10 = 20 arc segments/endpoint
+enum int MAX_BEVEL_SEGMENTS  = 64;
+
+/// Rounded-hub allocation backstop for `bevelEdgesByMask`'s N-way junction
+/// ring (task 0454): a full-ring hub emits `valence · (2^L)²` quad faces, so a
+/// crafted high-valence full hub is an attacker-scalable allocation vector.
+/// Valence is mesh-derived (not a user Param), so this is a kernel-only cap —
+/// an over-cap full hub falls back to the flat N-gon cap, staying sound. No
+/// Param/UI layer (there is no user-facing valence knob to clamp).
+enum int MAX_JUNCTION_VALENCE = 64;
+
+/// Upper bound on the number of registered `MeshMap`s per mesh (task 1069).
+/// A kernel-only backstop with no Param layer, for the same stated reason as
+/// `MAX_JUNCTION_VALENCE`: there is no user-facing knob to clamp, and the
+/// scriptable `mesh.morph.create` loop is the allocation vector — each new map
+/// costs `nverts * (dim*4 + 1)` bytes, so an unbounded create loop is
+/// attacker-scalable in a dimension the user's own mesh size does not control.
+/// Enforced in `addMeshMap` (returns null past the cap), which every creation
+/// path funnels through. Honest about what it bounds: the map COUNT. The
+/// per-map size is O(the caller's own mesh) and is not an attacker knob.
+enum int MAX_MESH_MAPS = 256;
+
+/// A generic named, typed per-element float attribute channel — the single
+/// reusable home for continuous per-element data (UV, vertex weight, edge
+/// crease, vertex color, …) so each such attribute does NOT become a bespoke
+/// parallel array on `Mesh`.
+///
+/// **Layout** is element-major: element `i`'s `dim` components occupy
+/// `data[i*dim .. i*dim + dim]`. So a dim-2 UV map stores `[u0,v0, u1,v1, …]`.
+/// The invariant `data.length == elementCount(domain) * dim` is maintained in
+/// lock-step with topology by the mesh resize path (see `Mesh.resizeMeshMaps`).
+///
+/// `dim` is the number of float components per element (1 = weight/crease,
+/// 2 = UV, 3 = color, …). `name` is the lookup key in the registry and must be
+/// unique per mesh.
+///
+/// **Presence** (task 1069). `present` is the parallel channel that makes
+/// "this element has no entry" a different state from "this element's entry is
+/// zero". Its invariant is stated separately from `data`'s because the two do
+/// NOT scale the same way:
+///
+///     data.length    == elementCount(domain) * dim   (per COMPONENT)
+///     present.length == elementCount(domain)         (per ELEMENT — NO `* dim`)
+///
+/// An element is present or absent as a whole; there is no per-component
+/// presence. `present.length == 0` is the separate legal value meaning "every
+/// element is present", which is what every kind that does not track presence
+/// (uv, vertexWeight, creaseWeight) carries — they allocate nothing and behave
+/// byte-identically to before this channel existed.
+struct MeshMap {
+    string    name;
+    ubyte     dim;
+    MapDomain domain;
+    float[]   data;
+    /// Which kind this map was registered as. STORED rather than inferred:
+    /// the two morph kinds have identical shape (Point, dim 3) and neither
+    /// reserves a name, so neither of the two mechanisms that exist (reserved
+    /// name, declared shape) can tell them apart (task 1069, plan §1).
+    MapKind   kind = MapKind.unclassified;
+    /// Per-ELEMENT presence, non-zero == present. Empty ⇒ all present.
+    ubyte[]   present;
+
+    MeshMap dup() const {
+        // FIELD-WISE, deliberately NOT the positional constructor. A
+        // positional `MeshMap(name, dim, domain, data.dup)` silently
+        // DEFAULT-INITS every field added after the last argument — and for
+        // `present` that default is `[]`, which MEANS "all present". A
+        // dropped presence channel would therefore not crash and not read as
+        // garbage; it would read as a legal, WRONG answer. The static assert
+        // is the tripwire for the NEXT field, not for these two.
+        static assert(MeshMap.tupleof.length == 6,
+            "MeshMap gained a field — add it to dup() before bumping this count");
+        MeshMap r;
+        r.name    = name;
+        r.dim     = dim;
+        r.domain  = domain;
+        r.data    = data.dup;
+        r.kind    = kind;
+        r.present = present.dup;
+        return r;
+    }
+
+    /// Is element `i` present? Honours the "empty ⇒ all present" convention,
+    /// so every pre-1069 map answers `true` for every in-range element.
+    bool isPresent(size_t i) const pure nothrow @nogc @safe {
+        if (present.length == 0) return i * dim + dim <= data.length;
+        return i < present.length && present[i] != 0;
+    }
+
+    /// Write element `i`'s dim-3 entry AND set its presence, with NO change
+    /// notification of any kind. The form the mid-drag routing kernel uses:
+    /// it resolves the map once per apply and writes every moving vertex
+    /// through here, then notes `MeshEditScope.Maps` ONCE. Going through
+    /// `Mesh.setMorphValue` instead would `commitChange` — and so bump
+    /// `mutationVersion` — once per vertex per motion event, which breaks the
+    /// mid-drag version stability the symmetry / falloff / snap caches key on.
+    /// Returns false on a dim mismatch or an out-of-range element.
+    bool setEntry(size_t i, Vec3 v) {
+        if (dim != 3) return false;
+        const size_t b = i * 3;
+        if (b + 3 > data.length) return false;
+        data[b] = v.x; data[b + 1] = v.y; data[b + 2] = v.z;
+        if (i < present.length) present[i] = 1;
+        return true;
+    }
+
+    /// Read element `i`'s dim-3 entry, or `fallback` when it is absent or out
+    /// of range. The read half of the same mid-drag loop — resolved once, no
+    /// per-vertex name lookup.
+    Vec3 entryOr(size_t i, Vec3 fallback) const {
+        if (dim != 3) return fallback;
+        const size_t b = i * 3;
+        if (b + 3 > data.length || !isPresent(i)) return fallback;
+        return Vec3(data[b], data[b + 1], data[b + 2]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MeshKey — ONE cache-validity key, parameterised by the terms it compares
+// (task 4060). `MeshCacheKey` / `MeshStructKey` / `MeshTopoKey` below are
+// aliases of it and are unchanged in behaviour: same field names, same
+// sentinels, same `matches` / `stamp` / `invalidate` contract.
+//
+// THE RECIPE — WHICH TERMS A NEW CACHE DECLARES — IS NOT HERE. It is the
+// header of `source/mesh_dirty.d`, which is the one place that can state it:
+// half the answer is a bus epoch, and this module cannot see the bus. Read
+// that header before writing a key; what follows is only the mechanism.
+//
+// WHY A TEMPLATE AND NOT THREE STRUCTS. The three differed in ONE token —
+// which counter `matches()` read — and were copied, comment block and all,
+// each time a cache needed a fourth. Measured before the fold (task 4060
+// §Посылка): 38 hand-rolled `ulong …Ver/Epoch/Stamp` fields outside this
+// module, of which the mesh-keyed ones re-implemented this same pair of
+// compares by hand. A term declared once, argued once, is then reusable
+// without a fresh copy of the argument.
+//
+// WHAT THE FOLD DELIBERATELY DID NOT CHANGE: the three types' comparison
+// CONTRACT was checked first and is identical — same parameter form
+// (`ref Mesh`, now widened to `ref const Mesh` so a `const` source can be
+// keyed), same address term, same `size_t.max` / `ulong.max` sentinels, one
+// counter each, and no term that another ignores. The only difference was
+// that `MeshTopoKey`'s three methods were spelled `nothrow @nogc` where the
+// other two were unannotated; a template's members INFER those, so the
+// annotation is not lost, it is derived (`SessionMeshKey.matches` is
+// `nothrow @nogc` and calls straight into this one — if inference ever fails,
+// that call site is a compile error, not a silent widening). Had they
+// differed in contract, this template would have taken a policy parameter and
+// said so; it did not, so it does not.
+//
+// THE CENSUS SEES THE TERMS, NOT THE INSTANTIATIONS, and that is the point.
+// `tests/unit/version_poll_census_test.d` scans for a line naming a mesh
+// counter next to a compare. Each TERM below carries exactly one such line,
+// with its own `recorded remainder` argument; `MeshKey.matches` carries none,
+// because it names no counter. So a NEW cache keyed on an existing term is
+// silent in that census — the argument for reading that counter was made once
+// at the term — while a NEW TERM is a new census row and has to be argued.
+// ---------------------------------------------------------------------------
+
+/// The POSITION-AND-EVERYTHING term: `Mesh.mutationVersion`, bumped on any
+/// topology or vertex-position change that goes through `commitChange`.
+///
+/// USE IT when the cached value depends on where the vertices ARE. Its cost is
+/// stated at `MorphMap.setEntry`: a drag moves this counter once per vertex
+/// per motion event, so a cache carrying only this term rebuilds every frame
+/// of a gesture. Its BLIND SPOT is the opposite one and is the more expensive
+/// mistake: an interactive gizmo transform is version-silent at drag AND at
+/// commit, so this term alone answers "fresh" over a cage that has moved
+/// (task 0401). A position-dependent cache pairs it with a bus epoch —
+/// `mesh_dirty`'s header says which.
+struct MeshTermMutation {
+    /// The field name this term contributes to a `MeshKey` — the spelling
+    /// the three folded structs used; no tool reads it directly since task
+    /// 7112 moved the slice tools to `SessionMeshKey`.
+    enum string field = "mutVer";
+
+    static ulong read(ref const Mesh m) nothrow @nogc {
+        return m.mutationVersion;
+    }
+    static bool same(ulong v, ref const Mesh m) nothrow @nogc {
+        // recorded remainder (1906 §3.6): `mutationVersion` owns this compare,
+        // and it survives for `SubpatchPreview`'s freshness half. (The slice
+        // tools' `armedKey_` left it in task 7112: position moves this counter
+        // under a live subpatch preview, so they key on `SessionMeshKey`.)
+        return v == m.mutationVersion;
+    }
+}
+
+/// The EDGE-SET term: `Mesh.structVersion`, and read that counter as "writes
+/// to `edges`", which is what it literally is (see `MeshTermTopology` for the
+/// measurement).
+///
+/// USE IT when the cached value depends only on how the vertices are
+/// CONNECTED — task 0585's Polygons-mode face->edge highlight mask is the
+/// worked example. `structVersion` is bumped only by the edge/face structural
+/// primitives and explicitly not by position, marks or subpatch writes, so the
+/// mask survives a drag intact; keyed on `mutationVersion` instead it would
+/// put an allocation proportional to the SELECTION back on the per-frame path,
+/// which is the exact defect task 0585 took off it.
+struct MeshTermStruct {
+    enum string field = "structVer";
+
+    static ulong read(ref const Mesh m) nothrow @nogc {
+        return m.structVersion;
+    }
+    static bool same(ulong v, ref const Mesh m) nothrow @nogc {
+        // recorded remainder (1906 §3.6): `structVersion` owns this compare.
+        // One consumer after stage 2: `faceSelEdgesKey`, declared in `app.d`,
+        // reached through `editor_app.d`'s pointer bridge and consumed by
+        // `ui/viewport_render.d` (plan §3.4 row 16), where this term covers the
+        // EDGE dependency and a `faceMarks` content diff covers the FACE one.
+        // Neither is redundant.
+        return v == m.structVersion;
+    }
+}
+
+/// The FACE-SET term: `Mesh.topologyVersion`.
+///
+/// IT EXISTS BECAUSE `structVersion` DOES NOT MEAN WHAT ITS NAME SUGGESTS, AND
+/// THAT WAS MEASURED, NOT REASONED (2026-08-25). `structVersion` is bumped by
+/// the primitives that WRITE `edges` — `addEdge`, `rebuildEdges`,
+/// `rebuildEdgesFromFaces`, the face-append primitive — and by nothing else.
+/// A face-set change that leaves the edge list alone therefore moves it NOT AT
+/// ALL: `deleteFacesByMask(mask, keepOrphans:true, keepFloatingEdges:true)`
+/// takes a 4-quad grid to 3 quads with `structVersion` unchanged (measured;
+/// `topologyVersion` went 4 → 5 on the same call, and `mutationVersion` 4 → 5).
+/// So `MeshTermStruct` is correct for a cache over `edges` and SILENTLY WRONG
+/// for a cache over `faces` — which is how `PenSnapGuide`'s border counts,
+/// re-keyed onto it, went stale on a face delete.
+///
+/// `commitChange` bumps this one for `Points | Polygons` (see §3.6 of
+/// doc/bus_sync_listeners_plan.md, where it is recorded with exactly that owner
+/// class). It OVER-invalidates — a subpatch-mark toggle and a crease-weight
+/// write both bump it while `faces` holds still — and that is the safe
+/// direction.
+struct MeshTermTopology {
+    enum string field = "topoVer";
+
+    static ulong read(ref const Mesh m) nothrow @nogc {
+        return m.topologyVersion;
+    }
+    static bool same(ulong v, ref const Mesh m) nothrow @nogc {
+        // recorded remainder (1906 §3.6): `topologyVersion` owns this compare.
+        // Two consumers. `PenSnapGuide.polyKey_` (plan §3.4 row 19) is driven
+        // headlessly over SCRATCH meshes no `Document` layer owns — and a
+        // `mesh_dirty` epoch only ever advances for a mesh that IS owned, so an
+        // epoch key would read permanently fresh there. That reachability
+        // argument, not the class, is why this row kept a counter.
+        // `SubpatchPreview`'s layout half (plan §3.4 row 10, second term) is
+        // not a freshness signal at all: it asks "is the stencil table still
+        // laid out for this source topology", which only an identity answers.
+        return v == m.topologyVersion;
+    }
+}
+
+/// The SELECTION term: `Mesh.marksVersion`.
+///
+/// USE IT when the cached value depends on WHICH elements are selected. It is
+/// the one counter task 1906 stage 2 did not consider migrating to the bus at
+/// all, and correctly: NO watcher carries `Marks` — the geometry and
+/// connectivity masks exclude it on purpose and `DisplayEpochMask` does not
+/// list it either — so a `Marks` epoch would be a strictly coarser restatement
+/// of a counter that already tracks exactly this class, on the mesh itself,
+/// where every scratch mesh has one. Both its consumers memoise an O(V)
+/// `selectionSignature()` walk that measured MORE than the work it guards, so
+/// this term is not a convenience: it is the cheap key that made the memo
+/// worth having.
+struct MeshTermMarks {
+    enum string field = "marksVer";
+
+    static ulong read(ref const Mesh m) nothrow @nogc {
+        return m.marksVersion;
+    }
+    static bool same(ulong v, ref const Mesh m) nothrow @nogc {
+        // recorded remainder (1906 §3.6): `marksVersion` owns this compare, for
+        // the two selection memos — `TransformTool.computeSelectionHash` and
+        // `ActionCenterStage.bboxMembershipCached`. Measured at 1M faces
+        // (ldc2 -O3 -release), the walk this key replaces cost 2.23 ms in
+        // Vertices/Polygons and 4.46 ms in Edges against a 1.02 ms bbox pass,
+        // i.e. the content answer was more expensive than the walk it guarded.
+        // No watcher carries `Marks`, so there is no epoch to move to.
+        return v == m.marksVersion;
+    }
+}
+
+/// A cache-validity key for a cache that lives OUTSIDE the `Mesh` it was built
+/// from (a toolpipe stage's per-drag cluster or selection-weight cache, a
+/// tool's armed-preview guard, the subpatch preview's staleness key).
+///
+/// THE ADDRESS TERM IS ALWAYS PRESENT AND IS NOT OPTIONAL. A counter alone is
+/// not enough for such a cache: `Mesh` is a value struct whose owning `Layer`
+/// can retarget a stage's `mesh_` delegate to a different primary mid-session,
+/// and two different `Mesh`es can legitimately carry an equal counter (both
+/// default-initialise to 0, or two same-op-count histories collide). Folding
+/// `cast(size_t)&m` in — the same address-key convention `snap.d` /
+/// `bvh_pick.d` already use — closes that hole: two distinct `Mesh` instances
+/// can never satisfy `matches()` for the same key, no matter how their
+/// counters line up. (A cache that is itself co-located ON the `Mesh`, like
+/// `vertexAdjacencyCSR`, needs no such key — the address IS the object.)
+/// Pinned by the "address is the sole discriminator" cell in
+/// `tests/unit/mesh_test.d` and by `SessionMeshKey`'s term-1 cell.
+///
+/// `Terms` are the term types above (or any type with the same three members).
+/// Each contributes one `ulong` field named by its own `field`, defaulted to
+/// `ulong.max`, which no live counter holds — so a fresh key matches nothing.
+struct MeshKey(Terms...) {
+    import std.meta : staticIndexOf;
+
+    static assert(Terms.length >= 1,
+        "a MeshKey with no term compares only the address, which is an "
+      ~ "identity check and not a freshness key — say which counter or epoch "
+      ~ "it depends on, or use a bare `size_t` address");
+
+    size_t addr = size_t.max;
+
+    static foreach (T; Terms)
+        mixin("ulong " ~ T.field ~ " = ulong.max;");
+
+    /// Compile-time position of `T` among `Terms`, offset past `addr` — the
+    /// index into `this.tupleof` of the field `T` contributes.
+    private template slotOf(T) {
+        enum int i = staticIndexOf!(T, Terms);
+        static assert(i >= 0,
+            "`" ~ T.stringof ~ "` is not a term of this key; a compare may "
+          ~ "only read a term the key actually stamps");
+        enum size_t slotOf = cast(size_t)i + 1;
+    }
+
+    /// Was this key stamped from `m`, with every declared term unchanged?
+    bool matches(ref const Mesh m) const {
+        if (addr != cast(size_t)&m) return false;
+        static foreach (T; Terms) {
+            if (!T.same(this.tupleof[slotOf!T], m)) return false;
+        }
+        return true;
+    }
+
+    /// The same question over a SUBSET of the declared terms, asked of ANOTHER
+    /// key of this type rather than of a live mesh — for a consumer whose key
+    /// answers two different questions from one stamp (the subpatch preview's
+    /// "is my surface fresh", epoch + mutation, against its "is the stencil
+    /// table still laid out for this topology", topology alone) and which must
+    /// sample its terms exactly ONCE per call and then both COMPARE and STAMP
+    /// that one sample. The address is compared either way; a subset that
+    /// dropped it would not be a mesh key. Naming a term the key does not
+    /// stamp is a compile error.
+    ///
+    /// THERE IS DELIBERATELY NO `matchesOnly(Sub...)(ref const Mesh)` BESIDE
+    /// IT. One was written for this task and had no production caller: every
+    /// consumer that wants a subset also wants the single sample, and asking a
+    /// live mesh for a subset takes a SECOND sample by construction. Task 4060
+    /// review deleted it rather than leave a door open for nobody.
+    ///
+    /// The subpatch preview is the reason it exists and the reason it is not a
+    /// convenience: its epoch term is read from the bus, and a rebuild can
+    /// take long enough for a publisher to fire during it. Sampling at the
+    /// compare and AGAIN at the stamp would write the later epoch, so a change
+    /// that landed mid-rebuild would be stamped in as already serviced — the
+    /// unsafe direction. One sample, compared here and assigned afterwards,
+    /// leaves the stamp BEHIND the live epoch and the next call rebuilds
+    /// again, which is the safe one.
+    bool agreesOn(Sub...)(ref const typeof(this) other) const {
+        static assert(Sub.length >= 1,
+            "agreesOn with no term compares only the address — say so directly");
+        if (addr != other.addr) return false;
+        static foreach (T; Sub) {
+            if (this.tupleof[slotOf!T] != other.tupleof[slotOf!T]) return false;
+        }
+        return true;
+    }
+
+    void stamp(ref const Mesh m) {
+        addr = cast(size_t)&m;
+        static foreach (T; Terms) {
+            this.tupleof[slotOf!T] = T.read(m);
+        }
+    }
+
+    void invalidate() {
+        addr = size_t.max;
+        static foreach (T; Terms) {
+            this.tupleof[slotOf!T] = ulong.max;
+        }
+    }
+}
+
+/// Use it when the cached value depends on where the vertices ARE.
+alias MeshCacheKey  = MeshKey!MeshTermMutation;
+/// Use it when the cached value depends only on the EDGE set.
+alias MeshStructKey = MeshKey!MeshTermStruct;
+/// Use it when the cached value depends only on the FACE set.
+alias MeshTopoKey   = MeshKey!MeshTermTopology;
+
+/// Cubic ease-in/ease-out, `3t²-2t³` — the Bridge Twist per-ring blend
+/// curve (task 0357, see `bridgeTwistedVertex` in source/mesh_ops/bridge.d).
+/// `t` is assumed in [0,1]; not clamped since every call site already
+/// guarantees that range.
+///
+/// NOT `private`, since task 1903 Stage D3, and it is the §2.6 widening that
+/// stage owed: this is a module-level free function of `mesh`, not a `Mesh`
+/// member, so it used to be reachable from `mesh_ops/bridge.d` ONLY because a
+/// `mixin template` body is instantiated in its host's scope. With the Bridge
+/// family converted to free functions of its own module, that scope is gone
+/// and `private` here is a compile error there — the plan called this one out
+/// by name as "the one that will not compile after conversion".
+///
+/// ITS ONLY CALLER IS `mesh_ops/bridge.d`'s `bridgeTwistedVertex`. If that
+/// call goes away, narrow this back to `private` in the same change: a door
+/// held open for nobody is exactly what the Stage A review reverted ten of
+/// (plan §2.6, review S3). `tests/unit/commit_seam_census_test.d` asserts both
+/// halves — the `private` spelling absent here, the call present there.
+float smoothstep01(float t) pure nothrow @nogc @safe {
+    return t * t * (3.0f - 2.0f * t);
+}
+
+/// Per-edge dihedral result, indexed like `Mesh.edges[]`. Returned by
+/// `Mesh.computeEdgeSharpness` — the shared sharp-edge test used by both
+/// `MeshSmooth.lockSharp` (`commands/mesh/smooth.d`) and the AI support-loop
+/// candidate generator (`ai.support_loop_candidates`). Boundary edges (only
+/// one adjacent face) are left at `.init` (`interior = false`).
+struct EdgeSharpness {
+    bool  interior = false;  // false for boundary edges (dihedral undefined)
+    float angleDeg = 0.0f;   // dihedral angle between the two adjacent faces
+    bool  sharp    = false;  // angleDeg exceeds the threshold passed in
+    uint  faceA    = uint.max;
+    uint  faceB    = uint.max;
+}
+
+// ---- Hide-derive batch state (task 1330) ----------------------------------
+// Thread-local by D's default for module-scope data. Deliberately NOT fields
+// of `Mesh`: kernels that replace the whole struct (`*mesh = subdivide(...)`)
+// would reset an in-struct counter mid-batch. See beginHideDeriveBatch.
+private int     g_hideDeriveDepth;
+private bool    g_hideDeriveDeferSafe;
+private Mesh*[] g_hideDerivePendingMeshes;
+
+// ---- Delivery-batch state (task 1906) -------------------------------------
+// The depth counter that decides WHEN a synchronous change delivery reaches
+// listeners: > 0 ⇒ delivery is deferred to the batch close. Module scope for
+// the SAME reason spelled out three lines above — a kernel of the form
+// `*mesh = subdivide(...)` would reset an in-struct counter mid-batch and
+// leave the close unbalanced.
+//
+// IT IS A DIFFERENT OBJECT FROM `Mesh.beginEditBatch`/`endEditBatch` (the
+// 1902/1903 undo-delta tracker pair further down this file), with a different
+// lifetime and a different job: the tracker records WHAT changed so undo can
+// revert it; this counter decides WHEN listeners are told. Neither is
+// implemented in terms of the other and neither may be assumed open when the
+// other is. Delivery lives inside `commitChange`, so a batch that DEFERS
+// `commitChange` defers delivery with it — there is no second seam.
+private int     g_deliveryDepth;
+private Mesh*[] g_deliveryPendingMeshes;
+private Mesh*[] g_preparedShadowMeshes;
+
+final class PreparedShadowScope {
+private:
+    Mesh* mesh_;
+public:
+    this(ref Mesh mesh) nothrow @nogc { mesh_ = &mesh; }
+    void close() nothrow @nogc {
+        if (mesh_ is null) return;
+        foreach (i, p; g_preparedShadowMeshes) if (p is mesh_) {
+            g_preparedShadowMeshes[i] = g_preparedShadowMeshes[$ - 1];
+            g_preparedShadowMeshes = g_preparedShadowMeshes[0 .. $ - 1];
+            break;
+        }
+        mesh_ = null;
+    }
+    ~this() nothrow @nogc { close(); }
+}
+
+PreparedShadowScope beginPreparedShadow(ref Mesh mesh) {
+    auto result = new PreparedShadowScope(mesh);
+    g_preparedShadowMeshes.reserve(g_preparedShadowMeshes.length + 1);
+    g_preparedShadowMeshes ~= &mesh;
+    return result;
+}
+
+void drainPreparedShadowDelivery(ref Mesh mesh, out uint flags,
+                                 out uint selectionDomains) nothrow @nogc {
+    flags = mesh.undeliveredChanges_;
+    selectionDomains = mesh.undeliveredSelDomains_;
+    mesh.undeliveredChanges_ = 0;
+    mesh.undeliveredSelDomains_ = 0;
+}
+
+version (unittest) unittest {
+    import vibe3d.mesh.change.change_bus : changeBus;
+    Mesh shadow = makeCube();
+    ulong before;
+    {
+        auto guard = beginPreparedShadow(shadow);
+        shadow = makeCube(); // address-based interception survives replacement
+        before = changeBus.deliveryCount; // exclude scratch RHS construction
+        shadow.commitChange(MeshEditScope.Position);
+        assert(changeBus.deliveryCount == before);
+        uint flags, domains;
+        drainPreparedShadowDelivery(shadow, flags, domains);
+        assert(flags == MeshEditScope.Position && domains == 0);
+        drainPreparedShadowDelivery(shadow, flags, domains);
+        assert(flags == 0 && domains == 0);
+        guard.close();
+    }
+    shadow.commitChange(MeshEditScope.Position);
+    assert(changeBus.deliveryCount == before + 1);
+}
+
+// ---- Is this mesh a DOCUMENT mesh? (task 1906 review B1) ------------------
+// The resolver that answers "does some `Layer` own the storage at this
+// address". `app.d` installs `document.ownsMesh` into it right beside
+// `command.g_editTargetResolver`, which is the precedent this follows exactly:
+// `mesh.d` must not import `document.d` (it is compiled into headless unit
+// tests that hold a bare `Mesh` with no `Document` in sight), so the question
+// is asked through a delegate rather than a call.
+//
+// WHY DELIVERY NEEDS IT. `Mesh` is a plain struct, so a `commitChange` on ANY
+// instance would otherwise reach every listener: `MeshSnapshot.restore` on the
+// bevel preview's private `cage_` (the first line of
+// `tools/edit/preview_rebuild.d :: PreviewRebuild.run`, once per mouse-motion
+// frame) delivers `0x3f`; `makeCube()` delivers 6 (one per `addFace`);
+// `makeGridPlane(316)` delivers ~99 856. `app.d`'s hub ORs those into
+// `meshChangedFlags`, whose `Geometry` arm runs `syncSelection` on the LIVE
+// document mesh — a private scratch mesh would drive it. Filtering at the SOURCE also keeps a stack-local `Mesh`
+// out of `g_deliveryPendingMeshes` (review S2), which is the only reason that
+// set cannot name a dead frame.
+//
+// SHARED SYMBOL — task 1903 declares the same resolver for its
+// mutation-path counter, and there must be exactly one. Its name and type are
+// therefore fixed here: `bool delegate(const(Mesh)*)`, not `nothrow`
+// (`document.ownsMesh` IS nothrow and converts implicitly, so the stricter
+// caller loses nothing).
+//
+// THE UNINSTALLED RULE IS NOT THE SAME FOR ALL THREE CONSUMERS, AND THAT IS
+// DELIBERATE — do not "unify" it:
+//
+//   * DELIVERY (1906, `deliverPending` below) reads null as **DELIVER**. Every
+//     headless unit test in this tree builds a bare `Mesh` with no `Document`,
+//     and the delivery blocks in `tests/unit/change_bus_test.d` assert on
+//     exactly those meshes; "uninstalled ⇒ reject" would make every one of
+//     them pass vacuously. Same rule, same reason, as
+//     `command.g_editTargetResolver`'s "uninstalled means there is a target".
+//   * 1903's L2 COUNTER reads null as **not a document mesh**, because it is a
+//     suite-lane-only observable and counting scratch meshes would swamp it.
+//
+//   * THE HIDE-DERIVE DEFERRAL (1903 gate fix, `hideDeriveDeferralAccepted`
+//     just below) reads null as **DEFER** — delivery's direction, for
+//     delivery's reason; see that function for why, and for the SIGSEGV that
+//     made a filter necessary there at all.
+//
+// A filter is a REFUSAL and must fail open; a counter is an OBSERVATION and
+// may fail closed.
+__gshared bool delegate(const(Mesh)*) g_isDocumentMesh;
+
+// The one place that rule is spelled: uninstalled ⇒ deliver.
+private bool deliverySubjectAccepted(const(Mesh)* m) {
+    foreach (p; g_preparedShadowMeshes) if (p is m) return false;
+    if (g_isDocumentMesh is null) return true;
+    return g_isDocumentMesh(m);
+}
+
+// THE THIRD CONSUMER, AND IT TAKES DELIVERY'S RULE, NOT THE COUNTER'S — task
+// 1903 gate fix, 2026-08-25.
+//
+// `commitStamps`' hide-derive DEFERRAL arm (path (a)) appends `&this` to
+// `g_hideDerivePendingMeshes`, an array that outlives the call — it is drained
+// at `endHideDeriveBatch`. So the same sentence 1906 review S2 wrote for the
+// delivery set applies here verbatim: THE PENDING SET MAY ONLY HOLD ADDRESSES
+// THAT OUTLIVE THE BATCH, and `g_isDocumentMesh` is the proxy we have for
+// one — ownership at commit time guarantees a HEAP address (a `Layer` holds
+// its `Mesh` on the heap at a stable address), and the GC, not the layer,
+// keeps it alive past an unlink mid-batch (the same window `deliverPending`'s
+// comment names for the delivery set), while a kernel's `Mesh sub = catmullClarkOsd(...)`
+// (commands/mesh/subdivide.d) or `Mesh result;` (subpatch_osd.d) is a STACK
+// FRAME that unwinds long before the command's batch closes. The measured
+// symptom of deferring one of those was a SIGSEGV inside
+// `refreshHiddenDerived` at `hasFace[] = false`, with `this` garbage, on
+// `test_subdivide_smooth` / `test_subdivide_undo_redo`.
+//
+// Uninstalled ⇒ ACCEPT (defer), the same fail-open direction as delivery and
+// for the same reason: every headless unit test in this tree holds a bare
+// `Mesh` with no `Document`, and the 1330/1333/1361 derive-COUNT tests beside
+// `beginHideDeriveBatch` assert on exactly those meshes. "Uninstalled ⇒
+// reject" would derive them inline and turn every one of those counts into
+// a different number for no reason anyone measured. Under that default the
+// pair brackets only the BATCH'S OWN mesh: a unittest that commits a mesh
+// OTHER than the batch's own inside the batch must install `g_isDocumentMesh`
+// (as the block beside the 1330/1333/1361 tests does) — nothing enforces it,
+// and an uninstalled resolver defers that stack address into a set drained
+// after its frame is gone, which is the main-tree "green by luck" shape.
+//
+// A SEPARATE NAME rather than a call to `deliverySubjectAccepted` at the site:
+// the two questions happen to share an answer today, and the call site should
+// name the consumer it is deciding for rather than borrow delivery's.
+private bool hideDeriveDeferralAccepted(const(Mesh)* m) {
+    return deliverySubjectAccepted(m);
+}
+
+// ---- Mesh-edit batch state (task 1903 §2.2a) ------------------------------
+// The undo-tracker batch, re-expressed as a STACK OF FRAMES KEYED BY `Mesh*`.
+//
+// Module scope, and for the reason this file already spells out twice above
+// (`g_hideDeriveDepth`, `g_deliveryDepth`): kernels that replace the whole
+// struct (`*mesh = subdivide(...)`, `*mesh = remesh(...)`, `commands/scene/
+// reset.d`) would reset an in-struct counter mid-batch, and the close would
+// then find depth 0, skip its stamp, and the edit would never publish.
+// Keying by ADDRESS survives those writers: `*mesh = value` assigns THROUGH
+// the pointer, so the address does not move, and `Layer` is a class with a
+// stable heap `mesh_`. The only way two edits could share one key is a
+// freed-then-reused address, and that needs a frame LEFT BEHIND on this stack
+// — which is what `changeBus.batchLeaks` is asserted 0 for.
+//
+// TASK 1903 S1 — TWO SPELLINGS OPEN A FRAME AND ONLY ONE OF THEM HAS A
+// DESTRUCTOR, so "a leaked handle" is NOT the sole path and this comment used
+// to say it was. `MeshEditBatch` pops in `~this` while the stack unwinds. The
+// older `Mesh.beginEditBatch` / `endEditBatch` pair has no handle at all: an
+// `Exception` escaping between them orphans the frame PERMANENTLY — every
+// later `commitChange` on that mesh defers forever, the app keeps running and
+// silently stops publishing, and `batchLeaks` stays 0 because nothing ticked
+// it. `Mesh.abortEditBatch()` is that pair's pop, and all four legacy callers
+// carry `scope(failure) mesh.abortEditBatch();`. The guard's presence at each
+// of the four is pinned by `tests/unit/commit_seam_census_test.d`, so removing
+// one is a red line rather than a silent regression.
+//
+// IT IS A DIFFERENT OBJECT FROM `g_deliveryDepth` (task 1906), with a
+// different lifetime and a different job — see that counter's declaration for
+// the contract both tasks cite. This stack records WHAT changed so undo can
+// revert it; that counter decides WHEN listeners are told.
+//
+// Thread-local by D's default, and that is correct here: nothing mutates a
+// live `Mesh` off the main thread (`source/subpatch_worker.d` is handed a
+// `CageSnapshot` and never reads the live mesh; remesh runs out of process).
+// If a future op ever commits off-main, this stack must become `__gshared`
+// and guarded, and `changeBus.batchLeaks` is what would show it first.
+// NB: the batch's DECLARED scope is not a field here. It is handed straight
+// to the recorder at the 0->1 transition (`MeshEditTracker.declare`, which is
+// what ends up in `MeshEditDelta.scope_` and drives the revert's own
+// `commitRestored`), and the close deliberately stamps `accum`, never the
+// declaration — see `closeEditFrame`. A copy on the frame would be state
+// nothing reads and everything could disagree with.
+private struct EditBatchFrame {
+    Mesh*            m;          // the subject, by address
+    uint             depth;      // nesting depth; only 0->1 and 1->0 do work
+    uint             accum;      // ORed by every deferred commitChange
+    MeshEditTracker* rec;        // null ⇒ unrecorded batch (plan §9)
+    bool             errored;    // a refused upgrade, or a nested leak
+    bool             deferSafe;  // !anyHideBitSet() at open — see commitChange
+    uint             invocationFloor; // a scoped invocation cannot close its caller
+}
+
+private EditBatchFrame[] g_editBatchStack;   // ≤2 entries in practice
+
+// The frame for `m`, or null. Innermost-first so a (refused) nested frame on
+// the same mesh is found before the outer one.
+//
+// THE POINTER IS AN INTERIOR POINTER INTO `g_editBatchStack` AND IS VALID ONLY
+// UNTIL THE NEXT `~=`. A push may reallocate the array and every frame pointer
+// handed out before it then aims at freed memory. The rule this file follows,
+// stated here rather than rediscovered: never hold a frame pointer across a
+// call that can open a batch. Every reader today re-looks-up instead
+// (`commitChange`, `refreshHiddenDerived`, `MeshEditBatch.recording`/`rec`/
+// `setVertexPos`), which is why they take the branch again rather than caching
+// the pointer; `pushEditFrame`'s own return is consumed by its caller before
+// anything else can push.
+pragma(inline, true)
+private EditBatchFrame* currentBatchFrame(const(Mesh)* m) nothrow @nogc {
+    if (g_editBatchStack.length == 0) return null;
+    foreach_reverse (i; 0 .. g_editBatchStack.length)
+        if (g_editBatchStack[i].m is m) return &g_editBatchStack[i];
+    return null;
+}
+
+// Open — or re-enter — the frame for `m`. Returns the frame, never null.
+//
+// The three inner/outer pairings are NOT symmetric (plan §2.3 rule 3):
+//   recording  inside recording   → allowed, depth++, counted
+//   unrecorded inside recording   → allowed, the inner request is IGNORED:
+//                                   the ops are part of the outer edit and
+//                                   must be in its op-log
+//   recording  inside unrecorded  → REFUSED. The alternative is a corrupt
+//                                   undo record, not a perf wart: the inner
+//                                   delta would be missing everything the
+//                                   outer did before it, and installing that
+//                                   as a history entry loses those ops.
+//
+// The refusal is a COUNTER, not a `debug assert`, and that is deliberate —
+// the same call this file already makes for `endHideDeriveBatch` ("clamped,
+// not asserted: an imbalance must not be a process death in one build kind
+// and a silent de-optimization in the other") and for `MeshEditBatch.~this`.
+// The unit lane builds with `-debug` and the suite lane without it, so a
+// `debug assert` here would be a hard death in one lane and invisible in the
+// other, and no single test could see both.
+//
+// `declared` reaches the RECORDER and nothing else (see `EditBatchFrame`), and
+// only at the 0->1 transition: a nested open may not re-declare the scope of
+// an edit it did not start (plan §2.3 rule 1). Doing it here rather than in
+// each opener is what keeps `Mesh.beginEditBatch` and `MeshEditBatch`'s
+// constructor from drifting on the one thing that ends up in the delta.
+private EditBatchFrame* pushEditFrame(Mesh* m, uint declared, MeshEditTracker* rec) {
+    if (auto f = currentBatchFrame(m)) {
+        ++f.depth;
+        ++changeBus.nestedBatchOpens;
+        if (rec !is null && f.rec is null) {
+            // The hard refusal. The frame stays UNRECORDED (the outermost
+            // batch owns the recording decision) and is marked errored so the
+            // inner close hands back `MeshEditDelta.init` rather than a
+            // truncated op-log.
+            f.errored = true;
+            ++changeBus.batchUpgradeRefusals;
+        }
+        return f;
+    }
+    // `m` is never null: both openers take it from a `ref Mesh` or `&this`.
+    g_editBatchStack ~= EditBatchFrame(m, 1, 0, rec, false, !m.anyHideBitSet());
+    if (rec !is null) rec.declare(cast(MeshEditScope)declared);
+    return &g_editBatchStack[$ - 1];
+}
+
+// Close the innermost frame for `m` and, at the 1->0 transition, stamp once.
+//
+// THIS IS THE ONLY PATH TO `Mesh.commitStamps` FROM A BATCH: both
+// `MeshEditBatch.close()` and the older `Mesh.endEditBatch()` spelling funnel
+// through here, so "one stamp per batch" is one function, not two that can
+// drift (plan §3.1 B4 — `endEditBatch` MUST stamp: the four legacy callers
+// hold zero `commitChange` of their own, their kernels commit INSIDE the
+// batch, and a pop-only close would silently stop `mesh.delete` bumping,
+// deriving and delivering).
+private MeshEditDelta closeEditFrame(Mesh* m, uint extraFlags) {
+    auto f = currentBatchFrame(m);
+    if (f is null) return MeshEditDelta.init;
+    if (f.invocationFloor && f.depth <= f.invocationFloor)
+        throw new Exception("headless invocation cannot close its caller edit frame");
+
+    // TASK 1903 S2 — `extraFlags` MUST GO THROUGH `noteChange`, exactly as
+    // every deferred `commitChange` in this batch already did. It is the only
+    // way into the stamp that does not, and skipping it breaks three things at
+    // once: `deliverPending` (riding `commitStamps`'s tail) would ship
+    // `undeliveredChanges_` WITHOUT these flags, so listeners never hear about
+    // the class the closer is declaring; `marksVersion` would miss a
+    // marks-affecting flag, which `selectionSignature`'s consumers key on; and
+    // with `accum == 0` the stamp would bump `mutationVersion` against
+    // no publish at all, which is precisely the shape app.d's per-frame
+    // guard counts as `changeBus.missedPublishers` — a counter the DoD
+    // requires to stay 0.
+    //
+    // Placed ABOVE the depth branch so the nested close behaves identically:
+    // its flags are OR-ed into the outer frame's `accum` for the stamp AND are
+    // in the pending words for the delivery, from one line.
+    if (extraFlags) m.noteChange(extraFlags);
+
+    if (f.depth > 1) {
+        // A nested close: fold its extra flags into the outer frame and hand
+        // back an empty delta. The outermost close is the one that stamps.
+        --f.depth;
+        f.accum |= extraFlags;
+        return MeshEditDelta.init;
+    }
+
+    MeshEditDelta d;
+    if (f.rec !is null && !f.errored) d = f.rec.finish();
+    else if (f.rec !is null)          cast(void)f.rec.finish();   // drain, discard
+
+    const uint flags   = f.accum | extraFlags;
+    const size_t nOps  = d.log.length;
+    popEditFrame(m);
+
+    // Stamp ONLY what actually committed. `f.declared` is the RECORDER's
+    // advisory scope, not a publication: a batch whose kernel refused (the
+    // `affected == 0` arm of `commands/mesh/delete.d` and `remove.d`) commits
+    // nothing today and must keep bumping nothing, or a refused command would
+    // advance `mutationVersion` and — since `declared` never went through
+    // `noteChange` — trip app.d's missed-publisher guard.
+    if (flags != 0) m.commitStamps(flags);
+
+    changeBus.opLogEntriesRecorded += nOps;
+    return d;
+}
+
+// Pop the innermost frame for `m`. Order-preserving for the rest of the stack.
+private void popEditFrame(Mesh* m) nothrow @nogc {
+    foreach_reverse (i; 0 .. g_editBatchStack.length) {
+        if (g_editBatchStack[i].m !is m) continue;
+        foreach (j; i + 1 .. g_editBatchStack.length)
+            g_editBatchStack[j - 1] = g_editBatchStack[j];
+        g_editBatchStack = g_editBatchStack[0 .. $ - 1];
+        return;
+    }
+}
+
+// The LEAK path — `MeshEditBatch.~this` running during unwinding (plan §2.2c).
+// Pops without stamping, and marks an enclosing frame errored so its own close
+// does not hand back an op-log that is missing everything after the throw.
+private void popLeakedEditFrame(Mesh* m) {
+    auto f = currentBatchFrame(m);
+    if (f is null) return;
+    if (f.invocationFloor && f.depth <= f.invocationFloor) {
+        f.errored = true;
+        return;
+    }
+    if (f.depth > 1) {
+        --f.depth;
+        f.errored = true;
+        return;
+    }
+    if (f.rec !is null) cast(void)f.rec.finish();
+    popEditFrame(m);
+}
+
+version (unittest) {
+    // The stack's own length, for the unit lane. Module scope and
+    // `version (unittest)` for the reason this file states three times above:
+    // a `debug {}` body is absent from a plain `-unittest` build, so a test
+    // over it would pass vacuously.
+    size_t editBatchStackLength() { return g_editBatchStack.length; }
+}
+
+version (unittest) {
+    // How many times the derive actually ran. Module scope (not a `Mesh`
+    // field) so a `*mesh = …` kernel cannot silently zero the count a test is
+    // reading. `version (unittest)`, deliberately not `debug {}` — a `debug`
+    // body is not compiled into a plain `-unittest` build, so a test over it
+    // would pass vacuously.
+    size_t g_hideDeriveRuns;
+
+    // ---- Task 1471 — the structural instrument for the bulk spin -------
+    // Same two reasons as above, verbatim: module scope because a kernel of
+    // the form `*mesh = …` would zero a struct field mid-measurement, and
+    // `version (unittest)` rather than `debug {}` because a `debug` body is
+    // not compiled into a plain `-unittest` build and the test over it would
+    // pass vacuously.
+    //
+    // Not `perf_probe` counters: `perf_probe` is entirely under
+    // `version (PerfProbe)` (the `perf` buildType), and the gate that reads
+    // these lives in `dub test --config=tests`, which never defines it.
+    //
+    // No production reader by design. The cap firing is already observable
+    // without one — it looks exactly like today's partial refusal of some
+    // targets — so a shipped reader would be a second way to say the same
+    // thing.
+    size_t g_rebuildEdgesRuns;   // Mesh.rebuildEdges entries
+    size_t g_buildLoopsRuns;     // Mesh.buildLoops entries
+    size_t g_spinRounds;         // rounds the last spinEdgesByKeys ran
+    bool   g_spinRoundsCapped;   // did MAX_SPIN_ROUNDS stop it?
+    size_t g_spinCollisions;     // spins whose new diagonal already existed
+    ulong[] g_spinCollisionKeys; // the diagonals those spins landed on
+    size_t g_spinsApplied;       // spins the last spinEdgesByKeys performed (S)
+}
+
+// The deferred-delivery set, shaped exactly like `noteHideDerivePending` /
+// `flushHideDerivePending` below. A set rather than "the batch's own mesh" so a
+// mutation of a mesh OTHER than the one the batch was opened on (a background
+// layer, a mesh a kernel built beside the primary) cannot strand its flags in
+// `undeliveredChanges_` until some unrelated later commit picks them up.
+// Appended to only when there is something to deliver, so a command that never
+// touches a mesh costs no allocation at all.
+private void noteDeliveryPending(Mesh* m) {
+    if (m is null) return;
+    // TASK 1906 review S2 — THE SET MUST NEVER NAME A NON-DOCUMENT MESH.
+    // This array outlives the call that appends to it (it is drained at the
+    // batch close), so a stack-local `Mesh` appended here becomes a pointer to
+    // a dead frame the moment its kernel returns: the measured symptom was a
+    // second delivery reading `flags=0x0` and a garbage `selDomains`. The
+    // filter in `deliverPending` runs BEFORE this call and is what makes that
+    // unrepresentable; this assert is what keeps a future caller from adding a
+    // second, unfiltered path to the set.
+    //
+    // The STRUCTURAL fix is to hold a `Layer` handle instead of a `Mesh*` —
+    // deferred to stage 2, when consumers key on the subject and there is a
+    // reason to resolve one (plan §S2).
+    assert(deliverySubjectAccepted(m),
+        "change_bus: a mesh no Layer owns reached the deferred-delivery set — "
+      ~ "the g_isDocumentMesh filter must run BEFORE noteDeliveryPending, or "
+      ~ "the set can name a dead stack frame");
+    foreach (p; g_deliveryPendingMeshes) if (p is m) return;
+    g_deliveryPendingMeshes ~= m;
+}
+
+version (unittest) {
+    // How many meshes the open delivery batch has deferred. `version
+    // (unittest)` and not `debug {}`, for the reason this file already records
+    // three times: a `debug` body is absent from a plain `-unittest` build,
+    // so a test over it would pass vacuously.
+    size_t deliveryPendingSetLength() { return g_deliveryPendingMeshes.length; }
+}
+
+// Deliver once per mesh the batch deferred, then clear the set. Take-and-clear
+// BEFORE iterating (same shape as flushHideDerivePending) so a listener that
+// illegally publishes cannot grow the set we are walking.
+private void flushDeliveryPending() {
+    auto pending = g_deliveryPendingMeshes;
+    g_deliveryPendingMeshes = null;
+    foreach (m; pending) if (m !is null) m.deliverPending();
+}
+
+// ---- The delivery batch, as it actually is: MESH-FREE ---------------------
+// TASK 1906 review S1. `g_deliveryDepth` is module state and neither of these
+// two functions reads a `Mesh` — the whole reason it is module state is spelled
+// out at its declaration (a `*mesh = subdivide(...)` kernel would reset an
+// in-struct counter mid-batch). So opening a batch does not need a mesh, and a
+// caller that HAS no mesh is not thereby excused from opening one.
+//
+// That is not hypothetical: `Command.apply`'s protected `mesh` is null for a
+// shipped command (`tools/create/box.d :: BoxLiveEditCommand` passes
+// `super(null, …)`), and a command that holds no mesh of its own can still
+// drive commits on one it reaches through a tool, a Document layer or an inner
+// command. An earlier cut of the wrapper guarded both calls with
+// `if (mesh !is null)` and would have left exactly that shape outside the
+// batch — pinned by `tests/unit/command_apply_anchor_test.d`'s null-`mesh`
+// block.
+//
+// The `Mesh` methods below are FORWARDERS, kept because a call site that
+// already has a mesh reads better beside its `beginHideDeriveBatch` twin. They
+// are the same function; the receiver is decoration.
+
+/// Open a delivery batch — see `Mesh.beginDeliveryBatch` for what a batch is.
+void beginDeliveryBatchGlobal() {
+    ++g_deliveryDepth;
+}
+
+/// Close a delivery batch; at depth 0, deliver every mesh the batch deferred.
+/// Clamped rather than asserted, exactly like `endHideDeriveBatch`: an
+/// imbalance must not be a process death in one build kind and a silent,
+/// sticky "never deliver again" in the other.
+void endDeliveryBatchGlobal() {
+    if (g_deliveryDepth <= 0) {
+        g_deliveryDepth = 0;
+        flushDeliveryPending();
+        return;
+    }
+    if (--g_deliveryDepth == 0)
+        flushDeliveryPending();
+}
+
+// THE SET MAY ONLY HOLD ADDRESSES THAT OUTLIVE THE BATCH (task 1903 gate fix).
+// This array is drained at `endHideDeriveBatch`, so every entry is dereferenced
+// AFTER the call that appended it has returned. `g_deliveryPendingMeshes` says
+// the same thing two hundred lines up and states it as an assert; this one
+// states it as a caller census, because the two callers satisfy it for two
+// DIFFERENT reasons and a blanket filter here would break one of them:
+//
+//   * `beginHideDeriveBatch` registers its OWN mesh, and is EXEMPT — the
+//     begin/end pair brackets that address's lifetime by construction (the
+//     close is itself a method call on it, so a dead mesh there is already UB
+//     for a reason that has nothing to do with this set). It must stay
+//     unconditional: `flushHideDerivePending`'s correctness argument below
+//     ("the batch's mesh is always among the ones a flush derives") is what
+//     lets `refreshHiddenDerived` own `g_hideDeriveDeferSafe` alone.
+//   * `commitStamps`' path (a) registers ANY mesh that commits while the batch
+//     is open, including one the batch never heard of, and satisfies the
+//     invariant only because `hideDeriveDeferralAccepted` refuses a
+//     non-document mesh BEFORE reaching here — see that predicate for the
+//     SIGSEGV that bought the rule.
+//
+// A THIRD CALLER must say which of those two it is. If it is the second kind,
+// it filters at its own site the way path (a) does; there is no third answer.
+private void noteHideDerivePending(Mesh* m) {
+    if (m is null) return;
+    foreach (p; g_hideDerivePendingMeshes) if (p is m) return;
+    g_hideDerivePendingMeshes ~= m;
+}
+
+version (unittest) {
+    // What the open hide-derive batch has deferred, shaped exactly like
+    // `deliveryPendingSetLength` above and `version (unittest)` for the reason
+    // this file records four times: a `debug {}` body is absent from a plain
+    // `-unittest` build, so a test over it would pass vacuously.
+    //
+    // `Contains` takes a raw address and never dereferences it, on purpose:
+    // the case worth testing is precisely an address whose frame is GONE.
+    size_t hideDerivePendingSetLength() { return g_hideDerivePendingMeshes.length; }
+
+    bool hideDerivePendingSetContains(const(void)* m) {
+        foreach (p; g_hideDerivePendingMeshes)
+            if (cast(const(void)*)p is m) return true;
+        return false;
+    }
+}
+
+// Runs the derive once per mesh the batch DEFERRED, then clears the set; a
+// mesh path (a) refused (no `Layer` owns it) derived inline at commit time and
+// is deliberately not here.
+// Unconditional: it also covers a mesh whose CONTENT was replaced wholesale
+// mid-batch (subdivide/remesh), where the pre-batch "nothing hidden" answer
+// no longer describes the mesh that is there now.
+private void flushHideDerivePending() {
+    auto pending = g_hideDerivePendingMeshes;
+    g_hideDerivePendingMeshes = null;
+    // Task 1333: this used to clear `g_hideDeriveDeferSafe` here as well. That
+    // was inert — the flush only ever fires at depth 0, where the batch is
+    // over and the flag is dead until the next `beginHideDeriveBatch` re-reads
+    // `anyHideBitSet()` anyway — but it was a latent de-optimization: any
+    // future flush from INSIDE an open batch would have turned deferral off
+    // for the rest of that batch and silently given back exactly what 1330
+    // bought in the clean case, with no symptom to notice.
+    //
+    // The flag is written by exactly two places, and between them the answer
+    // is already right: `beginHideDeriveBatch` arms it at depth 0 from
+    // `anyHideBitSet()`, and `refreshHiddenDerived` disarms it — but only when
+    // its scan actually finds a Hide bit, i.e. only when the derive is about
+    // to WRITE and deferring it would therefore be observable. The flush has
+    // no business overriding that answer.
+    //
+    // What makes that disarm SUFFICIENT, and not merely correct for one mesh:
+    // `refreshHiddenDerived` disarms only for the mesh it is called on, and a
+    // flush derives only the meshes in the pending set — so on its own the
+    // pair leaves a hole where a batch's own mesh is never scanned and the
+    // flag keeps a stale "safe" answer. What closes it is that
+    // `beginHideDeriveBatch` unconditionally puts the batch's own mesh into
+    // that set, so the batch's mesh is always among the ones a flush derives.
+    // That is the invariant any future MID-BATCH flush depends on — keep it if
+    // the pending set ever grows a removal path, or if a batch is ever opened
+    // without naming its mesh.
+    foreach (m; pending) if (m !is null) m.refreshHiddenDerived();
+}
+
+/// Borrowed, non-allocating view of ONE bit of a marks array.
+///
+/// This is not a second predicate. It is EXACTLY the predicate
+/// `Mesh.isVertexSelected` / `isEdgeSelected` / `isFaceSelected` apply --
+/// `i < marks.length && (marks[i] & bit) != 0`, bounds check included --
+/// only packaged so a consumer that has no `Mesh` to call a method on
+/// (`GpuMesh`, which takes a mask by value) can apply it without the
+/// materialized `bool[]` snapshot that `selectedVertices` & co. allocate.
+///
+/// LIFETIME CONTRACT -- the slice is BORROWED, not owned. It aliases the
+/// mesh's live `vertexMarks`/`edgeMarks`/`faceMarks` array, so it is
+/// invalidated by anything that changes that array's length (`resizeMarks`,
+/// every topological operation). A `MarkView` therefore lives for exactly
+/// one draw call: it is never stored in a field of a struct or class, and
+/// never survives a mesh mutation. That is a CONTRACT, not an assert --
+/// `-release` strips asserts, and a field that does not exist cannot be
+/// forgotten.
+///
+/// WHAT ACTUALLY CHECKS IT, and what it does not see.
+/// `tests/unit/mark_view_field_guard_test.d` scans `source/**.d` and fails on
+/// a declaration of this type at AGGREGATE scope -- `MarkView v;`,
+/// `private MarkView[] cache;`, `MarkView* p;`, `static MarkView x = ...` --
+/// and on a field whose initializer calls one of the `selected*View()`
+/// accessors (which is the `auto`-typed spelling of the same mistake). That
+/// is the whole of what is mechanically enforced. It is deliberately NOT the
+/// whole contract: a field reached through an `alias`, through a template
+/// parameter, or a view captured by a closure that outlives the draw call
+/// are all invisible to a source scan and remain matters for review. The
+/// guard exists so the COMMON spellings cannot land silently, not so the
+/// contract can stop being read.
+///
+/// `MarkView.init` is the empty view: `length == 0`, `empty == true`, and
+/// `opIndex` false at every index. That is what replaces the `(bool[]).init`
+/// / `[]` literals at the "no selection mask" draw call sites.
+struct MarkView {
+    // `marks_`, not `words_`: this is ONE `uint` mark per element, indexed by
+    // element, exactly as `vertexMarks`/`edgeMarks`/`faceMarks` are. Nothing
+    // here is bit-packed across elements -- `bit_` selects which BIT of each
+    // element's own mark is being read, and `opIndex(i)` reads `marks_[i]`.
+    private const(uint)[] marks_;
+    private uint          bit_;
+
+    this(const(uint)[] marks, uint bit) {
+        marks_ = marks;
+        bit_   = bit;
+    }
+
+    size_t length() const { return marks_.length; }
+    bool   empty()  const { return marks_.length == 0; }
+
+    /// Same bounds-checked shape as the scalar `is*Selected` accessors: an
+    /// index past the end is FALSE, not an error and not a range violation.
+    /// Call sites inherited that tolerance from the `bool[]` views they used
+    /// to guard with `i < sel.length`, so it is load-bearing, not defensive.
+    bool opIndex(size_t i) const {
+        return i < marks_.length && (marks_[i] & bit_) != 0;
+    }
+
+    /// Is ANY element's bit set? The early-out for consumers that would
+    /// otherwise walk the whole view to discover it is empty of marks.
+    ///
+    /// NOT the same question as `empty`, and the difference is the one that
+    /// matters here: `empty` asks whether the view has any ELEMENTS, which is
+    /// true only for `MarkView.init`. A live view over a mesh with nothing
+    /// selected has 100 489 elements and no bits, and it is that shape —
+    /// the shape of every whole-mesh drag, which operates on an empty
+    /// selection through the whole-mesh fallback — that made `drawVertices`
+    /// walk its entire cloud each frame to draw nothing.
+    ///
+    /// O(V) worst case, but over CONTIGUOUS uints with one AND each and an
+    /// early exit on the first hit, against a consumer loop that pays a
+    /// bounds check, a second array's load and a sentinel compare per element.
+    bool anySet() const {
+        foreach (m; marks_) if (m & bit_) return true;
+        return false;
+    }
+}
+
+/// Exact, non-allocating "did one mark BIT change" compare between a SNAPSHOT
+/// of a marks array and the live array (task 0585).
+///
+/// This is the change detector the Polygons-mode face->edge highlight cache in
+/// `ui/viewport_render.d` runs every frame. It used to be spelled
+/// `prevSelection != mesh.selectedFaces`, which materialized a fresh `bool[F]`
+/// for its own right-hand side on every frame -- the cache paid more than it
+/// saved. It lives here, next to the marks arrays it reads and away from the
+/// draw path, so it can be tested element by element against the materialized
+/// `bool[]` accessors as an independent oracle
+/// (`tests/unit/mark_view_test.d`); inline in the render function it had no
+/// identity-tier coverage at all, and an index shift that preserves run
+/// structure is invisible to the frame counters.
+///
+/// `mesh.selectionSignature` is the canonical non-allocating "did the
+/// selection change" detector and is deliberately NOT what this is. That one
+/// is a HASH, and its own contract promises only that a collision yields a
+/// stale cache hit rather than a wrong answer. For a cache that paints the
+/// screen a stale hit IS the wrong answer. An exact compare over the marks
+/// costs the same O(N) scan and cannot collide.
+///
+/// A length difference counts as a change: the snapshot cannot describe a
+/// marks array of a different size.
+bool marksBitDiffer(const(uint)[] snapshot, const(uint)[] live, uint bit)
+    pure nothrow @safe @nogc
+{
+    if (snapshot.length != live.length) return true;
+    foreach (i, mk; live)
+        if (((mk ^ snapshot[i]) & bit) != 0) return true;
+    return false;
+}
+
+private auto preparedDeepCopy(T)(ref T source) {
+    alias R = Unqual!T;
+    static if (is(R == string) || is(R == immutable)) {
+        return source;
+    } else static if (isDynamicArray!R) {
+        alias U = Unqual!(ElementType!T);
+        U[] result = new U[](source.length);
+        foreach (i; 0 .. source.length) result[i] = preparedDeepCopy(source[i]);
+        return result;
+    } else static if (isAssociativeArray!R) {
+        alias K = Unqual!(KeyType!T);
+        alias V = Unqual!(ValueType!T);
+        V[K] result;
+        foreach (key, value; source)
+            result[preparedDeepCopy(key)] = preparedDeepCopy(value);
+        return result;
+    } else static if (isStaticArray!R) {
+        alias U = Unqual!(ElementType!T);
+        U[source.length] result;
+        foreach (i; 0 .. source.length) result[i] = preparedDeepCopy(source[i]);
+        return result;
+    } else static if (is(R == struct)) {
+        R result = cast(R)source;
+        static foreach (i; 0 .. R.tupleof.length)
+            static if (__traits(compiles,
+                result.tupleof[i] = preparedDeepCopy(source.tupleof[i])))
+                result.tupleof[i] = preparedDeepCopy(source.tupleof[i]);
+        return result;
+    } else {
+        return source;
+    }
+}
+
+/// Owner support for Layer's future prepared mesh transaction. These are
+/// whole-image operations only; no shadow address is published to a bus.
+Mesh detachedPreparedMesh(ref const Mesh source) {
+    Mesh mutable = cast(Mesh)source;
+    return preparedDeepCopy(mutable);
+}
+
+bool canBeginPreparedMesh(ref const Mesh source) {
+    if (source.isRecordingEdits || source.undeliveredChanges_ ||
+        source.undeliveredSelDomains_ || source.cornerRewriteArmed_ ||
+        source.pendingCornerProvenance_.declared())
+        return false;
+    foreach (p; g_deliveryPendingMeshes) if (p is &source) return false;
+    foreach (p; g_hideDerivePendingMeshes) if (p is &source) return false;
+    return true;
+}
+
+void installPreparedMeshImage(ref Mesh target, ref Mesh image) nothrow @nogc {
+    target = image;
+    image = Mesh.init;
+}
+
+// A failure-only owned image plus external recorder/frame checkpoint. Pending
+// membership is restored for this subject alone, before Command delivery closes
+// (task 20261110; doc/headless_edit_rollback_completion_amendment_2026-10-06.md).
+struct MeshInvocation {
+private:
+    Mesh* subject_;
+    Mesh image_;
+    EditBatchFrame frame_;
+    MeshEditTracker.Checkpoint recorder_;
+    bool hadFrame_, deliveryQueued_, hideQueued_;
+
+    static bool queued(Mesh*[] queue, Mesh* subject) nothrow @nogc {
+        foreach (p; queue) if (p is subject) return true;
+        return false;
+    }
+    static void removeNew(ref Mesh*[] queue, Mesh* subject, bool wasQueued)
+            nothrow @nogc {
+        if (wasQueued) return;
+        foreach_reverse (i; 0 .. queue.length) {
+            if (queue[i] !is subject) continue;
+            foreach (j; i + 1 .. queue.length) queue[j - 1] = queue[j];
+            queue = queue[0 .. $ - 1];
+        }
+    }
+public:
+    @disable this(this);
+    this(ref Mesh subject) {
+        image_ = detachedPreparedMesh(subject);
+        auto frame = currentBatchFrame(&subject);
+        if (frame !is null) {
+            frame_ = *frame;
+            hadFrame_ = true;
+            if (frame.rec !is null) recorder_ = frame.rec.checkpoint();
+            // Set only after all checkpoint allocations have succeeded.
+            frame.invocationFloor = frame.depth;
+        }
+        deliveryQueued_ = queued(g_deliveryPendingMeshes, &subject);
+        hideQueued_ = queued(g_hideDerivePendingMeshes, &subject);
+        subject_ = &subject;
+    }
+    void validate() {
+        auto frame = currentBatchFrame(subject_);
+        if (hadFrame_) {
+            if (frame is null || frame.rec !is frame_.rec ||
+                frame.depth != frame_.depth || frame.invocationFloor != frame_.depth)
+                throw new Exception("headless invocation changed its caller edit frame");
+        } else if (frame !is null) {
+            throw new Exception("headless invocation leaked an edit frame");
+        }
+    }
+    void release() nothrow @nogc {
+        if (hadFrame_) {
+            auto frame = currentBatchFrame(subject_);
+            assert(frame !is null && frame.rec is frame_.rec);
+            frame.invocationFloor = frame_.invocationFloor;
+        }
+        subject_ = null;
+        image_ = Mesh.init;
+    }
+    void rollback() nothrow @nogc {
+        if (subject_ is null) return;
+        auto frame = currentBatchFrame(subject_);
+        if (hadFrame_) {
+            assert(frame !is null && frame.rec is frame_.rec,
+                "headless invocation lost its protected caller frame");
+            if (frame_.rec !is null) frame_.rec.restore(recorder_);
+            *frame = frame_;
+        } else if (frame !is null) {
+            // No caller-owned prefix exists; do not dereference a leaked
+            // inner recorder whose stack lifetime may already have ended.
+            popEditFrame(subject_);
+        }
+        removeNew(g_deliveryPendingMeshes, subject_, deliveryQueued_);
+        removeNew(g_hideDerivePendingMeshes, subject_, hideQueued_);
+        installPreparedMeshImage(*subject_, image_);
+        subject_ = null;
+    }
+    ~this() nothrow @nogc { rollback(); }
+}
+
+struct Mesh {
+    Vec3[]    vertices;
+    uint[2][] edges;
+    // Faces are stored through a FaceList wrapper to enable a staged
+    // migration toward flat (CSR-style) storage. See
+    // doc/mesh_faces_flat_refactor_plan.md for the multi-commit
+    // refactor; this commit (Stage A) introduces only the wrapper
+    // type with `alias this` to the underlying `uint[][]`, so every
+    // existing read/write/foreach call site keeps working unchanged.
+    FaceList faces;
+
+    /// The live face-index space (task 0831). Every kernel that records a
+    /// `RemoveFaces` / `ReshapeFaces` entry iterates THIS instead of
+    /// `0 .. faces.length`, so the index it records is one the type can vouch
+    /// came off the live array — `FaceIdx`'s doc comment has the full argument.
+    FaceIdxRange faceIndices() const { return FaceIdxRange(0, cast(uint)faces.length); }
+
+    /// The index the NEXT appended face will hold — the mint for an `AddFaces`
+    /// entry's `[F0,F1)` tail range, which is the one recorded index that is
+    /// deliberately NOT a live face yet. Read it BEFORE the append.
+    FaceIdx faceAppendBase() const { return FaceIdx.assumeFaceSpace(faces.length); }
+
+    /// The `FaceIdx` for ONE live face index — the single-index sibling of
+    /// `faceIndices`, added at task 1903 Stage L2-b for a kernel that already
+    /// holds an index the mesh itself handed it (an incidence walk such as
+    /// `facesAroundEdge`, an `edgeFaces` lookup) rather than one derived from a
+    /// scratch array's length.
+    ///
+    /// WHAT IT BUYS OVER `FaceIdx.assumeFaceSpace`, which it wraps: the BOUNDS
+    /// ASSERT. `assumeFaceSpace` is deliberately verbose because it can mint an
+    /// index the mesh does not have and is therefore "a review question, not a
+    /// conversion" (its own doc). This one cannot, so a kernel taking it is not
+    /// making a claim a reader has to re-check.
+    FaceIdx faceIndexAt(size_t fi) const {
+        assert(fi < faces.length,
+            "Mesh.faceIndexAt: not a live face index — the caller derived it "
+          ~ "from something other than the current `faces` array");
+        return FaceIdx.assumeFaceSpace(fi);
+    }
+
+    Loop[]     loops;        // all half-edge loops
+    uint[]     faceLoop;     // faceLoop[fi] = index of first loop of face fi
+    uint[]     vertLoop;     // vertLoop[vi] = loop starting at vi (anchored to fan start for boundary verts)
+    uint[]     loopEdge;     // loopEdge[li] = index in edges[] of the undirected edge for loop li
+    uint[ulong] edgeIndexMap; // edgeKey(a,b) → index in edges[]; populated by buildLoops + addEdge
+
+    // Task 0447 (vertex-fan-walk-returns-foreign-edge, KEEP-TWIN redesign):
+    // `buildLoops`'s twin pairing (Pass 3) links two darts by undirected-edge
+    // identity WITHOUT checking direction, so on inconsistently-wound faces a
+    // SAME-direction dart pair sharing an edge is paired as "twins". A proper
+    // twin is antiparallel; a same-direction pair has EQUAL tails
+    // (`loops[tw].vert == loops[li].vert`). We do NOT erase such a twin — the
+    // winding-repair tool (`mesh_ops/cleanup.d computeOrientationFlipMask`,
+    // behind `mesh.fixOrientation` / `mesh_analysis.inconsistentWindingFaces`)
+    // reads exactly that same-direction twin to DETECT the defect, so erasing
+    // it would blind the repair (see doc/vertex_fan_walk_foreign_edge_plan.md
+    // §1.2). Instead every vertex incident to a same-direction edge is marked
+    // NOT `vertexFanOrdered`: the fan walk stops there as at a boundary and
+    // slot-position consumers (`bevelEdgesByMask`,
+    // `symmetry.rebuildPairingTopological`) decline.
+    //
+    // TASK 1290 WIDENED THIS. It used to be keyed STRICTLY on
+    // same-directionness, leaving a genuine non-manifold ("book") vertex
+    // ordered — and that is precisely how a 3-face edge stayed invisible.
+    // Under treatment A all of its darts carry `twin==~0u`, so the ordered
+    // twin-walk truncates there exactly as at an open boundary: measured on
+    // three quads sharing edge (0,1), `facesAroundEdge` yielded ONE face,
+    // `isEdgeBorder` said "border", and `edgesAroundVertex(0)` enumerated 2 of
+    // the vertex's 4 edges. Both endpoints of a non-manifold edge are now
+    // marked unordered too, which routes those fans through the COMPLETE CSR
+    // walk instead of the truncating one. A non-manifold hub has no cyclic
+    // slot order to speak of, so the two slot-position consumers declining
+    // there (they `continue`) is the correct answer, not a lost capability.
+    // `edgeNonManifold_` below keeps the two meanings distinct for callers
+    // that need to tell them apart.
+    // Always sized to vertices.length (same class as
+    // `vertLoop`) so `vertexFanOrdered` is an O(1) read.
+    private bool[] vertFanOrdered_;
+
+    // Per-edge: does this edge carry THREE OR MORE incident face corners?
+    // Filled by `buildLoops` from the same pass that already discovers it
+    // (task 1290) and sized to `edges.length`; a shorter/empty array means
+    // "not built yet", and every reader treats an out-of-range index as
+    // manifold. This is the one bit that separates the two meanings of
+    // `twin == ~0u`: an OPEN BOUNDARY edge (one face) and a NON-MANIFOLD edge
+    // (three or more). Without it the two are byte-identical to every twin
+    // reader in the tree, which is the root of the whole 1290 cascade.
+    private bool[] edgeNonManifold_;
+
+    // CSR vertex→dart adjacency for the fan-walk fallback on unordered
+    // vertices: for vertex v, `vertDartAdj[vertDartStart[v] .. vertDartStart[v
+    // + 1]]` lists every dart `li` with `loops[li].vert == v` — one entry per
+    // face incident to v, built directly from `loops[]` (NOT via the twin
+    // graph), correct regardless of winding. Built ONLY when `buildLoops`
+    // finds at least one same-direction edge (Risk #1: no per-edge allocation
+    // on the clean corpus) — empty on every consistently-wound mesh, so the
+    // fast path pays nothing.
+    private uint[] vertDartStart;
+    private uint[] vertDartAdj;
+
+    // Shared CSR vertex→neighbor adjacency (flattened neighbor list + a
+    // per-vertex [offset, offset+1] bounds pair). Lazily rebuilt on read
+    // whenever `structVersion` moves — mirrors the lazy-invalidation
+    // discipline the toolpipe stages used to keep as private per-stage
+    // copies (`ensureVertexAdjacency` in FalloffStage / ActionCenterStage)
+    // before this provider replaced them. Co-locating the cache on `Mesh`
+    // itself dissolves the layer-aliasing hazard those copies had: a
+    // Mesh-owned cache can never be shared across two different Mesh
+    // instances the way a stage-owned cache (keyed only on mutationVersion,
+    // silently retargeted to a new primary layer) could.
+    //
+    // TASK 1906 STAGE 2d (plan §3.4 row 12) — THE KEY IS `structVersion`, NOT
+    // `mutationVersion`, AND NOT A BUS EPOCH. Three readings decide it:
+    //   * `mutationVersion` was simply the WRONG counter. This table is a pure
+    //     function of `edges` and `vertices.length`; `commitChange` bumps
+    //     `mutationVersion` for every class, so every scripted position
+    //     command, every selection click and every material write threw away a
+    //     connectivity table that could not have changed. `structVersion` is
+    //     bumped by the edge/face structural primitives and by nothing else.
+    //   * a bus EPOCH (`mesh_dirty`) was rejected for this row, unlike rows
+    //     10/14/15: an epoch only advances for a mesh the Document owns (the
+    //     delivery subject filter plus `app.d`'s per-layer feed), and this memo
+    //     is read on SCRATCH meshes all over the tree — every `mesh_ops` temp,
+    //     every unittest cage. Those would key on a frozen epoch and serve a
+    //     stale table forever.
+    //   * the `vertices.length` guard below is NOT redundant under either key:
+    //     `addVertex` commits `Points` and bumps `mutationVersion` but NOT
+    //     `structVersion`, so the length term is what catches a vertex append.
+    //     What it does NOT catch — and this is the trap, because the guard
+    //     reads like a general safety net — is any edit that changes `edges`
+    //     while `vertices.length` holds. Deleting every face with
+    //     `keepOrphans: true` is exactly that shape (E -> 0, V unchanged), so
+    //     the length term covers ONE direction only and the counter has to be
+    //     right about the other; see `rebuildEdges`'s `else if (hadEdges)` arm
+    //     and CELL 4 of the unittest below.
+    // INVARIANT: these slices must never be shared live across a
+    // mutating value copy of a Mesh. The rebuild writes in place when the
+    // vertex count is unchanged, so a copy that keeps the source's slice
+    // headers alive AND matches its version would be corrupted silently.
+    // Safe today because every live Mesh copy is source-dies / fresh-local
+    // / snapshot-.dup + a structVersion bump (which forces a rebuild) — the
+    // restore paths in `source/snapshot.d` assign `edges` DIRECTLY, bypassing
+    // every structural primitive, and bump `structVersion` themselves for
+    // exactly this reason. See the comment at that bump before removing it.
+    private ulong    _adjCsrStructVer = ulong.max;
+    private size_t[] _adjCsrOffset;
+    private uint[]   _adjCsrNeighbors;
+
+    // Return the CSR vertex→neighbor adjacency for this mesh: `offset` has
+    // length `vertices.length + 1`; the neighbors of vertex `v` are
+    // `neighbors[offset[v] .. offset[v + 1]]`. Rebuilt only when
+    // `structVersion` has moved since the last call (or the vertex count
+    // changed), so repeated calls within one topology-frozen drag — or one
+    // selection-frozen frame, or a run of scripted position commands — are
+    // O(1) after the first. Out-of-range edge endpoints (defensive —
+    // should not occur post-buildLoops) are skipped rather than indexing
+    // out of bounds.
+    void vertexAdjacencyCSR(out const(size_t)[] offset, out const(uint)[] neighbors) {
+        const size_t nV = vertices.length;
+        // recorded remainder (1906 §3.6): `structVersion` owns this compare
+        // (re-keyed off `mutationVersion` at stage 2d, plan §3.4 row 12). A bus
+        // epoch was REJECTED here for REACHABILITY, not for class: an epoch
+        // only advances for a mesh a `Document` layer owns, and this memo is
+        // read on scratch meshes throughout `mesh_ops` and the unit tests,
+        // where no delivery ever happens — it would read permanently fresh.
+        if (_adjCsrStructVer != structVersion || _adjCsrOffset.length != nV + 1) {
+            // Counting pass → per-vertex degree, then prefix-sum into offsets.
+            _adjCsrOffset.length = nV + 1;
+            _adjCsrOffset[] = 0;
+            foreach (e; edges) {
+                if (e[0] >= nV || e[1] >= nV) continue;
+                _adjCsrOffset[e[0] + 1]++;
+                _adjCsrOffset[e[1] + 1]++;
+            }
+            foreach (i; 1 .. nV + 1) _adjCsrOffset[i] += _adjCsrOffset[i - 1];
+            _adjCsrNeighbors.length = _adjCsrOffset[nV];
+            // Fill pass with a temporary cursor per vertex.
+            auto cursor = new size_t[](nV);
+            foreach (i; 0 .. nV) cursor[i] = _adjCsrOffset[i];
+            foreach (e; edges) {
+                if (e[0] >= nV || e[1] >= nV) continue;
+                _adjCsrNeighbors[cursor[e[0]]++] = e[1];
+                _adjCsrNeighbors[cursor[e[1]]++] = e[0];
+            }
+            _adjCsrStructVer = structVersion;
+        }
+        offset    = _adjCsrOffset;
+        neighbors = _adjCsrNeighbors;
+    }
+
+
+    // --- Per-element marks (single source of truth) ----------------------
+    // Bitfield per element folding the per-element flags into one word.
+    // These marks arrays are the AUTHORITATIVE storage for per-element
+    // selection (and per-face subpatch) state. The `selectedVertices /
+    // selectedEdges / selectedFaces / isSubpatch` names below are `@property`
+    // read accessors that materialize a fresh `bool[]` view from the matching
+    // marks array on demand — they are NOT stored. Lengths are maintained in
+    // lock-step with the matching geometry array (vertexMarks↔vertices,
+    // edgeMarks↔edges, faceMarks↔faces; faceMarks folds both Select and
+    // Subpatch for faces).
+    enum Marks : uint {
+        Select   = 1 << 0,
+        Subpatch = 1 << 1,
+        Hide     = 1 << 2, // per-element hide (task 0613) — see refreshHiddenDerived()
+        Lock     = 1 << 3, // reserved, unused
+    }
+    uint[]    vertexMarks;
+    uint[]    edgeMarks;
+    uint[]    faceMarks;
+
+    // --- Materialized bool[] read views over the marks arrays -------------
+    // Back-compat accessors: every external READ site (`mesh.selectedX[i]`,
+    // `.length`, `.dup`, `foreach`) keeps compiling unchanged. Each call
+    // allocates a fresh `bool[]` snapshot of the relevant mark bit, so these
+    // are read-only — a `mesh.selectedX[i] = …` write would mutate a throwaway
+    // temporary, which is why all writes go through the setter/helper methods
+    // below. `const` so they remain callable from const methods.
+    //
+    // THE PER-FRAME DRAW PATH IS NO LONGER A CLIENT (task 0585). It was, and
+    // that allocation was the whole of the frame's mesh-scaled GC traffic:
+    // one `bool[]` per accessor call per frame per viewport cell, 102 400 B
+    // at a grid of n=316, x4 in a Quad layout. `ui/viewport_render.d` now asks
+    // `selectedVertexView()/selectedEdgeView()/selectedFaceView()` below, and
+    // the face->edge cache's change detector asks `marksBitDiffer`. What is
+    // left here are the ~100 call sites that are NOT per-frame (commands,
+    // I/O, panels' click handlers) plus this file's own unit tests — for
+    // those the snapshot is the convenient shape and its cost is paid once.
+    // Before adding a call, check whether the site runs on the draw path.
+    @property bool[] selectedVertices() const {
+        auto r = new bool[](vertexMarks.length);
+        foreach (i, m; vertexMarks) r[i] = (m & Marks.Select) != 0;
+        return r;
+    }
+    @property bool[] selectedEdges() const {
+        auto r = new bool[](edgeMarks.length);
+        foreach (i, m; edgeMarks) r[i] = (m & Marks.Select) != 0;
+        return r;
+    }
+    @property bool[] selectedFaces() const {
+        auto r = new bool[](faceMarks.length);
+        foreach (i, m; faceMarks) r[i] = (m & Marks.Select) != 0;
+        return r;
+    }
+    @property bool[] isSubpatch() const {
+        auto r = new bool[](faceMarks.length);
+        foreach (i, m; faceMarks) r[i] = (m & Marks.Subpatch) != 0;
+        return r;
+    }
+
+    // --- Non-allocating scalar accessors ---------------------------------
+    // Hot-path counterparts to the materialized `bool[]` views above: a
+    // single mark-bit test instead of allocating a whole snapshot array per
+    // read. Each bounds-checks internally and returns false when out of
+    // range, so they drop straight into the common
+    // `if (i >= sel.length || !sel[i])` guard pattern.
+    bool isVertexSelected(size_t i) const {
+        return i < vertexMarks.length && (vertexMarks[i] & Marks.Select) != 0;
+    }
+    bool isEdgeSelected(size_t i) const {
+        return i < edgeMarks.length && (edgeMarks[i] & Marks.Select) != 0;
+    }
+    bool isFaceSelected(size_t i) const {
+        return i < faceMarks.length && (faceMarks[i] & Marks.Select) != 0;
+    }
+    bool isFaceSubpatch(size_t i) const {
+        return i < faceMarks.length && (faceMarks[i] & Marks.Subpatch) != 0;
+    }
+
+    // --- Borrowed non-allocating mask views (task 0585) -------------------
+    // The same three questions the materialized `selectedVertices/Edges/Faces`
+    // views above answer, in the form a per-frame consumer can afford: no
+    // allocation at all, the mesh's own marks array handed out under a
+    // one-draw-call borrow. See `MarkView` for the lifetime contract.
+    //
+    // These do NOT replace the materialized accessors, and the materialized
+    // accessors are deliberately NOT reimplemented on top of these: they are
+    // the independent ORACLE that `tests/unit/mark_view_test.d` compares this
+    // carrier against element by element. One implementation would make that
+    // test compare an expression with itself.
+    MarkView selectedVertexView() const {
+        return MarkView(vertexMarks, Marks.Select);
+    }
+    MarkView selectedEdgeView() const {
+        return MarkView(edgeMarks, Marks.Select);
+    }
+    MarkView selectedFaceView() const {
+        return MarkView(faceMarks, Marks.Select);
+    }
+    // --- Hide (Marks.Hide, task 0613) --------------------------------------
+    // The polygon plane is the ONLY stored authority (§1.2 of
+    // doc/hide_geometry_plan.md, measured — not the "conservative" guess the
+    // plan's own pre-capture fallback made, which the capture refuted).
+    // Vertex and edge are DERIVED and cached in place by
+    // refreshHiddenDerived(): a vertex is hidden iff it has at least one
+    // incident face and EVERY one of them is hidden (a loose vertex — no
+    // incident face — keeps its own settable bit, untouched by the
+    // derivation); an edge is hidden iff AT LEAST ONE endpoint vertex is
+    // hidden (derived from VERTICES, not polygons — measured: two adjacent
+    // hidden polygons do NOT hide the edge they share, because both
+    // endpoints still touch a third, visible face). These three scalar
+    // readers are non-allocating, same bounds-check-and-return-false
+    // contract as isFaceSubpatch above.
+    bool isVertexHidden(size_t i) const {
+        return i < vertexMarks.length && (vertexMarks[i] & Marks.Hide) != 0;
+    }
+    bool isEdgeHidden(size_t i) const {
+        return i < edgeMarks.length && (edgeMarks[i] & Marks.Hide) != 0;
+    }
+    bool isFaceHidden(size_t i) const {
+        return i < faceMarks.length && (faceMarks[i] & Marks.Hide) != 0;
+    }
+    // Non-allocating selection popcounts: scan the Select bit directly over
+    // the marks arrays instead of materializing a `bool[]` snapshot to count.
+    int countSelectedVertices() const {
+        int n = 0;
+        foreach (m; vertexMarks) if (m & Marks.Select) n++;
+        return n;
+    }
+    int countSelectedEdges() const {
+        int n = 0;
+        foreach (m; edgeMarks) if (m & Marks.Select) n++;
+        return n;
+    }
+    int countSelectedFaces() const {
+        int n = 0;
+        foreach (m; faceMarks) if (m & Marks.Select) n++;
+        return n;
+    }
+    // Recomputing accessor (never a guard — see refreshHiddenDerived()'s own
+    // early-out, which is self-computed and caches no count). A UI readout
+    // for "N hidden" (R9 — the isolate trap must never be invisible).
+    int countHiddenFaces() const {
+        int n = 0;
+        foreach (m; faceMarks) if (m & Marks.Hide) n++;
+        return n;
+    }
+    // The vertex/edge twins (S4). All three planes are reported, not just the
+    // stored one, because the readout has to answer "why is my geometry
+    // missing" in whichever selection type the user is in — a vertex-mode
+    // user who hid three faces around a corner sees one vertex vanish, and a
+    // face count of 3 does not explain it. Same recomputing contract as
+    // above: no cached counter anywhere (R13).
+    int countHiddenVertices() const {
+        int n = 0;
+        foreach (m; vertexMarks) if (m & Marks.Hide) n++;
+        return n;
+    }
+    int countHiddenEdges() const {
+        int n = 0;
+        foreach (m; edgeMarks) if (m & Marks.Hide) n++;
+        return n;
+    }
+    int[]     vertexSelectionOrder;  // 1-based counter; 0 = not manually selected
+    int[]     edgeSelectionOrder;    // 1-based counter; 0 = not manually selected
+    int[]     faceSelectionOrder;    // 1-based counter; 0 = not manually selected
+    int       vertexSelectionOrderCounter;
+    int       edgeSelectionOrderCounter;
+    int       faceSelectionOrderCounter;
+    // Persistent per-face subpatch flag (Tab toggle), stored as the Subpatch
+    // bit in `faceMarks` and surfaced via the `isSubpatch` @property above.
+    // Faces with the bit set are displayed through a subdivided preview while
+    // the cage geometry remains authoritative.
+
+    // Material Groups (LWO-style surfaces). `surfaces[]` is the per-mesh
+    // material registry; `faceMaterial[fi]` indexes into it. Both follow
+    // the same lazy-resize convention as `isSubpatch` / `selectedFaces`:
+    // read sites must defend with `faceAttrOr(faceMaterial, fi)`
+    // so the default-surface fallback works on freshly-built meshes that
+    // never had explicit material assignments. See
+    // doc/material_groups_plan.md for the data-model rationale.
+    Surface[] surfaces;
+    uint[]    faceMaterial;
+    uint[]    facePart;     /// per-face "part" id (parallel to faceMaterial; read sites defend fi<len?:0)
+
+    // Defensive per-face attribute read for the lazy-resize arrays above
+    // (faceMaterial / facePart / faceSelectionOrder): an index past the
+    // array's current length yields the default (T.init), not a RangeError.
+    // WIDENED out of `private` by task 1903 Stage F1 (plan §2.6): the first
+    // converted family to name it. `mesh_ops/loop_slice.d` reads
+    // `faceMarks` — and ONLY `faceMarks`, corrected at the F1 review — through
+    // it at FOUR sites while emitting the ring split, and a free function in
+    // `source/mesh_ops/` does not see mesh.d's `private` the way a mixin body
+    // instantiated in this scope did. `static`, so UFCS through the batch
+    // handle cannot reach it: the converted callers spell it
+    // `Mesh.faceAttrOr(...)`. `mesh_ops/extrude.d` (Stage H, 10 sites) and
+    // `mesh_ops/edge_bevel.d` (Stage G, 2) name it too and are still mixins —
+    // the census row lists all three files.
+    static T faceAttrOr(T)(in T[] attr, size_t fi) { return fi < attr.length ? attr[fi] : T.init; }
+
+    /// One face-local vertex substitution: wherever `oldV` appears in a face's
+    /// vertex list, it is replaced IN PLACE by the whole `newVs` run (one
+    /// vertex for a plain slide, two when a corner splits into a predecessor
+    /// and a successor). Accumulated per face id as `VertSub[][uint]` by every
+    /// operator that rims a face without re-deriving its winding.
+    static struct VertSub { uint oldV; uint[] newVs; }
+
+    /// Apply the substitutions recorded for ONE face. `subsP` is the raw
+    /// `fi in faceSubs` lookup, so the untouched-face case (null) stays a
+    /// single `.dup` with no map built.
+    ///
+    /// Singular, not the `rebuildFacesWithVertexSubs` the audit named: the
+    /// three call sites this replaced (edge bevel's L0 boundary resolve,
+    /// vertex bevel's rebuild pass, extrude's rebuild pass) share the inner
+    /// substitution exactly, but each wraps it in its OWN loop with its own
+    /// bound and its own per-face attribute carry. Hoisting the loop too
+    /// would have had to invent a policy for the attrs; hoisting the
+    /// substitution alone is the part that was byte-identical.
+    ///
+    /// Order-sensitive detail worth keeping visible: a repeated `oldV` in
+    /// `subs` means LAST wins (AA assignment), and an `oldV` appearing twice
+    /// in the face is substituted at BOTH positions. Both were true of all
+    /// three copies.
+    /// PUBLIC STATIC since task 1903 Stage E4 (plan §2.6), for the same reason
+    /// as `finalizeTopologyEdit` above: `mesh_ops/bevel_vertex.d` calls it as
+    /// `Mesh.rebuildFaceWithVertexSubs(...)` — a `static` member is not
+    /// reachable by UFCS through the batch handle, so the qualified spelling is
+    /// the only one. `mesh_ops/edge_bevel.d` (Stage G) and `mesh_ops/extrude.d`
+    /// (Stage H) name it too and are still mixins; the census row lists all
+    /// three files.
+    static uint[] rebuildFaceWithVertexSubs(const(uint)[] face, VertSub[]* subsP) {
+        if (subsP is null) return face.dup;
+        uint[][uint] repl;
+        foreach (s; *subsP) repl[s.oldV] = s.newVs;
+        uint[] rebuilt;
+        foreach (v; face) {
+            auto rp = v in repl;
+            if (rp is null) rebuilt ~= v;
+            else            rebuilt ~= *rp;
+        }
+        return rebuilt;
+    }
+
+    // Combine two face-marks words for a NEW face created FROM multiple
+    // source faces — bevel's chamfer strip/cap, loop-slice's section cap
+    // (task 0613 §4.2, code review S5). The two bits this mixes are NOT
+    // symmetric:
+    //  * Subpatch keeps the pre-existing ANY-source OR — a bridging/blended
+    //    face inherits smoothness if any of its sources asked for it. This is
+    //    cosmetic and unions safely.
+    //  * Hide instead uses ALL-source AND — the same law §1.2 of
+    //    doc/hide_geometry_plan.md already uses to derive a VERTEX's hidden
+    //    state from its incident faces (hidden iff EVERY incident face is
+    //    hidden), applied here to a face born from several sources instead of
+    //    a vertex born from several incident faces. OR-ing Hide instead would
+    //    make newly-created geometry straddling a hide boundary disappear on
+    //    creation — a chamfer strip or section cap the user just built in the
+    //    visible part of the mesh would read hidden even though no command
+    //    ever asked to hide it.
+    // `Marks.Hide` alone (every other bit 0) is this operator's identity
+    // element: `combineFaceMarksWords(Marks.Hide, w) == w` for any `w` — so a
+    // fold over N sources can seed its accumulator with `Marks.Hide` and get
+    // the correct "vacuously all-hidden" value if it ever folds zero sources,
+    // exactly like `&&`'s identity is `true`.
+    // WIDENED out of `private` by task 1903 Stage F1 (plan §2.6), for the same
+    // reason as `faceAttrOr` above: `mesh_ops/loop_slice.d`'s Cap Sections arm
+    // folds several ring faces' mark words into one cap face's word through
+    // it. `static`, so the converted caller spells it
+    // `Mesh.combineFaceMarksWords(...)`. `mesh_ops/edge_bevel.d` (Stage G)
+    // names it too and is still a mixin.
+    static uint combineFaceMarksWords(uint a, uint b) {
+        return ((a | b) & ~Marks.Hide) | (a & b & Marks.Hide);
+    }
+    // Monotonic counter bumped on any topology or vertex-position change that
+    // invalidates the subpatch preview. Mutators that touch geometry should
+    // increment this so cached previews can detect the change.
+    ulong     mutationVersion;
+    /// Counter for TOPOLOGY-only changes — bumped when faces / edges /
+    /// vertices are added or removed, when isSubpatch changes (which
+    /// changes subpatch preview output topology), or when a snapshot
+    /// restore brings in new geometry. NOT bumped on pure vertex-
+    /// position writes (move drag, undo of move, etc.) — that's what
+    /// `mutationVersion` is for. Callers that cache topology-derived
+    /// data (e.g. SubpatchPreview's per-level adjacency) compare this
+    /// to know whether the cache is still valid, vs. just refreshing
+    /// positions.
+    ulong     topologyVersion;
+
+    /// Connectivity (edge/face structure) sub-version. Bumped ONLY by the
+    /// edge/face structural primitives (addEdge/addFace/addFaceFast/
+    /// rebuildEdgesFromFaces, and transitively rebuildEdges). NOT bumped by
+    /// vertex-add/position/marks/isSubpatch changes. The loops family
+    /// (loops/faceLoop/vertLoop/loopEdge) and edgeIndexMap are functions of
+    /// this, so their validity stamps compare against it — NOT
+    /// topologyVersion, which conflates Points|Polygons and would falsely
+    /// invalidate on a Points-only change (e.g. a bare addVertex). Orthogonal
+    /// to commitChange — commitChange never touches it, so there is no
+    /// build-before-commit ordering hazard and no ride-along pending flag:
+    /// buildLoops stamps `loopsStamp = structVersion` directly, and nothing
+    /// re-bumps structVersion until the next real structural mutation.
+    ulong     structVersion;
+
+    /// Validity state for a structVersion-derived structure (the loops
+    /// family or edgeIndexMap). `Stale` = built for an older structVersion,
+    /// or never built at all (the fresh-`Mesh.init` case — the state starts
+    /// `Stale` so a never-built mesh does not read as valid by the `0==0`
+    /// coincidence). `Valid` = built for the current structVersion.
+    /// `DeliberatelyEmpty` = intentionally left empty by a caller that knows
+    /// it will not be read through the loops helpers (e.g. a subpatch
+    /// preview mesh whose consumers only read vertices/edges/faces) —
+    /// distinct from `Stale` so a future assert can tell "forgot to rebuild"
+    /// from "deliberately skipped".
+    enum DerivedState : ubyte { Stale, Valid, DeliberatelyEmpty }
+    private ulong loopsStamp;    // structVersion the loops family was built for
+    private ulong edgeMapStamp;  // structVersion edgeIndexMap was built for
+    private DerivedState loopsState_   = DerivedState.Stale;
+    private DerivedState edgeMapState_ = DerivedState.Stale;
+
+    /// O(1): true iff the loops family (loops/faceLoop/vertLoop/loopEdge)
+    /// was built for the CURRENT structVersion.
+    bool loopsValid() const {
+        // recorded remainder (1906 §3.6): `structVersion` owns this compare and
+        // KEEPS it. Both stamps are read INSIDE a command — add verts, then ask
+        // connectivity in the next statement — and a subscription cannot be
+        // call-granular: the bus delivers at the edit BOUNDARY, which is after
+        // the question has already been asked. Plan §3.4 row 13.
+        return loopsState_ == DerivedState.Valid && loopsStamp == structVersion;
+    }
+    /// O(1): true iff edgeIndexMap is populated AND in sync with the current
+    /// structVersion (false while deliberately deferred — e.g. between
+    /// addFaceFast calls and the caller's terminal buildLoops()).
+    bool edgeMapUsable() const {
+        // recorded remainder (1906 §3.6): `structVersion`, same reason as
+        // `loopsValid` just above — an intra-command question the bus is not
+        // granular enough to answer. Plan §3.4 row 13.
+        return edgeMapState_ == DerivedState.Valid && edgeMapStamp == structVersion;
+    }
+    /// Explicitly mark the loops family + edgeIndexMap DeliberatelyEmpty —
+    /// for meshes (e.g. subpatch preview output) whose consumers never read
+    /// through the loops helpers, so a stray reader sees an explicit
+    /// "not built, on purpose" state rather than stale data from a previous
+    /// rebuild. Keeps the state fields `private` while giving external
+    /// modules an intent-named way to record the contract.
+    void markDerivedEmpty() {
+        loopsState_   = DerivedState.DeliberatelyEmpty;
+        edgeMapState_ = DerivedState.DeliberatelyEmpty;
+    }
+
+
+    /// Debug-only (stripped from release builds — byte-stable): assert the
+    /// loops family is valid at a provably-settled read entry point. See
+    /// call sites for the settledness proof; never place in a mid-op reader.
+    pragma(inline, true) void assertLoopsValid() const {
+        debug assert(loopsValid(),
+            "loops family read while stale — a topology mutator skipped buildLoops()");
+    }
+    /// Debug-only (stripped from release builds — byte-stable): assert
+    /// edgeIndexMap is valid at a provably-settled read entry point.
+    pragma(inline, true) void assertEdgeMapValid() const {
+        debug assert(edgeMapUsable(),
+            "edgeIndexMap read while stale/empty — a topology mutator skipped rebuildEdges()/buildLoops()");
+    }
+
+    // --- The change-notification accumulator (task 1906 §1.2) --------------
+    // OR-accumulated change-class flags (MeshEditScope bits) and selection
+    // domains (change_bus.SelDomain bits) that have not yet been handed to the
+    // bus. Taken-and-zeroed by `deliverPending()` at the edit boundary.
+    //
+    // THERE USED TO BE A SECOND PAIR beside these — `undeliveredChanges_` /
+    // `undeliveredSelDomains_`, drained once per frame by `source/app.d`'s flush
+    // block. Stage 3 deleted both, and with them the two-path delivery model:
+    // every publisher now delivers, so a per-frame union with no subject has
+    // nothing left to carry (the drain's own `changeBus.flush` named
+    // `subjectAddr == 0`, which `mesh_dirty` refused by design anyway).
+    //
+    // The pair existed for one live reason, and that reason is gone too:
+    // app.d's shadow check used to read "mutationVersion moved while
+    // `undeliveredChanges_` reads 0", so a delivery that took-and-zeroed the same
+    // word would have made the guard fire on every mutation. Since stage 3 the
+    // guard reads `mutationVersion == stampedVersion_` instead — a per-mesh
+    // equality that needs no frame, no drain and no second word.
+    uint      undeliveredChanges_;     // MeshEditScope bits, not yet delivered
+    uint      undeliveredSelDomains_;  // change_bus.SelDomain bits, not yet delivered
+
+    // --- The missed-publisher witness (task 1906 stage 3) -----------------
+    // `mutationVersion` as of the last STAMP made through `commitStamps` — the
+    // one funnel that is allowed to advance it. The invariant is therefore a
+    // per-mesh equality, `mutationVersion == stampedVersion_`, and a mesh that
+    // fails it has had its version bumped by something that published nothing:
+    // exactly what `changeBus.missedPublishers` counts (task 0462).
+    //
+    // IT REPLACES A FRAME-SHAPED TEST WITH A PER-MESH ONE, and that is the
+    // whole reason it exists. Until stage 3 the guard read
+    // "`mutationVersion` moved while `undeliveredChanges_` reads 0", which needed
+    // the per-frame drain to zero that word for it — so deleting the drain
+    // would have left the old form permanently green (the word is never
+    // cleared again), i.e. a check that cannot come out differently. It was
+    // also MASKABLE: any other publisher on the same mesh in the same frame
+    // filled `undeliveredChanges_` and hid the bare bump. This one is not — the
+    // equality is restored only by a real stamp.
+    //
+    // Read by the `debug` shadow check in `source/app.d`'s flush block, which
+    // re-syncs after counting so one bare bump is counted once rather than
+    // every frame afterwards.
+    ulong     stampedVersion_;
+
+    // Accumulate-only: OR the given MeshEditScope flags into the pending set.
+    // Does NOT bump the version counters, so it is safe inside loops and safe
+    // mid-drag (where the intentional version-stability invariant must hold).
+    /// Bumped whenever anything `selectionSignature` reads can have changed:
+    /// the marks themselves (Marks), the Hide bit it folds in (Visibility), or
+    /// the LENGTH of the arrays (Points / Polygons). Deliberately NOT bumped on
+    /// Position — a drag moves vertices without touching a single mark, and a
+    /// counter that moved there would make the memo it exists for miss on every
+    /// frame of the one gesture that matters.
+    ///
+    /// It hangs off the SAME two funnels that publish `MeshEditScope.Marks`
+    /// and nothing else writes the accumulator, so its coverage is exactly
+    /// the Marks publication's coverage — which is already load-bearing (the
+    /// display-refresh mask and the GPU-select invalidation both key on it) and
+    /// already gated (`changeBus.missedPublishers`). A new invariant would have
+    /// been a new thing to get wrong; this is the existing one, counted.
+    ulong marksVersion;
+
+    // Anything that changes what `selectionSignature` would return. Named once
+    // so the two funnels below cannot drift apart.
+    private enum uint kMarksAffecting = MeshEditScope.Marks
+                                      | MeshEditScope.Visibility
+                                      | MeshEditScope.Points
+                                      | MeshEditScope.Polygons;
+
+    void noteChange(uint flags) {
+        // The companion contract assert (task 1906 §1.5). It catches an
+        // illegal publish AT the offending line instead of one delivery later,
+        // and it catches the case `deliverMesh`'s own assert structurally
+        // cannot: a publish made while a DELIVERY BATCH is open only
+        // accumulates, so it never re-enters delivery to be seen there.
+        // Always-on, for the same lane reason as the guard itself — the suite
+        // tests are compiled `dmd -unittest` with no `-debug`, so a `debug {}`
+        // body would be absent from exactly the binary under test.
+        assert(!changeBus.delivering,
+            "change_bus: a listener published a mesh change — listeners are " ~
+            "dirty-bit-only (set your own flag, recompute lazily at the reader)");
+        // Accumulate-only: `noteChange` keeps its "safe inside loops, safe
+        // mid-drag" contract and does NOT deliver. The next delivering
+        // publisher (`publishChange` / `commitChange`, or the command anchor at
+        // `Command.apply`'s close) takes this word.
+        undeliveredChanges_ |= flags;
+        if (flags & kMarksAffecting) ++marksVersion;
+    }
+
+    /// Accumulate + DELIVER, without touching the version counters — the
+    /// version-silent delivering publisher (task 1906 §1.2).
+    ///
+    /// The third of FOUR publisher entry points, and the row that distinguishes
+    /// them:
+    ///
+    ///   noteChange             accumulates, no version bump, NO delivery
+    ///   publishChange          accumulates, no version bump, delivers at depth 0
+    ///   commitChange           accumulates, bumps versions,  delivers at depth 0
+    ///   publishConfinedChange  publishChange + "the vertices I moved are my
+    ///                          live gesture's own moving set" (task 2000).
+    ///                          Same class word, same listeners, same count,
+    ///                          same version silence; the ONE difference is
+    ///                          that `mesh_dirty.g_settledGeomEpochs` withholds
+    ///                          its advance. Defined directly below, with the
+    ///                          caller contract that makes the claim true.
+    ///
+    /// It exists for the interactive transform path, whose mid-gesture applies
+    /// must stay version-silent (a `mutationVersion` bump there cancels an
+    /// in-session falloff re-grade) while still telling position-dependent
+    /// listeners that vertices moved. Version counters own STRUCTURE; the bus's
+    /// `Position` class owns POSITION.
+    ///
+    /// IT IS ALSO THE CORRECT TAIL FOR A `*mesh = …` WHOLESALE REPLACE, and
+    /// THAT is the rule stage 2 of task 1906 turned from a nicety into a
+    /// requirement. `noteChange` never delivers. A command whose LAST mesh
+    /// publisher is a note therefore delivers only if some EARLIER call inside
+    /// the same `Command.apply` batch happened to register the mesh — via a
+    /// `commitChange` in `resetSelection()`, or in a `MeshSnapshot.restore`.
+    /// That is INCIDENTAL: reorder those two lines, or drop the
+    /// `resetSelection()`, and the command silently stops delivering. Since
+    /// stage 2a the display family and the geometry family key on the BUS
+    /// EPOCH rather than on a per-frame pull, so a command that
+    /// delivers nothing leaves `ensureDisplayCurrent` — the mid-batch pull
+    /// guard in front of every VBO reader that runs before the frame's flush —
+    /// with no reason to re-upload, for the rest of that frame.
+    /// `publishChange` accumulates identically to `noteChange` and delivers at
+    /// depth 0 / at the batch close, so the delivery COUNT per command is
+    /// unchanged (one, at the close) while the delivery itself becomes
+    /// STRUCTURAL. A note is still right for a publisher that is followed by a
+    /// real delivering one inside the same operation (the `Maps` notes on the
+    /// transform path say so at their sites); it is wrong as a command's tail.
+    void publishChange(uint flags) {
+        noteChange(flags);
+        deliverPending();
+    }
+
+    /// `publishChange`, plus the publisher's claim that every vertex it moved
+    /// is inside the LIVE GESTURE'S OWN MOVING SET — the fourth publisher
+    /// entry point (task 2000), and the fourth row of the table above.
+    ///
+    /// WHO MAY CALL IT: the interactive-transform apply sites and the topology
+    /// pen's live move step, and nothing else. What makes the claim
+    /// TRUE at each is that the same tool hands the same set to its consumers as
+    /// an exclusion — `MoveTool.applySnapToDelta` passes the processed operand
+    /// (`vertexIndicesToProcess`) to `snapCursor` as `excludeVerts`.
+    /// A caller that cannot name the consumer-side exclusion its claim rests on
+    /// wants `publishChange`.
+    ///
+    /// THAT CALLER SET IS AN INVARIANT AND IT IS ENFORCED, not merely asked
+    /// for: `tests/unit/confined_publisher_census_test.d` scans `source/**`
+    /// for calls to this method and refuses any that is not one of the
+    /// recorded sites. A new caller — or a new tool mixing in
+    /// `XfrmApplyImpl` — would otherwise hold a mid-gesture stale bucket grid
+    /// with nothing in any suite moving, because the failure of a key that is
+    /// too NARROW is a wrong answer nobody asserts and the failure of one that
+    /// is too WIDE is merely slow. Add a caller and you edit that census, with
+    /// the exclusion set it leans on named in the row.
+    ///
+    /// WHAT IT CHANGES AND WHAT IT DOES NOT. The delivery is identical — same
+    /// class word, same listeners, same count, same version silence. The ONLY
+    /// difference is that `mesh_dirty`'s `g_settledGeomEpochs` withholds its
+    /// advance, so the two caches that key on that watcher survive the gesture.
+    /// Every other listener — the GPU upload, the display epochs, the surface
+    /// BVH, the subpatch preview — is untouched, and must be: a drag step that
+    /// stopped moving pixels would be a far worse bug than a rebuilt bucket
+    /// grid.
+    ///
+    /// THE MARKER CLOSES BEFORE THIS RETURNS, including on a throw. A delivery
+    /// deferred by an open batch would land at the batch close with the marker
+    /// already down, so it would read as unconfined and everything would
+    /// rebuild — the safe direction, and the honest one, since a command batch
+    /// around a transform apply is not a gesture step. Said in the conditional
+    /// deliberately: no `Command.apply` wraps a live gizmo apply today, so all
+    /// three callers run at `g_deliveryDepth == 0` and nothing is ever actually
+    /// deferred here. This is a property of the construction, not a live one
+    /// with a witness.
+    void publishConfinedChange(uint flags) {
+        noteChange(flags);
+        changeBus.beginConfinedDelivery();
+        scope (exit) changeBus.endConfinedDelivery();
+        deliverPending();
+    }
+
+    /// THE COMMAND-LEVEL DELIVERY ANCHOR (task 1906 stage 3). Hand whatever has
+    /// accumulated to the bus, adding no class of its own.
+    ///
+    /// It exists because the "convert every command's tail to `publishChange`"
+    /// rule above cannot reach the SELECTION family, and that was measured
+    /// rather than argued: `select.invert`, `select.byStat.{vertex,edge,polygon}`
+    /// and their siblings never call a publisher at all — the marks setters they
+    /// drive end in `noteSelectionChange`, which accumulates and never delivers.
+    /// Fired one per `/api/reset` on the live app, each of them moved
+    /// `deliveryCount` by 0 and `flushCount` by 1: their whole channel was the
+    /// per-frame drain this stage deletes.
+    ///
+    /// So the conversion is made STRUCTURALLY, at `Command.apply`'s `scope(exit)`
+    /// — the same `final` wrapper that already owns the delivery batch — instead
+    /// of by editing seventeen tails and hoping the eighteenth remembers. A
+    /// command that published nothing has empty words here and this is a no-op;
+    /// a command that already delivered has been through `deliverPending` and is
+    /// either registered in the batch's pending set (deduped by pointer) or
+    /// zeroed, so the delivery COUNT per command stays exactly one either way.
+    void deliverAccumulated() {
+        deliverPending();
+    }
+
+    /// Hand the undelivered words to the bus, unless a delivery batch is open.
+    ///
+    /// Take-and-zero happens BEFORE the delegates run, so a listener that
+    /// (illegally) publishes cannot make this loop.
+    private void deliverPending() {
+        // TASK 1906 review B1 — THE SUBJECT FILTER, AND IT IS THE FIRST THING
+        // HERE ON PURPOSE. `Mesh` is a struct: without this, every scratch
+        // instance in the tree publishes to the live document's listeners (see
+        // `g_isDocumentMesh`'s declaration for the three measured counts). It
+        // must sit ABOVE the depth check, not below it, so a rejected mesh
+        // never reaches `noteDeliveryPending` either — that is the whole of
+        // review S2's guarantee that the deferred set cannot name a dead stack
+        // frame.
+        //
+        // THE ONE CASE THIS FILTER DROPS A DELIVERY, named rather than
+        // discovered later: a layer UNLINKED between a deferring commit and
+        // the batch close. The commit was accepted (the layer owned the mesh
+        // then) and put it in `g_deliveryPendingMeshes`; by the close the
+        // resolver no longer finds it, so `flushDeliveryPending`'s
+        // `deliverPending()` rejects and the synchronous delivery never
+        // happens. Stage 0 called this harmless because the per-frame flush
+        // still ORed a subject-less union to every listener; STAGE 3 DELETED
+        // THAT FLUSH, so say what is true now instead: the dropped delivery is
+        // for a mesh whose layer no longer exists, so no epoch-keyed consumer
+        // can be asked about it — every one of them keys on an ADDRESS that is
+        // no longer in `document.layers`. The `undelivered*_` words are kept
+        // (see below), so if that same mesh is ever re-linked its next
+        // delivering publisher carries them. Holding a `Layer` handle instead
+        // of a `Mesh*` (review S2) remains the structural fix.
+        //
+        // Rejection deliberately leaves `undelivered*_` ALONE rather than
+        // zeroing it. A kernel that builds a scratch mesh and then hands it
+        // over wholesale (`*mesh = makeCube()`, ~15 sites) copies those words
+        // into the document mesh with the geometry they describe, and the
+        // next delivering publisher on THAT mesh carries them. Over-
+        // invalidation is the safe direction; a zero here would be the other
+        // one.
+        if (!deliverySubjectAccepted(&this)) return;
+        if (g_deliveryDepth > 0) {
+            // Deferred: remember this mesh so the batch close delivers it, but
+            // only if it actually has something to say.
+            if (undeliveredChanges_ != 0 || undeliveredSelDomains_ != 0)
+                noteDeliveryPending(&this);
+            return;
+        }
+        const uint f = undeliveredChanges_;
+        const uint d = undeliveredSelDomains_;
+        if (f == 0 && d == 0) return;
+        undeliveredChanges_    = 0;
+        undeliveredSelDomains_ = 0;
+        changeBus.deliverMesh(cast(size_t)&this, f, d);
+    }
+
+    /// Open a delivery batch: every `commitChange` / `publishChange` until the
+    /// matching close accumulates instead of delivering, and the close delivers
+    /// ONCE per mesh touched. In production the OUTERMOST open is
+    /// `Command.apply`'s `beginDeliveryBatchGlobal()` — `final`, so every
+    /// command goes through it, whether its kernel is an `Operator.evaluate` or
+    /// an `override applyImpl()` — and one command that moves 8 vertices, or
+    /// appends 400 faces, is therefore one delivery. `beginHideDeriveBatch`
+    /// opens one too (review S3, for the
+    /// derive-flush ordering) and nests inside it harmlessly; the depth counter
+    /// composes.
+    ///
+    /// Shaped and named after `beginHideDeriveBatch`/`endHideDeriveBatch`: the
+    /// depth lives at module scope, so `this` is not read here (a wholesale
+    /// `*mesh = …` inside the batch must not reset it). These two are
+    /// FORWARDERS to `beginDeliveryBatchGlobal` / `endDeliveryBatchGlobal` and
+    /// exist only so a call site that already has a mesh reads like its
+    /// hide-derive twin; a caller with no mesh calls the module-level pair
+    /// directly and gets the identical batch (review S1).
+    void beginDeliveryBatch() {
+        beginDeliveryBatchGlobal();
+    }
+
+    /// Close a delivery batch; at depth 0, deliver every mesh the batch
+    /// deferred. Forwards to `endDeliveryBatchGlobal`, which owns the clamp.
+    void endDeliveryBatch() {
+        endDeliveryBatchGlobal();
+    }
+
+    // Accumulate + bump the version counters, reproducing EXACTLY the existing
+    // bump behaviour: mutationVersion always advances; topologyVersion advances
+    // only when the change carries a Geometry class (Points | Polygons). This
+    // is the drop-in replacement for the raw `++mutationVersion;
+    // ++topologyVersion;` lines at the internal mutation sites.
+    // TASK 1906 — commitChange DELIVERS. Order inside the body, and every step
+    // of it is load-bearing:
+    //
+    //   1. noteChange(flags)            — accumulate (both words, + marksVersion)
+    //   2. ++mutationVersion; ++topologyVersion for a Geometry class
+    //   3. refreshHiddenDerived()       — or the g_hideDeriveDepth deferral arm
+    //   4. deliverPending()             — the listeners
+    //
+    // AFTER the version bump, because the consumers that keep a version term as
+    // their correctness backstop would otherwise re-stamp themselves from a
+    // version this mutation has not advanced yet, and read as fresh forever.
+    //
+    // AFTER `refreshHiddenDerived`, because a listener's downstream lazy
+    // recompute reads the derived hide planes (hidden verts/edges leave the VBO
+    // at upload time). Delivering before them publishes a mesh whose derived
+    // state contradicts its marks.
+    //
+    // THERE ARE THREE EXITS, NOT TWO, AND TWO INSERTION POINTS COVER THEM:
+    //
+    //   (a) Geometry + the hide-derive deferral arm → `return` inside the `if`.
+    //       The derive is DEFERRED to `endHideDeriveBatch`, so "after the
+    //       derive" is met not here but by `endHideDeriveBatch` itself, which
+    //       runs its derive flush and THEN closes the delivery batch that
+    //       `beginHideDeriveBatch` opened (task 1906 review S3). This arm
+    //       therefore only ever ACCUMULATES; the assert below states the
+    //       implication it relies on. Before S3 the same guarantee lived in
+    //       `Command.apply`'s `scope(exit)` declaration order, where six of the
+    //       call sites in this file could not see it.
+    //   (b) Geometry, not deferred → the derive ran; the tail delivers.
+    //   (c) NOT Geometry (a Position-only or Marks-only commit) → the `if` is
+    //       never entered and `refreshHiddenDerived` is never called. The
+    //       "after the derive" rule is VACUOUSLY satisfied here, not violated —
+    //       do not "fix" the missing call.
+    void commitChange(uint flags) {
+        noteChange(flags);
+
+        // TASK 1903 §3.1 — INSIDE AN EDIT BATCH, DECLARE ONLY. The class of
+        // the change is still recorded (`noteChange` above ran, so
+        // `undeliveredChanges_` already carries it); what
+        // is DEFERRED to the batch's close is the STAMP — the version bumps,
+        // the derive and, riding the same tail, 1906's delivery. `close()` is
+        // then the single site that advances a version for the whole edit.
+        if (auto f = currentBatchFrame(&this)) {
+            f.accum |= flags;
+            // B3 — THE ONE THING A BATCH MAY NOT DEFER. `refreshHiddenDerived`
+            // WRITES when something is hidden: it clears `Marks.Select` on
+            // every vertex/edge that became fully hidden. The observer is
+            // `selectVertex`, which refuses a vertex whose derived Hide bit is
+            // set — so a kernel that appends geometry and then selects its
+            // output silently loses the selection if the derive was deferred
+            // (task 1330 BLOCKER 2, pinned by this file's own REGIME-2
+            // unittest beside `anyHideBitSet`). `deferSafe` is armed
+            // `!anyHideBitSet()` at the 0->1 transition, exactly as
+            // `beginHideDeriveBatch` arms its own, and `refreshHiddenDerived`
+            // disarms it the moment it discovers a Hide bit. While it is
+            // false the derive runs INLINE on every Geometry commit, exactly
+            // as it does with no batch at all; only the stamp is deferred.
+            if ((flags & MeshEditScope.Geometry) && !f.deferSafe)
+                refreshHiddenDerived();
+            return;
+        }
+
+        // L2 (plan §3.2) — a Geometry-class commit that reached a DOCUMENT
+        // mesh outside any batch. Telemetry, per family, with a consumer: as
+        // each family migrates it opens a batch and its ops stop ticking this.
+        // The document-mesh term is not optional — every factory and importer
+        // builds a temporary `Mesh` through `addVertex`/`addFace`, which end
+        // in a per-element `commitChange`, and without the filter one
+        // `/api/reset` of the perf grid alone reads ~99 856. UNINSTALLED MEANS
+        // "NOT A DOCUMENT MESH" here — the opposite default from delivery's,
+        // and deliberately so: a filter is a refusal and must fail open, a
+        // counter is an observation and may fail closed (see
+        // `g_isDocumentMesh`'s declaration, which states both). The
+        // consequence is that this counter is a SUITE-LANE observable only; a
+        // unit case that reads it must install the predicate itself, or it is
+        // green in both directions.
+        if ((flags & MeshEditScope.Geometry)
+            && g_isDocumentMesh !is null && g_isDocumentMesh(&this))
+            ++changeBus.unbatchedGeometryCommits;
+
+        commitStamps(flags);
+    }
+
+    /// The tail of `commitChange`, verbatim — the version bumps, the derive
+    /// (or task 1330's deferral arm) and 1906's delivery. Split out so that a
+    /// batch can defer it and `close()` can run it exactly once.
+    ///
+    /// `private`, with THREE callers in this module and no others:
+    /// `commitChange` (the unbatched path), `commitRestored` (whole-state
+    /// restoration) and `closeEditFrame` (every batch close, whichever
+    /// spelling opened it). `tests/unit/commit_seam_census_test.d` asserts
+    /// that count on the comment-stripped text — a fourth caller is a new way
+    /// to advance a version stamp and must be argued for, not added.
+    private void commitStamps(uint flags) {
+        ++mutationVersion;
+        // The missed-publisher witness (task 1906 stage 3). Set HERE, beside
+        // the bump it witnesses and above both of this function's exits, so
+        // "the version moved through the stamp funnel" and "the version moved"
+        // are the same event by construction. See `stampedVersion_`.
+        stampedVersion_ = mutationVersion;
+        if (flags & MeshEditScope.Geometry) {
+            ++topologyVersion;
+            // Task 1330: inside a batch the derive is deferred to the batch's
+            // end — see beginHideDeriveBatch. The refresh still reads FRESH
+            // arrays when it runs; only its FREQUENCY changes.
+            // Skip ONLY when the call would write nothing anyway — see
+            // beginHideDeriveBatch's rule. `noteHideDerivePending` makes the
+            // batch close derive this mesh once.
+            // The third term is the LIFETIME filter, and it is not a
+            // micro-optimization — see `hideDeriveDeferralAccepted`. Deferring
+            // means appending `&this` to an array drained at the batch close,
+            // so a mesh that is not the document's cannot be deferred: a
+            // kernel's `Mesh sub = catmullClarkOsd(...)` / `Mesh result;` is a
+            // stack frame that unwinds first, and the close then derives a dead
+            // frame (SIGSEGV at `hasFace[] = false`, `this` garbage).
+            //
+            // A rejected mesh does NOT lose its derive — it falls through to
+            // the inline arm below and derives exactly as it would with no
+            // batch open at all, which is the state it was in before any of
+            // this existed. The cost is O(|marks| of the refused mesh) per
+            // commit — `refreshHiddenDerived`'s early-out scans all three mark
+            // planes before it can bail — which is ZERO today because every
+            // kernel sizes its marks AFTER its appends (measured: 339/339 refused
+            // commits with 0 mark words); a kernel that sized first would pay a
+            // full scan per appended element. And `g_hideDeriveDeferSafe`
+            // describes the DOCUMENT mesh at batch open, not this mesh: a refused
+            // mesh that carries a Hide bit runs the full derive and disarms the
+            // flag for the rest of the batch, so the document's remaining commits
+            // derive eagerly (unreachable through subdivide, whose temp inherits
+            // Hide from a cage that would have disarmed at open). It is also the
+            // only direction that stays correct for a
+            // LONG-lived non-document mesh (a tool's private cage), which must
+            // still get its planes derived.
+            //
+            // Cheapest terms first: two loads before the delegate call.
+            if (g_hideDeriveDepth > 0 && g_hideDeriveDeferSafe
+                && hideDeriveDeferralAccepted(&this)) {
+                // Path (a) is only safe inside a delivery batch — the derived
+                // hide planes are still the PRE-edit ones here and only
+                // `endHideDeriveBatch` makes them current. `beginHideDeriveBatch`
+                // opens a delivery batch precisely so this holds at every call
+                // site (task 1906 review S3); the assert is what makes a stray
+                // direct `endDeliveryBatch()` a failure instead of a silent
+                // early delivery. Always-on, no `debug`: the suite lane compiles
+                // this file with a bare `dmd -unittest` and no `-debug`.
+                assert(g_deliveryDepth > 0,
+                    "mesh: a deferred hide-derive commit outside a delivery "
+                  ~ "batch — beginHideDeriveBatch opens one so delivery lands "
+                  ~ "AFTER endHideDeriveBatch's derive flush");
+                // TASK 1903 STAGE O — the pair's own witness, on the bus so
+                // the SUITE lane can read it (`/api/changes`). This arm is
+                // reached only while `Command.apply`'s hide-derive pair is
+                // open, so every tick is a whole-mesh derive that pair moved
+                // off the inline path. `mesh.paste`'s vertex-mode arm ticks it
+                // once per pasted point; see the field's declaration for what
+                // the number means and for the one tick per batch close that
+                // is NOT a saving.
+                ++changeBus.hideDerivesDeferred;
+                noteHideDerivePending(&this);
+                deliverPending();   // path (a) — see the header above
+                return;
+            }
+            // Hide (task 0613, §1.2): the derived vertex/edge planes ride
+            // EVERY geometry-mutating commit through this one funnel, so a
+            // topology edit can never leave them stale. refreshHiddenDerived
+            // owns its own early-out (a three-plane word-OR) and costs
+            // nothing when nothing is hidden anywhere.
+            refreshHiddenDerived();
+        }
+        deliverPending();   // paths (b) and (c) — see the header above
+    }
+
+    /// WHOLE-STATE RESTORATION ONLY (task 1903 §3.2 S4/S5). The three internal
+    /// doors — `MeshSnapshot.restore` (twice) and `MeshEditDelta.finalize` —
+    /// re-publish a mesh they have just rewritten wholesale. They are not
+    /// mutation sites the batch seam is closing, so they must NOT tick
+    /// `changeBus.unbatchedGeometryCommits`: a counter that moves on every
+    /// `/api/reset` and every undo can never be asserted `== 0`, and asserting
+    /// it against a moving baseline is the "threshold derived from the
+    /// measurement" defect.
+    ///
+    /// Delivery is IDENTICAL to `commitChange`'s — 1906's `deliverPending()`
+    /// rides the tail `commitStamps` owns, so a restore publishes exactly as it
+    /// does today. The ONLY difference between the two entries is the counter.
+    ///
+    /// It never consults `g_editBatchStack`, on purpose: all three call sites
+    /// are outside any batch, and deferring a whole-state restore into someone
+    /// else's batch would let that batch's `accum` decide the class of an edit
+    /// it did not make.
+    void commitRestored(uint flags) {
+        noteChange(flags);
+        commitStamps(flags);
+    }
+
+    // Accumulate a SELECTION change (Stage 5): OR `Marks` into the mesh-class
+    // pending set AND the given selection-domain bit into undeliveredSelDomains_.
+    // Deliberately does NOT bump mutationVersion — selection is a Marks-class
+    // change, not a version-bumping geometry change, and the marks setters have
+    // always been version-stable (a property other systems rely on; e.g. the
+    // GPU upload key and mid-drag version stability must not move when
+    // only the highlight changes). Safe inside loops (pure OR) — the bulk
+    // lasso/paint setters call it once after a compare-before-set guard so a
+    // no-op restore does not spuriously publish.
+    void noteSelectionChange(SelDomain domain) {
+        // Companion contract assert — same reason as `noteChange`'s. This
+        // funnel does not go through `noteChange`, so it needs its own.
+        assert(!changeBus.delivering,
+            "change_bus: a listener published a selection change — listeners " ~
+            "are dirty-bit-only (set your own flag, recompute lazily)");
+        // Accumulate-only, like noteChange: the delivering publisher that takes
+        // these is the WRITER that called it — since stage 3 every selection
+        // writer on `Mesh` (the six scalar setters, the three bulk `clear*`,
+        // `applySelectedFrom_`) calls `deliverPending()` right after. This
+        // funnel itself must NOT, because `refreshHiddenDerived` uses it
+        // mid-`commitStamps`, where a delivery would land BEFORE the derive
+        // that `commitChange`'s documented order puts first.
+        undeliveredChanges_    |= MeshEditScope.Marks;
+        undeliveredSelDomains_ |= cast(uint)domain;
+        ++marksVersion;     // see the field: this is the SECOND of two funnels
+    }
+
+
+    // --- Mesh maps (generic per-element float attribute channels) ----------
+    // Named, typed per-element float channels (UV, vertex weight, edge crease,
+    // vertex color, …). ONE reusable home so each new continuous per-element
+    // attribute does not become a bespoke parallel array. Each `MeshMap`'s
+    // `data` runs parallel to the element array named by its `domain` (Point ↔
+    // vertices, Edge ↔ edges, PolyVertex ↔ loops/face-corners) and is kept
+    // length-correct in lock-step with topology by `resizeMeshMaps` (Point/Edge,
+    // hooked into `resizeVertexSelection` / `resizeEdgeSelection`) and
+    // `resizePolyVertexMaps` (PolyVertex, hooked into `buildLoops`).
+    //
+    // Point/Edge maps are RESIZED (not value-remapped) across destructive edits
+    // that renumber those elements: length stays correct so reads never go out
+    // of bounds, but values do not follow elements to new indices.
+    //
+    // PolyVertex (per-corner) UV is now LIVE end-to-end: assimp import populates
+    // the "uv" map (per-corner, captured pre-weld so seams survive), the `.v3d`
+    // v4 codec round-trips it, and assimp export re-splits at UV seams. v1 scope
+    // is a SINGLE UV set (kUvMapName == "uv"); the registry already supports N
+    // named PolyVertex maps, so multi-set is a later additive change. LWO UV
+    // import + export are pending follow-ups (they need the out-of-tree LWO
+    // writer dependency to learn VMAP/VMAD UV channels — see doc/uv_maps_plan.md
+    // Stage 6); LWO geometry imports/exports today WITHOUT its UV.
+    //
+    // PolyVertex (per-corner) maps additionally have a value-RELOCATE lifecycle
+    // — corner identity is not positional, so the per-corner values are made to
+    // follow their corners across face-mutating edits via two mechanisms:
+    //   (a) arity-PRESERVING relocate funnel `remapPolyVertexMaps` — wired in
+    //       `deleteFacesByMask`; `compactUnreferenced` preserves face order +
+    //       arity so it is identity-on-corners (no relocation needed).
+    //   (b) arity-CHANGING per-face rewrite (build `oldLoopOfNewLoop` at the
+    //       rewrite site, then call the same funnel) — wired in
+    //       `dissolveVerticesByMask`, `weldCoincidentVertices` (which does NOT
+    //       call buildLoops), and `removeEdgesByMask`/edge-dissolve-merge. The
+    //       short-edge-weld callers ride `weldCoincidentVertices`.
+    //   (c) arity-changing rewrite that also INSERTS vertices — build the same
+    //       `oldLoopOfNewLoop` PLUS a `PolyVertexBlend` per inserted vertex, and
+    //       call `carryPolyVertexMaps` (which runs the funnel and then a second,
+    //       interpolating pass). Wired in `insertEdgeLoopsMulti` (Loop Slice,
+    //       task 0682), `addEdgePoint` (the `mesh.addPoint` command — one
+    //       corner spliced into each incident winding, blended by the same
+    //       edge-split law) and `spikeFacesByMask` (task 0690; no blends — the
+    //       rim corners copy, the apex is left at the honest zero). The law is
+    //       frozen in tests/fixtures/uv_corner_transfer.json.
+    //       (c') PER-CORNER source — `carryPolyVertexMapsByCorner` (task 0697).
+    //       The same mechanism with the source old face given per NEW CORNER
+    //       instead of per new face, because a chamfer strip's two sides come
+    //       from the two faces the beveled edge separated: one source per face
+    //       would put one side in the wrong island. The per-face entry above is
+    //       now a wrapper that expands its array and delegates, so Loop Slice
+    //       cannot drift from it. Wired in `bevelEdgesByMask`,
+    //       `bevelFacesByMask` and `extrudeFacesByMask`.
+    //   (e) GENERATED corner values — `PolyVertexGen`, applied by the same call
+    //       (task 0697). Two measured laws are not a weighted sum of any
+    //       existing corner and cannot ride (c): a face bevel's inset ring is
+    //       the source face's UV POLYGON inset by
+    //       `inset * uvPerimeter / geomPerimeter` (`InsetRing`), and an extrude
+    //       wall's swept coordinate is a fresh 0→1 parameterisation
+    //       (`SweepU`, selected by `UvWallLaw` — the other measured wall law,
+    //       `Copy`, needs no gen at all). Both are anchored in a source face +
+    //       corner, so they stay per-island; both apply to 2-D maps only.
+    //   append — `addFace`/`addFaceFast` grow+zero-fill the new corners
+    //       ATOMICALLY (GAP-3, no element-count window). Bulk kernels that
+    //       cannot use `addFace` (they rebuild edges once and commit one
+    //       change) MUST append through `appendFaceRaw`, which does the same
+    //       growth: a bare `faces ~= …` leaves the map short and the tail
+    //       `buildLoops` then zeroes it WHOLE — losing the UV of faces the
+    //       operation never touched, which is strictly worse than the drop
+    //       below. Wired in array (linear / radial / grid), mirror, duplicate,
+    //       clipboard paste (`appendGeometry`) and the cut's cap polygons
+    //       (task 0690).
+    //   snapshot restore — values come back via the captured map `dup`.
+    //   (d) undo/redo delta replay — `MeshEditDelta.apply`/`revert` carry the
+    //       plane themselves (task 0689). A replay cannot write a corner while
+    //       it runs (`faceLoop` is only rebuilt by the tail `buildLoops`), so
+    //       `mesh_edit_delta.CornerCarry` tracks each face's PROVENANCE
+    //       through the entry walk and relocates once, before that rebuild,
+    //       through the same `remapPolyVertexMaps` funnel — plus a second pass
+    //       for the corners of faces the replay RE-CREATES, whose values are
+    //       gone from the mesh and live only in the delta. Those are captured
+    //       by `recordPolyVertexPayload` below (a `MeshOpEntry.Kind.MeshMapDelta`
+    //       entry, no longer a stub) at the three kernels that destroy corners
+    //       under a batch: `deleteFacesByMask`, `dissolveVerticesByMask`,
+    //       `removeEdgesByMask`. A new corner with no source in either state
+    //       is left at zero. `dropPolyVertexMaps` remains the FALLBACK for the
+    //       replays the carry declines — see task 0689 and the note there.
+    // v1 DROP set — since task 0830 this is no longer a LIST kept here. Each
+    // kernel that cannot state a correspondence says so where it runs, by type:
+    // `dropCornerProvenance(CornerDrop.…)`, and the reason enum in
+    // source/mesh_corner_maps.d carries the explanation. Grep `CornerDrop.` for
+    // the current membership; a family cannot enter or leave the set by an edit
+    // to this comment any more, which was the point.
+    //
+    // What the reasons MEAN, since that is what a comment is still good for:
+    //   * `SweptSurfaceNoLaw` — edge extrude, vertex extrude, edge extend,
+    //     smooth shift, path-extrude (revolve). A fresh surface whose
+    //     parameterisation no capture measures. (A FACE extrude's two wall laws
+    //     ARE frozen, task 0697, which is exactly why that sibling carries.)
+    //   * `VertexBevelNoCase` — `bevelVerticesByMask`. Its two siblings left the
+    //     set against frozen cases; this one has no frozen case at all.
+    //   * `ChordSplitNoSource` / `WeldTailNoSource` — the plane-cut / edge-slice
+    //     chord split and the vertex-merge tail. These are MACHINERY gaps, not
+    //     law gaps: the law is the same edge-split lerp Loop Slice already
+    //     carries, and what is missing is the record of which old face each
+    //     fragment came from.
+    //   * `SubdivideNoLaw` / `PrimitiveRebuild` / `SubpatchCage` /
+    //     `ForeignTopology` — kernels that REPLACE the mesh rather than edit it.
+    //     Declared for completeness of the vocabulary; a replaced mesh has no
+    //     old corner space at all, so most of them have nothing to declare.
+    //     Task 0901 walked every site the vocabulary names for these four and
+    //     found none live: `commands/mesh/subdivide.d` and
+    //     `commands/mesh/remesh.d` both do `*mesh = result` (a fresh `Mesh`
+    //     that never had a map — see `resizePolyVertexMaps`'s note above),
+    //     `io/scene_ir.d`/`io/scene_import.d`/`commands/scene/load_mesh.d`
+    //     build-then-swap the same way, `subpatch_osd.d`'s preview mesh never
+    //     registers a PolyVertex map, and `remesh/region_stitch.d`'s
+    //     intermediate `Mesh` scratch values are the same. `PrimitiveRebuild`,
+    //     `SubpatchCage` and `ForeignTopology` are therefore reserved, unused
+    //     vocabulary today — see each reason's own doc comment in
+    //     `mesh_corner_maps.d` for the specific site it was checked against.
+    // (The delta undo/redo replay LEFT this set in task 0689 — see mechanism (d)
+    // above; what remains there is a fallback, `DeltaReplayDeclined`.)
+    //
+    // `bevelEdgesByMask`, `bevelFacesByMask` and `extrudeFacesByMask` LEFT the
+    // set in task 0697 via (c') + (e); their laws are frozen in the same
+    // fixture (`edge_bevel_*` / `face_bevel_*` / `face_extrude_*`) and asserted
+    // by tests/test_uv_carry_bevel_extrude.d. What is still zero inside those
+    // three, deliberately and locally rather than mesh-wide:
+    //   * an edge bevel's MITER corner (both bordering edges beveled) — it sits
+    //     inside the face, on no original edge, and no capture measures it. A
+    //     bevel of a TURNING edge chain would settle it;
+    //   * a rounded profile's arc points and the junction/Gregory patches, for
+    //     the same reason (every frozen case is Round Level 0);
+    //   * a face bevel's SQUARE cap ring and grouped-corner sharing beyond what
+    //     `sharedCornerPos` registers first.
+    // Those are the honest zero of mechanism (c), not a whole-mesh drop: the
+    // faces the operation never touched keep their values byte for byte.
+    // See doc/uv_maps_plan.md D5.
+    //
+    // The drop set is deliberately about NEW corners. A kernel whose corner
+    // count changes drops the map for the WHOLE mesh, so the two are only the
+    // same thing for a kernel that rewrites every face; anything more local
+    // (append a face, splice one corner) must carry or grow instead, or the
+    // untouched half of the mesh pays for the edit (task 0690).
+    //
+    // Discrete polygon tags (`faceMaterial`, a per-face surface INDEX) are
+    // deliberately NOT mesh maps: a float channel cannot represent an integer
+    // surface id without precision/semantic abuse, so `faceMaterial` stays its
+    // own `uint[]`. Mesh maps are for CONTINUOUS float attributes only.
+    MeshMap[] meshMaps;
+
+    // --- Selection sets (mesh_selsets, task 1060) --------------------------
+    // Named, typed, per-domain groups of elements the user can re-select
+    // later. NOT a MeshMap (see mesh_selsets.d's module doc for why — no Face
+    // domain, and a membership bit is a misuse of a dense float channel).
+    // Every VERB lives in mesh_selsets.d as a free function over `ref Mesh`;
+    // these six fields are the whole of the storage.
+    //
+    // VERTEX / POLYGON: one `ulong` bitmask PER ELEMENT, parallel to
+    // `vertices`/`faces` — bit `s` of an element's mask is membership in the
+    // set occupying slot `s` of that domain's `*SetNames`. `vertexSetMask` is
+    // kept in LENGTH lock-step with `vertices` by `selSetResizeVertex`
+    // (wired into `resizeVertexSelection` below). `faceSetMask` is
+    // deliberately NOT — it is lazy-sized exactly like `facePart` (grows on
+    // write, reads as 0 past its length via `mesh_selsets.memberOf`'s bounds
+    // check); `resizeFaceSelection` below touches only `faceMarks`, so there
+    // is no hook to hang a face-domain grow on, and `facePart` lives with the
+    // identical gap.
+    //
+    // EDGE: keyed by the CANONICAL VERTEX PAIR (`edgeKey`), never by edge
+    // index — an index-parallel edge channel is garbage after the very next
+    // topology edit (`rebuildEdges()` renumbers every edge; nothing resizes
+    // an edge-domain channel by more than length). A pair key survives
+    // `rebuildEdges()` for free, but NOT vertex-index-renumbering events
+    // (`compactUnreferenced`, a weld) — the key EMBEDS vertex indices, so it
+    // rides every event that renumbers or drops a vertex, via
+    // `mesh_selsets.selSetRekeyEdges` at eight production call sites:
+    // `compactUnreferenced`, both weld remaps, and five replay calls in
+    // `mesh_edit_delta.d`. Missing any one fails SILENTLY — membership
+    // disappears, or reattaches to the WRONG edge, with no length mismatch
+    // and no assertion to trip. An associative array has no length, so it
+    // needs no resize hook at all; its only correctness obligation is the
+    // re-key.
+    //
+    // An empty name string marks a free slot (`ensureSlot` in
+    // mesh_selsets.d reuses it before growing); slot indices are assignment
+    // order and are NOT stable across a save/load, so nothing outside a
+    // mesh ever references a slot — every external reference is by name.
+    string[]     vertexSetNames;
+    ulong[]      vertexSetMask;
+    string[]     edgeSetNames;
+    ulong[ulong] edgeSetMask;
+    // Task 3910: authoritative authored-edge registry. Consumers walk and
+    // sort these pair keys; vertex renumbering uses selSetRekeyEdges, while
+    // explicit edge/end-point destruction prunes the matching key.
+    bool[ulong]  wireEdgeKeys;
+    string[]     polygonSetNames;
+    ulong[]      faceSetMask;
+
+    // --- Mesh-edit change tracker (mesh_edit_delta) -----------------------
+    // Restoration doors retain task 1903 replay guards; task 20262340.
+    // Policy lives in mesh_edit_replay; these writers never append recorder entries.
+    void restoreEdgeSetImage(in ulong[] keys, in ulong[] words) {
+        if (keys.length == 0) return;
+        assert(keys.length == words.length,
+            "restoreEdgeSetImage: the recorded edge-set keys and words are not "
+          ~ "parallel");
+        ulong[ulong] before;
+        foreach (i, k; keys) before[k] = words[i];
+        this.edgeSetMask = before;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Reindex — the crux (doc §2). `perm[old] = new` for kept verts, ~0u for
+    // dropped. The pair (RemoveVerts, Reindex) is recorded in that order by
+    // compactUnreferenced (drop-before-permute); LIFO reverse therefore runs
+    // Reindex^-1 first (restore the pre-compaction index space), then
+    // RemoveVerts^-1 (re-insert the dropped verts into the re-opened gaps).
+    // ---------------------------------------------------------------------------
+
+    // Forward: apply the compaction the kernel already did to the CURRENT mesh
+    // (rewrite face vids old->new, drop ~0u verts, repack vertices to new order).
+    // Used by redo (apply): on redo the verts are present at their pre-compaction
+    // positions (RemoveVerts^-1 + Reindex^-1 having been undone), so re-applying
+    // the recorded permutation reproduces the post-compaction state.
+    void restoreVertexReindexForward(in uint[] perm) {
+        if (perm.length == 0) return;
+        // New vertex array sized to the count of kept slots.
+        size_t kept = 0;
+        foreach (p; perm) if (p != ~0u) ++kept;
+        Vec3[] nv;
+        nv.length = kept;
+        // vertexMarks rides the SAME permutation as positions (task 0613 §4.2 —
+        // the "vertex-mark permutation gap"). Without this, a kept vertex's whole
+        // marks word — including a LOOSE vertex's own Hide bit, the only per-
+        // vertex Hide state that is not self-healed by refreshHiddenDerived()
+        // (a face-bound vertex's bit IS re-derived every geometry commit; a loose
+        // vertex's is not, since it never has an incident face to derive from) —
+        // stays parked at its OLD slot while the vertex itself moves to `p`,
+        // exactly the "bit slides onto whoever moves into the vacated slot"
+        // defect fixed at deleteFacesByMask's own compaction, here on the vertex
+        // side of a Reindex replay.
+        uint[] nm;
+        nm.length = kept;
+        // vertexSelectionOrder rides the SAME permutation (task 0613 §4.2, S3
+        // code review): before this task neither vertexMarks nor the order
+        // stamps moved with a compaction, so the two were consistently wrong
+        // TOGETHER. Fixing only vertexMarks would leave a kept vertex's mark
+        // word correctly at its new slot `p` while its selection-order stamp
+        // stayed behind at the OLD slot — the same "stale stamp" class this
+        // repository has already fixed three times elsewhere (see
+        // SelectionSnapshot.restore's own S3 fix in snapshot.d).
+        int[] no;
+        no.length = kept;
+        foreach (old, p; perm) {
+            if (p == ~0u) continue;
+            if (old < this.vertices.length) nv[p] = this.vertices[old];
+            if (old < this.vertexMarks.length) nm[p] = this.vertexMarks[old];
+            if (old < this.vertexSelectionOrder.length) no[p] = this.vertexSelectionOrder[old];
+        }
+        this.vertices             = nv;
+        this.vertexMarks          = nm;
+        this.vertexSelectionOrder = no;
+        // Task 0930: every Point-domain MeshMap (vertex weight, vertex color)
+        // rides the SAME permutation as `vertices`/`vertexMarks` above — the gap
+        // this task closes. Before this, `this.meshMaps` was never touched by this
+        // function at all; the tail `finalize()`'s `resizeAllMeshMaps()` only
+        // grows/shrinks each map's `data` by LENGTH (a raw truncate/grow, not a
+        // permutation), so a vertex dropped from the middle of a compaction left
+        // every survivor after it wearing a neighbour's weight — the same
+        // truncate-from-the-tail bug `compactUnreferenced` itself carried before
+        // task 0920 fixed it there. This mirrors that fix's gather shape,
+        // extended to the undo/redo replay side of the SAME compaction.
+        foreach (ref mm; this.meshMaps) {
+            if (mm.domain != MapDomain.Point) continue;
+            const ubyte dim = mm.dim;
+            float[] nd;
+            nd.length = kept * dim;
+            // Task 1069: the presence channel rides the SAME permutation, one
+            // entry per ELEMENT (no `* dim`).
+            const bool hasP = mm.present.length != 0;
+            ubyte[] np;
+            if (hasP) np.length = kept;
+            foreach (old, p; perm) {
+                if (p == ~0u) continue;
+                const size_t ob = cast(size_t)old * dim;
+                if (ob + dim > mm.data.length) continue; // defensive
+                nd[p * dim .. p * dim + dim] = mm.data[ob .. ob + dim];
+                if (hasP && old < mm.present.length) np[p] = mm.present[old];
+            }
+            mm.data = nd;
+            if (hasP) mm.present = np;
+        }
+        // Task 1060: `vertexSetMask` rides the SAME permutation as the
+        // Point-domain meshMaps loop just above (same gap `mesh.d`'s
+        // `compactUnreferenced` closed for the live path — this is its
+        // undo/redo replay twin).
+        this.vertexSetMask = selSetGatherVertexMaskForward(this.vertexSetMask, perm, kept);
+        // Task 1060, Stage 5b: the edge-set registry rides the SAME permutation
+        // — `perm[old] == ~0u` is exactly `selSetRekeyEdges`'s "vertex gone"
+        // sentinel already.
+        selSetRekeyEdges(this, (uint v) => v < perm.length ? perm[v] : uint.max,
+                         WireKeyPolicy.carry);
+        // Rewrite face vertex ids old->new.
+        foreach (ref f; this.faces)
+            foreach (ref vid; f)
+                if (vid < perm.length && perm[vid] != ~0u) vid = perm[vid];
+    }
+
+    // Reverse: restore the PRE-compaction index space. Grow `vertices` back to
+    // perm.length, placing the current (post-compaction) vert `new` back at its
+    // old index; dropped slots stay as gaps (Vec3.init) to be filled by the
+    // following RemoveVerts^-1. Face vids are rewritten new->old via the inverse
+    // permutation.
+    void restoreVertexReindexReverse(in uint[] perm) {
+        // NEGATIVE CONTROL (test only): stub Reindex^-1 to a no-op. Compiled in
+        // ONLY under -version=UndoNegControlReindex so the compaction round-trip
+        // test (b) can prove the permutation handling is load-bearing (the appended
+        // verts/faces then truncate in the wrong index space → corrupted mesh).
+        version (UndoNegControlReindex) return;
+        if (perm.length == 0) return;
+        Vec3[] nv;
+        nv.length = perm.length;            // pre-compaction length (gaps included)
+        // vertexMarks rides the SAME reverse permutation — see restoreVertexReindexForward's
+        // comment (task 0613 §4.2). Dropped slots stay 0 (no bits), matching how
+        // `nv`'s dropped slots stay a Vec3.init gap: both are filled by the
+        // following RemoveVerts^-1 (positions only — see restoreInsertVertices's own
+        // comment for why a removed vertex's marks are not restored here).
+        uint[] nm;
+        nm.length = perm.length;
+        // vertexSelectionOrder rides the SAME reverse permutation — see
+        // restoreVertexReindexForward's comment (task 0613 §4.2, S3 code review).
+        // Dropped slots stay 0 (not manually selected), same convention as
+        // `nm`'s dropped slots.
+        int[] no;
+        no.length = perm.length;
+        foreach (old, p; perm) {
+            if (p == ~0u) continue;         // dropped slot — gap, filled by RemoveVerts^-1
+            if (p < this.vertices.length) nv[old] = this.vertices[p];
+            if (p < this.vertexMarks.length) nm[old] = this.vertexMarks[p];
+            if (p < this.vertexSelectionOrder.length) no[old] = this.vertexSelectionOrder[p];
+        }
+        this.vertices             = nv;
+        this.vertexMarks          = nm;
+        this.vertexSelectionOrder = no;
+        // Task 0930: every Point-domain MeshMap rides the SAME reverse
+        // permutation — see restoreVertexReindexForward's comment. Dropped slots are
+        // explicitly zeroed (not left at `float.init` == NaN, unlike `nm`/`no`'s
+        // default-0 `uint`/`int` gaps) and stay that way until the following
+        // RemoveVerts^-1 fills them — matching `nv`'s Vec3 gap and `nm`/`no`'s
+        // documented "not restored here" convention.
+        foreach (ref mm; this.meshMaps) {
+            if (mm.domain != MapDomain.Point) continue;
+            const ubyte dim = mm.dim;
+            float[] nd;
+            nd.length = perm.length * dim;
+            nd[] = 0f;
+            // Task 1069: presence rides the same reverse permutation. Gap slots
+            // stay 0 == ABSENT, which is the right default for both morph kinds
+            // and matches `nd`'s explicit zero fill above.
+            const bool hasP = mm.present.length != 0;
+            ubyte[] np;
+            if (hasP) { np.length = perm.length; np[] = 0; }
+            foreach (old, p; perm) {
+                if (p == ~0u) continue;
+                const size_t pb = cast(size_t)p * dim;
+                if (pb + dim > mm.data.length) continue; // defensive
+                nd[old * dim .. old * dim + dim] = mm.data[pb .. pb + dim];
+                if (hasP && p < mm.present.length) np[old] = mm.present[p];
+            }
+            mm.data = nd;
+            if (hasP) mm.present = np;
+        }
+        // Task 1060: `vertexSetMask` rides the SAME reverse permutation as the
+        // Point-domain meshMaps loop just above.
+        this.vertexSetMask = selSetGatherVertexMaskReverse(this.vertexSetMask, perm);
+        // Inverse map: new -> old. Build it once, then rewrite face vids.
+        uint[] inv;
+        inv.length = this.vertices.length; // == perm.length now; safe upper bound for `new` ids
+        // Initialise to identity-ish; only kept `new` slots matter.
+        foreach (old, p; perm)
+            if (p != ~0u && p < inv.length) inv[p] = cast(uint)old;
+        // Task 1060, Stage 5b: re-key the edge-set registry through the SAME
+        // inverse map that is about to rewrite face vertex ids below — `m`'s
+        // vertices are back at pre-compaction (old) index space after this
+        // function returns, so the edge-set keys must be too.
+        selSetRekeyEdges(this, (uint v) => v < inv.length ? inv[v] : uint.max,
+                         WireKeyPolicy.carry);
+        foreach (ref f; this.faces)
+            foreach (ref vid; f) {
+                // A face vid here is a post-compaction `new` id; map back to old.
+                // It must reference a kept vert, so inv[vid] is defined.
+                if (vid < inv.length) vid = inv[vid];
+            }
+    }
+
+    // ---------------------------------------------------------------------------
+    // FaceReindex forward/reverse (task 1902 Stage H, plan §7.2). Unlike
+    // Reindex (vertex-only, a pure permutation with no content change),
+    // FaceReindex's forward direction is the LIVE primitive itself — see
+    // restoreFaceReindexForward's own comment for why a face's winding cannot be
+    // re-derived from the correspondence alone.
+    // ---------------------------------------------------------------------------
+
+    // Forward: redo. `rewriteFaces` IS the recorded operation (plan §7.2's "one
+    // implementation, so replay and live edit cannot drift") — this just hands
+    // it back the same `newFaceLists`/`faceOldOfNew` the live edit built. Safe to
+    // call unconditionally even on a mesh with an OPEN, armed batch: replay only
+    // ever runs after `Mesh.endEditBatch()` has detached the recorder (this
+    // entry's own log has already been finished by then), so `rewriteFaces`'s own
+    // internal `wantsFaceReindexRecording()` check reads `editRecorder_ is null`
+    // and records nothing — no double-append.
+    void restoreFaceReindexForward(ref const MeshOpEntry e,
+                                        bool cornerCarryActive) {
+        // Review finding B3: `e.faceOldOfNew.length == 0` used to read as
+        // "nothing to redo" and return early — but it is ALSO the shape of a
+        // redo whose rewrite drops every face (`newFaces.length == 0`, e.g.
+        // select-all + delete). That early return refused to redo exactly the
+        // entry `recordFaceReindex`'s own B3 fix now records. `rewriteFaces`
+        // already handles `newFaces.length == 0` correctly on its own (every
+        // generated plane carries zero elements, `this.faces` becomes empty), so no
+        // guard is needed here at all — the guard belongs solely at the record
+        // site, and the two must agree on what "no-op" means (`oldFaceCount ==
+        // 0`, not `faceOldOfNew.length == 0`).
+        uint[][] nf;
+        nf.reserve(e.newFaceLists.length);
+        foreach (l; e.newFaceLists) nf ~= l.dup;
+        rewriteFaces(this, nf, FaceSource(e.faceOldOfNew));
+        // `rewriteFaces` is called with `rw = null` — same as 15 of the 19 live
+        // sites (plan §2.6) — so it declares nothing about the PolyVertex corner
+        // map itself. Those 15 sites each pair `rw = null` with their OWN bare
+        // `dropCornerProvenance(CornerDrop.…)` call; this is FaceReindex's:
+        // `CornerDrop.DeltaReplayDeclined` exists for exactly this ("the replay
+        // normally carries the plane itself … and reaches this only when the
+        // carry DECLINES" — mesh_corner_maps.d's own doc comment on that value).
+        // `CornerCarry` (above) HAS a `Kind.FaceReindex` case as of task 1903
+        // Stage J, so this drop is the FALLBACK rather than the policy: it runs
+        // only when the carry has declined (no PolyVertex map at all, maps out of
+        // step with `faces` at replay entry, or the case's own index-space check
+        // fired). An EXPLICIT drop in that case is what keeps `buildLoops()` from
+        // either asserting (a length mismatch it cannot explain) or, worse,
+        // silently leaving a length-correct-by-COINCIDENCE map sitting on the
+        // wrong faces' corners. When the carry IS active it will place the values
+        // itself in `finalize` — declaring a drop here would zero them, because
+        // `resizePolyVertexMaps` consumes the declaration and returns from its
+        // FIRST branch without ever looking at what the carry wrote.
+        if (!cornerCarryActive)
+            this.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
+    }
+
+    // Reverse: undo. Rebuilds the pre-reindex `faces` (and its five carried
+    // planes) at exactly `oldFaceCount` slots:
+    //   * an old index NAMED by >=1 new index restores from the CURRENT mesh
+    //     (still in its post-reindex state at this point in the LIFO replay) at
+    //     its FIRST naming new index — that data is live, not archived, because
+    //     the forward carry put it there verbatim via the same correspondence;
+    //   * an old index named by NO new index (the drop set) restores from
+    //     fIdx/faceLists/faceMat/facePrt/faceSub/faceSetMsk/faceOrd, captured
+    //     before the forward rewrite ran (same fields RemoveFaces carries).
+    // A `kNoSource` new face names no old index at all, so it contributes to
+    // neither bucket and simply vanishes — correct, per plan §7.2: "they had no
+    // prior existence".
+    void restoreFaceReindexReverse(ref const MeshOpEntry e,
+                                        bool cornerCarryActive) {
+        // Review finding S4: this function used to open with
+        // `if (e.oldFaceCount == 0) return;` — read as "nothing to undo", but it
+        // is ALSO the shape of undoing a rewrite FROM an empty mesh (a
+        // create-only op: `oldFaceCount == 0`, `faceOldOfNew` all `kNoSource`).
+        // The correct reverse of THAT is to truncate every plane back to length
+        // 0, which is exactly what the code below does on its own when
+        // `e.oldFaceCount == 0` (every `rest*` array below is sized `0`) — no
+        // special case needed, just no early exit to skip it.
+        enum uint kNoneYet = uint.max;
+        uint[] firstNew;
+        firstNew.length = e.oldFaceCount;
+        firstNew[] = kNoneYet;
+        foreach (nf, of; e.faceOldOfNew) {
+            if (of == kNoSource || of >= e.oldFaceCount) continue;
+            if (firstNew[of] == kNoneYet) firstNew[of] = cast(uint) nf;
+        }
+
+        // Review finding B2: a survivor's winding, read off the CURRENT
+        // (post-reindex) mesh at `nf`, is the POST-rewrite winding — not always
+        // the PRE-rewrite one this entry must restore (e.g.
+        // `Mesh.removeVertsByMask` drops a corner from a kept face's list while
+        // its old index still survives). `mesh_planes.rewriteFaces` captures the
+        // pre-rewrite winding for exactly the survivors where it differs
+        // (`faceSurvivorIdx`/`faceSurvivorLists` — see their own doc comment in
+        // `MeshOpEntry`); build an old-index -> capture-slot lookup once so the
+        // restore loop below can prefer a captured winding over the live mesh.
+        uint[] survivorSlot;
+        survivorSlot.length = e.oldFaceCount;
+        survivorSlot[] = kNoneYet;
+        foreach (i, of; e.faceSurvivorIdx)
+            if (of < e.oldFaceCount) survivorSlot[of] = cast(uint) i;
+
+        uint[][] restFaces;  restFaces.length  = e.oldFaceCount;
+        uint[]   restMarks;  restMarks.length  = e.oldFaceCount;
+        uint[]   restMat;    restMat.length    = e.oldFaceCount;
+        uint[]   restPrt;    restPrt.length    = e.oldFaceCount;
+        int[]    restOrd;    restOrd.length    = e.oldFaceCount;
+        ulong[]  restSetMsk; restSetMsk.length = e.oldFaceCount;
+
+        foreach (of; 0 .. e.oldFaceCount) {
+            const uint nf = firstNew[of];
+            if (nf == kNoneYet) continue;   // filled from the drop set below
+            // Bounds-guard the survivor-list read too, house style with the
+            // fields around it: `faceSurvivorIdx`/`faceSurvivorLists` are meant
+            // to stay parallel, but nothing in the type enforces it, and
+            // `survivorSlot[of]` is built from `faceSurvivorIdx`'s own indices —
+            // a malformed/hand-built entry with a shorter `faceSurvivorLists`
+            // would otherwise index it out of bounds instead of falling back.
+            restFaces[of]  = (survivorSlot[of] != kNoneYet
+                              && survivorSlot[of] < e.faceSurvivorLists.length)
+                            ? e.faceSurvivorLists[survivorSlot[of]].dup
+                            : ((nf < this.faces.length) ? this.faces[nf].dup : null);
+            restMarks[of]  = (nf < this.faceMarks.length) ? this.faceMarks[nf] : 0;
+            restMat[of]    = (nf < this.faceMaterial.length) ? this.faceMaterial[nf] : 0;
+            restPrt[of]    = (nf < this.facePart.length) ? this.facePart[nf] : 0;
+            restOrd[of]    = (nf < this.faceSelectionOrder.length) ? this.faceSelectionOrder[nf] : 0;
+            restSetMsk[of] = (nf < this.faceSetMask.length) ? this.faceSetMask[nf] : 0UL;
+        }
+        // Overlay the drop set. Same documented limit RemoveFaces's own reverse
+        // has always had: the dropped face's whole `faceMarks` word (Select /
+        // Hide) is NOT captured by this entry, only its Subpatch bit (`faceSub`,
+        // restored by name below, after `this.faceMarks` exists at its new length) —
+        // see restoreInsertFaces's own comment for why.
+        foreach (i, fi; e.fIdx) {
+            if (fi >= e.oldFaceCount) continue;
+            restFaces[fi]  = (i < e.faceLists.length) ? e.faceLists[i].dup : null;
+            restMat[fi]    = (i < e.faceMat.length) ? e.faceMat[i] : 0;
+            restPrt[fi]    = (i < e.facePrt.length) ? e.facePrt[i] : 0;
+            restOrd[fi]    = (i < e.faceOrd.length) ? e.faceOrd[i] : 0;
+            restSetMsk[fi] = (i < e.faceSetMsk.length) ? e.faceSetMsk[i] : 0UL;
+        }
+
+        // Review finding S6 (nit): a malformed entry must not send a
+        // zero-length face into `buildLoops` — every old index in
+        // `[0, oldFaceCount)` must be named either by `faceOldOfNew` (a
+        // surviving/duplicated new face, `firstNew[of] != kNoneYet`) or by the
+        // drop set (`fIdx`, overlaid just above). Cheap: reuses the two passes
+        // above, one extra `bool[]`. `debug { }`, not a plain block: this is a
+        // coverage ASSERTION, not a repair — under `-release` it must do no
+        // work at all, matching the identical `debug { assert(...) }` shape at
+        // `Mesh.dropCornerProvenance`'s own corner-space check (mesh.d).
+        debug {
+            bool[] covered;
+            covered.length = e.oldFaceCount;
+            foreach (of; 0 .. e.oldFaceCount) if (firstNew[of] != kNoneYet) covered[of] = true;
+            foreach (fi; e.fIdx) if (fi < e.oldFaceCount) covered[fi] = true;
+            foreach (of; 0 .. e.oldFaceCount)
+                assert(covered[of],
+                       "restoreFaceReindexReverse: malformed entry — an old face "
+                     ~ "index is named by neither faceOldOfNew nor the drop set "
+                     ~ "(fIdx); reverse cannot rebuild it and would leave a "
+                     ~ "zero-length face for buildLoops");
+        }
+
+        this.faces              = restFaces;
+        this.faceMarks          = restMarks;
+        this.faceMaterial       = restMat;
+        this.facePart           = restPrt;
+        this.faceSelectionOrder = restOrd;
+        this.faceSetMask        = restSetMsk;
+
+        if (e.faceSub.length == e.fIdx.length)
+            foreach (i, fi; e.fIdx)
+                if (fi < this.faces.length)
+                    this.setFaceSubpatch(fi, e.faceSub[i] != 0);
+
+        // Same declared-drop obligation as restoreFaceReindexForward's own comment
+        // — this function assigns `this.faces` directly (no `rewriteFaces` call, so
+        // no `rw` parameter to have passed null in the first place), but the
+        // PolyVertex corner map is exactly as undeclared-for here, and
+        // `buildLoops()` (later, in `finalize()`) enforces the same precondition
+        // regardless of which code path rewrote `faces`. Same FALLBACK gate as
+        // the forward direction (task 1903 Stage J): declared only when
+        // `CornerCarry` has declined, including when `oldFaceCount == 0` (S4
+        // above), where the carry's own `payloadForCount` finds no payload for
+        // zero faces and declines on its own.
+        if (!cornerCarryActive)
+            this.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
+    }
+
+    // ---------------------------------------------------------------------------
+    // RemoveVerts forward/reverse (used by RemoveVerts entries that are NOT the
+    // compaction pair — e.g. a future direct vert-removal op). The compaction
+    // path records RemoveVerts purely to carry the dropped positions; on reverse
+    // they are re-inserted into the gaps Reindex^-1 re-opened.
+    // ---------------------------------------------------------------------------
+
+    // Forward drop: remove the listed (sorted-ascending) indices from `vertices`.
+    void restoreRemoveVertices(ref const MeshOpEntry e) {
+        const auto idx = e.vIdx;
+        if (idx.length == 0) return;
+        bool[] drop;
+        drop.length = this.vertices.length;
+        foreach (i; idx) if (i < drop.length) drop[i] = true;
+        Vec3[] nv;
+        nv.reserve(this.vertices.length);
+        foreach (i, v; this.vertices) if (!drop[i]) nv ~= v;
+        this.vertices = nv;
+        // Drop the same indices from vertexMarks (task 0613 §4.2 — same
+        // permutation-gap fix as restoreVertexReindexForward/Reverse above), so a
+        // surviving vertex's marks stay aligned with the dropped-then-repacked
+        // position array instead of one drifting relative to the other.
+        uint[] nm;
+        nm.reserve(this.vertexMarks.length);
+        foreach (i, w; this.vertexMarks) if (i >= drop.length || !drop[i]) nm ~= w;
+        this.vertexMarks = nm;
+        // Same drop for vertexSelectionOrder (task 0613 §4.2, S3 code review) —
+        // see restoreVertexReindexForward's comment for why the order stamp must move
+        // with the mark word, not just the position.
+        int[] no;
+        no.reserve(this.vertexSelectionOrder.length);
+        foreach (i, o; this.vertexSelectionOrder) if (i >= drop.length || !drop[i]) no ~= o;
+        this.vertexSelectionOrder = no;
+        // Task 0930: same parallel drop-filter for every Point-domain MeshMap —
+        // see restoreVertexReindexForward's comment for why a surviving vertex's own
+        // value must move with it rather than being left to finalize()'s tail
+        // length-only resize. Same `i >= drop.length || !drop[i]` survive
+        // condition as the three arrays above, scaled by the map's own `dim`.
+        foreach (ref mm; this.meshMaps) {
+            if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+            const size_t dim = mm.dim;
+            const size_t n   = mm.data.length / dim;
+            float[] nd;
+            nd.reserve(mm.data.length);
+            // Task 1069: presence rides the SAME drop-filter, one entry per
+            // ELEMENT, filtered on the identical survive condition.
+            const bool hasP = mm.present.length != 0;
+            ubyte[] np;
+            if (hasP) np.reserve(mm.present.length);
+            foreach (i; 0 .. n)
+                if (i >= drop.length || !drop[i]) {
+                    nd ~= mm.data[i * dim .. i * dim + dim];
+                    if (hasP) np ~= (i < mm.present.length) ? mm.present[i] : cast(ubyte)0;
+                }
+            mm.data = nd;
+            if (hasP) mm.present = np;
+        }
+        // Task 1060: `vertexSetMask` rides the SAME drop-filter as the
+        // Point-domain meshMaps loop just above — computed BEFORE `this.vertices`
+        // was reassigned, so `mm.data`'s pre-drop length still lines up with
+        // `drop`. Re-derive the same relation for `vertexSetMask`.
+        this.vertexSetMask = selSetDropFilterVertexMask(this.vertexSetMask, drop);
+        // Task 1060, Stage 5b: re-key the edge-set registry through THIS drop's
+        // prefix-sum remap — the drop-filter's own old->new correspondence,
+        // built the same way `compactUnreferenced`'s `remap` is (kept indices
+        // renumbered by how many earlier entries were dropped; a dropped
+        // vertex maps to `uint.max`). This must run on the SAME `drop` array
+        // used just above, before any caller reassigns `this.vertices` further.
+        {
+            uint[] vremap;
+            vremap.length = drop.length;
+            uint nextIdx = 0;
+            foreach (i; 0 .. drop.length)
+                vremap[i] = drop[i] ? uint.max : nextIdx++;
+            // No production RemoveVerts reaches this standalone forward arm: the
+            // sole producer writes an immediate Reindex pair, skipped at 848-851.
+            // carry is declared, not witnessed; a direct-removal producer must
+            // revisit this policy and the matching reverse insert arm.
+            selSetRekeyEdges(this,
+                (uint v) => v < vremap.length ? vremap[v] : uint.max,
+                WireKeyPolicy.carry);
+        }
+    }
+
+    // Reverse: restore the dropped verts at their recorded (pre-removal) indices.
+    //
+    // Two cases compose here:
+    //  * After a preceding Reindex^-1 (the compaction pair, the common case),
+    //    `vertices` is ALREADY at pre-compaction length with the dropped slots
+    //    sitting as gaps — so we ASSIGN the recorded position into the existing
+    //    gap (NOT insert, which would double-grow the array).
+    //  * For a standalone RemoveVerts with no preceding Reindex (a future direct
+    //    removal op), the slot does not exist yet, so we INSERT.
+    // `idx` is ascending; low-to-high keeps later indices valid in the insert case.
+    //
+    // vertexMarks (task 0613 §4.2): kept in LENGTH lock-step with `vertices` at
+    // every step, mirroring each of the three position operations exactly —
+    // otherwise a LATER Reindex/RemoveVerts entry in the same batch (a multi-step
+    // compaction) would see `vertexMarks.length != vertices.length` mid-replay,
+    // not just at finalize()'s tail resize. The VALUE inserted is 0 (no bits),
+    // not a restored capture: `MeshOpEntry.RemoveVerts` only records `vIdx` +
+    // `pos` — a removed vertex's marks are not captured anywhere in the delta.
+    // Re-inserting a vertex that was hidden (a loose point's own bit; a
+    // face-bound vertex's bit self-heals via refreshHiddenDerived and needs no
+    // capture) therefore comes back VISIBLE, same as the reference's own convention that
+    // selection bits do not survive an index change elsewhere in mesh.d
+    // (`clearFaceSelectionResize` et al.) — not a regression, a documented limit.
+    //
+    // Task 0930: every Point-domain MeshMap gets the same treatment as
+    // `vertexMarks` in all three branches (gap-fill / tail-append / standalone
+    // insert) — length lock-step, value 0 (not a restored capture, same
+    // documented limit; `MeshOpEntry.RemoveVerts` does not carry a removed
+    // vertex's own map values any more than it carries its marks word).
+    //
+    // TASK 1903 STAGE L5-b — `vertexSetMask` LEFT THAT CLASS AND THE OTHERS DID
+    // NOT. Read the paragraph above as history: it lumps four planes together
+    // (`vertexMarks`, the Point-map values, the `present` bytes, and the set mask)
+    // under one "documented limit", and exactly one of the four is now RESTORED.
+    //
+    //   RESTORED, from the entry's own payload: `vertexSetMask`, on all three
+    //       arms, plus the `edgeSetMask` entries whose endpoint vanished (re-
+    //       inserted after the loop, in the pre-compaction key space
+    //       `restoreVertexReindexReverse` has just put the mesh back into).
+    //   ALSO RESTORED SINCE STAGE L7-P3: every Point-domain `MeshMap` VALUE and
+    //       its `present` byte, on the same three arms, from `mapDims` /
+    //       `mapVals` / `presentBefore` (see their doc on `MeshOpEntry`). The
+    //       payload is optional — absent means "nothing to restore" and the arms
+    //       zero as they always did — and a present-but-unbindable one is refused
+    //       WHOLE, ticking `changeBus.mapDeltaBindRefused`.
+    //   STILL ZEROED, unchanged: `vertexMarks` — and it is now the ONLY plane in
+    //       that class, so the paragraph above should not be read as covering a
+    //       family.
+    //
+    // WHY THE SPLIT IS NOT ARBITRARY. The set mask is DOCUMENT state a user
+    // names, saves in `.v3d` and reloads — "a named selection set vanished on
+    // Ctrl+Z" is a data-loss report (task 2280). The Point-map values are the
+    // same class of loss one level down: a weight or a morph offset is authored
+    // data, and for a `morphAbsolute` map the zero this used to write is a LEGAL
+    // value ("stay at the base"), so the loss is a silent geometric answer rather
+    // than a blank. It was measured as the last blocker under an armed
+    // `bevelEdgesByMask` (card 2320) and under the L10 weld twin, which is why it
+    // left the class here rather than staying belt-covered by the migrated
+    // commands' own `preMaps_` capture.
+    //
+    // A re-inserted vertex coming back VISIBLE and un-marked is a different case
+    // and stays: that is the convention the rest of `mesh.d` already follows for
+    // index changes (`clearFaceSelectionResize` et al.), not authored data.
+    //
+    // `vertexSelectionOrder` (task 0930, secondary finding) now gets the SAME
+    // standalone-insert treatment `vertexMarks` already had: the gap-fill and
+    // tail-append branches were already safe (the gap/tail slot arrives at 0 via
+    // restoreVertexReindexReverse's own permute / finalize()'s tail length-resize), but
+    // the standalone insertInPlace branch left it out of lock-step with
+    // `vertices`' mid-array growth — the same hole this task closed for
+    // `meshMaps` just above, on an array that already had the fix everywhere
+    // else. No live producer reaches this branch yet (a standalone RemoveVerts
+    // with no paired Reindex — see the doc comment above), so this is a
+    // preventive close, not a measured-by-value fix; closed here because the
+    // adjacent lines were already being touched for the meshMaps fix.
+    void restoreInsertVertices(ref const MeshOpEntry e) {
+        const auto idx = e.vIdx; const auto pos = e.pos; const auto vertSetMaskBefore = e.vertSetMaskBefore; const auto edgeSetKeys = e.edgeSetKeys; const auto edgeSetWords = e.edgeSetWords; const auto pointMapDims = e.mapDims; const auto pointMapVals = e.mapVals; const auto pointMapPresent = e.presentBefore;
+        // Task 1903 Stage L5-b. EMPTY means "nothing to restore" — the honest
+        // empty a mesh with no selection sets produces — and a payload of the
+        // WRONG length is refused WHOLE rather than applied to the prefix that
+        // happens to line up: a set membership landing on the wrong vertex is a
+        // legal-looking wrong answer, which is worse than the zero it replaces.
+        const bool haveVsm = vertSetMaskBefore.length == idx.length;
+        ulong vsmFor(size_t i) { return haveVsm ? vertSetMaskBefore[i] : 0UL; }
+
+        // ---- Task 1903 Stage L7-P3: the Point-domain MAP-VALUE payload ---------
+        //
+        // BIND FIRST, ONCE, BEFORE ANY ARM RUNS. The three arms below differ in how
+        // they make room for the vertex, not in what they write into it, so the
+        // decision "is this payload usable at all" is taken here and the arms only
+        // read `pmValue` / `pmPresent`.
+        //
+        // THE BIND IS BY COUNT + DIMS + REGISTRATION ORDER, the same identity
+        // `CornerCarry`'s restore uses for the PolyVertex side. Names are
+        // deliberately not carried: a rename is its own history entry, so it must
+        // already have been undone before this delta's own undo can run (LIFO), and
+        // a `string[]` would be the fourth heap field on the struct — the cost this
+        // stage exists to avoid.
+        //
+        // MISMATCH REFUSES THE WHOLE BLOCK — every channel, not the prefix that
+        // lines up — and the arms then zero exactly as they did before this stage.
+        // The `RemoveVerts` entry itself is NOT refused: its other half re-inserts
+        // the vertex, and skipping that would leave the mesh short a vertex, which
+        // is a corruption rather than a documented limit.
+        size_t pmStride = 0;
+        foreach (d; pointMapDims) pmStride += d;
+        bool pmBound = false;
+        if (pointMapDims.length != 0) {
+            // The live Point-domain registry, in the order the recorder walked it.
+            // The COUNT and the DIMS are two separate terms on purpose: they fail
+            // on different drifts (a map appearing or vanishing vs a map coming
+            // back with a different shape), and a bind that folded them together
+            // would have one of the two untestable. The loop does not `break` for
+            // the same reason — an early exit makes `liveCount` a function of the
+            // dim mismatch and collapses the two terms back into one.
+            size_t liveCount = 0;
+            bool   dimsOk    = true;
+            foreach (ref mm; this.meshMaps) {
+                if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                if (liveCount >= pointMapDims.length
+                    || pointMapDims[liveCount] != mm.dim) dimsOk = false;
+                ++liveCount;
+            }
+            if (dimsOk && liveCount == pointMapDims.length
+                && pointMapVals.length == idx.length * pmStride
+                && (pointMapPresent.length == 0
+                    || pointMapPresent.length == idx.length * pointMapDims.length))
+                pmBound = true;
+            else
+                ++changeBus.mapDeltaBindRefused;
+        }
+        /// The `dim` floats this payload holds for dropped vertex `i`, map `j` —
+        /// or `null` when the payload is absent or refused, which is what the arms
+        /// read as "zero, as before".
+        const(float)[] pmValue(size_t i, size_t j, size_t off, size_t dim) {
+            if (!pmBound) return null;
+            const size_t b = i * pmStride + off;
+            return pointMapVals[b .. b + dim];
+        }
+        /// The presence byte for the same pair. Absent presence payload ⇒ 0, which
+        /// is exactly what the pre-L7-P3 arms wrote.
+        ubyte pmPresent(size_t i, size_t j) {
+            if (!pmBound || pointMapPresent.length == 0) return 0;
+            return pointMapPresent[i * pointMapDims.length + j];
+        }
+
+        foreach (i, vi; idx) {
+            if (vi < this.vertices.length) {
+                this.vertices[vi] = pos[i];          // fill the gap re-opened by Reindex^-1
+                if (vi < this.vertexMarks.length) this.vertexMarks[vi] = 0;
+                {
+                    size_t j = 0, off = 0;
+                    foreach (ref mm; this.meshMaps) {
+                        if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                        const size_t dim = mm.dim;
+                        // Task 1903 Stage L7-P3: this IS a restored capture now,
+                        // when the payload bound. `null` from `pmValue` is the
+                        // pre-L7-P3 zero-fill, unchanged.
+                        auto src = pmValue(i, j, off, dim);
+                        if (vi * dim + dim <= mm.data.length) {
+                            if (src !is null) mm.data[vi * dim .. vi * dim + dim] = src[];
+                            else              mm.data[vi * dim .. vi * dim + dim] = 0f;
+                        }
+                        // Task 1069: the presence channel travels with the value.
+                        if (vi < mm.present.length) mm.present[vi] = pmPresent(i, j);
+                        ++j;
+                        off += dim;
+                    }
+                }
+                // Task 1903 Stage L5-b: this IS a restored capture now — the
+                // one plane of the four that left the "documented limit" class.
+                // See this function's header for which three did not.
+                if (vi < this.vertexSetMask.length) this.vertexSetMask[vi] = vsmFor(i);
+            } else if (vi == this.vertices.length) {
+                this.vertices ~= pos[i];             // contiguous append at the tail
+                this.vertexMarks ~= 0u;
+                {
+                    size_t j = 0, off = 0;
+                    foreach (ref mm; this.meshMaps) {
+                        if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                        const size_t dim = mm.dim;
+                        auto src = pmValue(i, j, off, dim);   // Stage L7-P3
+                        if (src !is null) mm.data ~= src[];
+                        else foreach (_; 0 .. dim) mm.data ~= 0f;
+                        if (mm.present.length != 0) mm.present ~= pmPresent(i, j); // task 1069
+                        ++j;
+                        off += dim;
+                    }
+                }
+                this.vertexSetMask ~= vsmFor(i);   // task 1903 Stage L5-b
+            } else {
+                this.vertices.insertInPlace(vi, pos[i]); // standalone removal (no Reindex)
+                if (vi <= this.vertexMarks.length) this.vertexMarks.insertInPlace(vi, 0u);
+                if (vi <= this.vertexSelectionOrder.length) this.vertexSelectionOrder.insertInPlace(vi, 0);
+                {
+                    size_t j = 0, off = 0;
+                    foreach (ref mm; this.meshMaps) {
+                        if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                        const size_t dim = mm.dim;
+                        auto src = pmValue(i, j, off, dim);   // Stage L7-P3
+                        if (vi * dim <= mm.data.length) {
+                            float[] fill;
+                            fill.length = dim;
+                            if (src !is null) fill[] = src[];
+                            else              fill[] = 0f;
+                            mm.data.insertInPlace(vi * dim, fill);
+                            // Task 1069: the presence channel shifts with the values.
+                            if (mm.present.length != 0 && vi <= mm.present.length)
+                                mm.present.insertInPlace(vi, pmPresent(i, j));
+                        }
+                        ++j;
+                        off += dim;
+                    }
+                }
+                if (vi <= this.vertexSetMask.length)
+                    this.vertexSetMask.insertInPlace(vi, vsmFor(i));   // Stage L5-b
+                // Task 1060, Stage 5b: this is the STANDALONE insert branch — no
+                // live producer reaches it today (see the comment above this
+                // function), but the edge-set re-key belongs here for the same
+                // reason the meshMaps insert does: inserting a vertex at `vi`
+                // shifts every vertex index >= vi up by one, so any edge-set
+                // entry with such an endpoint must shift with it or it silently
+                // points at the wrong (or a now-nonexistent) pair. Preventive
+                // close, not measured-by-value — mirrors the note on
+                // `vertexSelectionOrder`'s insert two lines above.
+                // No production RemoveVerts reaches this standalone insert arm:
+                // the compaction pair reverses into the hole-fill arm above.
+                // carry is declared, not witnessed; a future direct-removal
+                // producer must revisit both standalone policies and add a cell.
+                selSetRekeyEdges(this, (uint v) => v >= vi ? v + 1 : v,
+                                 WireKeyPolicy.carry);
+            }
+        }
+        // Task 1903 Stage L5-b — the EDGE half, AFTER the whole loop and not
+        // inside it. The recorded keys name PRE-compaction vertex indices, which
+        // is the space the mesh is in only once every arm above has run (the
+        // standalone-insert arm shifts existing keys up as it goes). Merged with
+        // `|=` rather than assigned, matching `selSetRekeyEdges`' own conservative
+        // rule for two old keys landing on one new one: a restore may add
+        // membership back, never take it away.
+        foreach (k, key; edgeSetKeys) {
+            if (auto p = key in this.edgeSetMask) *p |= edgeSetWords[k];
+            else                               this.edgeSetMask[key] = edgeSetWords[k];
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // RemoveFaces forward/reverse.
+    // ---------------------------------------------------------------------------
+    void restoreRemoveFaces(ref const MeshOpEntry e) {
+        const auto idx = e.fIdx;
+        if (idx.length == 0) return;
+        bool[] drop;
+        drop.length = this.faces.length;
+        foreach (i; idx) if (i < drop.length) drop[i] = true;
+        uint[][] nf;
+        nf.reserve(this.faces.length);
+        foreach (i, ref f; this.faces) if (!drop[i]) nf ~= f.dup;
+        this.faces = nf;
+        // faceMarks rides the SAME compaction (task 0613 §4.2/S2 code review —
+        // the face-side twin of restoreRemoveVertices's vertexMarks fix above).
+        // This is a real array compaction (drop + shift), not a positional
+        // insert/remove, so a surviving face's WHOLE marks word (Subpatch +
+        // Hide) must move with it to its new index — otherwise finalize()'s
+        // tail `faceMarks.length = this.faces.length` truncate/grow leaves the
+        // word at each surviving index stale, and a face's Hide bit silently
+        // lands on whichever OTHER face slides into its old slot. Same class of
+        // bug already fixed at deleteFacesByMask's own compaction
+        // (`keptWord`, in `Mesh.finalizeTopologyEdit`). Reached on the apply/redo path of
+        // MeshSessionEdit-backed tools (bevel, loop-slice, reduce,
+        // topology-pen-remove — commands/mesh/session_edit.d:108); delete/remove
+        // dodge it because their own revert() re-overlays the full pre-op word
+        // afterward (see MeshDelete.revert) and their redo re-runs the kernel
+        // instead of replaying this forward op.
+        uint[] nm;
+        nm.reserve(this.faceMarks.length);
+        foreach (i, w; this.faceMarks) if (i >= drop.length || !drop[i]) nm ~= w;
+        this.faceMarks = nm;
+        // Task 0922: `faceMaterial` / `facePart` / `faceSelectionOrder` ride the
+        // SAME drop-filter as `faces`/`faceMarks` just above — the same class of
+        // bug, the same fix. Without this, `finalize()`'s tail
+        // `faceMaterial.length = this.faces.length` (a raw truncate/grow, not a
+        // compaction) left each of these three planes at their STALE pre-drop
+        // position instead of following their own face through the drop, so a
+        // face dropped anywhere but the array's tail left every survivor after
+        // it wearing a neighbour's material/part/pick-order stamp. Reached on
+        // the same apply/redo path as the faceMarks fix above.
+        uint[] nmat;
+        nmat.reserve(this.faceMaterial.length);
+        foreach (i, v; this.faceMaterial) if (i >= drop.length || !drop[i]) nmat ~= v;
+        this.faceMaterial = nmat;
+        uint[] nprt;
+        nprt.reserve(this.facePart.length);
+        foreach (i, v; this.facePart) if (i >= drop.length || !drop[i]) nprt ~= v;
+        this.facePart = nprt;
+        // Task 1060, Stage 5c: `faceSetMask` rides the SAME drop-filter as
+        // `facePart` just above — this is the undo/redo replay twin of the
+        // face-drop carry `deleteFacesByMask`/`dissolveVerticesByMask`/etc.
+        // already do on the live path.
+        ulong[] nsetm;
+        nsetm.reserve(this.faceSetMask.length);
+        foreach (i, v; this.faceSetMask) if (i >= drop.length || !drop[i]) nsetm ~= v;
+        this.faceSetMask = nsetm;
+        int[] nord;
+        nord.reserve(this.faceSelectionOrder.length);
+        foreach (i, v; this.faceSelectionOrder) if (i >= drop.length || !drop[i]) nord ~= v;
+        this.faceSelectionOrder = nord;
+    }
+
+    void restoreInsertFaces(ref const MeshOpEntry e) {
+        const auto idx = e.fIdx; const auto lists = e.faceLists; const auto mat = e.faceMat; const auto prt = e.facePrt; const auto sub = e.faceSub; const auto setm = e.faceSetMsk; const auto ord = e.faceOrd;
+        // NEGATIVE CONTROL (test only): stub RemoveFaces^-1 to a no-op under
+        // -version=UndoNegControlRemoveFaces so the delete/remove round-trip proves
+        // the face re-insertion inverse is load-bearing (without it the deleted
+        // faces never come back on undo → face count diverges from the pre-op mesh).
+        version (UndoNegControlRemoveFaces) return;
+        // Task 1902 Stage H (plan §7.3): `faceSelectionOrder` is now carried the
+        // same way `facePrt`/`faceSetMsk` are — an entry recorded before this
+        // task (or a hand-built test fixture with no `ord`) falls back to the
+        // pre-existing "insert 0" behaviour, unchanged.
+        const bool haveOrd = ord.length == idx.length;
+        // Insert ascending so later indices stay valid.
+        foreach (i, fi; idx) {
+            if (fi <= this.faces.length)
+                this.faces.insertInPlace(fi, lists[i].dup);
+            // faceMarks shifts in LOCKSTEP with `this.faces` (task 0613 §4.2/S2 code
+            // review — the reverse-direction twin of restoreRemoveFaces's fix
+            // above; mirrors how faceMaterial/facePart already insertInPlace at
+            // `fi` just below). Without this, `this.faces` grows by one at `fi`
+            // (shifting every surviving face after it up one slot) while
+            // `this.faceMarks` sits untouched until finalize()'s tail
+            // `faceMarks.length = this.faces.length` — a LENGTH GROW, which appends
+            // zeros at the TAIL, not at `fi` — so every surviving face's word
+            // ends up misaligned with its (now-shifted) face, not just the
+            // re-inserted one. Insert 0 (no bits): a re-inserted face's OWN word
+            // is not captured by this entry beyond `sub` (Subpatch, restored by
+            // name just below) — same "not a regression, a documented limit" as
+            // restoreInsertVertices's vertexMarks insert above.
+            if (fi <= this.faceMarks.length) this.faceMarks.insertInPlace(fi, 0u);
+            // faceSelectionOrder shifts in LOCKSTEP too (task 0922 — the reverse
+            // twin of the forward drop-filter fixed above). SelectionDelta only
+            // ever patches the Select BIT (see restoreSelectionValues below); it does not
+            // touch the pick-order stamp. Task 1902 Stage H: when `ord` is
+            // carried, insert the DROPPED face's own recorded stamp instead of
+            // the earlier unconditional 0 — the same carried/not-carried split
+            // `facePrt`/`faceSetMsk` already use below.
+            if (fi <= this.faceSelectionOrder.length)
+                this.faceSelectionOrder.insertInPlace(fi, haveOrd ? ord[i] : 0);
+        }
+        // Restore parallel per-face arrays (material / part / subpatch) where
+        // carried. The face SELECT bit is restored by the SelectionDelta /
+        // whole-array path, not here (see faceSelectionOrder's own insert above
+        // for why the pick-order STAMP is not restorable that way).
+        if (mat.length == idx.length) {
+            foreach (i, fi; idx) {
+                // `<=`, not `<` (task 0922): `fi == this.faceMaterial.length` is the
+                // legal TAIL-insert case `insertInPlace` accepts, and `facePart`
+                // just below already uses `<=` for the identical insert. The
+                // stricter `<` silently skipped exactly that tail re-insertion,
+                // leaving a re-inserted face's material lost — not merely
+                // deferred to finalize()'s tail pad, since that pad writes 0 at
+                // the array's OWN new tail, which after this skip is one slot
+                // short of where the restored face actually landed.
+                if (fi <= this.faceMaterial.length) {
+                    this.faceMaterial.insertInPlace(fi, mat[i]);
+                }
+            }
+        }
+        if (prt.length == idx.length) {
+            foreach (i, fi; idx) {
+                if (fi <= this.facePart.length)
+                    this.facePart.insertInPlace(fi, prt[i]);
+            }
+        } else {
+            // prt not carried (old delta): insert 0u to keep length aligned.
+            foreach (i, fi; idx) {
+                if (fi <= this.facePart.length)
+                    this.facePart.insertInPlace(fi, 0u);
+            }
+        }
+        // Task 1060, Stage 5c / review SHOULD-FIX 4: `faceSetMask` rides the SAME
+        // carried/not-carried split `prt` uses just above, NOT an unconditional
+        // 0-insert. The earlier comment here claimed this matched an "inherited"
+        // limit of the per-face-part data — that was wrong: all four live
+        // `recordRemoveFaces` call sites (`Mesh.deleteFacesByMask`,
+        // `Mesh.dissolveVerticesByMask`, the merge path, `extrudeFacesByMask`)
+        // already populate and pass `prt`, so `facePrt`'s "not carried" arm is
+        // dead in practice — only reachable from a hand-built (pre-1060)
+        // `MeshOpEntry`. `faceSetMask` had no capture field at all until this
+        // fix, so its 0-insert was the ONLY reachable arm: every face-delete undo
+        // silently dropped the restored face's set membership while its material
+        // and part id came back correctly. Carried the same way `prt` is.
+        if (setm.length == idx.length) {
+            foreach (i, fi; idx) {
+                if (fi <= this.faceSetMask.length)
+                    this.faceSetMask.insertInPlace(fi, setm[i]);
+            }
+        } else {
+            // Not carried (a hand-built entry with no faceSetMsk, e.g. this
+            // module's own S2 unittest fixture): insert 0UL to keep length
+            // aligned with `this.faces`, same as `prt`'s fallback arm above.
+            foreach (i, fi; idx) {
+                if (fi <= this.faceSetMask.length)
+                    this.faceSetMask.insertInPlace(fi, 0UL);
+            }
+        }
+        if (sub.length == idx.length) {
+            foreach (i, fi; idx)
+                if (fi < this.faces.length)
+                    this.setFaceSubpatch(fi, sub[i] != 0);
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Sparse mark patches. SelectionDelta carries the whole Select mark word per
+    // touched element; Subpatch/Material carry the bit / id.
+    // ---------------------------------------------------------------------------
+    void restoreSelectionValues(MeshOpEntry.SelDomain dom,
+                                in uint[] idx, in uint[] vals) {
+        import vibe3d.mesh.change.change_bus : BusSelDomain = SelDomain;
+        bool any = false;
+        BusSelDomain busDom;
+        final switch (dom) {
+            case MeshOpEntry.SelDomain.Vertex:
+                busDom = BusSelDomain.Vertex;
+                foreach (i, e; idx) if (e < this.vertexMarks.length) any |= setSelectBit(this.vertexMarks[e], vals[i]);
+                break;
+            case MeshOpEntry.SelDomain.Edge:
+                busDom = BusSelDomain.Edge;
+                foreach (i, e; idx) if (e < this.edgeMarks.length) any |= setSelectBit(this.edgeMarks[e], vals[i]);
+                break;
+            case MeshOpEntry.SelDomain.Face:
+                busDom = BusSelDomain.Face;
+                foreach (i, e; idx) if (e < this.faceMarks.length) any |= setSelectBit(this.faceMarks[e], vals[i]);
+                break;
+        }
+        // TASK 1903 L0.P1 — NOTE THE SELECTION DOMAIN, on BOTH paths.
+        //
+        // This loop writes Select marks RAW (see `setSelectBit` below) and, until
+        // now, noted no selection domain at all: on the slow path the incidental
+        // full `Polygons` re-upload that `rebuildEdges` publishes repainted the
+        // highlight by brute force, so nobody noticed. The carve-out drops that
+        // publish, and `Marks` is deliberately outside the local
+        // `DisplayRefreshMask`, so the domain note is what a selection consumer has
+        // left to key on.
+        //
+        // Placed HERE rather than in the fast branch so the two paths cannot
+        // diverge: it is the funnel every guarded marks setter on `Mesh` already
+        // uses, it accumulates without delivering (`finalize`'s `commitRestored`
+        // is the delivery), and it can only invalidate MORE, never less.
+        //
+        // Guarded on a REAL flip, like every one of those setters — `setSelectBit`
+        // reports whether the word actually changed. The recorders guard only
+        // `idx.length == 0`, so a `before == after` entry is representable, and a
+        // no-op restore must not publish (памятка: a paint stroke without
+        // compare-before-set delivered 280 times for 42 edits).
+        if (any) this.noteSelectionChange(busDom);
+    }
+
+    // Returns TRUE iff the word actually changed — see `restoreSelectionValues`'s domain
+    // note above for why the caller needs to know.
+    private bool setSelectBit(ref uint word, uint on) {
+        // §3.1 Select ∧ Hide = ∅ (doc/hide_geometry_plan.md, code review task
+        // 0613 — S2) — this sparse patch is the delta-backed undo/redo replay's
+        // own Select writer (delete / remove / edge extrude / edge extend), and
+        // it does not go through any of mesh.d's guarded selectX /
+        // setXSelectedFrom primitives. Refuse the same way they do — silently —
+        // or a redo/undo round-trip could resurrect a Select bit on an element
+        // that is (still) hidden at this index.
+        if (on != 0 && (word & Mesh.Marks.Hide) != 0) return false;
+        const uint was = word;
+        if (on) word |=  Mesh.Marks.Select;
+        else    word &= ~Mesh.Marks.Select;
+        return word != was;
+    }
+
+    // Mirrors patchSubpatch (task 0613 §4.2/S1) — sparse face-indexed Hide patch.
+    // Routes through setHideBit below rather than poking the word directly, for
+    // the same reason setSelectBit exists just above: this is a mark WRITER and
+    // owes the §3.1 invariant, not a caller-side convenience.
+    void restoreHideValues(in uint[] idx, in uint[] vals) {
+        foreach (i, e; idx)
+            if (e < this.faceMarks.length)
+                setHideBit(this.faceMarks[e], vals[i]);
+    }
+
+    private void setHideBit(ref uint word, uint on) {
+        // §3.1 Select ∧ Hide = ∅ — the same invariant setSelectBit enforces from
+        // the OTHER direction (refuse Select while Hide is set); this is the Hide
+        // side of it (clear Select when Hide gets set). Raw bit-twiddle — no
+        // commitChange, no refreshHiddenDerived here: finalize() does both ONCE
+        // for the whole replay (same convention as restoreSubpatchValues/restoreMaterialValues),
+        // and refreshHiddenDerived() is what re-derives the vertex/edge planes
+        // afterward — this function only owns the authoritative face bit.
+        if (on != 0) {
+            word |= Mesh.Marks.Hide;
+            word &= ~Mesh.Marks.Select;
+        } else {
+            word &= ~Mesh.Marks.Hide;
+        }
+    }
+
+    void restoreMaterialValues(in uint[] idx, in uint[] vals) {
+        foreach (i, e; idx)
+            if (e < this.faceMaterial.length)
+                this.faceMaterial[e] = vals[i];
+    }
+
+    // Resolve the entry's map and check every REFUSAL term the payload carries.
+    // Returns null (having ticked the counter) on any mismatch.
+    private MeshMap* bindMapForEntry(ref const MeshOpEntry e, string name) {
+        auto live = this.meshMap(name);
+        if (live is null)          { ++changeBus.mapDeltaBindRefused; return null; }
+        if (live.dim    != e.mapDim
+         || live.domain != e.mapDomain
+         || live.kind   != e.mapKind) { ++changeBus.mapDeltaBindRefused; return null; }
+        return live;
+    }
+
+    void restoreMapValues(ref const MeshOpEntry e, bool forward) {
+        auto live = bindMapForEntry(e, e.mapName);
+        if (live is null) return;
+
+        const bool tracks = kindInfo(live.kind).tracksPresence;
+        const(float)[] vals = forward ? e.mapValsAfter  : e.mapValsBefore;
+        const(ubyte)[] pres = forward ? e.presentAfter : e.presentBefore;
+
+        final switch (e.mapAddr) with (MeshOpEntry.MapAddressing) {
+            case Listed:
+                // A `Listed` entry with NO indices is a DROPPED plane, not "all
+                // elements" — refuse it rather than rewriting the whole map with
+                // whatever the value arrays hold. That inference is the
+                // empty-means-all trap this addressing enum exists to close.
+                if (e.mapElemIdx.length == 0) { ++changeBus.mapDeltaBindRefused; return; }
+                const size_t want = e.mapElemIdx.length * live.dim;
+                if (e.mapValsBefore.length != want || e.mapValsAfter.length != want) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+                if (tracks) {
+                    if (e.presentBefore.length != e.mapElemIdx.length
+                     || e.presentAfter.length  != e.mapElemIdx.length) {
+                        ++changeBus.mapDeltaBindRefused; return;
+                    }
+                    // THE LIVE CHANNEL'S OWN LENGTH, and this term is not
+                    // decoration. `present.length == 0` LEGALLY means "every
+                    // element is present", and every writer in `mesh.d` guards on
+                    // `i < present.length` — so without this compare a Listed
+                    // restore writes `data`, silently drops the presence half, and
+                    // every other length term still passes with no counter moving.
+                    // `data` then compares equal to the recorded values, so a
+                    // value-plane assertion does not see it either.
+                    if (live.present.length != this.elementCount(live.domain)) {
+                        ++changeBus.mapDeltaBindRefused; return;
+                    }
+                } else if (e.presentBefore.length != 0 || e.presentAfter.length != 0) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+                foreach (idx; e.mapElemIdx) {
+                    const size_t b = cast(size_t)idx * live.dim;
+                    if (idx >= this.elementCount(live.domain) || b + live.dim > live.data.length) {
+                        ++changeBus.mapDeltaBindRefused; return;
+                    }
+                }
+                // Bound. From here every write lands, and DELIBERATELY WITHOUT a
+                // second `idx < live.present.length` guard: the bind terms above
+                // are the single authority, and a belt-and-braces guard here would
+                // be an unnamed second refusal standing in front of the named one —
+                // the shape that makes a witness green on the broken code. If the
+                // live-presence bind term is ever removed, this line is a
+                // bounds-checked abort in `-debug` and an out-of-bounds WRITE in
+                // `-release`; that is a feature of the arrangement, not an
+                // oversight. (The plan predicted a silent drop here, on the
+                // assumption that this loop would guard the way `mesh.d`'s own
+                // setters do. It does not, so the term protects more than the
+                // plan said. Recorded rather than "fixed" by adding the guard.)
+                foreach (k, idx; e.mapElemIdx) {
+                    const size_t b = cast(size_t)idx * live.dim;
+                    live.data[b .. b + live.dim] = vals[k * live.dim .. (k + 1) * live.dim];
+                    if (tracks) live.present[idx] = pres[k];
+                }
+                break;
+
+            case WholeArray:
+                if (e.mapValsBefore.length != live.data.length
+                 || e.mapValsAfter.length  != live.data.length) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+                if (tracks) {
+                    if (e.presentBefore.length != live.present.length
+                     || e.presentAfter.length  != live.present.length) {
+                        ++changeBus.mapDeltaBindRefused; return;
+                    }
+                } else if (e.presentBefore.length != 0 || e.presentAfter.length != 0) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+                live.data[] = vals[];
+                if (tracks) live.present[] = pres[];
+                break;
+
+            case DefaultInit:
+                // Meaningless for a value write — it is the `Create` arm's "the
+                // content `addMeshMapOfKind` produces". A `Values` entry that
+                // carries it is malformed, and saying so is cheaper than guessing
+                // which of the two shapes the recorder meant.
+                ++changeBus.mapDeltaBindRefused;
+                break;
+        }
+    }
+
+    // Register the entry's map and, unless the entry says DefaultInit, fill it
+    // from the supplied image. Used by `Create` FORWARD and `Remove` REVERSE —
+    // the same operation, reached from the two arms whose payload class differs.
+    void restoreMapRegister(ref const MeshOpEntry e, bool forward) {
+        const(float)[] vals = forward ? e.mapValsAfter : e.mapValsBefore;
+        const(ubyte)[] pres = forward ? e.presentAfter : e.presentBefore;
+        const uint slot = forward ? uint.max : e.mapSlot;
+        if (e.mapName.length == 0)          { ++changeBus.mapDeltaBindRefused; return; }
+        if (this.meshMap(e.mapName) !is null)  { ++changeBus.mapDeltaBindRefused; return; }
+
+        // Through the CLASSIFIED door when the kind declares a shape, so dim and
+        // domain come from `kindInfo` and cannot drift from the shape table; the
+        // raw door otherwise (`unclassified` has no declarable shape — `kindInfo`
+        // gives it dim 0, which `addMeshMap` rejects outright).
+        MeshMap* live;
+        if (e.mapKind == MapKind.unclassified)
+            live = this.addMeshMap(e.mapName, e.mapDim, e.mapDomain);
+        else
+            live = this.addMeshMapOfKind(e.mapKind, e.mapName);
+
+        // `addMeshMap` returns NULL at the MAX_MESH_MAPS ceiling as well as on a
+        // duplicate name. A reverse that dereferenced it would crash; a reverse
+        // that ignored it would restore nothing and answer `true`.
+        if (live is null) { ++changeBus.mapDeltaBindRefused; return; }
+
+        // The shape the classified door produced must be the shape recorded, or
+        // the fill below writes into the wrong layout.
+        if (live.dim != e.mapDim || live.domain != e.mapDomain) {
+            this.removeMeshMap(e.mapName);
+            ++changeBus.mapDeltaBindRefused;
+            return;
+        }
+
+        if (e.mapAddr == MeshOpEntry.MapAddressing.DefaultInit) {
+            // "the content addMeshMapOfKind produces" — already there.
+            restoreMapSlot(slot);
+            return;
+        }
+
+        const bool tracks = kindInfo(live.kind).tracksPresence;
+        if (vals.length != live.data.length
+         || (tracks && pres.length != live.present.length)
+         || (!tracks && pres.length != 0)) {
+            // Refuse the entry WHOLE — including the registration it just made,
+            // so a half-restored map never reaches the document.
+            this.removeMeshMap(e.mapName);
+            ++changeBus.mapDeltaBindRefused;
+            return;
+        }
+        live.data[] = vals[];
+        if (tracks) live.present[] = pres[];
+        // LAST, and it must be last: `live` points into `meshMaps` and the move
+        // below rewrites that array. Fill through the pointer, then place.
+        restoreMapSlot(slot);
+    }
+
+    // Rotate the just-appended map from the end of `meshMaps` into `slot`,
+    // shifting the maps in between right by one — the inverse of the splice
+    // `removeMeshMap` performed. A no-op for `uint.max` and for any slot at or
+    // past the end.
+    //
+    // CLAMPS RATHER THAN REFUSES, and the reason is in `MeshOpEntry.mapSlot`: the
+    // registry may legitimately have shrunk between record and replay, and a map
+    // restored at the wrong index is a smaller error than a map not restored at
+    // all. Every pointer into `meshMaps` is invalid after this call.
+    void restoreMapSlot(uint slot) {
+        if (slot == uint.max || this.meshMaps.length == 0) return;
+        const size_t last = this.meshMaps.length - 1;
+        if (cast(size_t)slot >= last) return;
+        auto moved = this.meshMaps[last];
+        foreach_reverse (i; cast(size_t)slot .. last)
+            this.meshMaps[i + 1] = this.meshMaps[i];
+        this.meshMaps[cast(size_t)slot] = moved;
+    }
+
+    // Drop the entry's map — `Create` REVERSE and `Remove` FORWARD. Binds first,
+    // with the same refusal terms, so a map that came back reshaped between record
+    // and replay is not deleted on this entry's word.
+    void restoreMapUnregister(ref const MeshOpEntry e) {
+        auto live = bindMapForEntry(e, e.mapName);
+        if (live is null) return;
+        this.removeMeshMap(e.mapName);
+    }
+
+    // Rename `from` -> `to`, in whichever direction the caller asked for.
+    //
+    // BOTH ENDS BIND. `Mesh.meshMap()` and `Mesh.removeMeshMap()` each take the
+    // FIRST name match, so a DUPLICATE source name would rename the wrong map and
+    // leave the other permanently unreachable; and the shipped rename command
+    // throws on a taken target, which this arm must not quietly undercut.
+    void restoreMapRename(ref const MeshOpEntry e, string from, string to) {
+        if (from.length == 0 || to.length == 0) { ++changeBus.mapDeltaBindRefused; return; }
+        auto live = bindMapForEntry(e, from);
+        if (live is null) return;
+        size_t matches = 0;
+        foreach (ref mm; this.meshMaps) if (mm.name == from) ++matches;
+        if (matches != 1)                { ++changeBus.mapDeltaBindRefused; return; }
+        if (this.meshMap(to) !is null)      { ++changeBus.mapDeltaBindRefused; return; }
+        live.name = to;
+    }
+
+
+    void restoreParallelPlaneLengths() {
+        // Keep the per-element marks / order arrays length-correct with the
+        // restored geometry (the same resize primitives the topology mutators run).
+        // These GROW/SHRINK without clearing; the SelectionDelta entries restored
+        // the actual bits, so this only fixes lengths after a count change.
+        this.vertexMarks.length          = this.vertices.length;
+        this.vertexSelectionOrder.length = this.vertices.length;
+        // TASK 1903 STAGE L2-c — `vertexSetMask` was missing from this length sync,
+        // the SAME hole task 1060's review closed for `faceSetMask` two lines below
+        // and for the same reason. `AddVerts`'s forward/reverse (`this.vertices ~= …` /
+        // `this.vertices.length = v0`) carry no parallel-array payload of their own, so
+        // they rely entirely on this blanket resize to stay aligned; `RemoveVerts`'s
+        // reverse splices its own entry in and this line is a no-op for it.
+        //
+        // FOUND BY THE FROZEN PARITY ORACLE, not by review: `mesh.split_edge`'s
+        // `resetSelection()` grows `vertexSetMask` to V+1 on the forward, and the
+        // delta revert put `vertices` back to V and left the mask at V+1 —
+        // `create_stable.json [mesh.split_edge/postUndo]: plane 'vertexSetMask'
+        // differs`. The snapshot path restored the array whole and did not.
+        //
+        // THE USER-VISIBLE HALF, which is why this is a fix and not hygiene:
+        // `mesh_selsets.selSetMembersVertex` walks the MASK, not `this.vertices`, so a
+        // stale out-of-range entry reaches `/api/model` and the `.v3d` writer, and
+        // the loader's own bounds guard then drops the WHOLE named set on reload
+        // rather than the one bad entry — the exact incident `faceSetMask`'s line
+        // records.
+        this.vertexSetMask.length        = this.vertices.length;
+        this.edgeMarks.length            = this.edges.length;
+        this.edgeSelectionOrder.length   = this.edges.length;
+        this.faceMarks.length            = this.faces.length;
+        this.faceSelectionOrder.length   = this.faces.length;
+        this.faceMaterial.length         = this.faces.length;
+        this.facePart.length             = this.faces.length;
+        // Task 1060 review SHOULD-FIX 3: `faceSetMask` was missing from this
+        // length sync. `AddFaces`'s forward/reverse (`this.faces ~= …` / `this.faces.length
+        // = f0`) carry NO parallel-array payload of their own — same as
+        // facePart/faceMaterial, they rely entirely on this blanket resize to stay
+        // aligned. Without this line an AddFaces-revert SHRINK left `faceSetMask`
+        // over-long with stale, now out-of-range LIVE bits (add faces, put them in
+        // a polygon set, undo): `selSetMembersPolygon` walks the mask, not
+        // `this.faces`, so those out-of-range indices reached `/api/model` and the
+        // `.v3d` writer, and the loader's own bounds guard then dropped the WHOLE
+        // set on reload rather than the one stale entry.
+        this.faceSetMask.length          = this.faces.length;
+    }
+    void restoreTopologyEpoch() { ++topologyVersion; }
+
+    void restoreAppendVertices(in Vec3[] pos) { foreach (p; pos) vertices ~= p; }
+    void restoreVertexTail(uint v0) { if (v0 <= vertices.length) vertices.length = v0; }
+    void restorePositions(in uint[] idx, in Vec3[] pos) { foreach (i, vi; idx) if (vi < vertices.length) vertices[vi] = pos[i]; }
+    void restoreAppendFaces(in uint[][] lists) { foreach (l; lists) faces ~= l.dup; }
+    void restoreFaceTail(FaceIdx f0) { if (f0 <= faces.length) faces.length = f0; }
+    void restoreFaceWindings(in FaceIdx[] idx, in uint[][] lists) { foreach (i, fi; idx) if (fi < faces.length) faces[fi] = lists[i].dup; }
+
+    // Nullable recorder. NULL unless an edit batch is open (the common case —
+    // it is opened only around a committed topology op, never per drag frame).
+    // While non-null, the hooked mutation primitives (addVertex, addFace,
+    // compactUnreferenced, deleteFacesByMask, dissolveVerticesByMask,
+    // removeEdgesByMask, extrudeEdgesByMask, …) append an operation-log entry.
+    // Every hook's FIRST line is
+    // `if (editRecorder_ is null) return;` — a single predictable branch — so
+    // when no batch is open (always, in Phase 1) the tracker adds zero cost and
+    // every existing behavior is byte-for-byte unchanged. See
+    // doc/undo_change_tracker_plan.md.
+    //
+    // TASK 1903 §2.2a — this is an ACCESSOR over `g_editBatchStack`, not a
+    // field, and the reason is the same one stated at `g_hideDeriveDepth`:
+    // kernels that replace the whole struct (`*mesh = subdivide(...)`) would
+    // swap in the new value's EMPTY tracker mid-record and orphan the one the
+    // caller is about to read. A recording batch allocates its tracker once
+    // and the module-level frame holds the pointer; the array may reallocate,
+    // the tracker cannot move.
+    //
+    // Every existing spelling still reads the same — `editRecorder_ !is null`,
+    // `editRecorder_.recordX(...)` — because a property returning a pointer is
+    // indistinguishable from a pointer field at the use site. The early-out on
+    // an empty stack keeps the no-batch cost at one length compare, which is
+    // what the "zero cost when no batch is open" sentence above promises.
+    //
+    // `const` ON A METHOD RETURNING A MUTABLE POINTER IS DELIBERATE, and
+    // `inout` cannot express it. The recorder is not part of `Mesh`'s state at
+    // all: it lives on the GC and is reached through the module-level frame
+    // stack, so `const(Mesh)` says nothing about whether it may be written —
+    // `this` is only the KEY of the lookup. The qualifier is here because the
+    // const readers need it (`isRecordingEdits`, `wantsFaceReindexRecording`,
+    // and the `const` mutation hooks that ask "is anyone recording?"); an
+    // `inout` return would instead propagate `Mesh`'s constness onto a
+    // different object's, which is the claim that is actually false.
+    pragma(inline, true)
+    private MeshEditTracker* editRecorder_() const {
+        if (g_editBatchStack.length == 0) return null;
+        auto f = currentBatchFrame(&this);
+        return f is null ? null : f.rec;
+    }
+
+    // --- Edge-delete touched region (task 0474) ---------------------------
+    // POSITIONS of the endpoints of the edges last handed to removeEdgesByMask
+    // (the SELECTION the user asked to delete). Captured before any mutation,
+    // so — since compaction never moves a vertex — a surviving endpoint keeps a
+    // bit-identical position and can be re-found afterwards. `dissolveDegree2Verts`
+    // uses this as its scoping region so the post-remove 2-valent cleanup only
+    // touches verts the edge-delete actually reduced, never a distant pre-existing
+    // 2-valent vertex (e.g. a 90° corner). Vertex positions, not indices, because
+    // removeEdgesByMask reindexes verts through compactUnreferenced. Overwritten
+    // on every removeEdgesByMask call; only the edge-delete/remove commands read it.
+    private Vec3[] lastEdgeDeleteRegion_;
+
+    /// The touched-region positions captured by the most recent
+    /// `removeEdgesByMask` (see `lastEdgeDeleteRegion_`). Consumed by the
+    /// edge-mode delete/remove commands to scope `dissolveDegree2Verts`.
+    Vec3[] edgeDeleteRegion() const { return lastEdgeDeleteRegion_.dup; }
+
+    // INDICES of the merged boundary polygons the most recent
+    // removeEdgesByMask produced — the dissolve's PRODUCT, which
+    // `commands/mesh/merge.d` re-points the selection at (task 1180,
+    // `selection_product.d`). Same lifetime discipline as
+    // `lastEdgeDeleteRegion_` above: overwritten on every removeEdgesByMask
+    // call (including one that dissolves nothing, which leaves it empty), and
+    // valid only until the NEXT mesh mutation. Indices are safe to hand back
+    // even though the kernel reindexes verts, because the merged polys are the
+    // tail of the face array and the tail `compactUnreferenced` moves vertices,
+    // never faces.
+    private uint[] lastDissolveProduct_;
+
+    /// The merged polygons produced by the most recent `removeEdgesByMask`
+    /// (see `lastDissolveProduct_`). Empty when nothing merged.
+    uint[] dissolveProductFaces() const { return lastDissolveProduct_.dup; }
+
+    // Open an edit batch: install the recorder so the mutation hooks start
+    // logging. `declared` is the advisory change scope. The pointer must
+    // out-live the batch (callers stack-allocate a MeshEditTracker and pass its
+    // address, then call endEditBatch before it leaves scope).
+    //
+    // TASK 1903 — the OLDER SPELLING of `MeshEditBatch`, kept for the four
+    // callers that predate the handle (`commands/mesh/delete.d`, `remove.d`,
+    // `tools/edit/edge_extend.d`, `edge_extrude.d`) and for the unit fixtures
+    // that drive the tracker directly. Same frame, same stack, same close.
+    void beginEditBatch(MeshEditTracker* rec, MeshEditScope declared) {
+        // `pushEditFrame` owns the "only the OUTERMOST batch declares" rule
+        // (plan §2.3 rule 1), so this spelling and `MeshEditBatch`'s
+        // constructor cannot disagree about what lands in the delta's scope.
+        cast(void)pushEditFrame(&this, cast(uint)declared, rec);
+    }
+
+    // Close the batch and return the finished, invertible delta.
+    //
+    // TASK 1903 §3.1 B4 — THIS STAMPS. It has to: the four callers above hold
+    // ZERO `commitChange` of their own (measured: 0/0/0/0), their kernels
+    // commit INSIDE the batch, and those commits now defer into the frame. A
+    // pop-only close would throw them away and `mesh.delete` would silently
+    // stop bumping `mutationVersion`, stop deriving the hide planes and stop
+    // delivering. `closeEditFrame` is the shared body with
+    // `MeshEditBatch.close()`, so the two spellings cannot drift.
+    MeshEditDelta endEditBatch() {
+        return closeEditFrame(&this, 0);
+    }
+
+    /// TASK 1903 S1 — THE `beginEditBatch` PAIR'S UNWIND PATH.
+    ///
+    /// `MeshEditBatch` pops its frame from `~this`. This older spelling has no
+    /// handle and therefore no destructor, so an `Exception` escaping between
+    /// `beginEditBatch` and `endEditBatch` orphans the frame PERMANENTLY:
+    /// every later `commitChange` on this mesh finds it and defers forever, so
+    /// the app keeps running and silently stops bumping versions, deriving and
+    /// delivering — and `changeBus.batchLeaks` stays 0, because the counter
+    /// that would have shown it is the destructor's. The frame's `rec` also
+    /// points at the caller's stack `MeshEditTracker`, which is dead by then.
+    /// The four callers (`commands/mesh/delete.d`, `remove.d`,
+    /// `tools/edit/edge_extend.d`, `edge_extrude.d`) hold 66 `enforce` /
+    /// `throw new` sites' worth of kernel between the two calls.
+    ///
+    /// Each of the four spells `scope(failure) mesh.abortEditBatch();` right
+    /// after its open. `scope(failure)` stays ARMED for the rest of the
+    /// enclosing scope, i.e. past the successful `endEditBatch` — at three of
+    /// the four sites there are throwing statements after the close
+    /// (`refreshCaches`, `history.record`). So the no-frame early-out below is
+    /// load-bearing, not tidiness: without it a throw after a clean close
+    /// would tick `batchLeaks` for a batch that never leaked, and the suite
+    /// asserts that counter is 0.
+    ///
+    /// It never stamps: `popLeakedEditFrame` drops the accumulated flags on
+    /// the floor and marks an enclosing frame errored, exactly as the
+    /// destructor's path does. What it does NOT drop is `noteChange` — that
+    /// already ran, before the deferral early-out, so the flags are still in
+    /// `undeliveredChanges_` / `undeliveredSelDomains_` and the next commit on
+    /// this mesh carries them.
+    void abortEditBatch() {
+        if (currentBatchFrame(&this) is null) return;   // already closed
+        popLeakedEditFrame(&this);
+        ++changeBus.batchLeaks;     // the observable, asserted 0 by the suite
+    }
+
+    // True while a batch is open (test/introspection helper).
+    bool isRecordingEdits() const { return editRecorder_ !is null; }
+
+    // --- Task 1902 Stage H: the FaceReindex op-log seam --------------------
+    // `mesh_planes.rewriteFaces` needs to query and call the recorder, but
+    // `editRecorder_` is module-private to THIS module and `mesh_planes.d`
+    // is a separate one — these two public methods are the seam, mirroring
+    // `isRecordingEdits()`'s existing shape. Kept out of `mesh_edit_delta.d`
+    // deliberately: `MeshEditTracker.wantsFaceReindex` is the tracker's OWN
+    // opt-in field (plan §7.1), these are just the `Mesh`-side reachability.
+
+    /// Does the currently-open batch (if any) want `FaceReindex` entries?
+    /// Default answer is `false` whenever no batch is open OR the open
+    /// batch's recorder has not opted in (plan §7.1 — no production site
+    /// does, in this task).
+    bool wantsFaceReindexRecording() const {
+        return editRecorder_ !is null && editRecorder_.wantsFaceReindex;
+    }
+
+    /// Record a `FaceReindex` entry if (and only if) the open batch wants
+    /// one — re-checked here defensively; the only caller today
+    /// (`mesh_planes.rewriteFaces`) already gates its own capture on
+    /// `wantsFaceReindexRecording()`, so this second check costs one branch
+    /// on an already-decided-armed path, never a surprise no-op.
+    /// TASK 4059 — ONE parameter, down from twelve. Five of the twelve were
+    /// `kFacePlanes` written out a third time, positionally: five same-shaped
+    /// array arguments in a row that no count could tell apart if two were
+    /// swapped. They now ride inside `FaceReindexRecord.dropPlanes`, whose
+    /// fields are generated from that list.
+    void recordFaceReindexIfWanted(FaceReindexRecord rec) {
+        if (editRecorder_ is null || !editRecorder_.wantsFaceReindex) return;
+        editRecorder_.recordFaceReindex(rec);
+    }
+
+    // Install one in-place face winding and record its live before-image
+    // (task 1903). The replacement must not alias `faces[fi]`; identity writes
+    // record nothing, and whole-array rewrites use `rewriteFaces` instead.
+    // Rationale and witness: doc/source_prose_policy.md#запись-winding-и-arming-переиндексации.
+    bool setFaceWinding(FaceIdx fi, uint[] to) {
+        if (fi >= faces.length) return false;
+        assert(to.ptr !is faces[fi].ptr,
+            "Mesh.setFaceWinding: the new winding aliases the live one — the "
+          ~ "caller mutated `faces[fi]` in place (e.g. `reverse(faces[fi])`) "
+          ~ "and the before-image is already the after-image. Build the new "
+          ~ "winding into a fresh array.");
+        if (to == faces[fi]) return false;   // identity write records nothing
+
+        if (editRecorder_ !is null) {
+            // `recordPolyVertexPayload` and `recordReshapeFaces` both copy
+            // what they are handed, and both read the LIVE (pre-op) space, so
+            // the record runs before the write and needs no `.dup` here.
+            const FaceIdx[1] idx = [fi];
+            const uint[][1] before = [faces[fi]];
+            const uint[][1] after  = [to];
+            recordPolyVertexPayload(idx[]);
+            editRecorder_.recordReshapeFaces(idx[], before[], after[]);
+        }
+        faces[fi] = to;
+        return true;
+    }
+
+    /// The bulk form: ONE op-log entry (and one per-corner payload) for the
+    /// whole set. `idx` must be STRICTLY ASCENDING and parallel to `to`.
+    ///
+    /// THE BULK FORM IS NOT AN ERGONOMIC CONVENIENCE — the per-element path is
+    /// QUADRATIC. `recordPolyVertexPayload` resolves each requested face's
+    /// corner base by ONE ordered sweep over `faces`, so N single writes cost
+    /// N sweeps, i.e. O(N·F); and each one appends two `MeshOpEntry` of
+    /// `MeshOpEntry.sizeof` apiece (608 B on this tree since task 1903 Stage
+    /// L5-b; 560 B when this note was written, and the argument does not turn
+    /// on which) where the bulk form appends two, total. `insertEdgePoint` and `splitVerticesByMask` reshape
+    /// every incident face of a splice, so they are exactly the callers that
+    /// must not take the per-element door. Measured cost is in the task card
+    /// (2260).
+    ///
+    /// Buffers are PRE-SIZED, never grown with `~=`: an element-wise append is
+    /// a runtime call per element that `reserve` does not remove (task 2160
+    /// measured 2.39–3.27 ms against 0.12–1.08 ms at 100 489 elements for the
+    /// same payload), and the GC byte counter points the WRONG WAY on that
+    /// choice — an append-grown array is charged its page blocks while a
+    /// pre-sized one is charged its whole payload. Judged by time.
+    ///
+    /// The common case is cheaper still: when every requested write lands (no
+    /// out-of-range index, no identity winding) the caller's own arrays are
+    /// handed to the recorder unchanged and this method allocates NOTHING —
+    /// the recorder copies, as it always did. Only a filtered set is compacted,
+    /// and then exactly once.
+    ///
+    /// Returns the number of windings actually installed, so a kernel can
+    /// assert its own non-vacuity.
+    size_t setFaceWindings(in FaceIdx[] idx, uint[][] to) {
+        assert(idx.length == to.length,
+            "Mesh.setFaceWindings: index and winding arrays differ in length");
+        // Strictly ascending is a REQUIREMENT, not a preference: the payload's
+        // corner-base walk is a single ordered sweep and silently DECLINES on
+        // an unordered list, which would leave the entry unpaired and the
+        // per-corner plane re-derived instead of restored. Callers filter
+        // `faces` front-to-back, so ascending is what they already produce.
+        foreach (i; 1 .. idx.length)
+            assert(idx[i - 1].raw < idx[i].raw,
+                "Mesh.setFaceWindings: `idx` must be strictly ascending — the "
+              ~ "per-corner payload pairs by a single ordered sweep");
+
+        // Resolve the recording state ONCE, up front (task 2160): on an
+        // unrecorded batch — the redo arm, the legacy arm, every interactive
+        // preview — nothing below is built at all.
+        const bool recording = editRecorder_ !is null;
+
+        // One counting pass, shared by both arms, so the compaction below
+        // knows its size before it allocates.
+        size_t nHit = 0;
+        foreach (i, fi; idx) {
+            if (fi >= faces.length) continue;
+            assert(to[i].ptr !is faces[fi].ptr,
+                "Mesh.setFaceWindings: a new winding aliases the live one — "
+              ~ "see Mesh.setFaceWinding's aliasing guard");
+            if (to[i] == faces[fi]) continue;
+            ++nHit;
+        }
+        if (nHit == 0) return 0;
+
+        if (recording) {
+            if (nHit == idx.length) {
+                // Every write lands: hand the caller's own arrays over. The
+                // recorder copies them; we allocate nothing.
+                uint[][] before = new uint[][](idx.length);
+                foreach (i, fi; idx) before[i] = faces[fi];
+                recordPolyVertexPayload(idx);
+                editRecorder_.recordReshapeFaces(idx, before, to);
+            } else {
+                auto hitIdx = idx.dup;              // ascending subsequence
+                auto before = new uint[][](nHit);
+                auto after  = new uint[][](nHit);
+                size_t w = 0;
+                foreach (i, fi; idx) {
+                    if (fi >= faces.length) continue;
+                    if (to[i] == faces[fi]) continue;
+                    hitIdx[w] = fi;
+                    before[w] = faces[fi];
+                    after[w]  = to[i];
+                    ++w;
+                }
+                // SLICED, not `.length = nHit`: `FaceIdx` disables default
+                // construction (deliberately — a defaulted face index would be
+                // face 0, and face 0 is a real face), so `.length =` does not
+                // compile on a `FaceIdx[]` in either direction.
+                auto hits = hitIdx[0 .. nHit];
+                recordPolyVertexPayload(hits);
+                editRecorder_.recordReshapeFaces(hits, before, after);
+            }
+        }
+
+        // The write comes LAST, after every read of the pre-op space.
+        size_t n = 0;
+        foreach (i, fi; idx) {
+            if (fi >= faces.length) continue;
+            if (to[i] == faces[fi]) continue;
+            faces[fi] = to[i];
+            ++n;
+        }
+        assert(n == nHit, "Mesh.setFaceWindings: the counting pass and the "
+                        ~ "write pass disagree");
+        return n;
+    }
+
+    /// --- Task 1903 Stage L2-h: THE BULK POSITION DOOR, MOVED ONTO `Mesh` ---
+    ///
+    /// The body below is `MeshEditBatch.setVertexPositions`' verbatim, moved
+    /// rather than copied; the handle now forwards to it. Everything the old
+    /// doc comment said about it still holds and is not repeated — the
+    /// `sameBits` bit-compare instead of `==`, the fast arm that builds nothing
+    /// on an unrecorded batch, the `uninitializedArray` pre-size instead of
+    /// `reserve` + `~=`, and the out-of-range `continue` that turns a bad index
+    /// into a silent no-op rather than an `ArrayIndexError`. See
+    /// `MeshEditBatch.setVertexPositions` for all of it.
+    ///
+    /// WHY IT MOVED, and it is the same reason `setFaceWindings` was put here
+    /// rather than on the handle (§L2-P1): callers include the `Mesh` member
+    /// `alignFacesByMask` and the extracted `thickenSurface` kernel. The former
+    /// has no batch handle to thread, while both need the same recorded door.
+    /// The frame is reached the way `editRecorder_` reaches it,
+    /// through the module-level stack keyed on `&this`, so calling this with no
+    /// batch open simply writes and commits, which is exactly what the
+    /// pre-migration raw loops did.
+    void setVertexPositions(in uint[] idx, in Vec3[] to) {
+        assert(idx.length == to.length,
+            "Mesh.setVertexPositions: index and position arrays differ "
+          ~ "in length");
+        // Read the frame ONCE for the decision, and never hold the pointer
+        // across the loop — this file's rule at `currentBatchFrame`. The loop
+        // opens no batch, but the re-lookup below costs one scan of a
+        // two-entry array and keeps that rule true by construction rather
+        // than by argument.
+        bool recording = false;
+        if (auto f0 = currentBatchFrame(&this))
+            recording = f0.rec !is null && !f0.errored;
+
+        if (!recording) {
+            bool any = false;
+            foreach (k, vi; idx) {
+                if (vi >= vertices.length) continue;
+                if (MeshEditBatch.sameBits(vertices[vi], to[k])) continue;
+                vertices[vi] = to[k];
+                any = true;
+            }
+            if (!any) return;
+            commitChange(MeshEditScope.Position);
+            return;
+        }
+
+        // PRE-SIZED AND INDEX-WRITTEN, NOT `reserve` + `~=` (task 2160).
+        //
+        // `a ~= x` is not an inlined store: it is a runtime call that looks the
+        // block's used-length up in the GC on every element, and `reserve`
+        // removes the REALLOCATION, not the call. Three of them per vertex is
+        // what made this arm dear. MEASURED on this host over 100 489
+        // elements, same 2.691 MB of payload either way: `reserve` + three
+        // appends per element 2.39-3.27 ms, `uninitializedArray` + indexed
+        // writes 0.12-1.08 ms. That difference is most of what task 1903
+        // §L0-d added to `jitter`/`quantize`/`smooth`'s forward.
+        //
+        // `idx.length` is the exact ceiling for all three: the loop writes at
+        // most one element per input index. `uninitializedArray` is safe for
+        // both element types — neither `uint` nor `Vec3` holds a pointer, so
+        // there is nothing for the collector to misread in the tail, and the
+        // tail is sliced off before the entry ever sees it.
+        auto hitIdx = uninitializedArray!(uint[])(idx.length);
+        auto before = uninitializedArray!(Vec3[])(idx.length);
+        auto after  = uninitializedArray!(Vec3[])(idx.length);
+        size_t nHit = 0;
+        foreach (k, vi; idx) {
+            if (vi >= vertices.length) continue;
+            const Vec3 b = vertices[vi];
+            if (MeshEditBatch.sameBits(b, to[k])) continue;
+            vertices[vi] = to[k];
+            hitIdx[nHit] = vi;
+            before[nHit] = b;
+            after[nHit]  = to[k];
+            ++nHit;
+        }
+        if (nHit == 0) return;
+        // Slice to what was actually written. When some indices were filtered
+        // the tail stays allocated behind the slice until the delta dies —
+        // bounded by the caller's own index array, and the whole-mesh case
+        // (every write lands) wastes nothing.
+        hitIdx = hitIdx[0 .. nHit];
+        before = before[0 .. nHit];
+        after  = after [0 .. nHit];
+        // The three arrays were built for this entry and nothing else holds
+        // them, so the entry TAKES them rather than copying them.
+        if (auto f = currentBatchFrame(&this))
+            if (f.rec !is null && !f.errored)
+                f.rec.recordSetPosOwned(hitIdx, before, after);
+        commitChange(MeshEditScope.Position);
+    }
+
+    // Face reindex arming is scoped to one rewrite, never to the surrounding
+    // batch (task 1903). Only a rewrite without its own remove/reshape record
+    // may arm it. Rationale and roster:
+    // doc/source_prose_policy.md#запись-winding-и-arming-переиндексации.
+    struct FaceReindexArm {
+        private MeshEditTracker* rec_;
+        private bool prev_;
+
+        // One owner: a copy's destructor would restore the old value while the
+        // original still believes it is armed, disarming the rewrite half way
+        // through — the same reason `CornerRewrite` disables its postblit.
+        @disable this(this);
+
+        ~this() {
+            if (rec_ is null) return;
+            rec_.wantsFaceReindex = prev_;
+            rec_ = null;
+        }
+    }
+
+    /// Arm `Kind.FaceReindex` recording for the lifetime of the returned
+    /// handle. Spelled at the call site as
+    ///
+    ///     { auto arm = ed.faceReindexScope();
+    ///       rewriteFaces(ed, newFaces, src); }
+    ///
+    /// The tracker pointer is captured HERE rather than re-resolved in the
+    /// destructor: `editRecorder_` is an accessor keyed on `&this`, and a
+    /// kernel that replaces the whole struct mid-batch (`*mesh = result`)
+    /// would make the two lookups answer differently. The frame owns the
+    /// tracker on the GC, so the captured pointer stays valid and stays the
+    /// one the flag was set on.
+    FaceReindexArm faceReindexScope() {
+        FaceReindexArm a;
+        a.rec_ = editRecorder_;
+        if (a.rec_ !is null) {
+            a.prev_ = a.rec_.wantsFaceReindex;
+            a.rec_.wantsFaceReindex = true;
+        }
+        return a;
+    }
+
+    // Resize selection arrays to match geometry and clear them.
+    // Call after any wholesale geometry replacement — `catmullClarkOsd`,
+    // an importer building a fresh Mesh, `reset`.
+    //
+    // Deliberately does NOT clear subpatch (task 0389): this is a
+    // SELECTION reset, not a subpatch reset — a topology-editing command
+    // that rebuilds `faces` and then calls resetSelection() to re-sync the
+    // selection arrays should not, as a side effect, revert every
+    // untouched face back to plain polygons. Callers that DO want the
+    // result to start non-subpatch (e.g. subdivide's Catmull-Clark bake,
+    // which deliberately extinguishes the flag on its baked geometry) call
+    // `clearSubpatch()` explicitly at their own call site.
+    void resetSelection() {
+        resizeVertexSelection();
+        resizeEdgeSelection();
+        // TASK 4059 — one door for every per-face plane, `faceMarks`
+        // included, so `resizeFaceSelection()`/`resizeSubpatch()` (whose
+        // whole body is `faceMarks.length = faces.length`) are no longer
+        // spelled here. Grow/shrink ONLY, zero-fill on grow: it does not
+        // clear pre-existing bits, which is what makes this a SELECTION
+        // reset and not a subpatch one (the paragraph above). The four
+        // per-plane grows it replaces are named in task 4059's `## Лог`.
+        appendFacePlanes(this, PlaneFit.Exact);
+        clearVertexSelection();
+        clearEdgeSelection();
+        clearFaceSelection();
+        // NOTE: do not wipe `faceMaterial`. resetSelection is also called
+        // after LWO import to bring selection arrays in sync with the
+        // imported geometry; the import populates `faceMaterial` before
+        // calling us, and zeroing it here would undo that work. New
+        // entries default to 0 (Default surface) which is the same
+        // result the existing growth-and-don't-clear semantics gives
+        // for `isSubpatch` after a non-importing geometry growth.
+        // Geometry-class: array lengths re-sync to the (possibly new) geometry
+        // and selection marks are cleared. Bumps both counters as before.
+        commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
+    }
+
+    // Grow selection arrays to match geometry without clearing.
+    // Call after BoxTool or any in-place geometry growth.
+    //
+    // The guards ask the MARKS arrays directly, not the `selectedVertices` /
+    // `selectedEdges` / `selectedFaces` / `isSubpatch` views: each of those
+    // materializes a whole fresh `bool[]` (one per element) purely to have
+    // its `.length` read, and the length it reports IS the marks array's, by
+    // construction — the views are built as `new bool[](<marks>.length)`.
+    // Four allocations of |V| + 2|E| + 2|F| bools, on a call every in-place
+    // geometry growth makes (task 4066).
+    //
+    // The subpatch guard went with them, and it went because writing the
+    // length source out made it readable: `resizeSubpatch()`'s whole body is
+    // `faceMarks.length = faces.length`, which is `resizeFaceSelection()`'s
+    // body too, and it sat under the SAME predicate three lines lower — so
+    // it could only ever run after that predicate had been made false. It
+    // has never been reachable from here (`isSubpatch.length` was
+    // `faceMarks.length` all along); `resizeSubpatch` keeps its other
+    // callers, on the subpatch-only resize path its own comment names.
+    void syncSelection() {
+        if (vertexMarks.length < vertices.length) resizeVertexSelection();
+        if (edgeMarks.length   < edges.length)    resizeEdgeSelection();
+        if (vertexSelectionOrder.length < vertices.length) vertexSelectionOrder.length = vertices.length;
+        if (edgeSelectionOrder.length   < edges.length)    edgeSelectionOrder.length   = edges.length;
+        // TASK 4059 — the four hand-written face grows AND the guarded
+        // `resizeFaceSelection()` that used to sit above them collapse into
+        // the funnel. `GrowOnly`, not the kernels' `Exact`: this method is
+        // documented as "grow selection arrays to match geometry without
+        // clearing", and a plane LONGER than `faces` must survive it
+        // untruncated. The compare is per plane inside the funnel, so a mesh
+        // that needs no growth still allocates nothing — the property task
+        // 4066 came here to protect.
+        appendFacePlanes(this, PlaneFit.GrowOnly);
+    }
+
+    // Rebuild the deduplicated `edges` array from the current `faces`.
+    // Call after any topology op that adds/removes faces (poly bevel, edge
+    // bevel) so the edge list stays in sync. Selection arrays are resized
+    // afterward via syncSelection.
+    void rebuildEdgesFromFaces() {
+        edges = [];
+        bool[ulong] seen;
+        foreach (face; faces) {
+            foreach (i, _; face) {
+                uint u = face[i];
+                uint w = face[(i + 1) % face.length];
+                ulong key = edgeKey(u, w);
+                if (key !in seen) {
+                    seen[key] = true;
+                    edges ~= [u, w];
+                }
+            }
+        }
+        if (wireEdgeKeys.length != 0) {
+            auto keys = wireEdgeKeys.keys;
+            sort(keys);
+            foreach (key; keys) {
+                const uint a = cast(uint)(key >> 32);
+                const uint b = cast(uint)(key & 0xFFFF_FFFFUL);
+                if (a >= vertices.length || b >= vertices.length || a == b)
+                    continue;
+                if (key !in seen) {
+                    seen[key] = true;
+                    edges ~= [a, b];
+                }
+            }
+        }
+        // Structural change: `edges` reassigned directly (no addEdge), so
+        // bump once. Contract preserved: edgeIndexMap is intentionally left
+        // untouched by this function (see doc comment above) — mark it
+        // Stale rather than re-stamping it Valid. Loops are untouched too;
+        // loopsState_/loopsStamp are left as-is (stale relative to the new
+        // structVersion).
+        ++structVersion;
+        edgeMapState_ = DerivedState.Stale;
+    }
+
+    uint addVertex(Vec3 v) {
+        vertices ~= v;
+        // Points-class: one vertex added. Bumps both counters (Points is a
+        // Geometry bit) exactly as the raw double-bump did.
+        commitChange(MeshEditScope.Points);
+        const idx = cast(uint)(vertices.length - 1);
+        // Class P tracker hook — inert unless a batch is open.
+        if (editRecorder_ !is null) editRecorder_.recordAddVert(idx, v);
+        return idx;
+    }
+
+    /// Overwrite EVERY vertex position from `src`, changing nothing else, and
+    /// publish the write as `MeshEditScope.Position` — a POSITION-class change
+    /// and deliberately NOT a Geometry one, so `topologyVersion` does not move.
+    ///
+    /// That last clause is the whole point of the method, not an incidental
+    /// property (task 1620). `topologyVersion` is the key the subpatch preview
+    /// reads to decide whether its index space still holds; a bump makes it
+    /// drop `active` and re-derive, which on a per-frame drag is the flicker
+    /// between the cage and the subdivided surface. The interactive
+    /// topology-creating tools use this to land a re-run of their kernel whose
+    /// topology is IDENTICAL to the one already standing — see
+    /// `tools/edit/preview_rebuild.d`, which owns the decision about when a
+    /// re-run is in fact identical and verifies it rather than assuming it.
+    ///
+    /// Refuses (returns false, writes nothing) on a length mismatch: this
+    /// method carries no topology, so a differently-sized source is a caller
+    /// error, and a partial write would leave a mesh whose positions and
+    /// topology disagree.
+    ///
+    /// No tracker hook, matching the other `commitChange(Position)` sites: the
+    /// operation log records vertex MOVES through the transform commands'
+    /// own entries, and the interactive preview drag runs batchless.
+    bool adoptVertexPositions(in Vec3[] src) {
+        if (src.length != vertices.length) return false;
+        vertices[] = src[];
+        commitChange(MeshEditScope.Position);
+        return true;
+    }
+
+    /// True once a weld/merge/reduce pass has left the mesh with no
+    /// vertices or no faces. The `weldVerticesByMask` family
+    /// (`reduce` and `mirrorFacesPlane`'s weld pass) can
+    /// all cascade to this on an aggressive enough input/threshold and,
+    /// left unchecked, would report `status: ok` over a silently-emptied
+    /// document (task 0306). A pure query, not a rollback mechanism —
+    /// callers decide whether to revert to a pre-pass snapshot or fail
+    /// outright. `mirrorFacesPlane` is the first wired-up caller; task 0309
+    /// reuses this same predicate for EdgeSliceTool's guard.
+    bool isEmpty() const {
+        return vertices.length == 0 || faces.length == 0;
+    }
+
+    /// Append free-standing vertices — no face refers to any of them — and
+    /// leave EXACTLY the appended ones selected. The loose-vertex counterpart of
+    /// `appendGeometry`, for `mesh.paste` after a VERTEX-mode `mesh.copy`
+    /// (task 1200, ledger row 19: the reference's copy takes the vertices and
+    /// its paste adds them back as four free points).
+    ///
+    /// Returns the number appended, so a caller can gate on it the same way it
+    /// gates on `appendGeometry`'s face count. Faces, edges and the face/edge
+    /// selections are untouched: a loose vertex borders nothing.
+    size_t appendLooseVertices(in Vec3[] newVerts) {
+        if (newVerts.length == 0) return 0;
+        const size_t base = vertices.length;
+        foreach (ref v; newVerts) addVertex(v);
+        // Grows vertexMarks / vertexSelectionOrder / every Point-domain MeshMap
+        // to the new count, zero-filled — the same call `appendGeometry` and
+        // `splitSelectedVertices` make after their own appends.
+        resizeVertexSelection();
+        // The pasted points are the product; nothing else stays selected. This
+        // mirrors `appendGeometry`, which deselects every pre-existing face and
+        // selects only what it pasted.
+        clearVertexSelection();
+        foreach (i; 0 .. newVerts.length) selectVertex(cast(int)(base + i));
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return newVerts.length;
+    }
+
+    /// Weld the vertices marked in `mask` (hidden ones removed) that the one
+    /// coincidence search pairs at squared distance `epsSq` (seed walk,
+    /// inclusive compare — task 0360's captured `<=` — no chaining),
+    /// then rewrite faces through the rebuild tail (`applyVertexRemapAndRebuild`:
+    /// collapsed corners and faces dropped, edges rebuilt, slots compacted).
+    /// Returns the number of vertices welded away. Open (task 0360): a
+    /// whole-mesh merge at the boundary clusters by a rule neither this walk
+    /// nor a transitive closure reproduces; only isolated pairs are captured.
+    ///
+    /// `average` (opt-in, default off): position each surviving vertex at
+    /// the CENTROID of its own weld cluster's original member positions
+    /// (per-cluster — a single call may collapse several independent
+    /// clusters). Default (false) keeps the merge-to-first behavior: the
+    /// survivor stays at the lowest-index member's position. Only `vert.merge`
+    /// opts in; collapse / vert.join / decimate / drag-weld rely on the
+    /// merge-to-first placement and pass the default.
+    ///
+    /// `join` (task 1210) carries the three policy bits `vert.join` needs and
+    /// nobody else does; a default-constructed `JoinWeldPolicy` is exactly the
+    /// behaviour every caller had before it existed. See the struct.
+    size_t weldVerticesByMask(in bool[] maskIn, double epsSq, bool average = false,
+                              JoinWeldPolicy join = JoinWeldPolicy.init) {
+        const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
+        if (vertices.length < 2) return 0;
+        if (mask.length != vertices.length) return 0;
+        int[] remap = computeWeldRemap(epsSq, mask);
+        size_t welded = 0;
+        foreach (i; 0 .. vertices.length)
+            if (remap[i] != cast(int)i) ++welded;
+        if (welded == 0) return 0;
+
+        // WHO SURVIVES (task 1210, ledger row 11). The scan above makes the
+        // LOWEST-indexed member of each cluster its survivor. `join.survivor`
+        // overrides that for the one cluster it belongs to, by re-pointing the
+        // cluster's old head — and everything that pointed at it — at the
+        // requested vertex. Depth stays 1: every member pointed at `head`, and
+        // now points at `join.survivor` instead.
+        //
+        // Only the requested vertex's OWN cluster moves; a call that welds
+        // several clusters at once leaves the others on the lowest-index rule.
+        if (join.survivor >= 0 && join.survivor < cast(int) vertices.length
+            && join.survivor < cast(int) mask.length && mask[join.survivor]) {
+            const int head = remap[join.survivor];
+            if (head != join.survivor) {
+                foreach (i; 0 .. vertices.length)
+                    if (remap[i] == head) remap[i] = join.survivor;
+                remap[join.survivor] = join.survivor;
+            }
+        }
+
+        // Opt-in: relocate each surviving vertex to its cluster's centroid.
+        // remap is at most one level deep (a member points straight at its
+        // lowest-index survivor), so keying sums by remap[i] buckets each
+        // cluster exactly. Read original positions before overwriting.
+        if (average) {
+            Vec3[]   clusterSum   = new Vec3[](vertices.length);
+            size_t[] clusterCount = new size_t[](vertices.length);
+            clusterSum[] = Vec3(0, 0, 0);   // Vec3.init is NaN — zero it first
+            foreach (i; 0 .. vertices.length) {
+                int s = remap[i];
+                clusterSum[s] = clusterSum[s] + vertices[i];
+                ++clusterCount[s];
+            }
+            // TASK 2310 — through the recorded door, BULK, once per round.
+            // A raw `vertices[i] = …` on the LIVE subject mesh compiles inside a
+            // recording batch and produces no op-log entry, so a delta-backed
+            // undo of this weld restored the topology and left every survivor at
+            // its post-average coordinate. Gathered first and written in one
+            // call because the door records one `Kind.SetPos` per call.
+            uint[] avgIdx;
+            Vec3[] avgTo;
+            foreach (i; 0 .. vertices.length) {
+                if (remap[i] != cast(int)i) continue;   // survivors only
+                if (clusterCount[i] < 2)     continue;   // singletons unchanged
+                double c = cast(double)clusterCount[i];
+                avgIdx ~= cast(uint) i;
+                avgTo  ~= Vec3(cast(float)(clusterSum[i].x / c),
+                               cast(float)(clusterSum[i].y / c),
+                               cast(float)(clusterSum[i].z / c));
+            }
+            setVertexPositions(avgIdx, avgTo);
+        }
+
+        applyVertexRemapAndRebuild(remap, join);
+        return welded;
+    }
+
+    /// Rewrite every face through `remap`, drop the corners and faces the
+    /// rewrite collapses, and rebuild the derived arrays. The shared tail of
+    /// `weldVerticesByMask` and `weldVertexPairs` — extracted verbatim from
+    /// the former so both spellings of "these vertices are now that vertex"
+    /// produce the identical mesh, and so a future weld producer cannot
+    /// forget one of the six things that must follow a corner rewrite.
+    ///
+    /// `remap` is indexed by vertex id and must be AT MOST ONE LEVEL DEEP
+    /// (`remap[remap[i]] == remap[i]` for every i): the face rewrite reads it
+    /// once per corner and does not chase chains, so a two-level entry would
+    /// leave a corner pointing at a vertex that is itself dead. Both callers
+    /// guarantee that — `weldVerticesByMask` by never re-targeting an
+    /// already-remapped index, `weldVertexPairs` by rejecting any pair whose
+    /// keep is another pair's drop.
+    ///
+    /// Consecutive duplicates that arise post-remap are dropped (so a quad
+    /// whose two adjacent corners merged becomes a triangle); faces left with
+    /// fewer than 3 distinct corners are removed entirely — UNLESS
+    /// `join.keepTwoPointFaces`, which lowers the floor to 2 (task 1210,
+    /// ledger row 21b). `join.keepOrphanSurvivor` additionally pins
+    /// `join.survivor` through the tail `compactUnreferenced`, so a weld that
+    /// consumed every face still leaves the joined vertex behind.
+    // --- Task 2310: the weld's edge-set MERGE, recorded ---------------------
+    //
+    // `selSetRekeyEdges` is called at eight production sites; at exactly TWO
+    // live weld sites — the
+    // weld remaps `applyVertexRemapAndRebuild` and `applyVertexRemap` below —
+    // the map is SAME-SPACE and NOT INJECTIVE, so two old endpoint pairs
+    // collapse onto one survivor key and their words are OR-merged. Nothing
+    // inverts that: `Kind.RemoveVerts`' edge half (Stage L5-b) mirrors
+    // `compactUnreferenced`'s DROP predicate, and by the time it runs the merge
+    // has already happened, so its key list comes back EMPTY for exactly the
+    // entries the weld moved. Undo then leaves the membership on the survivor
+    // edge (which was not a member) and off the restored edge (which was),
+    // while V, F, E and every other plane compare equal.
+    //
+    // The authored-wire registry deliberately DROPS moved endpoints at these
+    // two non-injective maps: unlike selection sets it has no reversible weld
+    // payload, and carrying would manufacture a foreign edge on undo.
+    // THE OTHER SIX SITES NEED NO EDGE-SET MERGE RECORD. `compactUnreferenced`'s remap is
+    // injective on survivors — two distinct keys cannot land on one — so its
+    // drop-only payload is complete; the four `mesh_edit_delta.d` replay sites
+    // ARE the inverse machinery and must not record.
+    //
+    // TAKEN AS A PAIR: capture the pre-image, run the re-key, then record only
+    // if the table actually moved. `capture` returns an empty array on a mesh
+    // with no edge sets and on a recorder-free (unbatched) call, and `record`
+    // does nothing for it — the common case pays one branch and zero bytes.
+    private void captureEdgeSetImage(out ulong[] keys, out ulong[] words) {
+        if (editRecorder_ is null || edgeSetMask.length == 0) return;
+        keys.reserve(edgeSetMask.length);
+        words.reserve(edgeSetMask.length);
+        foreach (key, msk; edgeSetMask) { keys ~= key; words ~= msk; }
+    }
+
+    private void recordEdgeSetMerge(in ulong[] keys, in ulong[] words,
+                                    in int[] remap) {
+        if (keys.length == 0 || editRecorder_ is null) return;
+        // A re-key that changed nothing records nothing. Not an optimisation
+        // alone: an entry whose reverse re-installs the state already present
+        // is indistinguishable from one that does real work, and the op-log
+        // shape is what the weld cells assert.
+        if (edgeSetMask.length == keys.length) {
+            bool same = true;
+            foreach (i, k; keys) {
+                auto pw = k in edgeSetMask;
+                if (pw is null || *pw != words[i]) { same = false; break; }
+            }
+            if (same) return;
+        }
+        auto perm = new uint[](remap.length);
+        foreach (i, r; remap) perm[i] = cast(uint) r;
+        editRecorder_.recordEdgeSetRekey(perm, keys, words);
+    }
+
+    /// The face half both weld remaps share (task 9435): every corner read
+    /// through `remap` (one level deep), consecutive and wrap-around
+    /// duplicates dropped, a face kept while it has `minArity` corners.
+    private CollapsedFaces collapseFacesThroughRemap(in int[] remap, size_t minArity) const {
+        CollapsedFaces c;
+        c.newFaces.reserve(faces.length);
+        c.oldOfNew.reserve(faces.length);
+        foreach (fi, ref face; faces) {
+            uint[] f, src;
+            f.reserve(face.length);
+            src.reserve(face.length);
+            foreach (k, vid; face) {
+                uint mapped = (vid < remap.length) ? cast(uint) remap[vid] : vid;
+                if (f.length == 0 || f[$ - 1] != mapped) { f ~= mapped; src ~= cast(uint) k; }
+            }
+            // Wrap-around dup: the face cycles back to its start through a remapped corner.
+            if (f.length > 1 && f[$ - 1] == f[0]) { f = f[0 .. $ - 1]; src = src[0 .. $ - 1]; }
+            if (f.length >= minArity) {
+                c.newFaces  ~= f;
+                c.oldOfNew  ~= cast(uint) fi;
+                c.srcCorner ~= src;
+            }
+        }
+        return c;
+    }
+
+    /// The edge half both weld remaps share (tasks 1060 Stage 5b, 2310):
+    /// re-key the edge-set registry through the same-space merge map BEFORE
+    /// any later compaction (an edge (5,9) whose 9 welds into 3 follows to
+    /// (5,3) instead of being read as gone), record the pre-image that makes
+    /// the non-injective merge invertible, then settle the edges. Weld maps
+    /// have no wire-key inverse payload, so moved wires drop.
+    private void rekeyEdgeSetsThroughRemap(in int[] remap) {
+        ulong[] esKeys0, esWords0;
+        captureEdgeSetImage(esKeys0, esWords0);
+        selSetRekeyEdges(this, (uint v) =>
+            v < remap.length ? cast(uint) remap[v] : v,
+            WireKeyPolicy.dropMoved);
+        recordEdgeSetMerge(esKeys0, esWords0, remap);
+        rebuildEdges();
+        clearEdgeSelectionResize();
+    }
+
+    private void applyVertexRemapAndRebuild(in int[] remap,
+                                            JoinWeldPolicy join = JoinWeldPolicy.init) {
+        // Arity floor 3, except `vert.join keep:1`, which keeps the TWO-POINT
+        // remnants the reference keeps (a fan hub joined to a ring vertex:
+        // 8 faces, not 6). Nothing measured says a one-corner remnant survives.
+        auto c = collapseFacesThroughRemap(remap, join.keepTwoPointFaces ? 2 : 3);
+        // No corner handle: this tail declares a bare
+        // dropCornerProvenance(WeldTailNoSource) below (task 0830). The face
+        // reindex this rewrite performs is L10's (task 1903); the sibling
+        // `applyVertexRemap`'s L5-a measurement was taken through the OTHER
+        // function and does not transfer by inspection. Revert shape pinned by
+        // `tests/unit/face_reindex_arming_test.d` and `mesh_ops/cleanup_test.d`.
+        { auto arm = faceReindexScope();
+          rewriteFaces(this, c.newFaces, FaceSource(c.oldOfNew)); }
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
+        clearFaceSelectionResize();
+        rekeyEdgeSetsThroughRemap(remap);
+        // The pin (task 1210, ledger row 21a). Collapsing a whole plate leaves
+        // the reference ONE FREE VERTEX at the join point; unpinned, every face
+        // has just been dropped, so the survivor is unreferenced and this call
+        // would take the mesh to zero. The pin is `vert.join`'s alone and is
+        // NOT a general "welds keep their orphans" rule — the same capture has
+        // a CUT of every face leaving 0 verts, so loose remnants are not
+        // something the reference keeps by default.
+        const(uint)[] pinned = (join.keepOrphanSurvivor && join.survivor >= 0
+                                && join.survivor < cast(int) vertices.length)
+                             ? [cast(uint) join.survivor] : null;
+        compactUnreferenced(pinned);
+        // Stated loss (task 0830). The remap rewrote every winding from a VERTEX
+        // map and kept no record of which old corner each survivor was — the
+        // machinery gap task 0690 named, not a law gap. Declared rather than
+        // left to the length test, which reached the same zeroing by accident.
+        dropCornerProvenance(CornerDrop.WeldTailNoSource);
+        // See deleteFacesByMask: loops carry stale indices after face/vert
+        // compaction.
+        buildLoops();
+        // Geometry-class: faces rewritten, edges + loops rebuilt.
+        commitChange(MeshEditScope.Geometry);
+    }
+
+    /// Weld SEVERAL `[keep, drop]` vertex pairs in ONE pass: every `drop` is
+    /// absorbed into its OWN `keep`, and the mesh is rebuilt once. Returns the
+    /// number of pairs welded. The pair weld's law (captures K-W2, task 9437):
+    /// the TARGET `keep` survives at its own position and index (less the
+    /// dropped indices below it); in every polygon the drop's corner becomes
+    /// `keep` in place — adjacent corners collapse the edge, non-adjacent ones
+    /// leave the self-touching `[a,keep,b,keep]` the reference keeps.
+    ///
+    /// A pair is REFUSED (skipped, the rest still weld) when an index is out of
+    /// range; when `drop` was claimed by an earlier pair or is any pair's keep,
+    /// or `keep` is any pair's drop (a two-level remap the rewrite does not
+    /// chase; a self pair is one, and blocks every other pair of its vertex);
+    /// and when neither vertex is on a face (`compactUnreferenced` would vanish
+    /// both).
+    size_t weldVertexPairs(in uint[2][] pairs) {
+        if (pairs.length == 0) return 0;
+        if (vertices.length < 2) return 0;
+        bool valid(in uint[2] p) { return p[0] < vertices.length && p[1] < vertices.length; }
+
+        // The chain test reads EVERY asked pair, refused ones included, so the
+        // outcome does not depend on input order; a self pair is its own chain.
+        bool[] isKeep = new bool[](vertices.length);
+        bool[] isDrop = new bool[](vertices.length);
+        foreach (p; pairs) if (valid(p)) { isKeep[p[0]] = true; isDrop[p[1]] = true; }
+
+        bool[] referenced = new bool[](vertices.length);
+        foreach (ref face; faces)
+            foreach (vid; face) if (vid < vertices.length) referenced[vid] = true;
+
+        int[] remap = new int[](vertices.length);
+        foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
+        bool[] claimed = new bool[](vertices.length);
+        size_t welded = 0;
+        foreach (p; pairs) {
+            immutable uint keep = p[0], drop = p[1];
+            if (!valid(p) || claimed[drop]) continue;               // the first claim wins
+            if (isDrop[keep] || isKeep[drop]) continue;             // would chain
+            claimed[drop] = true;
+            if (!referenced[keep] && !referenced[drop]) continue;   // both faceless
+            remap[drop] = cast(int)keep;
+            ++welded;
+        }
+        if (welded == 0) return 0;
+
+        applyVertexRemapAndRebuild(remap);
+        return welded;
+    }
+
+    /// Inverse of weldVerticesByMask: unweld each masked vertex so every
+    /// incident face gets its own coincident copy. The vertex is kept in
+    /// its lowest-indexed incident face; every later incident face (in
+    /// face-index order) gets a fresh addVertex(pos) and its corner
+    /// rewritten. Returns the number of copies created.
+    ///
+    /// Granularity: one copy per incident face (v1). Per-fan grouping
+    /// (splitting only at topological seams on non-manifold vertices) is
+    /// a documented non-goal for v1.
+    ///
+    /// Point-domain MeshMap values (e.g. weight maps) are propagated to
+    /// every coincident copy in the tail, AFTER resizeVertexSelection()
+    /// has grown and zero-filled the new map rows. Copying map values
+    /// inside the corner loop would be OOB once any weight map exists
+    /// (addVertex does not resize MeshMap data). PolyVertex maps are
+    /// untouched: the op preserves face/corner count and order, so
+    /// loop-indexed UV values relocate correctly through buildLoops.
+    size_t splitVerticesByMask(in bool[] maskIn) {
+        const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
+        if (mask.length != vertices.length) return 0;
+
+        // --- TASK 1903 STAGE L2-e: THE CORNER REPOINT GOES THROUGH THE DOOR ---
+        //
+        // Until L2-e this walked `foreach (ref corner; faces[fi])` and wrote
+        // `corner = nv` straight onto the live winding. That reaches no hook,
+        // so a recording batch came back with `[AddVerts]` and NOTHING about
+        // the repoints: the reverse truncated the appended copies while the
+        // surviving windings still named them and `finalize`→`buildLoops`
+        // THREW. Publisher P5 of plan §L2.2.
+        //
+        // A COUNTING PASS FIRST, and it buys two things rather than one. It
+        // pre-sizes the three result arrays (no `~=` per element — task 2160),
+        // and it moves the whole `copies == 0` refusal AHEAD of the first
+        // `addVertex`, so the kernel's no-op answer is now atomic BY
+        // CONSTRUCTION rather than by the caller rolling a snapshot back
+        // (plan §L2.4's refusal ruling; `commands/mesh/vertex_split.d` was one
+        // of the four that used to `snap.restore` here).
+        //
+        // ONE BULK `setFaceWindings`, not one per face: the per-element door
+        // resolves its corner payload by its own ordered sweep over `faces`,
+        // so N calls are O(N·F) — measured 2.22 ms against 146 ms at ten
+        // thousand faces (task 2260). A vertex split on a dense mesh touches
+        // every face incident to every selected vertex.
+        bool[] claimedCount;
+        claimedCount.length = vertices.length;
+        size_t nTouched = 0, cornersTouched = 0, copies = 0, maxArity = 0;
+        foreach (fi; 0 .. faces.length) {
+            bool touched = false;
+            foreach (v; faces[fi]) {
+                if (v >= mask.length || !mask[v]) continue;
+                if (!claimedCount[v]) { claimedCount[v] = true; continue; }
+                touched = true;
+                ++copies;
+            }
+            if (faces[fi].length > maxArity) maxArity = faces[fi].length;
+            if (touched) { ++nTouched; cornersTouched += faces[fi].length; }
+        }
+        if (copies == 0) return 0;
+
+        // Per-vertex "first incident face already claimed" flag.
+        bool[] claimed;
+        claimed.length = vertices.length;
+
+        // Deferred (src, dst) pairs for Point-map value propagation.
+        // MUST NOT copy map values here: addVertex appends to vertices[]
+        // but does NOT resize MeshMap.data — writing data[nv*dim..] would
+        // be OOB the instant any weight map is registered. The copy
+        // happens in the tail, after resizeVertexSelection() below.
+        uint[2][] copyPairs;
+        copyPairs.reserve(copies);
+
+        {
+            import std.array : uninitializedArray;
+            auto backing = uninitializedArray!(uint[])(cornersTouched);
+            auto newWind = uninitializedArray!(uint[][])(nTouched);
+            // `uninitializedArray` and not `new FaceIdx[](n)`: `FaceIdx`
+            // `@disable`s default construction on purpose.
+            auto idx = uninitializedArray!(FaceIdx[])(nTouched);
+            // TWO STEPS PER FACE, and the split is forced rather than tidy:
+            // `backing` is sized for the TOUCHED faces only, so the slice may
+            // not be taken until the face is known to be one of them — the
+            // first draft sliced unconditionally and ran off the end on the
+            // last untouched face. Step 1 decides (and advances `claimed`
+            // exactly as the counting pass did); step 2 builds. The corner
+            // positions found in step 1 are carried in a reusable buffer
+            // because step 2 can no longer tell a corner this face CLAIMED
+            // from one it must copy.
+            auto hitK = uninitializedArray!(size_t[])(maxArity);
+            size_t w = 0, base = 0;
+            foreach (fi; faceIndices) {          // the mint — never assumeFaceSpace
+                const uint[] face = faces[fi];
+                size_t nh = 0;
+                foreach (k, v; face) {
+                    if (v >= mask.length || !mask[v]) continue;
+                    if (!claimed[v]) {
+                        claimed[v] = true;  // first incident face keeps original
+                        continue;
+                    }
+                    hitK[nh++] = k;     // later incident face: needs a copy
+                }
+                if (nh == 0) continue;
+
+                auto dst = backing[base .. base + face.length];
+                dst[] = face[];
+                foreach (j; 0 .. nh) {
+                    immutable size_t k = hitK[j];
+                    immutable uint   v = face[k];
+                    const Vec3 p = vertices[v];  // read position before addVertex
+                    immutable uint nv = addVertex(p);
+                    dst[k] = nv;
+                    copyPairs ~= [v, nv];
+                }
+                idx[w]     = fi;
+                newWind[w] = dst;
+                base += face.length;
+                ++w;
+            }
+            assert(w == nTouched && copyPairs.length == copies,
+                "Mesh.splitVerticesByMask: the counting pass and the write "
+              ~ "pass disagree about which faces the repoint touches");
+            // The return is not read: a repoint always changes at least one
+            // corner of every face in `idx`, so the identity filter cannot
+            // drop one, and `faceIndices` cannot mint an out-of-range index.
+            //
+            // THE PER-CORNER PAYLOAD THE DOOR PAIRS HERE IS INERT FOR THIS
+            // KERNEL, and that is recorded rather than left to look like
+            // coverage. A repoint preserves every face's ARITY, so
+            // `resizePolyVertexMaps` takes its keep branch and each corner
+            // value stays on its own slot through the forward AND through the
+            // reverse; `CornerCarry.reshapeSrc` would re-derive exactly the
+            // same values slot-for-slot with no payload at all. The pair is
+            // written anyway because the `[MeshMapDelta, <face entry>]`
+            // ADJACENCY is contractual since Stage J
+            // (`CornerCarry.payloadForCount`) and an UNPAIRED payload zeroes a
+            // map silently — the door owns that invariant, not the caller.
+            cast(void) setFaceWindings(idx, newWind);
+        }
+
+        rebuildEdges();
+        // Grow vertexMarks, vertexSelectionOrder, and Point-domain MeshMap
+        // data arrays to cover the newly appended vertices (zero-filled).
+        resizeVertexSelection();
+
+        // Propagate Point-domain map values from source to each copy.
+        // Runs AFTER resizeVertexSelection() — the destination rows exist
+        // only once the resize above has extended data[].
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.Point) continue;
+            const ubyte d = m.dim;
+            foreach (pair; copyPairs) {
+                const size_t src = pair[0] * d;
+                const size_t dst = pair[1] * d;
+                m.data[dst .. dst + d] = m.data[src .. src + d];
+                // Task 1069: presence propagates with the value. A copy of a
+                // vertex that had NO entry must itself have no entry — copying
+                // `data` alone would give the copy a present zero.
+                if (m.present.length != 0
+                    && pair[0] < m.present.length && pair[1] < m.present.length)
+                    m.present[pair[1]] = m.present[pair[0]];
+            }
+        }
+
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return copies;
+    }
+
+    /// Move every vertex marked true in `mask` to `target`. No welding
+    /// happens here; the verts merely coincide in space. Combine with
+    /// weldVerticesByMask() to collapse them into one. Used by
+    /// `vert.join` (set target = centroid or first-selected) before the
+    /// weld pass.
+    void collapseVerticesByMask(in bool[] maskIn, Vec3 target) {
+        const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
+        if (mask.length != vertices.length) return;
+        // TASK 2310 — through the recorded door, BULK. `any` still reads the
+        // MASK rather than the door's own "did any coordinate change" answer,
+        // because the trailing commit below owes its Geometry bit whenever the
+        // mask named something — see its comment; a vertex already sitting on
+        // `target` used to bump the counters and must go on doing so.
+        bool any = false;
+        uint[] collapseIdx;
+        Vec3[] collapseTo;
+        foreach (i; 0 .. mask.length) {
+            if (!mask[i]) continue;
+            collapseIdx ~= cast(uint) i;
+            collapseTo  ~= target;
+            any = true;
+        }
+        setVertexPositions(collapseIdx, collapseTo);
+        // Positions only move here, but the original double-bumped BOTH
+        // counters; preserve that EXACTLY by carrying a Geometry bit so
+        // commitChange still advances topologyVersion. (Semantic class is
+        // Position; the Geometry bit exists solely to reproduce the prior
+        // topology bump — see plan Stage 0 step 2.)
+        if (any) commitChange(MeshEditScope.Position | MeshEditScope.Geometry);
+    }
+
+    /// Collapse each connected island of selected edges to a single point
+    /// (the centroid of the island's endpoint set — a single selected edge
+    /// collapses to its two-endpoint midpoint). Each island is processed
+    /// with a pass-1 `collapseVerticesByMask` (move only, no compaction),
+    /// then a single `weldVerticesByMask` over the union of all
+    /// selected-edge vertices. The move-all-then-weld-once order is
+    /// essential: per-island welding would compact after each island and
+    /// stale the remaining islands' index masks.
+    /// Returns the number of vertices welded; 0 means nothing changed.
+    size_t collapseEdgesByMask(in bool[] edgeMaskIn) {
+        const edgeMask = maskMinusHiddenEdges(edgeMaskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
+        if (edgeMask.length != edges.length) return 0;
+
+        // Union-find over vertex indices: vertices connected through a
+        // chain of selected edges share an island.
+        int[] parent;
+        parent.length = vertices.length;
+        foreach (i; 0 .. vertices.length) parent[i] = cast(int)i;
+
+        int findRoot(int x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void unite(int a, int b) {
+            a = findRoot(a); b = findRoot(b);
+            if (a != b) parent[b] = a;
+        }
+
+        // Mark selected-edge verts and build connectivity.
+        bool[] inSelection;
+        inSelection.length = vertices.length;
+        bool anySelected = false;
+        foreach (i; 0 .. edges.length) {
+            if (!edgeMask[i]) continue;
+            uint a = edges[i][0], b = edges[i][1];
+            if (a >= vertices.length || b >= vertices.length) continue;
+            inSelection[a] = true;
+            inSelection[b] = true;
+            unite(cast(int)a, cast(int)b);
+            anySelected = true;
+        }
+        if (!anySelected) return 0;
+
+        // Accumulate per-island centroid (root → sum / count).
+        Vec3[int] islandSum;
+        int[int]  islandCount;
+        foreach (vi; 0 .. vertices.length) {
+            if (!inSelection[vi]) continue;
+            int root = findRoot(cast(int)vi);
+            if (root in islandSum) {
+                islandSum[root] = islandSum[root] + vertices[vi];
+                ++islandCount[root];
+            } else {
+                islandSum[root]   = vertices[vi];
+                islandCount[root] = 1;
+            }
+        }
+
+        // Pass 1 — move every island's verts to its centroid (no compaction).
+        foreach (root, cnt; islandCount) {
+            Vec3 s = islandSum[root];
+            Vec3 centroid = Vec3(s.x / cnt, s.y / cnt, s.z / cnt);
+            bool[] islandMask;
+            islandMask.length = vertices.length;
+            foreach (vi; 0 .. vertices.length) {
+                if (inSelection[vi] && findRoot(cast(int)vi) == root)
+                    islandMask[vi] = true;
+            }
+            collapseVerticesByMask(islandMask, centroid);
+        }
+
+        // Pass 2 — one weld over the union of all selected-edge verts.
+        // epsSq = 1e-12: welds only exactly-coincident verts (collapse
+        // set exact equality); distinct island centroids cannot cross-weld.
+        return weldVerticesByMask(inSelection, 1e-12);
+    }
+
+    /// Collapse each connected island of selected faces to a single point
+    /// (the centroid of the island's corner vertices). Two selected faces
+    /// sharing any vertex are in the same island. Uses the same
+    /// move-all-then-weld-once structure as `collapseEdgesByMask`.
+    /// Returns the number of vertices welded; 0 means nothing changed.
+    size_t collapseFacesByMask(in bool[] faceMaskIn) {
+        const faceMask = maskMinusHiddenFaces(faceMaskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
+        if (faceMask.length != faces.length) return 0;
+
+        bool anySelected = false;
+        foreach (b; faceMask) if (b) { anySelected = true; break; }
+        if (!anySelected) return 0;
+
+        // Union-find over face indices: two selected faces sharing a vertex
+        // belong to the same island.
+        int[] parent;
+        parent.length = faces.length;
+        foreach (i; 0 .. faces.length) parent[i] = cast(int)i;
+
+        int findRoot(int x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void unite(int a, int b) {
+            a = findRoot(a); b = findRoot(b);
+            if (a != b) parent[b] = a;
+        }
+
+        // Map each vertex to the first selected face that contains it.
+        // When a second selected face shares that vertex, unite the two faces.
+        int[] vertToFace;
+        vertToFace.length = vertices.length;
+        vertToFace[] = -1;
+        foreach (fi; 0 .. faces.length) {
+            if (!faceMask[fi]) continue;
+            foreach (v; faces[fi]) {
+                if (v >= vertices.length) continue;
+                if (vertToFace[v] == -1)
+                    vertToFace[v] = cast(int)fi;
+                else
+                    unite(cast(int)fi, vertToFace[v]);
+            }
+        }
+
+        // Collect all verts touched by selected faces.
+        bool[] inSelection;
+        inSelection.length = vertices.length;
+        foreach (i; 0 .. vertices.length)
+            if (vertToFace[i] >= 0) inSelection[i] = true;
+
+        // Accumulate per-island centroid (face-root → sum / count).
+        Vec3[int] islandSum;
+        int[int]  islandCount;
+        foreach (vi; 0 .. vertices.length) {
+            if (!inSelection[vi]) continue;
+            int root = findRoot(vertToFace[vi]);
+            if (root in islandSum) {
+                islandSum[root] = islandSum[root] + vertices[vi];
+                ++islandCount[root];
+            } else {
+                islandSum[root]   = vertices[vi];
+                islandCount[root] = 1;
+            }
+        }
+
+        // Pass 1 — move every island's verts to its centroid (no compaction).
+        foreach (root, cnt; islandCount) {
+            Vec3 s = islandSum[root];
+            Vec3 centroid = Vec3(s.x / cnt, s.y / cnt, s.z / cnt);
+            bool[] islandMask;
+            islandMask.length = vertices.length;
+            foreach (vi; 0 .. vertices.length) {
+                if (inSelection[vi] && findRoot(vertToFace[vi]) == root)
+                    islandMask[vi] = true;
+            }
+            collapseVerticesByMask(islandMask, centroid);
+        }
+
+        // Pass 2 — one weld over the union of all selected-face verts.
+        return weldVerticesByMask(inSelection, 1e-12);
+    }
+
+    /// Return a bool mask (indexed by vertex index) marking every vertex in
+    /// the CONNECTED COMPONENT (island) reachable from face `faceIndex` —
+    /// i.e. the transitive closure of "shares a face with" over every face
+    /// in the mesh. Two faces are unioned whenever they share ANY vertex; a
+    /// face's own corners are unioned to each other first so a face is
+    /// always wholly inside one island even before any cross-face union
+    /// happens. Same union-find shape as `collapseEdgesByMask`
+    /// / `collapseFacesByMask` (both in this file) — parent[] +
+    /// findRoot + unite — but this walks EVERY face in the mesh (not just a
+    /// masked subset), since island membership isn't selection-driven here.
+    ///
+    /// Used by TackTool's moving-set rule (task 0126, capture-verified):
+    /// a rigid polygon-align moves the picked polygon "and all connected
+    /// vertices" — the whole geometric island the picked face belongs to,
+    /// not just its own 4 corners and not the whole mesh. On a mesh built
+    /// from disjoint parts (e.g. two separate cubes), this returns exactly
+    /// the picked cube's 8 vertices; the other cube's mask stays false.
+    ///
+    /// Returns an all-false mask when `faceIndex` is out of range.
+    bool[] connectedComponentVertices(uint faceIndex) const {
+        bool[] mask = new bool[](vertices.length);
+        if (faceIndex >= faces.length) return mask;
+
+        int[] parent;
+        parent.length = vertices.length;
+        foreach (i; 0 .. vertices.length) parent[i] = cast(int)i;
+
+        int findRoot(int x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+        void unite(int a, int b) {
+            a = findRoot(a); b = findRoot(b);
+            if (a != b) parent[b] = a;
+        }
+
+        foreach (fi; 0 .. faces.length) {
+            const uint[] f = faces[fi];
+            if (f.length < 2) continue;
+            foreach (i; 1 .. f.length) {
+                if (f[0] >= vertices.length || f[i] >= vertices.length) continue;
+                unite(cast(int)f[0], cast(int)f[i]);
+            }
+        }
+
+        const uint[] srcFace = faces[faceIndex];
+        if (srcFace.length == 0) return mask;
+        int root = findRoot(cast(int)srcFace[0]);
+        foreach (vi; 0 .. vertices.length) {
+            if (findRoot(cast(int)vi) == root) mask[vi] = true;
+        }
+        return mask;
+    }
+
+
+
+    /// The ONE coincidence search (task 9436), read-only: `remap[j] == i` when
+    /// `j` welds into `i`, else `remap[j] == j`. Seed walk: in ascending `i`,
+    /// each unclaimed seed claims every later unclaimed `j` within the weld
+    /// distance — inclusive (`<=`, the one comparator), floored at
+    /// `kCoincidentDistance` — so no chain forms and every follower points
+    /// straight at its seed. `mask` (empty = all) bounds both ends of a pair.
+    /// `copyStarts` is a duplicator's PER-COPY scope: ascending vertex indices
+    /// where copy 1, 2, … begin, everything before the first being copy 0; a
+    /// pair welds only when its later vertex lies in a LATER copy, so the
+    /// earlier vertex survives in place (K-W1 W1a/W1i/W1j/W1k; mirror's single
+    /// copy is ledger row 32). Empty = every vertex its own copy. Bucketed on
+    /// a grid no finer than 1e-6, kept apart from the distance floor.
+    int[] computeWeldRemap(double epsSq = 0, in bool[] mask = null,
+                           in size_t[] copyStarts = null) const {
+        import std.math : floor, isFinite;
+        const size_t n = vertices.length;
+        int[] remap;
+        remap.length = n;
+        foreach (i; 0 .. n) remap[i] = cast(int)i;
+        assert(mask.length == 0 || mask.length == n, "computeWeldRemap: mask length");
+        bool takes(size_t v) { return mask.length == 0 || mask[v]; }
+        if (!(epsSq >= kCoincidentDistance ^^ 2)) epsSq = kCoincidentDistance ^^ 2;
+
+        size_t[] copyOf = new size_t[](n);
+        size_t k = 0;
+        foreach (v; 0 .. n) {
+            while (k < copyStarts.length && copyStarts[k] <= v) ++k;
+            copyOf[v] = copyStarts.length ? k : v;
+        }
+
+        // A cell a hair wider than the distance keeps every pair the float
+        // compare accepts within one cell of each other.
+        double cellSize = sqrt(epsSq) * (1 + 1e-6);
+        if (!isFinite(cellSize) || cellSize < 1e-6) cellSize = 1e-6;
+        immutable double invCell = 1.0 / cellSize;
+        long[3] cellOf(size_t v) {
+            return [cast(long)floor(cast(double)vertices[v].x * invCell),
+                    cast(long)floor(cast(double)vertices[v].y * invCell),
+                    cast(long)floor(cast(double)vertices[v].z * invCell)];
+        }
+        size_t[][long[3]] buckets;
+        foreach (v; 0 .. n) if (takes(v)) buckets[cellOf(v)] ~= v;
+
+        foreach (i; 0 .. n) {
+            if (!takes(i) || remap[i] != cast(int)i) continue;
+            const long[3] c = cellOf(i);
+            foreach (dx; -1 .. 2) foreach (dy; -1 .. 2) foreach (dz; -1 .. 2) {
+                const long[3] key = [c[0] + dx, c[1] + dy, c[2] + dz];
+                auto bucket = key in buckets;
+                if (bucket is null) continue;
+                foreach (j; *bucket) {
+                    version (PerfProbe) ++weldPairVisits;
+                    if (j <= i || remap[j] != cast(int)j || copyOf[i] >= copyOf[j]) continue;
+                    Vec3 d = vertices[i] - vertices[j];
+                    if (d.x * d.x + d.y * d.y + d.z * d.z <= epsSq)
+                        remap[j] = cast(int)i;
+                }
+            }
+        }
+        return remap;
+    }
+
+    /// Weld through `computeWeldRemap(epsSq, mask, copyStarts)` and apply it
+    /// with the relocate tail (`applyVertexRemap`: welded slots stay in
+    /// `vertices` for the caller to compact). Readers: cleanup, mirror and the
+    /// three arrays. Returns the number of vertices welded away.
+    size_t weldCoincidentVertices(double epsSq = 0, in size_t[] copyStarts = null,
+                                  in bool[] mask = null) {
+        if (vertices.length < 2) return 0;
+        int[] remap = computeWeldRemap(epsSq, mask, copyStarts);
+
+        size_t welded = 0;
+        foreach (i; 0 .. vertices.length)
+            if (remap[i] != cast(int)i) ++welded;
+        if (welded == 0) return 0;
+
+        applyVertexRemap(remap);
+
+        // Geometry-class: coincident verts merged, faces/edges rebuilt.
+        commitChange(MeshEditScope.Geometry);
+        return welded;
+    }
+
+
+
+    /// Applies a precomputed vertex remap (`remap[i]` = the surviving vertex
+    /// index `i` collapses into, or `i` itself if it survives unchanged) to
+    /// `faces`: collapses each face's corner list (drop consecutive dups,
+    /// drop the wrap-around dup, drop the whole face once it falls below 3
+    /// distinct corners), remaps PolyVertex maps, rebuilds edges, and
+    /// resizes the parallel per-face arrays. Does **not** call
+    /// `commitChange` — the caller owns that. Split out of
+    /// `weldCoincidentVertices` (task 0436, pure refactor — zero behavior
+    /// change for that function's own 8 call sites) so `bevelEdgesByMask`
+    /// can reuse the APPLY half of the weld machinery under its own,
+    /// differently-scoped merge predicate without inheriting
+    /// `computeWeldRemap`'s all-pairs spatial SEARCH, which that predicate
+    /// does not use (it derives its remap from rebuilt-face co-membership,
+    /// not from a coincidence scan).
+    private void applyVertexRemap(const int[] remap) {
+        // PolyVertex remap, mechanism (b): this mutator does not call
+        // buildLoops, so per-corner values follow the surviving corners here,
+        // from the core's `srcCorner`, read against the OLD corner offsets
+        // (task 0830: the handle arms the drop for any path that skips it).
+        auto rw = beginCornerRelocate();
+        const bool remapUv = rw.active();
+        auto c = collapseFacesThroughRemap(remap, 3);
+        uint[] oldLoopOfNewLoop;
+        if (remapUv) {
+            const(uint)[] oldFaceLoop = rw.oldFaceLoop();
+            size_t k = 0;
+            foreach (nf, ref f; c.newFaces)
+                foreach (_; f)
+                    oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, c.oldOfNew[nf], c.srcCorner[k++]);
+        }
+        // This rewrite alone is armed for face reindexing (task 1903); sibling
+        // removers record their own operations and must stay unarmed.
+        // See doc/source_prose_policy.md#запись-winding-и-arming-переиндексации.
+        { auto arm = faceReindexScope();
+          rewriteFaces(this, c.newFaces, FaceSource(c.oldOfNew)); }
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
+        if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
+        // The same edge half as the sibling; THIS is the funnel
+        // `mesh_ops/cleanup.cleanupMesh` runs inside its recording batch.
+        rekeyEdgeSetsThroughRemap(remap);
+        // Re-asserts the Select drop and publishes the selection-domain change,
+        // as every face-compaction site does.
+        clearFaceSelectionResize();
+    }
+
+    /// Remove vertices not referenced by any face. Updates all face vertex
+    /// references via a remap table and re-derives the edges array. Returns
+    /// the number of vertices removed.
+    /// Useful after topology mutations (e.g. bevel arc miter) that leave
+    /// stale BoundVerts or cap mids unreferenced.
+    /// Read-only: which vertices are referenced by at least one face — the
+    /// exact test `compactUnreferenced` uses to decide which vertices
+    /// survive. Shared with the read-only Cleanup detector
+    /// (`mesh_analysis.orphanVertexIndices`, task 0402 Phase 4 risk #2).
+    bool[] computeReferencedVertexMask() const {
+        bool[] referenced;
+        referenced.length = vertices.length;
+        foreach (ref face; faces)
+            foreach (vid; face)
+                if (vid < referenced.length) referenced[vid] = true;
+        return referenced;
+    }
+
+    /// `pinned` vertices are KEPT even when no face references them. Callers
+    /// that pass a non-empty list: edge.bevel's valence-4 full-hub free-end
+    /// cap, which deliberately retains the reference's orphan cap slide (see
+    /// `bevelPinnedOrphans_`); `dissolveVerticesByMask(keepOrphans)`; and the
+    /// loose-geometry preservation in the dissolve kernels (task 0502 — see
+    /// `captureLooseGeometry`).
+    ///
+    /// `remapOut`, when non-null, receives the old→new vertex index table this
+    /// compaction applied (`~0u` for a dropped vertex). It is written even on
+    /// the `removed == 0` early-out, where it is the identity — so a caller may
+    /// rely on it unconditionally. It is the ONLY way to carry a vertex
+    /// identity across this call by index; positions work too but carry a
+    /// coincident-position caveat this does not.
+    size_t compactUnreferenced(const(uint)[] pinned = null, uint[]* remapOut = null) {
+        bool[] referenced = computeReferencedVertexMask();
+        foreach (pi; pinned)
+            if (pi < referenced.length) referenced[pi] = true;
+        // `edges` and the registry are both still in the OLD index space.
+        // Only a registered pair that is live in `edges` pins its endpoints;
+        // a stale key cannot retain arbitrary vertices.
+        foreach (ref e; edges)
+            if (edgeKey(e[0], e[1]) in wireEdgeKeys) {
+                if (e[0] < referenced.length) referenced[e[0]] = true;
+                if (e[1] < referenced.length) referenced[e[1]] = true;
+            }
+        // Build old→new index map
+        uint[] remap;
+        remap.length = vertices.length;
+        Vec3[] newVerts;
+        newVerts.reserve(vertices.length);
+        size_t removed = 0;
+        foreach (i, ref v; vertices) {
+            if (referenced[i]) {
+                remap[i] = cast(uint)newVerts.length;
+                newVerts ~= v;
+            } else {
+                remap[i] = cast(uint)~0u;
+                ++removed;
+            }
+        }
+        // Published BEFORE the early-out so `remapOut` is filled on every path
+        // (identity when nothing was dropped).
+        if (remapOut !is null) *remapOut = remap;
+        if (removed == 0) return 0;
+        // Class R tracker hook — inert unless a batch is open. Record the
+        // dropped verts (their pre-compaction indices + positions) THEN the
+        // index permutation, in drop-before-permute order. LIFO revert inverts
+        // permute-before-undrop (doc §2.3 steps 2–3): Reindex^-1 restores the
+        // pre-compaction index space, then RemoveVerts^-1 re-inserts the
+        // dropped verts into the re-opened gaps. Captured here, BEFORE
+        // `vertices = newVerts`, so the dropped positions are still live.
+        if (editRecorder_ !is null) {
+            uint[] droppedIdx;
+            Vec3[] droppedPos;
+            droppedIdx.reserve(removed);
+            droppedPos.reserve(removed);
+            foreach (i, p; remap) {
+                if (p == cast(uint)~0u) {
+                    droppedIdx ~= cast(uint)i;
+                    droppedPos ~= vertices[i];
+                }
+            }
+            // TASK 1903 STAGE L5-b — the SELECTION-SET payload, captured HERE
+            // because here is the last place both planes are still live and in
+            // the pre-compaction index space. This is the one production
+            // publisher of `Kind.RemoveVerts`; the defect it closes is task
+            // 2280's "a named selection set vanished on Ctrl+Z", and
+            // `MeshOpEntry.vertSetMaskBefore` carries the whole argument.
+            //
+            // PER ROUND, NOT PER ELEMENT, on both halves: one pass over the
+            // dropped list and one pass over the edge-set AA (whose length is
+            // the number of TAGGED EDGES, not of mesh edges), both outside any
+            // per-vertex loop.
+            //
+            // AN ALL-ZERO VERTEX PAYLOAD IS DROPPED rather than stored. A mesh
+            // with no selection sets is the common case and pays nothing;
+            // "empty" and "all bits clear" restore identically, so collapsing
+            // them costs no information and keeps `MeshEditDelta.byteSize`
+            // (and therefore §8's delta-vs-snapshot ratio) unmoved on every
+            // mesh that carries no membership.
+            ulong[] vertSetWords;
+            if (vertexSetMask.length != 0) {
+                bool anyBit = false;
+                auto w = new ulong[](droppedIdx.length);
+                foreach (k, vi; droppedIdx) {
+                    if (vi >= vertexSetMask.length) continue;
+                    w[k] = vertexSetMask[vi];
+                    if (w[k] != 0) anyBit = true;
+                }
+                if (anyBit) vertSetWords = w;
+            }
+            // The edge half. `selSetRekeyEdges` runs one call below with the
+            // SAME `remap` and the SAME two predicates (`uint.max` on either
+            // endpoint, or both endpoints landing on one new index); this
+            // mirrors them rather than moving the drop, which P0-L5-2 measured
+            // to be exact — predicted key set == dropped key set, both ways.
+            ulong[] esKeys, esWords;
+            if (edgeSetMask.length != 0) {
+                esKeys.reserve(edgeSetMask.length);
+                esWords.reserve(edgeSetMask.length);
+                foreach (key, msk; edgeSetMask) {
+                    const uint a = cast(uint)(key >> 32);
+                    const uint b = cast(uint)(key & 0xFFFF_FFFFUL);
+                    const uint na = a < remap.length ? remap[a] : uint.max;
+                    const uint nb = b < remap.length ? remap[b] : uint.max;
+                    if (na == uint.max || nb == uint.max || na == nb) {
+                        esKeys  ~= key;
+                        esWords ~= msk;
+                    }
+                }
+            }
+            // TASK 1903 STAGE L7-P3 — the POINT-DOMAIN MAP-VALUE payload, on
+            // the same principle and at the same last-live moment as the
+            // set-mask capture above: `removeVertsReverse` used to re-insert a
+            // dropped vertex with a ZEROED value in every Point map, which is
+            // the residual that kept `bevelEdgesByMask` unarmed (card 2320) and
+            // that Stage L10's weld twin walks into.
+            //
+            // ALL Point-domain channels with `dim > 0`, in registration order —
+            // the same predicate `removeVertsReverse`'s zeroing loop uses, term
+            // for term, so the capture and the loss cannot drift apart.
+            //
+            // PER ROUND: one pass over the map registry per dropped vertex, no
+            // per-element call. The block is `dropped x Σ dim` floats — for the
+            // one Point map on the parity stands, one float per dropped vertex.
+            //
+            // AN ALL-ZERO BLOCK IS DROPPED, exactly as the vertex set-mask
+            // block above is: a mesh with no Point map (the common case) and
+            // one whose dropped vertices carry nothing both pay ZERO bytes and
+            // behave bit-for-bit as before, which keeps `MeshEditDelta.byteSize`
+            // and therefore §8's delta-vs-snapshot ratio unmoved on them.
+            ubyte[] pmDims;
+            float[] pmVals;
+            ubyte[] pmPresent;
+            {
+                size_t stride = 0;
+                size_t nMaps  = 0;
+                foreach (ref mm; meshMaps) {
+                    if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                    stride += mm.dim;
+                    ++nMaps;
+                }
+                if (nMaps != 0 && droppedIdx.length != 0) {
+                    auto dims = new ubyte[](nMaps);
+                    auto vals = new float[](droppedIdx.length * stride);
+                    auto pres = new ubyte[](droppedIdx.length * nMaps);
+                    bool worthIt = false;
+                    size_t j = 0, off = 0;
+                    foreach (ref mm; meshMaps) {
+                        if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                        dims[j] = mm.dim;
+                        const size_t dim = mm.dim;
+                        const bool tracksPresence = mm.present.length != 0;
+                        foreach (k, vi; droppedIdx) {
+                            const size_t src = cast(size_t)vi * dim;
+                            if (src + dim <= mm.data.length) {
+                                const size_t dst = k * stride + off;
+                                vals[dst .. dst + dim] = mm.data[src .. src + dim];
+                                foreach (c; 0 .. dim)
+                                    if (vals[dst + c] != 0f) worthIt = true;
+                            }
+                            // "Empty ⇒ all present" is the map's convention, so
+                            // a map that tracks no presence records a 1 that the
+                            // reverse never writes back — recorded honestly
+                            // rather than as a 0 that would read as "absent".
+                            const ubyte p = tracksPresence
+                                ? (vi < mm.present.length ? mm.present[vi] : cast(ubyte)0)
+                                : cast(ubyte)1;
+                            pres[k * nMaps + j] = p;
+                            // Only a TRACKED presence can differ from what the
+                            // pre-L7-P3 arms wrote (they wrote 0, and only into
+                            // a non-empty `present`).
+                            if (tracksPresence && p != 0) worthIt = true;
+                        }
+                        ++j;
+                        off += dim;
+                    }
+                    if (worthIt) { pmDims = dims; pmVals = vals; pmPresent = pres; }
+                }
+            }
+            editRecorder_.recordRemoveVerts(droppedIdx, droppedPos,
+                                            vertSetWords, esKeys, esWords,
+                                            pmDims, pmVals, pmPresent);
+            editRecorder_.recordReindex(remap);
+        }
+        // Rewrite face vertex IDs
+        foreach (ref face; faces)
+            foreach (ref vid; face)
+                if (vid < remap.length) vid = remap[vid];
+        // Task 0920: `vertexMarks` / `vertexSelectionOrder` / every
+        // Point-domain MeshMap (vertex weight, vertex color) must ride the
+        // SAME `remap` as `vertices` itself. The tail `resizeVertexSelection()`
+        // below only grows/shrinks these arrays by LENGTH — it does not move a
+        // value between slots — so leaving it to do the work alone is exactly
+        // the truncate-from-the-tail bug: a vertex dropped from the middle of
+        // the array left every survivor after it wearing the mark/weight that
+        // used to sit at ITS new index, not its own. Gather each survivor's own
+        // value from its OLD index into its NEW slot here, BEFORE `vertices` is
+        // overwritten — the same gather `applyReindexForward` (mesh_edit_delta.d)
+        // already runs for `vertexMarks`/`vertexSelectionOrder` on the undo/redo
+        // side of this exact compaction; this is that shape, extended to the
+        // Point-domain map registry it does not reach.
+        uint[] newMarks;
+        newMarks.length = newVerts.length;
+        int[] newOrder;
+        newOrder.length = newVerts.length;
+        foreach (old, p; remap) {
+            if (p == cast(uint)~0u) continue;
+            if (old < vertexMarks.length) newMarks[p] = vertexMarks[old];
+            if (old < vertexSelectionOrder.length) newOrder[p] = vertexSelectionOrder[old];
+        }
+        vertexMarks          = newMarks;
+        vertexSelectionOrder = newOrder;
+        foreach (ref mm; meshMaps) {
+            if (mm.domain != MapDomain.Point) continue;
+            const ubyte dim = mm.dim;
+            float[] nd;
+            nd.length = newVerts.length * dim;
+            // Task 1069: the presence channel rides the SAME gather, one entry
+            // per ELEMENT. Copying `data` and not `present` is invisible to a
+            // relative-kind assertion (absent and zero look alike there) and
+            // MOVES A VERTEX under the absolute kind — which is why the
+            // regression test for this gather uses the absolute kind.
+            const bool hasP = mm.present.length != 0;
+            ubyte[] np;
+            if (hasP) np.length = newVerts.length;
+            foreach (old, p; remap) {
+                if (p == cast(uint)~0u) continue;
+                const size_t ob = cast(size_t)old * dim;
+                if (ob + dim > mm.data.length) continue; // defensive
+                nd[p * dim .. p * dim + dim] = mm.data[ob .. ob + dim];
+                if (hasP && old < mm.present.length) np[p] = mm.present[old];
+            }
+            mm.data = nd;
+            if (hasP) mm.present = np;
+        }
+        // task 1060: `vertexSetMask` rides the SAME gather as the
+        // Point-domain meshMaps loop just above — a survivor's own
+        // membership bits must move from its OLD index to its NEW slot, or
+        // every survivor past a dropped vertex wears its neighbour's set
+        // membership (the exact defect task 0920 fixed for vertexMarks).
+        vertexSetMask = selSetGatherVertexMaskForward(vertexSetMask, remap, newVerts.length);
+        // task 1060, Stage 5b: the OTHER half of the edge-set re-key (the
+        // "vanish" half — an endpoint that is genuinely unreferenced is
+        // gone, so its edge-set membership is gone with it). The MERGE half
+        // (an endpoint that welds into a survivor) already ran in
+        // `applyVertexRemapAndRebuild` above, before this function's own
+        // `rebuildEdges()`/`compactUnreferenced()` tail — but this function
+        // has its OWN independent callers too (`weldVertexPairs`'s wrapper,
+        // any direct `compactUnreferenced()` call after e.g. a bevel), so
+        // the re-key belongs here unconditionally, not only behind the weld
+        // path. `remap[old] == ~0u` here is exactly `selSetRekeyEdges`'s
+        // "vertex gone" sentinel, no translation needed.
+        selSetRekeyEdges(this,
+            (uint v) => v < remap.length ? remap[v] : uint.max,
+            WireKeyPolicy.carry);
+        vertices = newVerts;
+        // Re-derive edges from faces (remap can break edge endpoints).
+        rebuildEdges();
+        // Selection arrays follow vertices length; truncate / repack the
+        // simple cases (selected vertices: re-built bool array).
+        resizeVertexSelection();
+        // Edges have changed — clear edge selection for safety.
+        clearEdgeSelectionResize();
+        // Points-class: orphan verts removed + reindexed (Geometry bit keeps
+        // the topology bump).
+        commitChange(MeshEditScope.Points);
+        return removed;
+    }
+
+    /// Shared tail of a topology edit: rebuild edges + loops, compact orphan
+    /// vertices, rebuild loops again. The second buildLoops() is MANDATORY —
+    /// half-edge loops carry face/vert indices that compaction just
+    /// invalidated; rebuild so adjacentFaces / verticesAroundVertex / friends
+    /// return live indices. (Without this, the next consumer of `loops` walks
+    /// stale data and either reports wrong adjacency or indexes out of
+    /// bounds.)
+    /// PUBLIC since task 1903 Stage E4 (plan §2.6). It was `private` only
+    /// because a mixin body is instantiated in its host's scope and could
+    /// therefore reach it for free; `mesh_ops/bevel_fin.d` and
+    /// `mesh_ops/bevel_vertex.d` stopped being mixin bodies in that commit and
+    /// call it as `ed.finalizeTopologyEdit()`. `mesh_ops/extrude.d` names it at
+    /// three further sites and is STILL a mixin (Stage H), so it reaches the
+    /// name through the instantiation scope today and inherits this widening
+    /// when it converts — the census row in
+    /// tests/unit/commit_seam_census_test.d lists all three files.
+    void finalizeTopologyEdit() {
+        rebuildEdges();
+        buildLoops();
+        compactUnreferenced();
+        buildLoops();
+    }
+
+    /// Drop the faces marked true in `mask`. Edges are rebuilt from the
+    /// surviving faces; orphan vertices (no longer referenced by any
+    /// remaining face) are removed via compactUnreferenced() UNLESS
+    /// `keepOrphans` is set. Selection arrays are resized and cleared
+    /// (re-selecting after a delete is the caller's responsibility — index
+    /// validity is unstable across a compact). Returns the number of faces
+    /// removed.
+    ///
+    /// This is the unified delete primitive: Tier 1.1 mesh.delete dispatches
+    /// here for every edit mode by translating its selection into a face
+    /// mask (verts → faces incident; edges → faces incident; polys
+    /// directly).
+    ///
+    /// `keepOrphans` distinguishes the two topological operations that share
+    /// this primitive: Delete (default, `keepOrphans=false`) drops the faces
+    /// AND compacts every now-unreferenced vertex, while Remove
+    /// (`keepOrphans=true`) drops ONLY the faces and leaves the orphaned
+    /// vertices floating in place — matching the reference editor's
+    /// polygon-Remove semantic (Delete removes points, Remove keeps them;
+    /// task 0465). With `keepOrphans` the `vertices` array is untouched, so
+    /// vertex indices/positions stay stable and no vertex reindex is recorded
+    /// into an open edit batch (the RemoveFaces entry alone reverts the op).
+    ///
+    /// `keepFloatingEdges` (task 0477, topology-pen P3): the unconditional
+    /// `rebuildEdges()` this primitive otherwise runs re-derives `edges[]`
+    /// PURELY by walking the surviving `faces[]` (mesh.d rebuildEdges), so
+    /// any edge that borders NO surviving face — an orphaned diagonal left
+    /// behind by a triangle→quad splice, or an unrelated bare floating edge
+    /// elsewhere in the mesh — is silently wiped even with `keepOrphans` (that
+    /// flag only protects floating VERTICES, not floating EDGES). Set
+    /// `keepFloatingEdges:true` to skip that rebuild entirely: `edges[]` /
+    /// `edgeIndexMap` are left exactly as they were, and the tail
+    /// `buildLoops()` (which never assigns `edges[]`, only rebuilds
+    /// `edgeIndexMap` FROM it) re-syncs loops around the untouched edge set —
+    /// so every floating edge, related or not, survives. Default `false`
+    /// (byte-identical to every pre-task-0477 caller).
+    size_t deleteFacesByMask(in bool[] maskIn, bool keepOrphans = false,
+                             bool keepFloatingEdges = false) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
+        if (mask.length != faces.length) return 0;
+        bool[ulong] coveredBefore;
+        if (keepFloatingEdges)
+            foreach (ref face; faces)
+                foreach (i; 0 .. face.length)
+                    coveredBefore[edgeKey(face[i], face[(i + 1) % face.length])] = true;
+        uint[][] keptFaces;
+        uint[]   oldOfNew;   // newToOld correspondence — task 1902, mesh_planes.rewriteFaces
+                              // carries faceMarks/faceMaterial/facePart/faceSelectionOrder/
+                              // faceSetMask from this in one pass; no more hand-built kept* planes.
+        size_t   removed = 0;
+        keptFaces.reserve(faces.length);
+        oldOfNew.reserve(faces.length);
+        // Class B tracker hook — accumulate the dropped (filtered-out) faces so
+        // a RemoveFaces entry can re-insert them on revert. Inert unless a batch
+        // is open. Indices are the PRE-filter face indices (the space the entry
+        // is inverted in, before the tail compactUnreferenced reindexes verts) —
+        // and since task 0831 that is the TYPE, not just this comment: a
+        // `FaceIdx` can only come off the live `faces` array (`faceIndices`
+        // below), so the scratch-array position the sibling kernels used to
+        // record here no longer type-checks.
+        FaceIdx[] droppedFaceIdx;
+        uint[][] droppedFaceLists;
+        uint[]   droppedFaceMat;
+        uint[]   droppedFacePart;
+        uint[]   droppedFaceSub;
+        ulong[]  droppedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
+        int[]    droppedFaceOrd;       // task 1902 Stage H — rides facePart's carry too
+        const bool recDelete = editRecorder_ !is null;
+        // Task 0680 — the delta for a bulk face removal used to cost TWO GC
+        // allocations per removed face: `f.dup` here, then a second copy of
+        // every list inside recordRemoveFaces. On a whole-mesh remove
+        // (99 856 faces) that is ~200 000 allocations to record ONE entry, and
+        // the collector work behind them is what made the operation itself
+        // read +612% against the perf baseline.
+        //
+        // Now: one pass over the mask sizes everything exactly, the vertex
+        // lists live in ONE flat buffer, and each entry in `droppedFaceLists`
+        // is a SLICE of it. Two allocations for the geometry instead of one
+        // per face. The buffer is sized up front and never appended to, so the
+        // slices stay valid; the recorder takes ownership and only ever reads
+        // them (its revert path dups before inserting).
+        uint[] droppedFlat;
+        size_t flatFill = 0;
+        if (recDelete) {
+            size_t willDrop = 0, corners = 0;
+            foreach (i, ref f; faces)
+                if (i < mask.length && mask[i]) { ++willDrop; corners += f.length; }
+            droppedFaceIdx.reserve(willDrop);
+            droppedFaceLists.reserve(willDrop);
+            droppedFaceMat.reserve(willDrop);
+            droppedFacePart.reserve(willDrop);
+            droppedFaceSub.reserve(willDrop);
+            droppedFaceSetMask.reserve(willDrop);
+            droppedFaceOrd.reserve(willDrop);
+            droppedFlat.length = corners;
+        }
+        // PolyVertex remap, mechanism (a): surviving faces keep their corner
+        // count, so corner `c` of a kept face maps to old loop
+        // oldFaceLoop[oldFi]+c. Build `oldLoopOfNewLoop` in NEW-face/new-corner
+        // (CSR) order while filtering, then relocate before the tail buildLoops.
+        // Task 0830: this capture is the obligation handle. `beginCornerRelocate`
+        // takes the OFFSETS only — a relocation names each source corner by
+        // index and never looks a vertex up in an old winding — and it ARMS the
+        // drop: a path out of here that rewrites `faces` without declaring loses
+        // the plane rather than keeping values on foreign corners.
+        auto rw = beginCornerRelocate();
+        const bool remapUv = rw.active();
+        const(uint)[] oldFaceLoop = rw.oldFaceLoop();
+        uint[] oldLoopOfNewLoop;
+        foreach (i; faceIndices) {
+            auto f = faces[i];
+            if (mask[i]) {
+                ++removed;
+                if (recDelete) {
+                    droppedFaceIdx   ~= i;
+                    droppedFlat[flatFill .. flatFill + f.length] = f[];
+                    droppedFaceLists ~= droppedFlat[flatFill .. flatFill + f.length];
+                    flatFill += f.length;
+                    droppedFaceMat   ~= faceAttrOr(faceMaterial, i);
+                    droppedFacePart  ~= faceAttrOr(facePart, i);
+                    droppedFaceSub   ~= (isFaceSubpatch(i) ? 1u : 0u);
+                    droppedFaceSetMask ~= faceAttrOr(faceSetMask, i);
+                    droppedFaceOrd   ~= faceAttrOr(faceSelectionOrder, i);
+                }
+                continue;
+            }
+            keptFaces ~= f;
+            // Old index `i` is this survivor's SOLE plane source — carried by
+            // `mesh_planes.rewriteFaces` below, whole word (Subpatch + Hide +
+            // reserved Lock, not just one bit — task 0613 §4.2: the GAP that
+            // used to be documented right here was `setFaceSubpatchFrom` only
+            // patching in the Subpatch bit at each NEW index, leaving whatever
+            // Hide bit already sat there from truncation, so a deleted face's
+            // Hide bit would silently MOVE onto whichever face slides into its
+            // vacated slot instead of following its own face or vanishing with
+            // it. The primitive re-establishes every plane at its captured OLD
+            // index `i`, so `setFaceMarksFrom` below writes each survivor's OWN
+            // word at its new position — same O(F²) trap avoided as the old
+            // isFaceSubpatch comment noted (task 0396): no allocating
+            // `@property` read, the primitive's generated body reads the raw
+            // plane arrays directly.
+            oldOfNew ~= cast(uint) i;
+            if (remapUv)
+                foreach (c; 0 .. f.length)
+                    oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)i, cast(uint)c);
+        }
+        if (removed == 0) return 0;
+        if (recDelete) {
+            // Per-corner payload FIRST (task 0689): the dropped faces' UV is
+            // still readable here — `faces` and the maps are both untouched —
+            // and in two statements it will not be. `droppedFaceIdx` is in the
+            // live (pre-drop) index space, which is what the capture wants.
+            recordPolyVertexPayload(droppedFaceIdx);
+            editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
+                                            droppedFaceMat, droppedFacePart, droppedFaceSub,
+                                            droppedFaceSetMask, droppedFaceOrd);
+        }
+        // task 1902: mesh_planes.rewriteFaces assigns `faces` AND carries
+        // every kFacePlanes entry (faceMarks/faceMaterial/facePart/
+        // faceSelectionOrder/faceSetMask) from `oldOfNew` in one pass — the
+        // hand-built kept*/keptWord arrays above are gone, this is their
+        // replacement. `rw` (this site's OWN beginCornerRelocate() handle) is
+        // NOT passed in: it declares through `.relocated()` on a per-CORNER
+        // correspondence built above, which is a different shape from the
+        // primitive's per-NEW-FACE `rw.carriedPerFace()` call — passing it in
+        // would call the wrong method on a handle opened for relocation, not
+        // rewrite (`CornerRewrite.carried()` asserts on exactly that
+        // mismatch). So the corner declaration below stays this site's own,
+        // unchanged.
+        // Task 1903 Stage K — NOT armed, and this is the row the whole
+        // per-rewrite scope exists for. This kernel already recorded
+        // `RemoveFaces` above; arming here would describe the SAME drop a
+        // second time and the LIFO revert would land on a state neither entry
+        // describes (plan §5.3, "K's red row", measured at Stage E1).
+        rewriteFaces(this, keptFaces, FaceSource(oldOfNew));
+        // Select is still dropped deliberately (~Marks.Select) — the
+        // subsequent clearFaceSelectionResize() below relied on that being
+        // true regardless, so this stays behaviourally identical for Select;
+        // Subpatch and Hide now BOTH ride along in the same word, at the
+        // survivor's own captured index, not whatever slot they land in.
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
+        // PolyVertex relocate (a): per-corner values follow their surviving
+        // corners. Done now (before the tail buildLoops); the loop layout this
+        // produces is exactly what buildLoops rebuilds from the new `faces`, so
+        // its resizePolyVertexMaps is then a length-correct no-op.
+        if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
+        // Selection bits don't survive index changes; clear and let caller
+        // restore as needed.
+        clearFaceSelectionResize();
+        // Re-derive edges from the surviving faces. Some edges may be gone
+        // entirely (only-touched the deleted faces); others stay. Always
+        // do this even if no verts were orphaned — compactUnreferenced
+        // skips the rebuild when removed==0.
+        //
+        // `keepFloatingEdges` (task 0477, KILLER-2 fix): skip this rebuild
+        // when the caller wants floating edges (bordering no surviving
+        // face) to survive instead of being wiped — see the ctor doc above.
+        if (!keepFloatingEdges) {
+            rebuildEdges();
+        } else {
+            // A transition rule, not a definition of every face-less edge:
+            // register only edges this operation has just orphaned.
+            const polyCount = edgePolygonCounts();
+            foreach (ei, ref e; edges)
+                if (ei < polyCount.length && polyCount[ei] == 0 &&
+                    edgeKey(e[0], e[1]) in coveredBefore)
+                    wireEdgeKeys[edgeKey(e[0], e[1])] = true;
+        }
+        clearEdgeSelectionResize();
+        // Compact orphan vertices (no-op if all verts still referenced).
+        // Skipped for Remove (keepOrphans): the faces go, the now-unused
+        // points stay floating in place (task 0465 — reference-editor
+        // poly-Remove keeps points; only Delete removes them).
+        if (!keepOrphans) compactUnreferenced();
+        // Half-edge loops carry face/vert indices that compaction just
+        // invalidated; rebuild so adjacentFaces / verticesAroundVertex /
+        // friends return live indices. (Without this, the next consumer
+        // of `loops` walks stale data and either reports wrong adjacency
+        // or indexes out of bounds.)
+        buildLoops();
+        // Geometry-class: faces removed, orphan verts compacted, edges/loops
+        // rebuilt.
+        commitChange(MeshEditScope.Geometry);
+        return removed;
+    }
+
+    /// Drop the faces marked in `mask` together with exactly the vertices and
+    /// edges THIS removal leaves with no face; face-less geometry that predates
+    /// the call (a loose point, a bare wire, registered or not) survives, and so
+    /// does a vertex still holding one of those wires. Neither half of
+    /// `deleteFacesByMask` says this: `keepOrphans=false` sweeps every
+    /// unreferenced vertex in the mesh, and `keepFloatingEdges=true` registers
+    /// the edges this call orphaned as wires, which then pin their endpoints.
+    /// Measured law: the topology pen's face remove (task 8710; fixture
+    /// cells K-chords, C1-R1 and C1-R2r). One delivery for the whole call.
+    size_t removeFacesWithOwnOrphans(in bool[] mask) {
+        const loose = captureLooseGeometry();
+        uint[] pins = looseVertPins(loose, null);
+        foreach (ref w; loose.wires) pins ~= [w[0], w[1]];
+        beginDeliveryBatch();
+        scope (exit) endDeliveryBatch();
+        const removed = deleteFacesByMask(mask, /*keepOrphans*/ true, /*keepFloatingEdges*/ false);
+        if (removed == 0) return 0;
+        uint[] remap;
+        compactUnreferenced(pins, &remap);
+        restoreLooseWires(loose, remap);
+        buildLoops();
+        return removed;
+    }
+
+    /// Reverse the winding (vertex order) of every face selected by `mask`,
+    /// inverting its normal. The undirected edge set is invariant under a
+    /// winding flip (consecutive pairs are the same undirected set after
+    /// reversal), so edges[] and edgeIndexMap are left intact; only the
+    /// half-edge loops are re-synced via buildLoops() — NOT rebuildEdges().
+    /// PolyVertex (per-corner UV / color) maps are RELOCATED to follow the
+    /// reversed corner order so UVs stay glued to their corners (R5): for
+    /// each flipped face, new loop faceLoop[fi]+j maps to old loop
+    /// faceLoop[fi]+(N-1-j); non-flipped faces use the identity mapping.
+    /// Empty mask (all-false) is a no-op that returns 0.
+    size_t flipFacesByMask(in bool[] maskIn) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
+        import std.algorithm.mutation : reverse;
+        if (mask.length != faces.length) return 0;
+        // Task 0830: a winding flip is a corner PERMUTATION — the one shape
+        // that leaves the corner total untouched, so the length test has
+        // nothing to say about it and every value would be kept, each on the
+        // corner that used to be its mirror. Open the rewrite before the first
+        // `reverse` so that silence here costs the plane instead.
+        auto rw = beginCornerRelocate();
+        const bool needUV = rw.active();
+
+        // ONE predicate, read three times below (the count, the write, the
+        // relocation map). Hoisted out of the loop it used to be inlined in so
+        // that the two write arms below cannot drift about WHICH faces they
+        // touch — that drift is the standing hazard of a two-armed kernel and
+        // `flipped` is the only number either arm reports.
+        bool isTarget(size_t fi) {
+            return mask[fi] && faces[fi].length >= 3;   // degenerate guard
+        }
+
+        size_t flipped = 0, corners = 0;
+        foreach (fi; 0 .. faces.length)
+            if (isTarget(fi)) { ++flipped; corners += faces[fi].length; }
+        if (flipped == 0) return 0;
+
+        // --- TASK 1903 STAGE L2-a: THE WINDING WRITE, AND WHY IT IS TWO ARMS
+        //
+        // Until L2-a this was one `reverse(faces[fi])` per masked face: an
+        // IN-PLACE permutation that adds, removes and reorders no face slot, so
+        // not one hooked mutator saw it and a recording batch around this kernel
+        // came back with an EMPTY op-log. `MeshEditDelta.revert` then answered
+        // `true` and changed NOTHING — which §5.3 rates worse than a throw,
+        // because a throw is caught on the first run. `mesh.flip` and
+        // `mesh.fixOrientation` are the only two callers and both are stage-L2
+        // commands, so this publisher is unshared.
+        //
+        // THE SPLIT IS BY RECORDING STATE, NOT BY TASTE. `Mesh.setFaceWindings`
+        // needs the new windings in FRESH arrays — an in-place `reverse` would
+        // hand it a "before" that is already the "after", which is exactly what
+        // its aliasing guard refuses. Building those arrays costs one pass and
+        // three pre-sized allocations, and on an UNRECORDED batch (the redo arm,
+        // every interactive preview, `cleanupMesh`'s hygiene sweep) there is
+        // nobody to hand them to. So the unrecorded arm keeps the in-place
+        // reverse verbatim and allocates nothing, and the recorded arm pays for
+        // what it records. The differential unittest below
+        // (`flipFacesByMask: the two arms agree`) is what stops the two drifting.
+        //
+        // THE BULK FORM, not one `setFaceWinding` per face: the per-element door
+        // is QUADRATIC (each call resolves the corner payload by its own ordered
+        // sweep over `faces`), measured 2.22 ms against 146 ms at ten thousand
+        // faces — task 2260. A whole-mesh flip is precisely the caller that must
+        // not take the per-element door.
+        //
+        // BUFFERS ARE PRE-SIZED, and the reversed windings share ONE backing
+        // array sliced per face — three allocations for the whole flip rather
+        // than one per face, and no `~=` anywhere (task 2160: an element-wise
+        // append is a runtime call per element that `reserve` does not remove).
+        if (editRecorder_ is null) {
+            foreach (fi; 0 .. faces.length)
+                if (isTarget(fi)) reverse(faces[fi]);   // in-place, as before
+        } else {
+            import std.array : uninitializedArray;
+            auto backing = uninitializedArray!(uint[])(corners);
+            auto newWind = uninitializedArray!(uint[][])(flipped);
+            // `uninitializedArray` and not `new FaceIdx[](n)`: `FaceIdx`
+            // `@disable`s default construction on purpose (a defaulted face
+            // index would be face 0, and face 0 is a real face), so `new` and
+            // `.length =` do not compile on a `FaceIdx[]` in either direction.
+            auto idx = uninitializedArray!(FaceIdx[])(flipped);
+            size_t w = 0, b = 0;
+            foreach (fi; faceIndices) {          // the mint — never assumeFaceSpace
+                if (!isTarget(fi)) continue;
+                const uint[] cur = faces[fi];
+                auto dst = backing[b .. b + cur.length];
+                foreach (j, v; cur) dst[$ - 1 - j] = v;   // the reversal
+                idx[w] = fi;
+                newWind[w] = dst;
+                b += cur.length;
+                ++w;
+            }
+            // The return is deliberately NOT used as `flipped`. `setFaceWindings`
+            // drops an IDENTITY write from both the record and the write, and a
+            // winding that is its own reverse is reachable — a face carrying a
+            // repeated vertex, e.g. `[a, b, a]`, on a mesh the cleanup sweep has
+            // not been over. Today's kernel counts such a face as flipped and
+            // relocates its corners, and this migration is behaviour-preserving
+            // on the FORWARD, so `flipped` keeps that meaning.
+            //
+            // RECORDED RESIDUAL, named rather than papered: that face's corner
+            // relocation is therefore not in the op-log, so an undo does not put
+            // its per-corner values back. It is unreachable on any well-formed
+            // mesh (a face with a repeated vertex is what `hasRepeatedVertex_`
+            // and the cleanup sweep exist to remove) and the alternative — making
+            // `flipped` mean "installed" — would change which meshes
+            // `mesh.flip` refuses.
+            cast(void) setFaceWindings(idx, newWind);
+        }
+        if (needUV) {
+            // Build oldLoopOfNewLoop BEFORE buildLoops.  faceLoop[] is still
+            // the pre-flip CSR (arity is preserved ⇒ offsets are identical):
+            //   new loop faceLoop[fi]+j  ←  old loop faceLoop[fi]+(N-1-j)
+            // Non-flipped and degenerate faces use the identity mapping.
+            auto oldLoopOfNewLoop = new uint[](loops.length);
+            foreach (fi; 0 .. faces.length) {
+                // The capture's offsets, not `faceLoop` — same numbers here
+                // (arity is preserved, so the pre- and post-flip CSR agree),
+                // but sourced from the windings the correspondence is about
+                // rather than from a cache that a different kernel could leave
+                // stale.
+                const uint base = rw.oldFaceLoop()[fi];
+                const uint n    = cast(uint) faces[fi].length;
+                if (isTarget(fi))   // the SAME predicate the write arms used
+                    foreach (j; 0 .. n) oldLoopOfNewLoop[base + j] = base + (n - 1 - j);
+                else
+                    foreach (j; 0 .. n) oldLoopOfNewLoop[base + j] = base + j;
+            }
+            declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
+        }
+        buildLoops();   // re-sync loops/loopEdge; NOT rebuildEdges (edge set invariant)
+        commitChange(MeshEditScope.Geometry);
+        return flipped;
+    }
+
+    /// Dissolve the vertices marked true in `mask`: each selected vert
+    /// is dropped from every face's boundary list (a quad becomes a
+    /// triangle, a triangle becomes degenerate and the face is dropped).
+    /// Edges are rebuilt and orphan verts compacted out.
+    ///
+    /// This is `delete vertex` semantics — it preserves the
+    /// surrounding faces by re-shaping them, rather than killing every
+    /// incident face like a naive "delete incident topology" would.
+    /// `keepOrphans` (reference-editor parity for delete/remove): dissolving the
+    /// masked verts removes EXACTLY them. Any OTHER vertex left unreferenced
+    /// because its faces degenerated away stays as a loose point instead of
+    /// being swept. Measured: vertex delete AND vertex remove both keep such
+    /// collateral orphans (a prism whose three surviving corners lose every face
+    /// keeps those three points, 0 faces); only polygon-Delete compacts orphans.
+    /// The masked verts are dropped from every face → always unreferenced → the
+    /// compact removes them regardless; pinning the non-masked verts spares the
+    /// collateral orphans. Default false preserves the compact-all behaviour for
+    /// every other caller (edge_join, the cleanup hygiene sweep).
+    ///
+    /// Independent of `keepOrphans`: face-less geometry that was ALREADY
+    /// face-less before this call — loose points, bare wire edges, anywhere in
+    /// the mesh — survives (task 0502, see `captureLooseGeometry`). A MASKED
+    /// vertex is never spared by that, because the mask is the caller naming
+    /// it. `keepOrphans` remains the knob for the different question of what to
+    /// do with verts THIS call newly orphaned.
+    size_t dissolveVerticesByMask(in bool[] maskIn, bool keepOrphans = false) {
+        import std.array : appender;
+        const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
+        if (mask.length != vertices.length) return 0;
+        size_t dissolved = 0;
+        foreach (vi; 0 .. mask.length) if (mask[vi]) ++dissolved;
+        if (dissolved == 0) return 0;
+
+        // Before anything rewrites `faces[]`: what is face-less right NOW is
+        // pre-existing, and nothing this call does can make it collateral.
+        foreach (ref e; edges)
+            if ((e[0] < mask.length && mask[e[0]]) ||
+                (e[1] < mask.length && mask[e[1]]))
+                wireEdgeKeys.remove(edgeKey(e[0], e[1]));
+        const loose = captureLooseGeometry();
+
+        // Rebuild faces array, dropping each masked vert from every face's
+        // boundary. Faces shrunk below 3 verts (degenerate) are dropped.
+        uint[][] newFaces;
+        uint[]   oldOfNew;   // newToOld correspondence — task 1902, mesh_planes.rewriteFaces
+                              // carries every kFacePlanes entry from this in one pass.
+        newFaces.reserve(faces.length);
+        oldOfNew.reserve(faces.length);
+        // Class B tracker hook accumulators — inert unless a batch is open.
+        // A face whose boundary shrinks (but stays >= 3) is a ReshapeFaces; a
+        // face that becomes degenerate (< 3) and is dropped is a RemoveFaces.
+        // Both index in the OLD (pre-rewrite) face-index space — the live index
+        // `fi` — which is the one every entry uses (MeshOpEntry, "THE INDEX
+        // SPACE OF AN ENTRY") and, being the space the maps are still in, also
+        // the one the per-corner payload capture wants (task 0689). Both entries
+        // invert before the tail compactUnreferenced's vert reindex (LIFO).
+        //
+        // Task 0703: these used to be recorded in the POST-shrink space
+        // (`newFaces.length` at the moment each face was appended/dropped),
+        // which is wrong twice over. Two faces dropped from the head both read
+        // 0, so `RemoveFaces⁻¹`'s ascending insertInPlace returned them
+        // reversed; and the reshape index is consumed AFTER that inverse has
+        // already re-inserted the dropped faces — i.e. against an array that is
+        // back in the pre-op space — so it landed on a re-inserted face and
+        // overwrote it. Pinned by tests/test_mesh_edit_delta.d (g).
+        //
+        // Task 0831: both accumulators are `FaceIdx[]`, so the exact expression
+        // that caused it — `newFaces.length`, a position in the array being
+        // BUILT — is now a compile error here rather than a number that agrees
+        // with the right answer whenever only one face is dropped.
+        const bool recDis = editRecorder_ !is null;
+        FaceIdx[] reshapeIdx;
+        uint[][] reshapeBefore;
+        uint[][] reshapeAfter;
+        // Appender caches capacity during this bulk capture, avoiding a GC
+        // block lookup for every appended face attribute. The recorder still
+        // takes ownership of the completed buffers, including deep-copied rings.
+        auto removedFaceIdx = appender!(FaceIdx[])();
+        auto removedFaceLists = appender!(uint[][])();
+        auto removedFaceMat = appender!(uint[])();
+        auto removedFacePart = appender!(uint[])();
+        auto removedFaceSub = appender!(uint[])();
+        auto removedFaceSetMask = appender!(ulong[])();
+        auto removedFaceOrd = appender!(int[])();
+        // Removed rings share one owned slab, with disjoint slices: copying
+        // the same values needs no separate GC allocation for every polygon.
+        size_t removedCornerCount;
+        if (recDis) foreach (f; faces) {
+            size_t keptCount;
+            foreach (vid; f) {
+                if (vid < mask.length && mask[vid]) continue;
+                if (++keptCount == 3) break;
+            }
+            if (keptCount < 3) removedCornerCount += f.length;
+        }
+        auto removedRings = new uint[removedCornerCount];
+        size_t removedCornerOffset;
+        // PolyVertex remap, mechanism (b): a masked corner is dropped from its
+        // face's corner LIST, so new corner `j` of a surviving face came from a
+        // specific OLD corner `k` (its position in the old face). Build
+        // `oldLoopOfNewLoop` in NEW-face/new-corner (CSR) order so a planted UV
+        // follows the surviving corner even as the face changes arity.
+        // Task 0830: this capture is the obligation handle. `beginCornerRelocate`
+        // takes the OFFSETS only — a relocation names each source corner by
+        // index and never looks a vertex up in an old winding — and it ARMS the
+        // drop: a path out of here that rewrites `faces` without declaring loses
+        // the plane rather than keeping values on foreign corners.
+        auto rw = beginCornerRelocate();
+        const bool remapUv = rw.active();
+        const(uint)[] oldFaceLoop = rw.oldFaceLoop();
+        uint[] oldLoopOfNewLoop;
+        foreach (fi; faceIndices) {
+            auto f = faces[fi];
+            uint[] kept;
+            uint[] keptCorner; // old corner index of each kept corner (mech b)
+            foreach (k, vid; f) {
+                if (vid < mask.length && mask[vid]) continue;
+                kept ~= vid;
+                if (remapUv) keptCorner ~= cast(uint)k;
+            }
+            if (kept.length >= 3) {
+                if (recDis && kept.length != f.length) {
+                    reshapeIdx    ~= fi;
+                    reshapeBefore ~= f.dup;
+                    reshapeAfter  ~= kept.dup;
+                }
+                newFaces ~= kept;
+                oldOfNew ~= cast(uint) fi;
+                if (remapUv)
+                    foreach (kc; keptCorner)
+                        oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, kc);
+            } else if (recDis) {
+                // Degenerate face dropped — reconstruct it on revert at the
+                // index it holds RIGHT NOW, in the pre-rewrite array.
+                removedFaceIdx.put(fi);
+                auto ring = removedRings[removedCornerOffset .. removedCornerOffset + f.length];
+                ring[] = f[];
+                removedCornerOffset += f.length;
+                removedFaceLists.put(ring);
+                removedFaceMat.put(faceAttrOr(faceMaterial, fi));
+                removedFacePart.put(faceAttrOr(facePart, fi));
+                removedFaceSub.put(isFaceSubpatch(fi) ? 1u : 0u);
+                removedFaceSetMask.put(faceAttrOr(faceSetMask, fi));
+                removedFaceOrd.put(faceAttrOr(faceSelectionOrder, fi));
+            }
+        }
+        if (recDis) {
+            // Reshape first, then RemoveFaces — on revert (LIFO) the dropped
+            // faces are re-inserted FIRST, which restores the pre-rewrite
+            // length and ORDER, and only then are the reshape lists restored,
+            // at the pre-rewrite indices both entries were recorded in.
+            // Each face entry is preceded by its own per-corner payload (task
+            // 0689): the reshape's payload holds the PRE-shrink corner values
+            // of the faces it shortens (the dissolved corner among them), the
+            // removal's holds the degenerate faces' corners. `faces` is still
+            // the pre-rewrite array here, so both reads are in the live space —
+            // the same space the entries' own indices are in.
+            recordPolyVertexPayload(reshapeIdx);
+            editRecorder_.recordReshapeFaces(reshapeIdx, reshapeBefore, reshapeAfter);
+            recordPolyVertexPayload(removedFaceIdx.data);
+            editRecorder_.recordRemoveFaces(removedFaceIdx.data, removedFaceLists.data,
+                                            removedFaceMat.data, removedFacePart.data, removedFaceSub.data,
+                                            removedFaceSetMask.data, removedFaceOrd.data);
+        }
+        // Task 1903 Stage K — NOT armed: this kernel records `ReshapeFaces`
+        // AND `RemoveFaces` above, so its face change is already in the log
+        // twice over. A third description is the double revert.
+        rewriteFaces(this, newFaces, FaceSource(oldOfNew));
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
+        // PolyVertex relocate (b): per-corner values follow surviving corners
+        // through the arity change. Before the tail buildLoops/compact.
+        if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
+        clearFaceSelectionResize();
+
+        // Rebuild edges from the new faces (some edges are gone, some
+        // boundaries are shorter). compactUnreferenced then removes the
+        // dissolved (now-orphan) verts and re-derives edges yet again.
+        rebuildEdges();
+        clearEdgeSelectionResize();
+        uint[] pinned;
+        if (keepOrphans) {
+            // Pin every non-masked vert so the compact removes ONLY the
+            // dissolved (masked, now unreferenced) verts, sparing collateral
+            // orphans (see the keepOrphans note on the signature).
+            foreach (i; 0 .. mask.length) if (!mask[i]) pinned ~= cast(uint)i;
+        } else {
+            // Pin only the PRE-EXISTING loose points (task 0502) — collateral
+            // orphans this call created still go, which is what !keepOrphans
+            // means.
+            pinned = looseVertPins(loose, mask);
+        }
+        uint[] vremap;
+        compactUnreferenced(pinned, &vremap);
+        restoreLooseWires(loose, vremap);
+        // See deleteFacesByMask: loops carry stale indices after face/vert
+        // compaction.
+        buildLoops();
+        // Geometry-class: verts dissolved out of faces, geometry rebuilt.
+        commitChange(MeshEditScope.Geometry);
+        return dissolved;
+    }
+
+
+
+
+    /// Dissolve every vertex that is incident to exactly 2 edges. Such
+    /// verts are pinch-points along a chain of edges in the surrounding
+    /// faces — collapsing them merges the two adjacent boundary edges
+    /// into one. Used as a cleanup pass after removeEdgesByMask: the
+    /// `delete` / `remove` behavior on edge selections dissolves the
+    /// edge AND drops the now-orphaned 2-valent endpoints.
+    ///
+    /// `region` (task 0474): when non-null, ONLY verts whose position matches
+    /// an entry are eligible — the touched region of an edge delete (the
+    /// endpoints of the deleted edges, from `edgeDeleteRegion`). This scopes the
+    /// cleanup to the verts the edit actually reduced to 2-valent, matching the
+    /// reference editor's edge-delete: a pre-existing 2-valent vertex NOT touched
+    /// by the removed edges (a 90° corner, a straight-through midpoint elsewhere)
+    /// is left in place. Passing null keeps the legacy mesh-wide behavior (the
+    /// opt-in `dissolve2Valent` hygiene sweep in cleanupMesh). NB the eligibility
+    /// is purely region membership — there is deliberately NO collinearity /
+    /// angle test: the reference editor dissolves a touched endpoint regardless
+    /// of the angle its two survivors make (a 135° bent endpoint of a removed
+    /// edge is dissolved just like a straight one; only being outside the region
+    /// spares a vertex — measured against the reference editor, task 0474).
+    /// Returns the number of verts dissolved.
+    /// `keepOrphans` is forwarded to `dissolveVerticesByMask`: the edge
+    /// delete/remove cleanup keeps collateral orphans (verts whose faces
+    /// degenerated to < 3 while their own valence stayed > 2) as loose points,
+    /// matching the reference editor. The opt-in cleanup hygiene sweep keeps the
+    /// default (compact-all) behaviour.
+    size_t dissolveDegree2Verts(in Vec3[] region = null, bool keepOrphans = false) {
+        // Tally the number of edges incident to each vertex.
+        int[] degree;
+        degree.length = vertices.length;
+        foreach (e; edges) {
+            uint a = e[0], b = e[1];
+            if (a < degree.length) ++degree[a];
+            if (b < degree.length) ++degree[b];
+        }
+        bool[] mask;
+        mask.length = vertices.length;
+        size_t cnt = 0;
+        foreach (i, d; degree) {
+            if (d != 2) continue;
+            if (region !is null && !positionInRegion(vertices[i], region)) continue;
+            mask[i] = true; ++cnt;
+        }
+        if (cnt == 0) return 0;
+        return dissolveVerticesByMask(mask, keepOrphans);
+    }
+
+    /// True iff `p` coincides (within a tight epsilon) with any position in
+    /// `region`. Used by `dissolveDegree2Verts` to scope its cleanup. The
+    /// positions flow through unchanged (compaction copies verts by value, never
+    /// recomputes), so an exact match would suffice; the small epsilon only
+    /// guards against future float re-derivation. Linear scan — both the region
+    /// (deleted-edge endpoints) and the 2-valent candidate set are tiny.
+    private static bool positionInRegion(in Vec3 p, in Vec3[] region) {
+        enum float epsSq = 1e-12f;
+        foreach (ref r; region) {
+            immutable dx = p.x - r.x, dy = p.y - r.y, dz = p.z - r.z;
+            if (dx*dx + dy*dy + dz*dz <= epsSq) return true;
+        }
+        return false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Loose (face-less) geometry preservation — task 0502
+    //
+    // Every dissolve kernel below ends in `rebuildEdges()` +
+    // `compactUnreferenced()`. Authored wires now ride both through
+    // `wireEdgeKeys`; this older capture also preserves unregistered legacy /
+    // transient loose geometry. Loose points still need it outright. Neither
+    // tail is scoped to the edited region, so dissolving ONE interior edge
+    // used to take every bare wire edge and every loose point in the mesh with
+    // it, arbitrarily far from the edit.
+    //
+    // That is pure collateral damage, not a behaviour: vibe3d builds both as
+    // ordinary intermediate retopo state (a placed point; a chain drawn before
+    // any polygon closes over it), so the loss is silent destruction of work in
+    // progress. `deleteFacesByMask` already carries `keepFloatingEdges` for
+    // exactly this reason; the dissolves cannot take that route because they
+    // REINDEX vertices, so the edge array cannot simply be left alone.
+    //
+    // The fix is therefore capture-and-replay, and it is the KERNEL's job
+    // rather than each caller's: no caller of a dissolve can plausibly want
+    // mesh-wide destruction of geometry it did not name, and an opt-in flag
+    // would leave the trap armed for the next caller. Explicit orphan removal
+    // remains available and untouched — `compactUnreferenced()` direct, or
+    // Cleanup's `removeOrphans` — so nothing loses the ability to sweep.
+    //
+    // What is deliberately NOT preserved: geometry the edit itself consumed. A
+    // wire edge whose endpoint the dissolve legitimately removed stays gone
+    // (its endpoint's remap entry is `~0u`, and the replay skips it). This
+    // restores UNRELATED geometry; it does not resurrect the edit.
+    // -----------------------------------------------------------------------
+
+    /// The mesh's FACE-LESS geometry — vertices no polygon references, and
+    /// edges no polygon borders — in the CURRENT vertex-index space.
+    private static struct LooseGeometry {
+        uint[]    verts;   // vertex indices referenced by no face
+        uint[2][] wires;   // edges bordering no face, by endpoint vertex index
+        bool empty() const { return verts.length == 0 && wires.length == 0; }
+    }
+
+    /// Snapshot the face-less geometry BEFORE a dissolve rewrites `faces[]`.
+    /// Indices are valid until the tail `compactUnreferenced` reindexes — every
+    /// dissolve leaves `vertices[]` untouched until then, which is what makes
+    /// the index-keyed (rather than position-keyed) capture sound here.
+    private LooseGeometry captureLooseGeometry() const {
+        LooseGeometry g;
+        auto referenced = computeReferencedVertexMask();
+        foreach (i, r; referenced)
+            if (!r) g.verts ~= cast(uint)i;
+        // Zero incident polygons ⇒ a bare wire. Counted off `faces[]` via
+        // `edgePolygonCounts`, the counter that cannot undercount.
+        auto polyCount = edgePolygonCounts();
+        foreach (ei; 0 .. edges.length)
+            if (polyCount[ei] == 0)
+                g.wires ~= [edges[ei][0], edges[ei][1]];
+        return g;
+    }
+
+    /// The vertices of `g` that must be PINNED through the tail compaction,
+    /// minus anything `excluded` (a dissolve's own target mask) names: a loose
+    /// vertex the caller explicitly asked to remove is not collateral damage.
+    /// `excluded` may be empty.
+    private static uint[] looseVertPins(in LooseGeometry g, in bool[] excluded) {
+        uint[] pins;
+        foreach (v; g.verts)
+            if (v >= excluded.length || !excluded[v]) pins ~= v;
+        return pins;
+    }
+
+    /// Re-add any unregistered bare wire of `g` that the rebuild could not
+    /// derive, through the `remap` the tail `compactUnreferenced` published.
+    /// Registered wires are already present and deduplicate here. Call AFTER
+    /// compaction and BEFORE the terminal `buildLoops()`. A wire is skipped
+    /// when either endpoint was dropped, when it is already live, or when it
+    /// degenerated.
+    private void restoreLooseWires(in LooseGeometry g, in uint[] remap) {
+        if (g.wires.length == 0) return;
+        bool added = false;
+        foreach (ref w; g.wires) {
+            if (w[0] >= remap.length || w[1] >= remap.length) continue;
+            immutable uint a = remap[w[0]], b = remap[w[1]];
+            if (a == cast(uint)~0u || b == cast(uint)~0u || a == b) continue;
+            if (edgeIndex(a, b) != cast(uint)~0u) continue;
+            addEdge(a, b);
+            added = true;
+        }
+        // `addEdge` appends past the length the enclosing kernel's
+        // `clearEdgeSelectionResize()` just settled on.
+        if (added) clearEdgeSelectionResize();
+    }
+
+    /// Which vertices an edge dissolve of `mask` consumes ENTIRELY — the
+    /// companion query to `removeEdgesByMask(mask, keepConsumedVerts:false)`.
+    ///
+    /// The rule, in full (task 0494, recovered from the reference editor's own
+    /// removal primitive and reproduced here directly rather than approximated):
+    ///
+    ///   a vertex disappears **iff** it is an endpoint of a dissolving edge
+    ///   AND every polygon of its incident fan is itself incident to some
+    ///   dissolving edge.
+    ///
+    /// Read the two halves separately, because BOTH are load-bearing:
+    ///
+    ///   * The CANDIDATE set is the endpoints of the dissolving edges, never
+    ///     "every vertex the merge touched". On a 4x4 grid dissolving the
+    ///     3-edge column {(1,5),(5,9),(9,13)}, vertex 4's whole fan {f00,f10}
+    ///     IS consumed — but 4 is nobody's dissolving endpoint, so it stays.
+    ///   * The TEST is fan completeness, not valence. `dissolveDegree2Verts`
+    ///     (this file's other cleanup pass) is the valence rule, and the two
+    ///     DIVERGE IN BOTH DIRECTIONS — see this method's unittests, which pin
+    ///     the two constructed masks that separate them. On a plain quad grid
+    ///     dissolving a whole loop they happen to coincide, so a green test on
+    ///     that fixture alone proves nothing about which rule is implemented.
+    ///
+    /// Only mask entries that will ACTUALLY dissolve count: an edge with other
+    /// than exactly two incident polygons is skipped, matching
+    /// `removeEdgesByMask`'s own boundary-edge skip, so a border edge in the
+    /// mask neither marks its single polygon nor nominates its endpoints.
+    ///
+    /// Pure query — indexes and answers in the CURRENT (pre-dissolve) vertex
+    /// index space. Returns an all-false mask when `mask` is the wrong length.
+    bool[] consumedFanVertexMask(in bool[] mask) const {
+        bool[] result;
+        result.length = vertices.length;
+        if (mask.length != edges.length || faces.length == 0) return result;
+
+        // How many polygons each undirected edge borders. Counted straight off
+        // `faces` (not `buildEdgeFaces`, whose two-slot int[2] cannot witness a
+        // third incident polygon) so "exactly two" really means exactly two.
+        int[ulong] polyCount;
+        foreach (ref f; faces)
+            foreach (k; 0 .. f.length)
+                ++polyCount[edgeKey(f[k], f[(k + 1) % f.length])];
+
+        // The edges that will dissolve, as undirected keys.
+        bool[ulong] doomed;
+        foreach (i; 0 .. edges.length) {
+            if (!mask[i]) continue;
+            immutable ulong key = edgeKey(edges[i][0], edges[i][1]);
+            auto pc = key in polyCount;
+            if (pc is null || *pc != 2) continue;
+            doomed[key] = true;
+        }
+        if (doomed.length == 0) return result;
+
+        // Candidates: the endpoints of those edges, and nothing else.
+        bool[] candidate;
+        candidate.length = vertices.length;
+        foreach (i; 0 .. edges.length) {
+            if (!mask[i]) continue;
+            if (edgeKey(edges[i][0], edges[i][1]) !in doomed) continue;
+            foreach (v; edges[i])
+                if (v < candidate.length) candidate[v] = true;
+        }
+
+        // A polygon is CONSUMED when it borders a dissolving edge.
+        bool[] consumedFace;
+        consumedFace.length = faces.length;
+        foreach (fi, ref f; faces)
+            foreach (k; 0 .. f.length)
+                if (edgeKey(f[k], f[(k + 1) % f.length]) in doomed) {
+                    consumedFace[fi] = true;
+                    break;
+                }
+
+        // A vertex is SPARED as soon as one polygon of its fan survives; a
+        // vertex with no fan at all is spared too (an empty fan is not a
+        // consumed one).
+        bool[] spared, hasFan;
+        spared.length = hasFan.length = vertices.length;
+        foreach (fi, ref f; faces)
+            foreach (v; f) {
+                if (v >= vertices.length) continue;
+                hasFan[v] = true;
+                if (!consumedFace[fi]) spared[v] = true;
+            }
+
+        foreach (i; 0 .. vertices.length)
+            result[i] = candidate[i] && hasFan[i] && !spared[i];
+        return result;
+    }
+
+    /// `removeEdgesByMask`, then DROP the vertices the dissolve consumed
+    /// entirely (`consumedFanVertexMask`) — re-stitching the survivors around
+    /// them. Task 0494: the reference editor's edge removal runs this purge
+    /// unless its "keep vertex" option is on, and that option defaults OFF, so
+    /// THIS overload is the reference default and the one-argument form above
+    /// is its "keep vertex ON" branch.
+    ///
+    /// `keepConsumedVerts: true` forwards verbatim to the one-argument overload
+    /// (so a caller can pass the flag straight through without branching); every
+    /// pre-existing caller keeps the one-argument form and is byte-unchanged.
+    ///
+    /// The consumed set is resolved BEFORE the dissolve and carried across it by
+    /// POSITION — the dissolve reindexes vertices (`compactUnreferenced`), and
+    /// positions flow through compaction by value. Same technique, and the same
+    /// coincident-position caveat, as `lastEdgeDeleteRegion_`.
+    ///
+    /// Returns the number of edges dissolved, exactly as the one-argument form.
+    size_t removeEdgesByMask(in bool[] maskIn, bool keepConsumedVerts) {
+        const mask = maskMinusHiddenEdges(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
+        if (keepConsumedVerts) return removeEdgesByMask(mask);
+
+        Vec3[] consumedPos;
+        foreach (i, c; consumedFanVertexMask(mask))
+            if (c) consumedPos ~= vertices[i];
+
+        immutable size_t dissolved = removeEdgesByMask(mask);
+        if (dissolved == 0 || consumedPos.length == 0) return dissolved;
+
+        // A consumed vertex that the merge already left face-unreferenced is
+        // gone (the dissolve's own tail compaction took it); the rest are still
+        // corners of a merged polygon and are dropped from it here.
+        bool[] vmask;
+        vmask.length = vertices.length;
+        size_t hit = 0;
+        foreach (i; 0 .. vertices.length)
+            if (positionInRegion(vertices[i], consumedPos)) { vmask[i] = true; ++hit; }
+        if (hit > 0) dissolveVerticesByMask(vmask, /*keepOrphans*/true);
+        return dissolved;
+    }
+
+    /// Dissolve the edges marked true in `mask`: each selected edge is
+    /// removed, and any group of faces transitively connected through
+    /// selected edges is merged into a single polygon along the union's
+    /// outer boundary.
+    ///
+    /// Algorithm: union-find over faces, edges within a component drop
+    /// out, the remaining directed half-edges of the component form a
+    /// closed walk = the merged polygon boundary. Handles fans (multiple
+    /// selected edges sharing a vertex) cleanly — pairwise-merge would
+    /// produce a bowtie polygon in that case. Boundary edges (only one
+    /// adjacent face) are skipped. Returns the number of selected edges
+    /// actually dissolved.
+    ///
+    /// This overload KEEPS every vertex the merge consumed, as a corner of the
+    /// merged polygon. The two-argument overload above drops them instead.
+    ///
+    /// Face-less geometry elsewhere in the mesh (loose points, bare wire edges)
+    /// SURVIVES — see the `captureLooseGeometry` block above for why the tail
+    /// used to wipe it mesh-wide and why the fix lives here rather than in each
+    /// caller.
+    size_t removeEdgesByMask(in bool[] maskIn) {
+        const mask = maskMinusHiddenEdges(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
+        if (mask.length != edges.length) return 0;
+        // Before anything rewrites `faces[]`: what is face-less right NOW is
+        // pre-existing, and nothing this call does can make it collateral.
+        foreach (i, ref e; edges)
+            if (mask[i]) wireEdgeKeys.remove(edgeKey(e[0], e[1]));
+        const loose = captureLooseGeometry();
+
+        // Touched-region capture (task 0474): remember the POSITIONS of the
+        // endpoints of the edges the caller asked to delete, BEFORE any mutation.
+        // The edge-mode delete/remove commands use this to scope the follow-up
+        // dissolveDegree2Verts so pre-existing 2-valent verts elsewhere (90°
+        // corners, straight-through midpoints far from the edit) are left alone.
+        // Positions (not indices) survive removeEdgesByMask's vert reindexing.
+        lastEdgeDeleteRegion_ = null;
+        lastDissolveProduct_  = null;   // the merge product, filled at the tail append
+
+        // Snapshot selected edges as undirected keys; edge-array indices
+        // are unstable across compactUnreferenced.
+        // Flat, not hashed (task 0688): both of these used to be associative
+        // arrays walked once per selected edge — ~200 000 hashed inserts for
+        // the keys and ~100 000 more for the seen-set on the perf lane's grid,
+        // paid before the merge even starts. The keys are needed ONLY by the
+        // stale-loops fallback below, so they are built there, lazily; the
+        // seen-set is a plain bool[] indexed by vertex.
+        bool[] regionSeen;
+        regionSeen.length = vertices.length;
+        size_t selectedEdgeCount = 0;
+        foreach (i; 0 .. edges.length)
+            if (mask[i]) {
+                uint a = edges[i][0], b = edges[i][1];
+                ++selectedEdgeCount;
+                if (a < vertices.length && !regionSeen[a]) {
+                    regionSeen[a] = true; lastEdgeDeleteRegion_ ~= vertices[a];
+                }
+                if (b < vertices.length && !regionSeen[b]) {
+                    regionSeen[b] = true; lastEdgeDeleteRegion_ ~= vertices[b];
+                }
+            }
+        if (selectedEdgeCount == 0) { lastEdgeDeleteRegion_ = null; return 0; }
+
+        // PolyVertex remap, mechanism (b): merging faces rewrites the corner
+        // LIST (the merged poly is a boundary walk). Capture the OLD CSR corner
+        // offsets so each merged-poly corner — and each kept face's corner — can
+        // be traced to an old loop index. Built into `oldLoopOfNewLoop` in the
+        // final [kept ++ merged] face order below.
+        // Task 0830: this capture is the obligation handle. `beginCornerRelocate`
+        // takes the OFFSETS only — a relocation names each source corner by
+        // index and never looks a vertex up in an old winding — and it ARMS the
+        // drop: a path out of here that rewrites `faces` without declaring loses
+        // the plane rather than keeping values on foreign corners.
+        auto rw = beginCornerRelocate();
+        const bool remapUv = rw.active();
+        const(uint)[] oldFaceLoop = rw.oldFaceLoop();
+
+        // Build face → face union-find via selected edges.
+        size_t nFaces = faces.length;
+        int[] parent;  parent.length = nFaces;
+        int[] rank_;   rank_.length  = nFaces;
+        foreach (i; 0 .. nFaces) parent[i] = cast(int)i;
+        int find(int x) { while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+        void unite(int a, int b) {
+            a = find(a); b = find(b); if (a == b) return;
+            if (rank_[a] < rank_[b]) { int t = a; a = b; b = t; }
+            parent[b] = a;
+            if (rank_[a] == rank_[b]) ++rank_[a];
+        }
+
+        // One-pass adjacency: map each edge key → up to its first two DISTINCT
+        // adjacent faces (by ascending face index). Reproduces the original
+        // "first two distinct faces" semantics: first occurrence → slot 0,
+        // second distinct face → slot 1; a 3rd+ face and a face that contains
+        // the edge twice are ignored.
+        // Edge → its (up to two) adjacent faces. `buildEdgeFaces` answers this
+        // from `faces` alone — correct under ANY loop state, and the reason it
+        // exists — but it hashes every corner of every face: on the perf lane's
+        // 99 856-face grid that one call, plus the keyed walk below, measured
+        // 90 ms of the kernel's 157 ms (task 0688).
+        //
+        // The half-edge structure already holds the same fact positionally:
+        // `loopEdge[li]` is the edge of dart `li` and `loops[li].face` its face.
+        // When it is VALID (the stamp `loopsValid()` — task 0678 M6 — not a
+        // guess), the incidence can be read off flat, indexed by edge, with no
+        // hashing at all; the walk below then iterates edge INDICES straight
+        // off `mask` instead of re-deriving keys. Same "first two DISTINCT
+        // faces, ascending" semantics: darts are visited in face order.
+        //
+        // Stale loops fall back to the hashed path, so the contract that made
+        // `buildEdgeFaces` the safe answer is preserved, not traded away.
+        // Task 1290 (P1): the union below may only join TWO faces, so an edge
+        // must border EXACTLY two before it is allowed to dissolve. The
+        // slot-filling idiom alone cannot say "exactly": both `int[2]` and
+        // `buildEdgeFaces` fill their second slot from the second face and
+        // then ignore every further one, so a NON-MANIFOLD edge (three
+        // incident polygons — reachable from Edge Extend and from an LWO
+        // import, so ordinary state, not an emergency) read as an ordinary
+        // interior edge. It then merged an ARBITRARY two of the three (the
+        // first two in dart order), counted itself dissolved, and left the
+        // edge standing — still bounded by the third face, which the merged
+        // polygon no longer touches. Measured on three quads sharing edge
+        // (0,1): `removeEdgesByMask` returned 1, faces 0 and 1 came back as
+        // one hexagon, and edge (0,1) was still there.
+        //
+        // So each arm now carries a true dart tally beside the slots and
+        // requires it to be 2. `nmdEdgeDartCount` / `nmdEdgePolyCount` count
+        // CORNERS, not distinct faces: together with the existing
+        // distinct-face slot test that keeps the two pre-existing skips
+        // byte-identical (a border edge has one dart; a keyhole edge has two
+        // darts on ONE face and already failed `ef[e][0] != fi`) and adds
+        // exactly one new one — three or more.
+        //
+        // This is not a new refusal. `consumedFanVertexMask`, this kernel's
+        // own companion query, has always documented the rule as "an edge with
+        // other than exactly two incident polygons is skipped, matching
+        // removeEdgesByMask's own boundary-edge skip" and has always
+        // implemented it (`*pc != 2`). Only the kernel disagreed with its
+        // companion; now it does not.
+        size_t dissolved = 0;
+        bool[ulong] dissolvedEdgeKeys;   // edges ACTUALLY merged (interior, both faces)
+        if (loopsValid() && loopEdge.length == loops.length) {
+            auto ef = new int[2][](edges.length);
+            auto nmdEdgeDartCount = new int[](edges.length);
+            foreach (ref slot; ef) slot = [-1, -1];
+            foreach (li, ref lp; loops) {
+                if (li >= loopEdge.length) break;
+                immutable uint e = loopEdge[li];
+                if (e >= ef.length) continue;
+                ++nmdEdgeDartCount[e];
+                immutable int fi = cast(int) lp.face;
+                if (ef[e][0] == -1) ef[e][0] = fi;
+                else if (ef[e][1] == -1 && ef[e][0] != fi) ef[e][1] = fi;
+            }
+            foreach (i; 0 .. edges.length) {
+                if (!mask[i]) continue;
+                immutable int fA = ef[i][0], fB = ef[i][1];
+                if (fA != -1 && fB != -1 && nmdEdgeDartCount[i] == 2) {
+                    unite(fA, fB);
+                    dissolvedEdgeKeys[edgeKey(edges[i][0], edges[i][1])] = true;
+                    ++dissolved;
+                }
+            }
+        } else {
+            auto edgeFaces = buildEdgeFaces();
+            // Stale loops: the count comes off `faces[]` by key, the same way
+            // `consumedFanVertexMask` builds it — `buildEdgeFaces`' own
+            // `int[2]` cannot witness a third incident polygon.
+            int[ulong] nmdEdgePolyCount;
+            foreach (ref f; faces)
+                foreach (k; 0 .. f.length)
+                    ++nmdEdgePolyCount[edgeKey(f[k], f[(k + 1) % f.length])];
+            bool[ulong] selectedEdgeKeys;
+            foreach (i; 0 .. edges.length)
+                if (mask[i]) selectedEdgeKeys[edgeKey(edges[i][0], edges[i][1])] = true;
+            foreach (key; selectedEdgeKeys.byKey) {
+                auto p = key in edgeFaces;
+                if (p is null) continue;
+                auto pc = key in nmdEdgePolyCount;
+                if (pc is null || *pc != 2) continue;
+                int fA = (*p)[0], fB = (*p)[1];
+                if (fA != -1 && fB != -1) {
+                    unite(fA, fB);
+                    dissolvedEdgeKeys[key] = true;
+                    ++dissolved;
+                }
+            }
+        }
+        if (dissolved == 0) return 0;
+
+        // Group faces by component root.
+        size_t[][int] componentFaces;
+        foreach (fi; 0 .. nFaces) {
+            int r = find(cast(int)fi);
+            componentFaces[r] ~= fi;
+        }
+
+        // For each multi-face component: walk the boundary and produce the
+        // merged polygon. Single-face components are untouched.
+        bool[] dropFace      = new bool[](nFaces);
+        uint[][] newPolyList;
+        uint[]   newPolySrc;    // per merged poly: the representative OLD face
+                                 // index (comp[0]) — task 1902,
+                                 // mesh_planes.rewriteFaces's plane source,
+                                 // replacing newPolyWord/Order/Material/Part/
+                                 // SetMask above (all five rode `firstFi`).
+        // Parallel to newPolyList: the OLD loop index that produced each merged
+        // corner (mechanism b). `~0u` ⇒ no traceable source ⇒ zero-fill.
+        uint[][] newPolySrcLoop;
+        foreach (root, comp; componentFaces) {
+            if (comp.length < 2) continue;
+
+            // Every edge INTERNAL to this merged component vanishes from the
+            // union boundary — not only the explicitly-selected edges. An edge
+            // shared by two of the component's faces is interior once those
+            // faces merge, even if the caller did not select it: it got
+            // internalised because its two faces were joined through OTHER
+            // selected edges. Dropping only the selected edges leaves such an
+            // edge as an antenna spike with a dangling vertex, which the
+            // reference editor does not keep (measured on non-cube prism
+            // geometry: the merged polygon is the boundary of the face union,
+            // with no interior stubs). Tally per-component edge multiplicity;
+            // an edge appearing >= 2 times among the component's faces is
+            // interior and dissolves. On a clean merge where every interior
+            // edge WAS selected (e.g. the cube-corner fan) this is identical to
+            // the selected-only drop, so those results stay byte-for-byte.
+            // One pass, one table: how many of the component's faces use each
+            // edge, AND the (up to two, distinct-face) darts that use it. Task
+            // 1220 needs the darts for the orientation pass and the bridge
+            // below; folding them into the multiplicity tally keeps this at the
+            // ONE associative-array build per component it has always been —
+            // this loop walks every corner of every component face, and on the
+            // perf lane's 99 856-face grid a second table here would be paid on
+            // every dissolve (task 0688 measured what that costs).
+            struct CompEdge {
+                int    count;
+                uint[2] dartFace   = uint.max;
+                uint[2] dartCorner;
+            }
+            CompEdge[ulong] compEdges;
+            foreach (fi; comp) {
+                auto f = faces[fi];
+                foreach (k; 0 .. f.length) {
+                    immutable ulong key = edgeKey(f[k], f[(k + 1) % f.length]);
+                    auto p = key in compEdges;
+                    if (p is null) {
+                        CompEdge ce;
+                        ce.count         = 1;
+                        ce.dartFace[0]   = cast(uint) fi;
+                        ce.dartCorner[0] = cast(uint) k;
+                        compEdges[key]   = ce;
+                    } else {
+                        ++p.count;
+                        if (p.dartFace[1] == uint.max &&
+                            p.dartFace[0] != cast(uint) fi) {
+                            p.dartFace[1]   = cast(uint) fi;
+                            p.dartCorner[1] = cast(uint) k;
+                        }
+                    }
+                }
+            }
+
+            // ---- task 1220 (ledger row 33): ONE ORIENTATION PER COMPONENT ---
+            // Two faces that share an edge and traverse it in the SAME
+            // direction are wound against each other. The boundary walk below
+            // cancels a shared edge only through the multiplicity tally, which is
+            // winding-blind, so on a counter-wound pair the two surviving
+            // half-edge chains never join head to tail: the walk dies after
+            // two corners and the whole component is skipped — measured as
+            // "vert.merge leaves both quads standing" (7 edges, 2 faces).
+            // The reference merges them into one hexagon wound like the FIRST
+            // face of the component, so flip every face reached across a
+            // same-direction edge, seeded by `comp[0]` — the same face the
+            // merged polygon already inherits its marks / material / part /
+            // selection-order from.
+            //
+            // On an already-consistent component NOTHING flips and every line
+            // below sees the arrays it saw before this block existed.
+            size_t[uint] localOf;
+            foreach (li, fi; comp) localOf[cast(uint) fi] = li;
+            bool[] flip = new bool[](comp.length);
+            {
+                bool[] seenFace = new bool[](comp.length);
+                size_t[] pending = [cast(size_t) 0];
+                seenFace[0] = true;
+                while (pending.length) {
+                    immutable size_t li = pending[0];
+                    pending = pending[1 .. $];
+                    auto f = faces[comp[li]];
+                    foreach (k; 0 .. f.length) {
+                        immutable uint a = f[k], b = f[(k + 1) % f.length];
+                        if (a == b) continue;
+                        auto dp = edgeKey(a, b) in compEdges;
+                        if (dp is null) continue;
+                        foreach (slot; 0 .. 2) {
+                            immutable uint df = dp.dartFace[slot];
+                            if (df == uint.max || df == cast(uint) comp[li]) continue;
+                            immutable size_t lj = localOf[df];
+                            if (seenFace[lj]) continue;
+                            auto g = faces[df];
+                            // `g` stores this edge as a→b as well ⇒ the two
+                            // rings disagree and one of them must be reversed.
+                            immutable bool sameDir = (g[dp.dartCorner[slot]] == a);
+                            seenFace[lj] = true;
+                            flip[lj]     = flip[li] ^ sameDir;
+                            pending ~= lj;
+                        }
+                    }
+                }
+            }
+
+            // The component's rings, read through `flip`. A flipped face is
+            // its own vertex list reversed, so oriented corner k sits at
+            // ORIGINAL corner n-1-k — which is the corner the per-corner maps
+            // (UVs, weights) must be traced to.
+            uint orientedVert(size_t li, size_t k) {
+                auto f = faces[comp[li]];
+                return flip[li] ? f[f.length - 1 - k] : f[k];
+            }
+            uint orientedCorner(size_t li, size_t k) {
+                auto f = faces[comp[li]];
+                return cast(uint)(flip[li] ? f.length - 1 - k : k);
+            }
+
+            // Gather directed half-edges from the component, dropping
+            // half-edges whose edge is interior to the component (appears in two
+            // of its faces); boundary edges — including selected edges with only
+            // one adjacent face in the component — survive on the merged
+            // boundary. `outSrc` carries the OLD loop index of the half-edge's
+            // START corner, parallel to `outAt`.
+            uint[][uint] outAt;  // outAt[u] = list of `v` for each surviving u→v
+            uint[][uint] outSrc; // outSrc[u][i] = old loop index of u→v's start
+            foreach (li, fi; comp) {
+                auto f = faces[fi];
+                foreach (k; 0 .. f.length) {
+                    uint a = orientedVert(li, k);
+                    uint b = orientedVert(li, (k + 1) % f.length);
+                    if (compEdges[edgeKey(a, b)].count >= 2) continue;
+                    outAt[a] ~= b;
+                    if (remapUv)
+                        outSrc[a] ~= oldFaceLoopIndex(oldFaceLoop, cast(uint) fi,
+                                                      orientedCorner(li, k));
+                }
+            }
+
+            // Walk: start at any vertex with an outgoing half-edge, follow
+            // until back to start. A simple connected face fan produces one
+            // closed loop; degenerate inputs may leave half-edges behind
+            // (we accept the first walk).
+            void walkLoop(uint startV, out uint[] poly, out uint[] polySrc) {
+                uint cur = startV;
+                while (true) {
+                    poly ~= cur;
+                    auto p = cur in outAt;
+                    if (p is null || (*p).length == 0) {
+                        if (remapUv) polySrc ~= ~0u; // dangling start ⇒ zero-fill
+                        break;
+                    }
+                    uint nxt = (*p)[0];
+                    *p = (*p)[1 .. $];
+                    if (remapUv) {
+                        // Consume the parallel source entry. The corner just pushed
+                        // (`cur`) is the START of this consumed half-edge, so its old
+                        // loop index is the source for this poly corner.
+                        auto ps = cur in outSrc;
+                        if (ps !is null && (*ps).length > 0) {
+                            polySrc ~= (*ps)[0];
+                            *ps = (*ps)[1 .. $];
+                        } else {
+                            polySrc ~= ~0u;
+                        }
+                    }
+                    if (nxt == startV) break;
+                    cur = nxt;
+                }
+            }
+
+            if (outAt.length == 0) continue;
+            uint startV = uint.max;
+            foreach (k; outAt.byKey) { startV = k; break; }
+
+            uint[] poly;
+            uint[] polySrc; // old loop index per poly corner (mechanism b)
+            walkLoop(startV, poly, polySrc);
+
+            if (poly.length < 3) continue;
+
+            // ---- task 1220 (ledger row 8): A REGION WITH A HOLE -------------
+            // Half-edges left over after that walk mean the union's boundary is
+            // MORE than one closed loop: the merged region has a hole, and the
+            // walk above described only one of its rims. Until now the rest was
+            // simply abandoned — the hole got paved over and its rim vertices,
+            // referenced by nothing, were dropped by the tail compaction (an
+            // annulus of eight quads came back as a 12-corner square, four
+            // vertices short).
+            //
+            // The reference returns ONE face whose ring enters the hole along
+            // an edge, goes round it and leaves along that same edge, so both
+            // of that edge's vertices stand in the ring twice and the edge
+            // itself survives, used twice by the one face — a keyhole.
+            //
+            // WHICH edge it bridges along is the part that is inferred rather
+            // than measured (one cell, `merge_all_grid_hole`): every one of the
+            // annulus's eight interior edges joins the two rims, and the one
+            // the reference used is the one a SEQUENTIAL dissolve reaches last
+            // — the edge whose two faces are already merged by the time it is
+            // processed, i.e. the CYCLE-closing edge of a union-find over the
+            // component's faces in ascending edge-array order. That is also the
+            // only mechanism under which a 2x2 block (whose dual is a cycle
+            // too, closed around an interior VERTEX and not a hole) keeps
+            // collapsing to a plain square, which it must. Interior edges that
+            // close no cycle are still tried afterwards, so a component that
+            // needs more bridges than it has cycle edges still closes.
+            uint[][] rings  = [poly];
+            uint[][] ringSrc = [polySrc];
+            foreach (v; outAt.byKey) {
+                while (true) {
+                    auto p = v in outAt;
+                    if (p is null || (*p).length == 0) break;
+                    uint[] hp, hs;
+                    walkLoop(v, hp, hs);
+                    if (hp.length < 3) break;   // dangling — not a rim
+                    rings ~= hp;
+                    ringSrc ~= hs;
+                }
+            }
+
+            if (rings.length > 1) {
+                // Interior edges of the component in ascending edge-array
+                // order, split into the ones that CLOSE a cycle of the dual and
+                // the ones that do not; the cycle-closers are tried first.
+                int[] cparent;
+                cparent.length = comp.length;
+                foreach (i; 0 .. comp.length) cparent[i] = cast(int) i;
+                int cfind(int x) {
+                    while (cparent[x] != x) { cparent[x] = cparent[cparent[x]]; x = cparent[x]; }
+                    return x;
+                }
+                uint[] cycleEdges, treeEdges;
+                foreach (ei; 0 .. edges.length) {
+                    immutable ulong key = edgeKey(edges[ei][0], edges[ei][1]);
+                    auto cc = key in compEdges;
+                    if (cc is null || cc.count < 2) continue;
+                    immutable uint fa = cc.dartFace[0], fb = cc.dartFace[1];
+                    if (fa == uint.max || fb == uint.max) continue;
+                    immutable int ra = cfind(cast(int) localOf[fa]);
+                    immutable int rb = cfind(cast(int) localOf[fb]);
+                    if (ra == rb) cycleEdges ~= cast(uint) ei;
+                    else { cparent[ra] = rb; treeEdges ~= cast(uint) ei; }
+                }
+
+                // The old loop index of the ORIENTED half-edge u→v, so a
+                // bridge corner carries the same per-corner payload the corner
+                // it stands on always did.
+                uint bridgeSrc(uint u, uint v) {
+                    if (!remapUv) return ~0u;
+                    auto dp = edgeKey(u, v) in compEdges;
+                    if (dp is null) return ~0u;
+                    foreach (slot; 0 .. 2) {
+                        immutable uint df = dp.dartFace[slot];
+                        if (df == uint.max) continue;
+                        immutable size_t li = localOf[df];
+                        auto f = faces[df];
+                        immutable size_t kk = dp.dartCorner[slot];
+                        immutable size_t nx = (kk + 1) % f.length;
+                        immutable uint su = flip[li] ? f[nx] : f[kk];
+                        immutable uint sv = flip[li] ? f[kk] : f[nx];
+                        if (su == u && sv == v)
+                            return oldFaceLoopIndex(oldFaceLoop, df,
+                                                    cast(uint)(flip[li] ? nx : kk));
+                    }
+                    return ~0u;
+                }
+
+                bool[] ringAlive = new bool[](rings.length);
+                ringAlive[] = true;
+                size_t aliveRings = rings.length;
+                foreach (ei; cycleEdges ~ treeEdges) {
+                    if (aliveRings == 1) break;
+                    immutable uint e0 = edges[ei][0], e1 = edges[ei][1];
+                    size_t r0 = size_t.max, p0, r1 = size_t.max, p1;
+                    foreach (r; 0 .. rings.length) {
+                        if (!ringAlive[r]) continue;
+                        foreach (t, x; rings[r]) {
+                            if (r0 == size_t.max && x == e0) { r0 = r; p0 = t; }
+                            if (r1 == size_t.max && x == e1) { r1 = r; p1 = t; }
+                        }
+                    }
+                    if (r0 == size_t.max || r1 == size_t.max || r0 == r1) continue;
+
+                    // Splice the higher-indexed ring INTO the lower one, so
+                    // rings[0] — the ring the untouched walk above produced —
+                    // stays the survivor.
+                    size_t ra = r0, pa = p0, rb = r1, pb = p1;
+                    uint a = e0, b = e1;
+                    if (rb < ra) {
+                        ra = r1; pa = p1; rb = r0; pb = p0;
+                        a = e1; b = e0;
+                    }
+                    auto A = rings[ra], As = ringSrc[ra];
+                    auto B = rings[rb], Bs = ringSrc[rb];
+
+                    // a → b → (all of B, from b) → b → a → (rest of A)
+                    uint[] merged = A[0 .. pa + 1].dup;
+                    uint[] mergedSrc;
+                    if (remapUv) {
+                        mergedSrc = As[0 .. pa].dup;
+                        mergedSrc ~= bridgeSrc(a, b);   // `a` now leaves along the bridge
+                    }
+                    foreach (t; 0 .. B.length) {
+                        merged ~= B[(pb + t) % B.length];
+                        if (remapUv) mergedSrc ~= Bs[(pb + t) % Bs.length];
+                    }
+                    merged ~= b;
+                    if (remapUv) mergedSrc ~= bridgeSrc(b, a);
+                    merged ~= a;
+                    if (remapUv) mergedSrc ~= As[pa];    // `a`'s original exit
+                    merged ~= A[pa + 1 .. $];
+                    if (remapUv) mergedSrc ~= As[pa + 1 .. $];
+
+                    rings[ra]   = merged;
+                    ringSrc[ra] = mergedSrc;
+                    ringAlive[rb] = false;
+                    --aliveRings;
+                }
+                poly    = rings[0];
+                polySrc = ringSrc[0];
+            }
+
+            // Mark every face in the component for removal; the new
+            // merged polygon will replace them.
+            foreach (fi; comp) dropFace[fi] = true;
+
+            // Inherit the whole marks word (Subpatch + Hide + reserved Lock,
+            // task 0613 §4.2 — was Subpatch-only) and selection-order from the
+            // FIRST face in the component (arbitrary but deterministic).
+            int firstFi = cast(int)comp[0];
+            newPolyList ~= poly;
+            newPolySrc  ~= cast(uint) firstFi;
+            if (remapUv) newPolySrcLoop ~= polySrc;
+        }
+
+        // Compact: drop faces, append merged polygons.
+        //
+        // Class B tracker hook (Phase 3) — inert unless a batch is open. The
+        // face array is rebuilt as [kept faces, in original relative order]
+        // ++ [merged boundary polygons]. That is exactly a keep-filter drop
+        // (closing the gaps the dropped component faces leave) followed by a
+        // tail append, so the delta is a RemoveFaces (the dropped component
+        // faces, recorded in the PRE-DROP face-index space — the space every
+        // entry uses, see MeshOpEntry's "THE INDEX SPACE OF AN ENTRY", and the
+        // only one RemoveFaces⁻¹'s ascending insertInPlace reconstructs) plus
+        // an AddFaces (the appended merged polys, a tail range). The tail
+        // compactUnreferenced then self-logs RemoveVerts + Reindex via the
+        // Class-R hook. Forward log for an edge dissolve =
+        // [RemoveFaces, AddFaces, RemoveVerts, Reindex].
+        //
+        // Task 0703: this used to record the POST-drop slot
+        // (`keptFaces.length` at the moment of the drop). An edge dissolve
+        // drops the WHOLE component — two faces for an ordinary interior edge —
+        // so the two spaces never coincided here: both component faces of a
+        // head-of-array pair recorded index 0 and undo returned them reversed,
+        // silently moving selection / faceMaterial / facePart / the per-corner
+        // maps onto the other face. Pinned by tests/test_mesh_edit_delta.d (f).
+        const bool recRemoveEdges = editRecorder_ !is null;
+        // PRE-drop = the live index `fi`, so this doubles as the live-space
+        // index list the per-corner payload capture needs (task 0689).
+        FaceIdx[] droppedFaceIdx;
+        uint[][] droppedFaceLists;
+        uint[]   droppedFaceMat;
+        uint[]   droppedFacePart;
+        uint[]   droppedFaceSub;
+        ulong[]  droppedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
+        int[]    droppedFaceOrd;       // task 1902 Stage H — rides facePart's carry too
+        uint[][] keptFaces;
+        uint[]   oldOfNew;   // newToOld correspondence, final [kept ++ merged]
+                              // order — task 1902, mesh_planes.rewriteFaces
+                              // carries every kFacePlanes entry from this.
+        // PolyVertex relocate accumulator, in final [kept ++ merged] CSR order.
+        uint[] oldLoopOfNewLoop;
+        foreach (fi; faceIndices) {
+            if (dropFace[fi]) {
+                if (recRemoveEdges) {
+                    // PRE-drop position = the live index `fi`. On revert
+                    // RemoveFaces⁻¹ re-inserts ascending at exactly these
+                    // indices, re-opening the slot each face vacated and so
+                    // restoring the original ORDER, not merely the set.
+                    //
+                    // THE TASK-0831 MUTATION LIVES HERE, and it is the reason
+                    // the accumulator is a `FaceIdx[]`. The arm below is the
+                    // 0703 defect restored verbatim — `keptFaces.length`, the
+                    // slot this face WOULD have occupied in the array being
+                    // built. It compiled for months, agreed with the line above
+                    // on every fixture that dropped one face, and returned an
+                    // edge dissolve's faces reversed on undo. It no longer
+                    // compiles: there is no implicit `uint` → `FaceIdx`. Prove
+                    // it with
+                    //     dub build --config=modeling --d-version=MutateIndexSpace0831
+                    // which must FAIL, and fail on THIS line. (Same negative-
+                    // control convention as `UndoNegControlRemoveFaces` et al.
+                    // in mesh_edit_delta.d — compiled only under its own
+                    // version, so a normal build carries none of it.)
+                    version (MutateIndexSpace0831)
+                        droppedFaceIdx ~= cast(uint)keptFaces.length;
+                    else
+                        droppedFaceIdx ~= fi;
+                    droppedFaceLists ~= faces[fi].dup;
+                    droppedFaceMat   ~= faceAttrOr(faceMaterial, fi);
+                    droppedFacePart  ~= faceAttrOr(facePart, fi);
+                    droppedFaceSub   ~= (isFaceSubpatch(cast(uint)fi) ? 1u : 0u);
+                    droppedFaceSetMask ~= faceAttrOr(faceSetMask, fi);
+                    droppedFaceOrd   ~= faceAttrOr(faceSelectionOrder, fi);
+                }
+                continue;
+            }
+            keptFaces ~= faces[fi];
+            oldOfNew  ~= cast(uint) fi;
+            // Kept faces preserve arity → corner c maps to old loop fi/c (a).
+            if (remapUv)
+                foreach (c; 0 .. faces[fi].length)
+                    oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, cast(uint)c);
+        }
+        // Tail range start = number of kept (non-dropped) faces.
+        const size_t firstMerged = keptFaces.length;
+        // The dissolve's PRODUCT, in the FINAL face-index space: the tail range
+        // is stable through everything below (rebuildEdges + the vertex-only
+        // compactUnreferenced move no faces). Read by mesh.mergeFaces.
+        foreach (i; 0 .. newPolyList.length)
+            lastDissolveProduct_ ~= cast(uint)(firstMerged + i);
+        foreach (i; 0 .. newPolyList.length) {
+            keptFaces ~= newPolyList[i];
+            oldOfNew  ~= newPolySrc[i];
+            // Merged poly corners → the old loop traced during the boundary
+            // walk (~0u where the walk could not trace a source) (b).
+            if (remapUv) oldLoopOfNewLoop ~= newPolySrcLoop[i];
+        }
+        if (recRemoveEdges) {
+            // RemoveFaces FIRST, then AddFaces — on revert (LIFO) the appended
+            // merged polys truncate FIRST (restoring the kept-only array), then
+            // the dropped component faces re-insert at their pre-drop indices.
+            // The removal's per-corner payload (task 0689) goes ahead of it;
+            // the AddFaces needs none, since a merged polygon is a brand-new
+            // face on the way FORWARD (its corners come back on revert with
+            // the component faces they were merged from). `droppedFaceIdx` is
+            // the live (pre-drop) space, which is what the capture wants.
+            recordPolyVertexPayload(droppedFaceIdx);
+            editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
+                                            droppedFaceMat, droppedFacePart, droppedFaceSub,
+                                            droppedFaceSetMask, droppedFaceOrd);
+            uint[][] mergedLists;
+            mergedLists.length = newPolyList.length;
+            foreach (i; 0 .. newPolyList.length) mergedLists[i] = newPolyList[i].dup;
+            // `assumeFaceSpace`, and this is the one call in the kernel that
+            // earns it (task 0831). An AddFaces' `[F0,F1)` is NOT a live face
+            // index — it is the tail base in the array `faces` is ABOUT to
+            // become, i.e. precisely the scratch-array length the mutation arm
+            // above is forbidden from recording. The two entry kinds carry
+            // genuinely different spaces in the same field, and the type cannot
+            // tell them apart; naming the conversion here is what keeps that
+            // visible instead of implicit.
+            editRecorder_.recordAddFaces(FaceIdx.assumeFaceSpace(firstMerged),
+                                         cast(uint)keptFaces.length, mergedLists);
+        }
+        // Task 1903 Stage K — NOT armed: `RemoveFaces` + `AddFaces` above
+        // already name this kernel's face change.
+        rewriteFaces(this, keptFaces, FaceSource(oldOfNew));
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
+        // PolyVertex relocate (b): per-corner values follow the merged/kept
+        // corners. Before the tail buildLoops (which then no-ops the resize).
+        if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
+        clearFaceSelectionResize();
+
+        // Rebuild edges + compact orphan verts. The pre-existing loose verts
+        // are PINNED so the compaction takes only what this dissolve consumed,
+        // and the bare wires are replayed through its remap (task 0502).
+        rebuildEdges();
+        clearEdgeSelectionResize();
+        uint[] vremap;
+        compactUnreferenced(loose.verts, &vremap);
+        restoreLooseWires(loose, vremap);
+        // See deleteFacesByMask: loops carry stale indices after face/vert
+        // compaction.
+        buildLoops();
+        // Geometry-class: edge dissolve merged faces, geometry rebuilt.
+        commitChange(MeshEditScope.Geometry);
+        return dissolved;
+    }
+
+
+
+    /// Which of the reference's two triangulators to run on a ring.
+    ///
+    /// The reference's command takes this as an argument and DEFAULTS to the
+    /// strip: a bare invocation is bit-for-bit the strip path, which is how
+    /// every fixture in this repo was captured. `Strip` is therefore our
+    /// default too, and no caller has to ask for it.
+    ///
+    /// `EarClip` names the OTHER path — the quality ear clip ported in task
+    /// 1280, which is also the strip's own fallback whenever one of its three
+    /// gates declines. It is reachable on its own because the clip is a law we
+    /// pin separately: 21 of the 62 measured cells were driven down it, and one
+    /// of them (`oct_quality`, a convex octagon) is a ring the strip would
+    /// otherwise take, so without this switch that cell could not be asserted
+    /// at all. No production path asks for it — `mesh.triple` is a bare call,
+    /// exactly as the reference's is.
+    enum TriangulateMode : ubyte {
+        Strip,     /// the default: convex-only zig-zag, falling back to EarClip
+        EarClip,   /// the quality ear clip alone (task 1280)
+    }
+
+
+    /// Radial-array the faces marked true in `mask`: insert `count-1`
+    /// new copies, each rotated around the axis (`axis` ∈ {'X','Y','Z'})
+    /// through `center` by `i * totalAngle / count` (i = 1..count-1),
+    /// and optionally translated by `i * extraShift` (for helices /
+    /// spirals). `count` ≤ 1 ⇒ no-op (count includes the original).
+    /// `weld.merge` folds each copy's coincident verts onto
+    /// earlier copies and drops duplicate faces — primarily useful
+    /// for closed 360° rings where the first and last steps abut.
+    ///
+    /// `count` is clamped to `MAX_RADIAL_ARRAY_COUNT` internally — this is
+    /// the durable safety net for BOTH callers that reach this shared
+    /// kernel (the one-shot `mesh.radial_array` command and the
+    /// interactive `mesh.radialArrayTool`): an unbounded `count` (e.g. a
+    /// scripted `tool.attr ... count 100000000`) would otherwise allocate
+    /// `count * selectedFaceCount` new faces/verts synchronously — an easy
+    /// DoS/OOM. UI-level Param hints (`.max().enforceBounds()`) are a
+    /// second, shallower line of defense that keeps the common interactive
+    /// path from ever reaching this clamp in practice.
+    ///
+    /// Returns the number of new faces inserted.
+    size_t radialArrayFaces(in bool[] maskIn, int count, char axis, Vec3 center,
+                            float totalAngle, Vec3 extraShift, CloneWeld weld) {
+        import vibe3d.util.math.math : mulMV, pivotRotationMatrix;
+        const mask = maskMinusHiddenFaces(maskIn);  // hidden faces never enter the clone operand (K-AR)
+        enum int MAX_RADIAL_ARRAY_COUNT = 256;
+        if (count > MAX_RADIAL_ARRAY_COUNT) count = MAX_RADIAL_ARRAY_COUNT;
+        if (mask.length != faces.length) return 0;
+        if (count <= 1) return 0;
+        if (axis != 'X' && axis != 'Y' && axis != 'Z') return 0;
+        size_t selCount = 0;
+        foreach (b; mask) if (b) ++selCount;
+        if (selCount == 0) return 0;
+
+        size_t[] sourceFaces;
+        sourceFaces.reserve(selCount);
+        foreach (fi, ref f; faces)
+            if (mask[fi]) sourceFaces ~= fi;
+        size_t origFaceCount = faces.length;
+        size_t[] newFaceIndices;
+        // Task 1903 Stage L6-b: the base of this kernel's ONE append round.
+        const size_t appendVertBase = vertices.length;
+
+        Vec3 axisVec;
+        if      (axis == 'X') axisVec = Vec3(1, 0, 0);
+        else if (axis == 'Y') axisVec = Vec3(0, 1, 0);
+        else                  axisVec = Vec3(0, 0, 1);
+
+        float stepAngle = totalAngle / cast(float)count;
+        size_t[] copyStarts;   // the weld's PER-COPY scope
+
+        foreach (step; 1 .. count) {
+            copyStarts ~= vertices.length;
+            float ang = stepAngle * step;
+            Vec3  shift = Vec3(extraShift.x * step,
+                               extraShift.y * step,
+                               extraShift.z * step);
+            auto rotM = pivotRotationMatrix(center, axisVec, ang);
+
+            uint[uint] vertMap;
+            foreach (fi; sourceFaces) {
+                foreach (vid; faces[fi]) {
+                    if (vid !in vertMap) {
+                        vertMap[vid] = cast(uint)vertices.length;
+                        Vec3 p = vertices[vid];
+                        auto v4 = Vec4(p.x, p.y, p.z, 1.0f);
+                        auto r4 = mulMV(rotM, v4);
+                        vertices ~= Vec3(r4.x + shift.x,
+                                         r4.y + shift.y,
+                                         r4.z + shift.z);
+                    }
+                }
+            }
+            foreach (fi; sourceFaces) {
+                auto src = faces[fi];
+                uint[] cloned;
+                cloned.length = src.length;
+                foreach (k, vid; src) cloned[k] = vertMap[vid];
+                newFaceIndices ~= faces.length;
+                appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
+            }
+        }
+
+        // Task 1903 Stage L6-b — the WHOLE round, ONE `AddVerts` + ONE
+        // `AddFaces` for every step of the array, recorded BEFORE the optional
+        // weld below so the LIFO reverse undoes the weld's compaction first and
+        // truncates the appended tail last.
+        recordBulkAppendRound(appendVertBase, origFaceCount);
+
+        // Task 0830: a tail append, stated. `appendFaceRaw` already grew the
+        // per-corner plane face by face; this states the resulting TOTAL so the
+        // rebuild can check it against the corner space it actually lays down.
+        declareCornerAppend();
+
+        // Re-derive edges from the new face list.
+        rebuildEdges();
+
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this, PlaneFit.Exact);
+        foreach (fi; 0 .. origFaceCount) {
+            deselectFace(cast(int)fi);
+        }
+        faceSelectionOrderCounter = 0;
+        foreach (idx; newFaceIndices) {
+            size_t srcFi = sourceFaces[(idx - origFaceCount) % selCount];
+            setFaceSubpatch(idx, isFaceSubpatch(srcFi));
+            faceMaterial[idx] = faceAttrOr(faceMaterial, srcFi);
+            facePart[idx]     = faceAttrOr(facePart, srcFi);
+            faceSetMask[idx]  = faceAttrOr(faceSetMask, srcFi);
+            selectFace(cast(int)idx);
+        }
+        resizeVertexSelection();
+        clearVertexSelection();
+        resizeEdgeSelection();
+        clearEdgeSelection();
+
+        // FULL PARITY (weld coincident-face convention): weld merges coincident
+        // VERTS only — no face fingerprint-dedup. When the rotation maps a copy
+        // onto itself or onto the source (e.g. a 180° radial of a symmetric
+        // solid about its own axis, or a closed 360° ring whose first/last steps
+        // abut), the reference editor KEEPS the doubled coincident faces
+        // (opposite-wound shell). So we fold coincident verts and drop only the
+        // orphaned welded-away vert slots — matching arrayFaces / mirrorFaces.
+        if (weld.merge) {
+            const size_t cornersBeforeWeld = cornerCount();
+            if (weldCoincidentVertices(weld.epsSq, copyStarts) > 0) {
+                rebuildEdges();
+                clearEdgeSelectionResize();
+                compactUnreferenced();
+                // What the weld did to the CORNERS is decided by the only
+                // thing it leaves behind — the total (task 0830).
+                declareCornerWeld(cornersBeforeWeld);
+            }
+        }
+
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return newFaceIndices.length;
+    }
+
+    /// Linear-array the faces marked true in `mask`: insert `count-1`
+    /// new copies, each shifted from the original by `i * offset`
+    /// (i = 1..count-1). `count` ≤ 1 ⇒ no-op (the count includes the
+    /// original). When `weld.merge`, coincident verts
+    /// between consecutive copies are welded and identical seam faces
+    /// dropped (same dedup pass as `mirrorFaces`).
+    ///
+    /// `detachSubsetSource` selects the captured array-copy
+    /// model for a PARTIAL selection. The reference REPLACES each selected
+    /// source polygon with `count` fresh copies rather than keeping the
+    /// source and appending `count-1` — so a copy landing at the source
+    /// position gets its OWN duplicated verts instead of sharing the seam
+    /// verts with the unselected neighbours it was welded to. When the flag
+    /// is set AND the selection is a strict subset (`selCount < faces.length`)
+    /// the source faces are detached first (their verts duplicated at
+    /// offset 0, the faces repointed to the duplicates) so the total is
+    /// `count` independent instances. For a WHOLE-MESH array there are no
+    /// unselected neighbours to share with, so keep+`count-1` and
+    /// replace-with-`count` are geometrically identical and the detach is
+    /// skipped, leaving that path byte-for-byte unchanged. A welding array
+    /// (`weld.merge`) never detaches either. The flag defaults
+    /// off so the interactive Clone tool / clone command keep their exact
+    /// original (source-preserving) behaviour.
+    ///
+    /// Selection ends on the resulting copies (all `count` instances for a
+    /// subset source — the source is copy 0; otherwise the
+    /// `count-1` marched copies with originals deselected). Vert / edge
+    /// selections are cleared. Returns the number of new faces inserted.
+    ///
+    /// Rotate / scale per-step variants are deferred to a follow-up —
+    /// per-step rotation pivot semantics overlap with Radial Array
+    /// (which has its own pivot/axis schema) so they live in that
+    /// command's surface, not here.
+    size_t arrayFaces(in bool[] mask, int count, Vec3 offset, CloneWeld weld,
+                      bool detachSubsetSource = false) {
+        if (mask.length != faces.length) return 0;
+        if (count <= 1) return 0;
+        // DoS backstop (task 0365 P1): `count` allocates `count-1` new
+        // copies of every masked face; Param `.min()` hints are UI-only and
+        // do not clamp a direct/scripted caller reaching this shared kernel.
+        enum int MAX_ARRAY_COUNT = 256;
+        if (count > MAX_ARRAY_COUNT) count = MAX_ARRAY_COUNT;
+        size_t selCount = 0;
+        foreach (b; mask) if (b) ++selCount;
+        if (selCount == 0) return 0;
+
+        // Snapshot face indices to clone BEFORE any appending starts —
+        // we need to clone the originals N-1 times, not the already-
+        // appended copies.
+        size_t[] sourceFaces;
+        sourceFaces.reserve(selCount);
+        foreach (fi, ref f; faces)
+            if (mask[fi]) sourceFaces ~= fi;
+        size_t origFaceCount = faces.length;
+        size_t[] newFaceIndices;
+
+        // FULL-PARITY sub-face copy model (captured array behavior): for a
+        // strict subset the selected source polygons are REPLACED by `count`
+        // fresh copies, so the copy that lands at the source position must
+        // own duplicated verts rather than share the seam verts it was
+        // welded to. Realise that by DETACHING the source: duplicate its
+        // verts at offset 0 and repoint the source faces to the duplicates.
+        // The `count-1` marched copies below then bring the total to `count`
+        // independent instances (e.g. arraying one top face 3× → 8 cube +
+        // 3×4 = 20 verts / 8 faces, matching the reference, instead of the
+        // 16 verts a shared seam produced). Whole-mesh arrays have no
+        // unselected neighbour to share with, so this is a no-op there and
+        // the existing keep+`count-1` path is left untouched (whole-cube
+        // array cases stay byte-for-byte exact). A WELDING array does not
+        // detach: the weld would delete the source's own slots (and their
+        // set / map values) and keep the copies; W1k keeps the source in place.
+        const bool subsetSource = detachSubsetSource && (selCount < faces.length);
+        const bool detachSource = subsetSource && !weld.merge;
+        // Task 1903 Stage L6-b: the base of the DETACH round. `arrayFaces` is
+        // the one member of the family with TWO append rounds, and they are
+        // recorded separately for an ordering reason, not for tidiness — see
+        // the winding install below.
+        const size_t detachVertBase = vertices.length;
+        if (detachSource) {
+            uint[uint] seamMap;
+            foreach (fi; sourceFaces) {
+                foreach (vid; faces[fi]) {
+                    if (vid !in seamMap) {
+                        seamMap[vid] = cast(uint)vertices.length;
+                        Vec3 p = vertices[vid];   // offset 0 ⇒ same position
+                        vertices ~= p;
+                    }
+                }
+            }
+            // THE DETACH ROUND'S `AddVerts` GOES IN FIRST, BEFORE the winding
+            // entry below, and the order is the whole reason these are two
+            // calls instead of one at the end. The reverse replays LIFO, so
+            // `ReshapeFaces`^-1 (which puts the ORIGINAL windings back, all of
+            // them pointing below `detachVertBase`) must run BEFORE
+            // `AddVerts`^-1 truncates the seam duplicates away. Recorded the
+            // other way round, the replay would leave the detached windings
+            // pointing past `vertices.length` for one entry.
+            recordAppendedVertsRound(detachVertBase);
+
+            // --- TASK 1903 STAGE L6-b: THE DETACH'S WINDING INSTALL GOES
+            // THROUGH THE DOOR. These used to be `faces[fi][k] = seamMap[vid];`
+            // — an INDEXED winding rewrite that reaches no hook, so a recording
+            // batch came back with an op-log that never mentioned the splice
+            // and a revert that left every detached source face repointed at
+            // its duplicate. The detach is arity-PRESERVING, so V/F/E and every
+            // mark word round-trip either way and ONLY a per-winding compare
+            // can see it.
+            //
+            // ONE BULK CALL, and ASCENDING: `Mesh.setFaceWindings` requires a
+            // strictly ascending `idx` (its per-corner payload resolves each
+            // face's corner base by a single ordered sweep) and the per-element
+            // door is quadratic. `sourceFaces` is built by a front-to-back
+            // filter over `faces`, so it is already strictly ascending and
+            // needs no sort — asserted at the door, which carries an
+            // always-on assert rather than a silent decline.
+            //
+            // THE PER-CORNER PAYLOAD THE DOOR PAIRS HERE IS INERT ON THIS
+            // PATH, said here rather than left to look like coverage: the
+            // repoint preserves every face's ARITY, so `CornerCarry.reshapeSrc`
+            // would re-derive the same values slot-for-slot with no payload at
+            // all. The pair is written because the `[MeshMapDelta, <face
+            // entry>]` ADJACENCY is contractual since Stage J and an unpaired
+            // payload zeroes a map silently — the door owns that, not us.
+            if (sourceFaces.length > 0) {
+                import std.array : uninitializedArray;
+                auto idx     = uninitializedArray!(FaceIdx[])(sourceFaces.length);
+                auto newWind = uninitializedArray!(uint[][])(sourceFaces.length);
+                foreach (i, fi; sourceFaces) {
+                    auto nf = faces[fi].dup;   // NOT in place: the door's
+                                               // aliasing guard refuses a new
+                                               // winding that IS the live one
+                    foreach (k, vid; faces[fi]) nf[k] = seamMap[vid];
+                    idx[i]     = faceIndexAt(fi);
+                    newWind[i] = nf;
+                }
+                // The return is deliberately not read as "did it work": every
+                // detached corner is repointed at a vertex index at or above
+                // `detachVertBase`, so no face in `idx` can compare equal to
+                // its own new winding and the identity filter cannot drop one.
+                cast(void) setFaceWindings(idx, newWind);
+            }
+        }
+        // The MARCH round's base — after the detach has finished appending.
+        const size_t marchVertBase = vertices.length;
+
+        // For each step i ∈ [1..count-1], clone the original masked
+        // verts at offset i*step and emit cloned faces referencing them.
+        // vertMap is rebuilt per step so each copy gets a fresh set of
+        // verts (no accidental sharing between copies).
+        size_t[] copyStarts;   // the weld's PER-COPY scope
+        foreach (step; 1 .. count) {
+            copyStarts ~= vertices.length;
+            uint[uint] vertMap;
+            Vec3 shift = Vec3(offset.x * step, offset.y * step, offset.z * step);
+            foreach (fi; sourceFaces) {
+                foreach (vid; faces[fi]) {
+                    if (vid !in vertMap) {
+                        vertMap[vid] = cast(uint)vertices.length;
+                        Vec3 p = vertices[vid];
+                        vertices ~= Vec3(p.x + shift.x, p.y + shift.y, p.z + shift.z);
+                    }
+                }
+            }
+            foreach (fi; sourceFaces) {
+                auto src = faces[fi];
+                uint[] cloned;
+                cloned.length = src.length;
+                foreach (k, vid; src) cloned[k] = vertMap[vid];
+                newFaceIndices ~= faces.length;
+                appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
+            }
+        }
+
+        // Task 1903 Stage L6-b — the MARCH round, one `AddVerts` + one
+        // `AddFaces`. Recorded before the optional weld below, so the LIFO
+        // reverse undoes the weld's compaction first.
+        recordBulkAppendRound(marchVertBase, origFaceCount);
+
+        declareCornerAppend();   // tail append, stated (task 0830)
+
+        // Re-derive edges from the new face list.
+        rebuildEdges();
+
+        // Subpatch + face-order arrays follow the new face count. New
+        // faces inherit subpatch from their source; selection switches
+        // to the new copies.
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this, PlaneFit.Exact);
+        foreach (fi; 0 .. origFaceCount) {
+            deselectFace(cast(int)fi);
+        }
+        faceSelectionOrderCounter = 0;
+        // Map each new face index back to its source face for subpatch
+        // inheritance. The cloning loop pushes (count-1)*selCount faces
+        // in [source, source, ..., source] order per step, so we can
+        // recover the source via modulo.
+        foreach (idx; newFaceIndices) {
+            size_t srcFi = sourceFaces[(idx - origFaceCount) % selCount];
+            setFaceSubpatch(idx, isFaceSubpatch(srcFi));
+            faceMaterial[idx] = faceAttrOr(faceMaterial, srcFi);
+            facePart[idx]     = faceAttrOr(facePart, srcFi);
+            faceSetMask[idx]  = faceAttrOr(faceSetMask, srcFi);
+            selectFace(cast(int)idx);
+        }
+        // For a subset source (detached or welded in place) the source faces
+        // are copy 0 of the array: all `count` instances end selected.
+        if (subsetSource) {
+            foreach (fi; sourceFaces) selectFace(cast(int)fi);
+        }
+        resizeVertexSelection();
+        clearVertexSelection();
+        resizeEdgeSelection();
+        clearEdgeSelection();
+
+        // Optional vertex weld — FULL PARITY: the reference editor's linear
+        // array KEEPS the doubled coincident seam FACE that a cap-to-cap
+        // weld produces (e.g. a 2× cube whose copy's -X face lands exactly
+        // on the source's +X face). So we weld coincident VERTS, each copy
+        // onto everything before it (via weldCoincidentVertices, which also
+        // rebuilds edges + collapses degenerate face corners) and then drop
+        // the now-unreferenced welded-away verts with compactUnreferenced —
+        // but we deliberately do NOT fingerprint-dedup faces, so the doubled
+        // seam face survives (11f → 12f for the 2× cube). This differs from
+        // mirrorFaces / arrayFacesGrid, which still dedup coincident faces;
+        // this line-array path matches the reference's face count instead.
+        if (weld.merge) {
+            const size_t cornersBeforeWeld = cornerCount();
+            if (weldCoincidentVertices(weld.epsSq, copyStarts) > 0) {
+                compactUnreferenced();
+                // What the weld did to the CORNERS is decided by the only
+                // thing it leaves behind — the total (task 0830).
+                declareCornerWeld(cornersBeforeWeld);
+            }
+        }
+
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return newFaceIndices.length;
+    }
+
+    /// 3-axis GRID array — generalizes `arrayFaces` above to independent
+    /// Count/Offset per axis (`numX × numY × numZ` total instances,
+    /// INCLUDING the source at grid index (0,0,0)), plus per-clone
+    /// Jitter/Scale/Rotate/Replace-Source/Invert-Polygons/Merge-Vertices.
+    /// Backs the interactive Array tool (`tools/array_tool.d`,
+    /// `mesh.arrayTool`, task 0355) — grounded in the captured reference
+    /// toolcard's 23-attribute "Array Generator" + "Clone Effector" panel
+    /// (see `doc/tasks/*/0355-array-tool.md`). `arrayFaces` above is left
+    /// byte-for-byte UNTOUCHED for the one-shot `mesh.array` command. With
+    /// `linear=true`, this kernel also backs reference-style interactive Clone.
+    ///
+    /// Grid layout: for step index (i,j,k) ∈ [0,numX)×[0,numY)×[0,numZ),
+    /// the per-axis translation is `i*stepX, j*stepY, k*stepZ`, where
+    /// `stepX/Y/Z` is `offset.x/y/z` directly (per-STEP spacing) unless
+    /// `between` is set, in which case it is re-derived so `offset` reads
+    /// as the total span from the FIRST to the LAST clone along that axis
+    /// (`offset.x/(numX-1)` when numX>1, else 0 — a single-count axis has
+    /// no span to divide).
+    /// In linear mode, `numX` is the number of instances INCLUDING the
+    /// source and each clone advances by the full 3-D offset vector. The
+    /// `between` span is divided by `numX-1` on all three components.
+    ///
+    /// Scale (`scale`, 1.0 = 100%) and Rotate (`rotateDeg`, ZYX euler
+    /// degrees via `matrixFromEulerZYX` — the SAME convention the
+    /// transform tools use) are applied UNIFORMLY to every clone (not
+    /// accumulated/stepped by grid index — matches the captured "All
+    /// cloned elements receive the same amount of scaling" semantics),
+    /// about a PIVOT = the mask's own vertex centroid, captured once
+    /// before any mutation. NOTE: the reference capture did not confirm
+    /// an exact scale/rotate pivot for the interactive tool (not exercised
+    /// by the captured parity case, which uses the flat 100%/0° defaults)
+    /// — the mask centroid is this port's documented choice, not a
+    /// verified-live value; see the task's Лог for this gap.
+    /// In linear mode, scale and Euler rotation are raised/multiplied by
+    /// the clone index, and the pivot is the source bounds' lower centre
+    /// `(midX,minY,midZ)`. reference editor MCP captures for Scale X/Y and Rotate Z
+    /// pin that law on an asymmetric selected polygon.
+    ///
+    /// Jitter (`jitter`) is ONE random per-CLONE offset (not per-vertex —
+    /// "Max random per-clone offset variation" per the captured spec),
+    /// drawn from a FIXED-seed `Mt19937` (deterministic across runs and
+    /// platforms — same convention as `commands.mesh.jitter.MeshJitter`),
+    /// so the interactive tool and any parity fixture stay byte-
+    /// reproducible. Default 0/0/0 is a pure no-op.
+    ///
+    /// `replaceSource` (captured default OFF): when true, the ORIGINAL
+    /// selected faces' vertices are ALSO transformed IN PLACE by the
+    /// (0,0,0) slot's scale/rotate/jitter (shift is always zero for that
+    /// slot) instead of being left byte-untouched — "the source is
+    /// removed and replaced by a clone" (Jitter/Scale/Rotate now apply to
+    /// what was the source). When false (default), grid slot (0,0,0) IS
+    /// the untouched original: no new geometry is built for it.
+    /// In linear mode the source slot has index zero, so its compounded
+    /// scale/rotation are neutral even when replacement is enabled.
+    ///
+    /// `invertPolygons`: reverses winding on every NEWLY BUILT clone face
+    /// (and on the in-place-mutated originals too, when `replaceSource` is
+    /// on — they count as "cloned geometry" in that mode). The untouched
+    /// (0,0,0) original is never flipped while `replaceSource` is off.
+    ///
+    /// `weld`: the clone effector's merge switch + distance (`CloneWeld`).
+    /// When on, the weld + face-fingerprint-dedup tail.
+    ///
+    /// DoS guard (code review B1): `numX/numY/numZ` are each UI-clamped by
+    /// `ArrayTool.params()`, but this is a public Mesh method any caller can
+    /// drive directly, and 3 independently-bounded axes still multiply into
+    /// a huge product. `totalSlots` is capped at `MAX_ARRAY_GRID_SLOTS`
+    /// (10,000) — over that, the call is a clean no-op (returns 0) rather
+    /// than building an unbounded number of clones.
+    ///
+    /// Ordering guard (code review S1): every clone — including the
+    /// (0,0,0) slot when `replaceSource` mutates it IN PLACE — reads from
+    /// `origPos`/`origFaceVerts`, a snapshot taken ONCE before the grid
+    /// loop starts. Without this, since (0,0,0) is always visited first,
+    /// later clones would read the ALREADY-transformed source position/
+    /// winding and compound the transform (position) or cancel it out
+    /// (winding, under `invertPolygons`) instead of each being the
+    /// original transformed exactly once.
+    ///
+    /// Returns the number of NEW faces inserted (0 ⇒ no grid geometry was
+    /// added; note this can be 0 while `replaceSource` still mutated the
+    /// originals in place at a 1×1×1 count).
+    size_t arrayFacesGrid(in bool[] maskIn, int numX, int numY, int numZ,
+                          Vec3 offset, Vec3 jitter, Vec3 scale, Vec3 rotateDeg,
+                          bool between, bool replaceSource, bool invertPolygons,
+                          CloneWeld weld,
+                          bool linear = false) {
+        import std.random : Mt19937, uniform01;
+        import std.math : pow;
+        import std.algorithm.mutation : reverse;
+
+        const mask = maskMinusHiddenFaces(maskIn);  // hidden faces never enter the clone operand (K-AR)
+        if (mask.length != faces.length) return 0;
+        if (numX < 1) numX = 1;
+        if (numY < 1) numY = 1;
+        if (numZ < 1) numZ = 1;
+        size_t selCount = 0;
+        foreach (b; mask) if (b) ++selCount;
+        if (selCount == 0) return 0;
+        enum size_t MAX_ARRAY_GRID_SLOTS = 10_000;
+        // Each axis first: the stored counts are unbounded, and three of them
+        // can wrap the size_t product back under the cap.
+        if (numX > MAX_ARRAY_GRID_SLOTS || numY > MAX_ARRAY_GRID_SLOTS
+            || numZ > MAX_ARRAY_GRID_SLOTS) return 0;
+        size_t totalSlots = cast(size_t)numX * cast(size_t)numY * cast(size_t)numZ;
+        // 1×1×1 with replaceSource=false is a true no-op (nothing to add,
+        // nothing to replace). 1×1×1 with replaceSource=true still falls
+        // through — it transforms the originals in place (null shift).
+        if (totalSlots <= 1 && !replaceSource) return 0;
+        // Defense-in-depth DoS cap (review B1): the per-axis Count params are
+        // UI-clamped to a sane max each (see ArrayTool.params()), but this is
+        // a public Mesh method any caller can drive directly, and 3
+        // independently-bounded axes still multiply into a huge product
+        // (e.g. 64×64×64 ≈ 262k). Reject outright rather than silently
+        // reshape the requested grid down to something smaller — the caller
+        // asked for a specific Count X/Y/Z and a partial/rescaled grid would
+        // be a worse surprise than a clean no-op.
+        if (totalSlots > MAX_ARRAY_GRID_SLOTS) return 0;
+
+        size_t[] sourceFaces;
+        sourceFaces.reserve(selCount);
+        foreach (fi, ref f; faces)
+            if (mask[fi]) sourceFaces ~= fi;
+
+        // Pivot for scale/rotate: the mask's own vertex centroid for grids.
+        // the reference editor's linear Clone Generator instead uses the selected bounds'
+        // lower centre (mid X, minimum Y, mid Z), measured with independent
+        // Scale X, Scale Y and Rotate Z captures on an asymmetric polygon.
+        // The pivot is captured ONCE from the ORIGINAL (pre-mutation)
+        // positions, alongside a
+        // snapshot of every mask vertex's original position (`origPos`) —
+        // review S1: with `replaceSource` on, the (0,0,0) slot is always
+        // visited FIRST (the grid loop starts at i=j=k=0) and mutates
+        // `vertices[vid]` IN PLACE; every subsequent clone must still read
+        // the PRE-mutation position, not the already-transformed one, or
+        // the transform compounds across clones. `cloneVertex` below is fed
+        // exclusively from `origPos`, never a live `vertices[vid]` read.
+        // Same rationale extends to face WINDING: `origFaceVerts` snapshots
+        // each source face's untouched vertex-id order. Without it, a
+        // replaceSource+invertPolygons(count>1) combo has the same
+        // order-dependency bug as S1 one level up — the (0,0,0) slot
+        // reverses `faces[fi]` IN PLACE, and every later clone that read
+        // `faces[fi]` directly would clone the ALREADY-reversed order and
+        // then reverse it AGAIN, net cancelling back to the original
+        // winding for every clone after the first.
+        Vec3 pivot = Vec3(0, 0, 0);
+        Vec3 boundsMin, boundsMax;
+        Vec3[uint] origPos;
+        uint[][size_t] origFaceVerts;
+        {
+            size_t n = 0;
+            foreach (fi; sourceFaces) {
+                origFaceVerts[fi] = faces[fi].dup;
+                foreach (vid; faces[fi])
+                    if (vid !in origPos) {
+                        origPos[vid] = vertices[vid];
+                        Vec3 p = vertices[vid];
+                        pivot = pivot + p;
+                        if (n == 0) { boundsMin = boundsMax = p; }
+                        else {
+                            if (p.x < boundsMin.x) boundsMin.x = p.x;
+                            if (p.y < boundsMin.y) boundsMin.y = p.y;
+                            if (p.z < boundsMin.z) boundsMin.z = p.z;
+                            if (p.x > boundsMax.x) boundsMax.x = p.x;
+                            if (p.y > boundsMax.y) boundsMax.y = p.y;
+                            if (p.z > boundsMax.z) boundsMax.z = p.z;
+                        }
+                        ++n;
+                    }
+            }
+            if (n > 0) pivot = linear
+                ? Vec3((boundsMin.x + boundsMax.x) * 0.5f, boundsMin.y,
+                       (boundsMin.z + boundsMax.z) * 0.5f)
+                : pivot * (1.0f / n);
+        }
+
+        float stepX = between ? (numX > 1 ? offset.x / (numX - 1) : 0.0f) : offset.x;
+        float stepY = between ? ((linear ? numX : numY) > 1 ?
+            offset.y / ((linear ? numX : numY) - 1) : 0.0f) : offset.y;
+        float stepZ = between ? ((linear ? numX : numZ) > 1 ?
+            offset.z / ((linear ? numX : numZ) - 1) : 0.0f) : offset.z;
+
+        bool anyRotate = (rotateDeg.x != 0.0f || rotateDeg.y != 0.0f || rotateDeg.z != 0.0f);
+        float[16] rotMat = anyRotate ? matrixFromEulerZYX(rotateDeg) : identityMatrix;
+        Vec3 slotScale = scale;
+        float[16] slotRotMat = rotMat;
+        bool slotRotate = anyRotate;
+
+        // Deterministic per-clone jitter — fixed seed, same convention as
+        // commands.mesh.jitter.MeshJitter. Drained once per grid slot
+        // (including the skipped/untouched source slot) so the sequence
+        // never depends on replaceSource/invertPolygons, only on the grid
+        // shape — same "drain regardless" rationale as MeshJitter.
+        Mt19937 rng;
+        rng.seed(0u);
+        Vec3 jitterFor() {
+            float ju = uniform01!float(rng) * 2.0f - 1.0f;
+            float jv = uniform01!float(rng) * 2.0f - 1.0f;
+            float jw = uniform01!float(rng) * 2.0f - 1.0f;
+            return Vec3(ju * jitter.x, jv * jitter.y, jw * jitter.z);
+        }
+
+        // Transform one ORIGINAL vertex position into a clone's local
+        // position: de-pivot -> scale -> rotate -> re-pivot -> translate.
+        Vec3 cloneVertex(Vec3 p, Vec3 shift, Vec3 jit) {
+            Vec3 local = p - pivot;
+            local = Vec3(local.x * slotScale.x, local.y * slotScale.y,
+                         local.z * slotScale.z);
+            if (slotRotate) local = transformPoint(slotRotMat, local);
+            return pivot + local + shift + jit;
+        }
+
+        size_t origFaceCount = faces.length;
+        size_t[] newFaceIndices;
+        size_t[] copyStarts;   // the weld's PER-COPY scope, in slot order
+
+        foreach (i; 0 .. numX) {
+            foreach (j; 0 .. numY) {
+                foreach (k; 0 .. numZ) {
+                    bool isSourceSlot = (i == 0 && j == 0 && k == 0);
+                    Vec3 shift = isSourceSlot ? Vec3(0, 0, 0)
+                        : linear ? Vec3(i * stepX, i * stepY, i * stepZ)
+                                 : Vec3(i * stepX, j * stepY, k * stepZ);
+                    if (linear) {
+                        slotScale = Vec3(pow(scale.x, i), pow(scale.y, i),
+                                         pow(scale.z, i));
+                        slotRotate = anyRotate && i != 0;
+                        slotRotMat = slotRotate ? matrixFromEulerZYX(
+                            Vec3(i * rotateDeg.x, i * rotateDeg.y,
+                                 i * rotateDeg.z)) : identityMatrix;
+                    }
+                    Vec3 jit = jitterFor();
+
+                    if (isSourceSlot) {
+                        if (!replaceSource) continue;   // untouched original stays as-is
+                        // replaceSource: mutate the ORIGINAL verts in place
+                        // (shift is always (0,0,0) here), no new verts/faces.
+                        // Reads from `origPos` (the PRE-mutation snapshot),
+                        // never the live `vertices[vid]` — see the S1 fix
+                        // note above the pivot computation.
+                        bool[uint] doneV;
+                        foreach (fi; sourceFaces) {
+                            foreach (vid; origFaceVerts[fi])
+                                if (vid !in doneV) {
+                                    doneV[vid] = true;
+                                    // Materialize exactly the snapshot's three floats: a direct
+                                    // by-value AA argument can overread Vec3's 12-byte value
+                                    // (task 20262210; core boundary evidence in the task receipt).
+                                    auto snapshot = &origPos[vid];
+                                    Vec3 p;
+                                    p.x = snapshot.x;
+                                    p.y = snapshot.y;
+                                    p.z = snapshot.z;
+                                    vertices[vid] = cloneVertex(p, shift, jit);
+                                }
+                        }
+                        if (invertPolygons)
+                            foreach (fi; sourceFaces) {
+                                faces[fi] = origFaceVerts[fi].dup;
+                                reverse(faces[fi]);
+                            }
+                        continue;
+                    }
+
+                    copyStarts ~= vertices.length;
+                    uint[uint] vertMap;
+                    foreach (fi; sourceFaces) {
+                        foreach (vid; origFaceVerts[fi]) {
+                            if (vid !in vertMap) {
+                                vertMap[vid] = cast(uint)vertices.length;
+                                auto snapshot = &origPos[vid];
+                                Vec3 p;
+                                p.x = snapshot.x;
+                                p.y = snapshot.y;
+                                p.z = snapshot.z;
+                                vertices ~= cloneVertex(p, shift, jit);
+                            }
+                        }
+                    }
+                    foreach (fi; sourceFaces) {
+                        auto src = origFaceVerts[fi];
+                        uint[] cloned;
+                        cloned.length = src.length;
+                        foreach (m, vid; src) cloned[m] = vertMap[vid];
+                        if (invertPolygons) reverse(cloned);
+                        newFaceIndices ~= faces.length;
+                        appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
+                    }
+                }
+            }
+        }
+
+        // Tail append, stated (task 0830). When Merge Vertices is on, the dedup
+        // pass further down opens its own rewrite and REPLACES this declaration
+        // with the relocation that describes it — which is the right order:
+        // each declaration describes the corner space as it stands when it is
+        // made, and the last one before the rebuild is the one that holds.
+        declareCornerAppend();
+
+        rebuildEdges();
+
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this, PlaneFit.Exact);
+        foreach (fi; 0 .. origFaceCount) {
+            deselectFace(cast(int)fi);
+        }
+        faceSelectionOrderCounter = 0;
+        foreach (idx; newFaceIndices) {
+            size_t srcFi = sourceFaces[(idx - origFaceCount) % selCount];
+            setFaceSubpatch(idx, isFaceSubpatch(srcFi));
+            faceMaterial[idx] = faceAttrOr(faceMaterial, srcFi);
+            facePart[idx]     = faceAttrOr(facePart, srcFi);
+            faceSetMask[idx]  = faceAttrOr(faceSetMask, srcFi);
+            selectFace(cast(int)idx);
+        }
+        // replaceSource re-selects the (mutated) originals too — they are
+        // now part of the array's output geometry, not leftover source.
+        if (replaceSource)
+            foreach (fi; sourceFaces) selectFace(cast(int)fi);
+
+        resizeVertexSelection();
+        clearVertexSelection();
+        resizeEdgeSelection();
+        clearEdgeSelection();
+
+        // Merge Vertices (boolean) + Distance (threshold) — default OFF. A
+        // distance of 0 still welds at the coincidence floor (K-W1 W1f_arr).
+        // Weld + face-fingerprint-dedup tail.
+        if (weld.merge) {
+            if (weldCoincidentVertices(weld.epsSq, copyStarts) > 0) {
+                import std.algorithm.sorting : sort;
+                import std.format : format;
+                bool[string] seenFp;
+                uint[][] keptFaces;
+                uint[]   oldOfNew;      // newToOld correspondence — task 1902,
+                                         // mesh_planes.rewriteFaces carries
+                                         // every kFacePlanes entry from this
+                                         // (replaces keptWord/Order/Material/
+                                         // Part/SetMask below).
+                bool[]   keptSelected;  // Select stays OUTSIDE the primitive's
+                                         // carry (plan §2.7) — reapplied below
+                                         // via setFacesSelectedFrom, same as
+                                         // today.
+                keptFaces   .reserve(faces.length);
+                oldOfNew    .reserve(faces.length);
+                keptSelected.reserve(faces.length);
+                // Per-corner (UV) relocate — mechanism (a). This rebuild drops
+                // whole DUPLICATE faces but keeps every survivor's corner
+                // count, so each kept corner has exactly one old corner. Without
+                // the relocate the tail `buildLoops` would find a wrong-length
+                // map and zero it WHOLE — undoing, for the entire mesh, the
+                // append-time growth the clone loop above just did (task 0690).
+                //
+                // The CSR offsets are recomputed here rather than read from
+                // `faceLoop`: `weldCoincidentVertices` just above rewrites face
+                // windings WITHOUT a `buildLoops`, so the cached offsets are
+                // stale by this point. Task 0830: that recomputation IS what
+                // `beginCornerRelocate` does — prefix-sum the live windings —
+                // so the hand-rolled `dedupFaceLoop` is now the handle's own
+                // offsets, and opening the rewrite here arms the drop for the
+                // dedup pass below.
+                auto rw = beginCornerRelocate();
+                const bool remapUv = rw.active();
+                uint[] oldLoopOfNewLoop;
+                if (remapUv && faces.length > 0)
+                    oldLoopOfNewLoop.reserve(rw.oldFaceLoop()[$ - 1]
+                                             + faces[$ - 1].length);
+                foreach (fi, ref f; faces) {
+                    auto sorted = f.dup;
+                    sort(sorted);
+                    string fp = format("%(%d,%)", sorted);
+                    if (fp in seenFp) continue;
+                    seenFp[fp] = true;
+                    if (remapUv)
+                        foreach (c; 0 .. f.length)
+                            oldLoopOfNewLoop ~= rw.oldFaceLoop()[fi] + cast(uint)c;
+                    keptFaces    ~= f;
+                    oldOfNew     ~= cast(uint) fi;
+                    // TASK 2020 — `isFaceSelected(fi)`, never `selectedFaces`:
+                    // the property allocates a whole `bool[faces.length]` per
+                    // call, and both reads it replaced sat INSIDE this
+                    // per-face loop, so the weld-dedup pass carried the same
+                    // O(F²) byte defect `duplicateSelectedFaces` did (see its
+                    // header). The guard is identical — `selectedFaces.length`
+                    // IS `faceMarks.length` — so this is a cost change only.
+                    // ITS OWN GATE is the second cell of
+                    // tests/unit/duplicate_face_scan_alloc_test.d, which drives
+                    // this kernel through `arrayFacesGrid` with Merge Vertices
+                    // on. Until that cell existed, reverting this line alone
+                    // left the module lane green at 503 modules, exit 0 — the
+                    // first cell cannot see this site.
+                    keptSelected ~= isFaceSelected(fi);
+                }
+                // TASK 1903 STAGE K MEASURED THIS ROW AND LEFT IT DISARMED
+                // (2026-08-27, numbers re-measured after the Stage K review's
+                // MAJOR-4), correcting the plan, which listed `arrayFacesGrid`
+                // under "arm".
+                //
+                // THE FAMILY IS UNREVERTIBLE IN A RECORDING BATCH TODAY,
+                // ARMED OR NOT, and the arming is not what breaks it. The
+                // array's OWN growth is hook-free: vertices arrive by a bare
+                // `vertices ~= cloneVertex(…)` and faces by `appendFaceRaw`,
+                // whose body is `faces ~= idx;` — neither reaches a tracker
+                // hook. So the only thing a recording batch can see in this
+                // kernel is the OPTIONAL weld-dedup pass right here, and the
+                // delta therefore describes the compaction and nothing else.
+                //
+                // Measured on a 3×3 tagged grid arrayed 2×1×1 (offset 2.0 =
+                // the bbox width, Merge Vertices on, distance 0.001 — the weld
+                // really fires, V 32→28), pre-op V=16 F=9 E=24, post-op
+                // V=28 F=18 E=45:
+                //
+                //   DISARMED (as it ships) — log `[RemoveVerts Reindex]`,
+                //     `revert()` answers TRUE, mesh lands V=32 F=18 E=45.
+                //   ARMED                  — log `[MeshMapDelta FaceReindex
+                //     MeshMapDelta FaceReindex RemoveVerts Reindex]`,
+                //     `revert()` answers TRUE, mesh lands V=32 F=18 E=48.
+                //
+                // So the "answers true, does not restore" shape §5.3's other
+                // audit calls WORSE than a throw is ALREADY PRESENT with the
+                // publisher disarmed, and the revert does not stop at the
+                // post-array state either — V=32 is a THIRD state, neither
+                // pre-op nor post-op, because `RemoveVerts⁻¹` re-inserts the
+                // welded vertices into a face array nothing described.
+                //
+                // The family's prerequisite is therefore a publisher at the
+                // two hook-free appends — `vertices ~= cloneVertex(…)` and
+                // `appendFaceRaw` — and it belongs to L6, not to any arming
+                // decision here. See the plan's §5.3 other-audit table.
+                rewriteFaces(this, keptFaces, FaceSource(oldOfNew));
+                if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
+                // keptSelected is applied right after via setFacesSelectedFrom,
+                // so Select's bit in the carried faceMarks is irrelevant either
+                // way; drop it here anyway to match every other compaction
+                // site's convention.
+                setFaceMarksFrom(faceMarks, ~Marks.Select);
+                setFacesSelectedFrom(keptSelected);
+                rebuildEdges();
+                clearEdgeSelectionResize();
+                compactUnreferenced();
+            }
+        }
+
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return newFaceIndices.length;
+    }
+
+    /// Mirror the faces marked true in `mask` across the plane defined by
+    /// `center` + (unit or non-unit) `normal` — the general, arbitrarily-
+    /// oriented form of `mirrorFaces` below (which delegates here). Verts
+    /// are cloned and reflected via the same formula as `mirrorPosition`
+    /// (symmetry.d:41): `v' = v - normal*(2*dot(v-center, normal))`. When
+    /// `flipNormals` is true the winding of each cloned face is reversed so
+    /// the mirrored surface has outward-facing normals — a reflection is
+    /// orientation-reversing for ANY plane, so this pass is plane-independent
+    /// and identical to the axis-aligned path. When `weld.merge`, coincident
+    /// verts (seam verts that lie on the mirror plane, plus any pre-existing
+    /// coincidences) are welded via `weldCoincidentVertices` with the
+    /// clones as copy 1, and orphan verts are compacted.
+    ///
+    /// Selection ends on the newly created mirrored faces (plus any
+    /// originals not in the mirror mask). Returns the number of new faces
+    /// actually inserted; 0 = noop (empty mask or near-zero-length normal).
+    size_t mirrorFacesPlane(in bool[] mask, Vec3 center, Vec3 normal, CloneWeld weld, bool flipNormals) {
+        if (mask.length != faces.length) return 0;
+        float nlen = normal.length;
+        if (nlen < 1e-9f) return 0;
+        normal = normal / nlen;
+        size_t toMirror = 0;
+        foreach (b; mask) if (b) ++toMirror;
+        if (toMirror == 0) return 0;
+
+        // Vertex indices below this bound are PRE-EXISTING (captured before
+        // any clone is appended below): the weld's copy 0.
+        const size_t origVertexCount = vertices.length;
+
+        // Clone each unique vert referenced by a masked face exactly once.
+        uint[uint] vertMap;
+        foreach (fi, ref f; faces) {
+            if (!mask[fi]) continue;
+            foreach (vid; f) {
+                if (vid !in vertMap) {
+                    vertMap[vid] = cast(uint)vertices.length;
+                    vertices ~= vertices[vid];
+                }
+            }
+        }
+        // Snapshot face indices to mirror BEFORE we start appending —
+        // see duplicateSelectedFaces for the same reason.
+        size_t[] toClone;
+        toClone.reserve(toMirror);
+        foreach (fi, ref f; faces)
+            if (mask[fi]) toClone ~= fi;
+
+        size_t origFaceCount = faces.length;
+        foreach (fi; toClone) {
+            auto src = faces[fi];
+            uint[] cloned;
+            cloned.length = src.length;
+            if (flipNormals) {
+                // Reverse winding so the reflected face has its normal
+                // pointing outward instead of into the cloned solid.
+                foreach (k, vid; src) cloned[src.length - 1 - k] = vertMap[vid];
+            } else {
+                foreach (k, vid; src) cloned[k] = vertMap[vid];
+            }
+            appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
+        }
+
+        // Reflect every cloned vert across the mirror plane. `vertMap`
+        // values are the new vert indices (≥ original vertices.length
+        // at the time the clone began), so iterating it covers exactly
+        // the new range without disturbing the originals. Same formula as
+        // symmetry.d's mirrorPosition; for a unit axis normal this is
+        // TOLERANCE-identical (not bit-for-bit, see the mirrorFaces wrapper's
+        // doc comment) to the prior per-component axis-aligned formula.
+        foreach (oldVid, newVid; vertMap) {
+            Vec3 v = vertices[newVid];
+            float d = dot(v - center, normal);
+            vertices[newVid] = v - normal * (2.0f * d);
+        }
+
+        // Task 1903 Stage L6-c — the WHOLE round, one `AddVerts` + one
+        // `AddFaces`.
+        //
+        // AFTER THE REFLECTION LOOP, NOT BEFORE, and that placement is the
+        // answer to a measured question rather than a preference: the clones
+        // are appended UNREFLECTED at `vertices ~= vertices[vid]` above and the
+        // loop just overhead writes their real positions in place. Recording
+        // here reads the FINAL positions, so no `Kind.SetPos` is owed for them;
+        // recording at the append site would have owed one. Asserted by value
+        // in `undo_parity_l6_test`'s mirror cells.
+        //
+        // `origVertexCount` is the same bound the weld's copy 1 starts at,
+        // which is what makes "everything appended by this kernel" one number.
+        recordBulkAppendRound(origVertexCount, origFaceCount);
+
+        declareCornerAppend();   // tail append, stated (task 0830)
+
+        // Re-derive edges from the (now larger) face list.
+        rebuildEdges();
+
+        // Subpatch + face-order arrays follow the new face count.
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this, PlaneFit.Exact);
+        // Mark the new mirrored faces as the active selection; clear
+        // the originals' face-selection bits (they keep their geometry
+        // unchanged but lose the "this is selected" tag, matching
+        // duplicateSelectedFaces semantics).
+        foreach (fi; 0 .. origFaceCount) {
+            deselectFace(cast(int)fi);
+        }
+        faceSelectionOrderCounter = 0;
+        foreach (k, fi; toClone) {
+            size_t newFi = origFaceCount + k;
+            setFaceSubpatch(newFi, isFaceSubpatch(fi));
+            faceMaterial[newFi] = faceAttrOr(faceMaterial, fi);
+            facePart[newFi]     = faceAttrOr(facePart, fi);
+            faceSetMask[newFi]  = faceAttrOr(faceSetMask, fi);
+            selectFace(cast(int)newFi);
+        }
+
+        // Resize selection arrays (verts/edges) to current sizes; both
+        // selections are invalidated by the topology changes.
+        resizeVertexSelection();
+        clearVertexSelection();
+        resizeEdgeSelection();
+        clearEdgeSelection();
+
+        // Optional weld pass: verts on the mirror plane reflected to
+        // themselves are coincident with their originals, as are all verts of
+        // a symmetric object mirrored about its own centre plane. weld>0 folds
+        // those coincident VERTS (full-parity: faces are NOT deduped — the
+        // doubled coincident faces are kept as an opposite-wound shell/membrane;
+        // see the convention note at the weld call below).
+        if (weld.merge) {
+            // Empty-mesh guard (task 0306): snapshot everything this pass
+            // can touch BEFORE running it, so an aggressive weld/dedup that
+            // would collapse the WHOLE document can be rolled back to the
+            // un-welded (but valid, non-empty) mirror result instead of
+            // silently committing `status: ok` over an empty mesh. See
+            // `isEmpty()`. Includes vertexSelectionOrder/edgeSelectionOrder
+            // (SHOULD-FIX review of 0306): compactUnreferenced() and
+            // clearEdgeSelectionResize() truncate those two parallel arrays
+            // in lock-step with vertices/edges during the collapse, so
+            // omitting them here would leave a length mismatch after
+            // rollback (vertices.length == N but vertexSelectionOrder.length
+            // == 0) — the very next selectVertex()/selectEdge() indexes them
+            // unguarded and RangeErrors.
+            Vec3[]    rbVertices = vertices.dup;
+            uint[2][] rbEdges    = edges.dup;
+            uint[][]  rbFaces;
+            rbFaces.reserve(faces.length);
+            foreach (f; faces) rbFaces ~= f.dup;
+            uint[]    rbVertexMarks          = vertexMarks.dup;
+            uint[]    rbEdgeMarks            = edgeMarks.dup;
+            uint[]    rbFaceMarks            = faceMarks.dup;
+            int[]     rbVertexSelectionOrder = vertexSelectionOrder.dup;
+            int[]     rbEdgeSelectionOrder   = edgeSelectionOrder.dup;
+            int[]     rbFaceSelectionOrder   = faceSelectionOrder.dup;
+            uint[]    rbFaceMaterial         = faceMaterial.dup;
+            uint[]    rbFacePart             = facePart.dup;
+            ulong[]   rbFaceSetMask          = faceSetMask.dup;    // task 1060, Stage 5c
+            ulong[]   rbVertexSetMask        = vertexSetMask.dup;  // task 1060, Stage 5a
+            ulong[ulong] rbEdgeSetMask       = edgeSetMask.dup;    // task 1060, Stage 5b —
+            bool[ulong] rbWireEdgeKeys       = wireEdgeKeys.dup;   // task 3910
+            // `.dup` is REQUIRED (AA is a reference type; see mesh_selsets.d's
+            // storage doc comment) — a bare `= edgeSetMask` would alias the
+            // live registry, and the weld/compact below re-keys it in place.
+            MeshMap[] rbMeshMaps;
+            rbMeshMaps.reserve(meshMaps.length);
+            foreach (mm; meshMaps) rbMeshMaps ~= mm.dup;
+
+            // The clones are copy 1 of the PER-COPY scope: a clone welds to
+            // an ORIGINAL only — never two originals (task 0306 bug B), never
+            // two clones (task 1220, ledger row 32; K-W1 W1d).
+            //
+            // FULL PARITY (weld coincident-face convention): the weld merges
+            // coincident VERTS only — it does NOT fingerprint-dedup faces. When
+            // the mirror maps geometry onto itself — a symmetric object
+            // mirrored about its own centre plane, or an on-plane seam membrane
+            // — the reference editor KEEPS the doubled coincident faces (the
+            // original + its winding-reversed clone form an opposite-wound
+            // shell / membrane), even though that leaves each shared edge
+            // incident to more than two faces: a deliberate non-manifold
+            // artifact of Mirror+Merge. So we weld verts, rebuild edges from
+            // the (now vertex-merged) faces, and drop only the orphaned
+            // welded-away vert slots via compactUnreferenced — the same
+            // keep-doubled convention as arrayFaces / radialArrayFaces.
+            const size_t cornersBeforeWeld = cornerCount();
+            if (weldCoincidentVertices(weld.epsSq, [origVertexCount]) > 0) {
+                rebuildEdges();
+                clearEdgeSelectionResize();
+                compactUnreferenced();
+                // What the weld did to the CORNERS is decided by the only
+                // thing it leaves behind — the total (task 0830).
+                declareCornerWeld(cornersBeforeWeld);
+            }
+
+            if (isEmpty()) {
+                // The weld/dedup pass emptied the whole document — not a
+                // legitimate "merge the seam" outcome, just a destructive
+                // collapse driven by a threshold too large for this mesh's
+                // scale. Roll back to the un-welded (but valid, non-empty)
+                // mirror clone rather than commit an empty mesh.
+                //
+                // task 1902 (site 8): this is a RESTORE, not a reindex, and
+                // deliberately stays outside mesh_planes.rewriteFaces/
+                // rewriteVertices. The primitive reads every plane off `m`'s
+                // OWN live arrays through a FaceSource/VertSource correspondence
+                // — it has no way to pull a value from an external snapshot
+                // like `rbFaceMaterial`, so expressing this as a "rewrite"
+                // would mean first overwriting the live arrays with the `rb*`
+                // snapshots and then asking the primitive to copy them right
+                // back out under `.identity()` — strictly more code and one
+                // more allocation per plane for the exact same bytes. Nothing
+                // here is renumbered either: `rbFaces`/`rb*` are the pre-weld
+                // state at its OWN pre-weld indices, restored verbatim, which
+                // is exactly what `declareCornerProvenance(unchanged())` below
+                // already says about the corners. Stays hand-rolled and in
+                // mesh_planes_census_test.d's kAllow (both entries unchanged).
+                vertices             = rbVertices;
+                edges                = rbEdges;
+                faces                = rbFaces;
+                vertexMarks          = rbVertexMarks;
+                edgeMarks            = rbEdgeMarks;
+                faceMarks            = rbFaceMarks;
+                vertexSelectionOrder = rbVertexSelectionOrder;
+                edgeSelectionOrder   = rbEdgeSelectionOrder;
+                faceSelectionOrder   = rbFaceSelectionOrder;
+                faceMaterial         = rbFaceMaterial;
+                facePart             = rbFacePart;
+                faceSetMask          = rbFaceSetMask;
+                vertexSetMask        = rbVertexSetMask;   // task 1060, Stage 5a
+                edgeSetMask          = rbEdgeSetMask;     // task 1060, Stage 5b
+                wireEdgeKeys         = rbWireEdgeKeys;
+                meshMaps             = rbMeshMaps;
+                // The rollback put back the very maps that describe the
+                // restored windings, so the corner space this rebuild will
+                // lay down is the un-welded one and nothing moved in it.
+                // Without this the weld's drop above would still be pending
+                // and would zero maps that are already correct.
+                declareCornerProvenance(CornerProvenance.unchanged());
+            }
+        }
+
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return toClone.length;
+    }
+
+    /// Mirror the faces marked true in `mask` across the plane defined by
+    /// axis ∈ {'X','Y','Z'} passing through `center` — thin wrapper over
+    /// `mirrorFacesPlane` kept for existing callers (commands/mesh/mirror.d,
+    /// MirrorTool). Computes the unit-axis normal and delegates.
+    ///
+    /// TOLERANCE-identical (not bit-for-bit) to the pre-refactor axis-only
+    /// implementation: the general formula `v - normal*(2*dot(v-center,
+    /// normal))` with `normal=(1,0,0)` reduces to `v.x - 2*(v.x-center.x)` =
+    /// `2*center.x - v.x` on the x component (y/z: dot term is 0, so they
+    /// pass through EXACTLY) — algebraically identical to the prior
+    /// `2.0f*center.x - v.x`, but computed via an extra subtract/multiply
+    /// step that can differ by ~1 ULP for non-dyadic inputs. `weld`/`flip`/
+    /// selection passes are untouched. Returns 0 for an invalid axis char
+    /// (mirrors the prior guard).
+    size_t mirrorFaces(in bool[] mask, char axis, Vec3 center, CloneWeld weld, bool flipNormals) {
+        Vec3 normal;
+        if      (axis == 'X') normal = Vec3(1, 0, 0);
+        else if (axis == 'Y') normal = Vec3(0, 1, 0);
+        else if (axis == 'Z') normal = Vec3(0, 0, 1);
+        else return 0;
+        return mirrorFacesPlane(mask, center, normal, weld, flipNormals);
+    }
+
+    /// Duplicate the currently selected faces in place: every vertex used
+    /// by a selected face is cloned (shared verts cloned once), each
+    /// selected face is re-emitted referencing the cloned verts, edges
+    /// are derived from the new faces. Selection is switched to the
+    /// newly created faces (originals deselected). Edge and vertex
+    /// selections are cleared.
+    ///
+    /// Primitive used by Tier-1 `mesh.duplicate` and the future
+    /// Mirror / Array / Radial Array tools. Polygons-mode-only: vertex
+    /// and edge selections produce no useful standalone topology in
+    /// vibe3d's face-derived edge model, so the command should reject
+    /// non-Polygons modes upstream.
+    ///
+    /// Returns the number of faces duplicated (0 = nothing selected).
+    size_t duplicateSelectedFaces() {
+        // TASK 2020, evidence and the broken/fixed ladder in `doc/tasks/done/`
+        // — NOT `selectedFaces` ANYWHERE IN THIS KERNEL, and that is an
+        // asymptotic contract, not a style note. `selectedFaces` is the
+        // `@property` that materialises a fresh `bool[faces.length]` per CALL,
+        // so the three reads this replaced — the length guard, the count, and
+        // the two `selectedFaces[fi]` INSIDE the per-face loops below — made
+        // the kernel O(F²) in both time and bytes: 2·F² bytes of throwaway
+        // `bool[]` by payload — but the counter the card's figure comes from,
+        // `GC.allocatedInCurrentThread`, charges each such block PAGE-ROUNDED,
+        // so the figure to compare against is 2·F·⌈F/4096⌉·4096 = 20.45 GB at
+        // F=99 856, not the payload's 19.94 GB. That is 95–100 % of the
+        // "20 524 MB" the card's own 100K measurement had already charged to
+        // `mesh.duplicate` without explaining it: 99.6 % if that figure's MB is
+        // decimal, 95.0 % if binary, which the card does not record. The page
+        // rounding is measured rather than assumed — the residual of the array
+        // cell in tests/unit/duplicate_face_scan_alloc_test.d matches it to
+        // within 0.2 % at three sizes. Measured on the ladder: 5.1 / 28.5 / 121.6 /
+        // 852 s at 99 856 / 202 500 / 399 424 / 1 000 000 faces, against
+        // 0.14 / 0.26 /
+        // 0.57 / 1.78 s once the property left the loops. It is quadratic on
+        // the FACE COUNT, not on the selection — both loops evaluate the
+        // property BEFORE testing the bit, so one selected face on a 1M grid
+        // cost the same churn as half of them, which is how the defect was
+        // separated from "duplicating a lot of geometry is expensive". The
+        // mark accessors used instead are the non-allocating ones by contract.
+        if (faceMarks.length != faces.length) return 0;
+        const size_t selCount = cast(size_t) countSelectedFaces();
+        if (selCount == 0) return 0;
+
+        // Task 1903 Stage L6-a: the base of this kernel's ONE append round,
+        // read before the first `vertices ~=` below. See
+        // `recordBulkAppendRound`.
+        const size_t appendVertBase = vertices.length;
+
+        // Map old vert index → cloned vert index. Built lazily as we
+        // iterate selected faces; shared verts between two selected
+        // faces get cloned once.
+        uint[uint] vertMap;
+        foreach (fi, ref f; faces) {
+            if (!isFaceSelected(fi)) continue;
+            foreach (vid; f) {
+                if (vid !in vertMap) {
+                    vertMap[vid] = cast(uint)vertices.length;
+                    vertices ~= vertices[vid];
+                }
+            }
+        }
+        // Snapshot the indices of faces to duplicate before we start
+        // appending — appending grows `faces` and would otherwise turn
+        // the new faces into duplicates of themselves.
+        size_t[] toClone;
+        toClone.reserve(selCount);
+        foreach (fi, ref f; faces)
+            if (isFaceSelected(fi)) toClone ~= fi;
+
+        size_t origFaceCount = faces.length;
+        foreach (fi; toClone) {
+            auto src = faces[fi];
+            uint[] cloned;
+            cloned.length = src.length;
+            foreach (k, vid; src) cloned[k] = vertMap[vid];
+            appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
+        }
+
+        // Task 1903 Stage L6-a — the WHOLE round, one `AddVerts` + one
+        // `AddFaces`. This kernel has no weld and no compaction, so this pair
+        // is the ENTIRE op-log: before it, a recording batch here closed EMPTY
+        // over a real duplication and `acceptRecordedEdit` refused the pairing.
+        recordBulkAppendRound(appendVertBase, origFaceCount);
+
+        // Re-derive edges from the (now larger) face list. Doing this
+        // wholesale is simpler and faster than tracking which edges are
+        // new — and stays consistent with the dedup'd-edge invariant
+        // used by delete / dissolve.
+        declareCornerAppend();   // tail append, stated (task 0830)
+        rebuildEdges();
+
+        // Subpatch + face-order arrays follow the new face count.
+        // New faces inherit subpatch flag from their source and start
+        // with a fresh selection order (1-based) so they are picked up
+        // as the active selection.
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this, PlaneFit.Exact);
+        // Clear old face selection first; only new duplicates remain selected.
+        foreach (fi; 0 .. origFaceCount) {
+            deselectFace(cast(int)fi);
+        }
+        faceSelectionOrderCounter = 0;
+        foreach (k, fi; toClone) {
+            size_t newFi = origFaceCount + k;
+            setFaceSubpatch(newFi, isFaceSubpatch(fi));
+            faceMaterial[newFi] = faceAttrOr(faceMaterial, fi);
+            facePart[newFi]     = faceAttrOr(facePart, fi);
+            faceSetMask[newFi]  = faceAttrOr(faceSetMask, fi);
+            selectFace(cast(int)newFi);
+        }
+
+        // Vertex / edge selections are invalidated by the edge rebuild
+        // and the new verts respectively; clear them out.
+        resizeVertexSelection();
+        clearVertexSelection();
+        resizeEdgeSelection();
+        clearEdgeSelection();
+
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return toClone.length;
+    }
+
+    /// Append externally-provided geometry (clipboard paste) to this mesh.
+    ///
+    /// `clipVerts` are appended to `vertices`. Each face in `clipFaces`
+    /// stores 0-based indices into `clipVerts`; they are remapped by
+    /// `+vertexBase` (the pre-append vertex count) before being added to
+    /// `faces`. `clipSubpatch`, `clipMaterial`, and `clipPart` are per-face
+    /// parallel arrays sourced from the clipboard.
+    ///
+    /// After appending, selection switches to the new faces only: all
+    /// pre-existing faces are deselected; each new face is selected in
+    /// insertion order. Vertex and edge selections are cleared.
+    ///
+    /// Single `rebuildEdges()` + `buildLoops()` + `commitChange(Geometry)`
+    /// at the end — no per-face hooks or addFace calls (which would each
+    /// fire commitChange). Returns the number of faces appended; 0 = no-op.
+    size_t appendGeometry(in Vec3[] clipVerts, in uint[][] clipFaces,
+                          in bool[] clipSubpatch, in uint[] clipMaterial,
+                          in uint[] clipPart = null,
+                          in ulong[] clipSetMask = null) {
+        if (clipFaces.length == 0) return 0;
+
+        const size_t vertBase      = vertices.length;
+        const size_t origFaceCount = faces.length;
+
+        // Append clip verts verbatim.
+        foreach (ref v; clipVerts) vertices ~= v;
+
+        // Append remapped faces: each clip-local index shifts by vertBase.
+        foreach (ref f; clipFaces) {
+            uint[] remapped;
+            remapped.length = f.length;
+            foreach (k, vid; f) remapped[k] = cast(uint)(vid + vertBase);
+            // Pasted corners have no UV to carry (the clipboard has no
+            // per-corner channel) — but the mesh they land in may, and it must
+            // survive the paste. task 0690.
+            appendFaceRaw(remapped);
+        }
+
+        declareCornerAppend();   // tail append, stated (task 0830)
+
+        // Re-derive edges from the (now larger) face list.
+        rebuildEdges();
+
+        // Grow subpatch / selection-order / face-selection / material arrays
+        // to the new face count. Mirroring duplicateSelectedFaces order.
+        // TASK 4059 — the six lines this replaces (`resizeSubpatch()` +
+        // `faceSelectionOrder` + `resizeFaceSelection()` + `faceMaterial` +
+        // `facePart` + `faceSetMask`) were one hand-written grow per plane,
+        // repeated verbatim in six kernels. `appendFacePlanes` iterates
+        // `kFacePlanes`, so a plane added later arrives here for free.
+        appendFacePlanes(this, PlaneFit.Exact);
+
+        // Deselect all pre-existing faces; only pasted faces end up selected.
+        foreach (fi; 0 .. origFaceCount) deselectFace(cast(int)fi);
+        faceSelectionOrderCounter = 0;
+
+        // Assign clip metadata and select each new face.
+        foreach (k; 0 .. clipFaces.length) {
+            size_t newFi = origFaceCount + k;
+            setFaceSubpatch(newFi, (k < clipSubpatch.length ? clipSubpatch[k] : false));
+            faceMaterial[newFi] = (k < clipMaterial.length ? clipMaterial[k] : 0u);
+            facePart[newFi]     = (k < clipPart.length     ? clipPart[k]     : 0u);
+            faceSetMask[newFi]  = (k < clipSetMask.length  ? clipSetMask[k]  : 0UL);
+            selectFace(cast(int)newFi);
+        }
+
+        // Vertex/edge selections are invalidated by the edge rebuild and the
+        // new verts; clear them out.
+        resizeVertexSelection();
+        clearVertexSelection();
+        resizeEdgeSelection();
+        clearEdgeSelection();
+
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return clipFaces.length;
+    }
+
+    // Deduplicated edge insert: append (a,b) + record its index in `lookup`
+    // unless an edge with the same undirected key is already present. The
+    // stored index is `edges.length` BEFORE the append — identical to
+    // `edges.length - 1` taken AFTER the append (the shape the former
+    // addFaceFast inner loop used), so callers written either way observe
+    // the same value. Returns whether an edge was actually inserted (false
+    // on a duplicate), so callers that only want to commit/bump on a real
+    // insert (addEdge) can gate on the result.
+    private bool insertEdgeDedup(ref uint[ulong] lookup, uint a, uint b) {
+        ulong key = edgeKey(a, b);
+        if (key in lookup) return false;
+        lookup[key] = cast(uint)edges.length;
+        edges ~= [a, b];
+        return true;
+    }
+
+    void addEdge(uint a, uint b) {
+        if (insertEdgeDedup(edgeIndexMap, a, b)) {
+            wireEdgeKeys[edgeKey(a, b)] = true;
+            // Structural change: one edge appended, and edgeIndexMap (the
+            // map we just inserted into) stays fully in sync.
+            ++structVersion;
+            edgeMapStamp  = structVersion;
+            edgeMapState_ = DerivedState.Valid;
+            commitChange(MeshEditScope.Polygons);
+        }
+    }
+    /// Re-derive the deduplicated edge list AND `edgeIndexMap` from the
+    /// current `faces` via `insertEdgeDedup`, followed by ONE version bump +
+    /// commit for the whole re-derive (task 1333; it was one per edge, through
+    /// `addEdge`). Mutating ops that rewrite `faces` call this to keep
+    /// edges + the lookup map consistent. Iteration order over faces/loop
+    /// corners is fixed, so the resulting edge indices are deterministic —
+    /// callers rely on this when resizing the edge-selection arrays
+    /// afterwards. This helper does NOT touch selection arrays; the caller
+    /// owns those. (Distinct from `rebuildEdgesFromFaces`, which rebuilds
+    /// `edges` only and leaves `edgeIndexMap` / the version counters alone.)
+    // Re-derive the deduplicated edge array (+ edgeIndexMap) from faces. Used
+    // internally by every topology mutator and by mesh_edit_delta's replay
+    // finalize so a delta apply/revert produces the same canonical edge order
+    // the kernels do.
+    void rebuildEdges(EdgePlaneCarry edgePlanes = EdgePlaneCarry.leaveIndexed) {
+        version (unittest) ++g_rebuildEdgesRuns;   // task 1471 instrument
+        // TASK 1906 STAGE 2d — the PRE-clear edge count, read before the clear
+        // that follows. Emptying a non-empty `edges` IS a write to `edges`,
+        // and `vertexAdjacencyCSR` is keyed on `structVersion` now; see the
+        // `else if (hadEdges)` arm at the bottom of this function for the
+        // reachable edit that made the `inserted` gate alone insufficient.
+        const bool hadEdges = edges.length > 0;
+        // TASK 4059 — the per-edge plane carry, snapshotted HERE and applied
+        // after the refill below. The position is the whole of it: `edges` is
+        // about to be emptied and there is nothing left to key from
+        // afterwards. See `mesh_planes.captureEdgePlanes`.
+        const auto edgeCarry = (edgePlanes == EdgePlaneCarry.byKey)
+                             ? captureEdgePlanes(this) : EdgeCarry.init;
+        edges.length = 0;
+        edgeIndexMap.clear();
+        // Rebuild every deduplicated edge without publishing from the loop,
+        // then advance the structural stamps once (task 1333). Authored wire
+        // edges use the same map before the final commit.
+        // See doc/source_prose_policy.md#один-структурный-commit-после-rebuildappend.
+        bool inserted = false;
+        foreach (ref f; faces)
+            foreach (k; 0 .. f.length)
+                if (insertEdgeDedup(edgeIndexMap, f[k], f[(k + 1) % f.length]))
+                    inserted = true;
+        if (wireEdgeKeys.length != 0) {
+            auto keys = wireEdgeKeys.keys;
+            sort(keys);
+            foreach (key; keys) {
+                const uint a = cast(uint)(key >> 32);
+                const uint b = cast(uint)(key & 0xFFFF_FFFFUL);
+                if (a >= vertices.length || b >= vertices.length || a == b)
+                    continue;
+                if (insertEdgeDedup(edgeIndexMap, a, b)) inserted = true;
+            }
+        }
+        // TASK 4059 — re-lay `edgeMarks` / `edgeSelectionOrder` over the
+        // rebuilt `edges`, each value following its edge's endpoint KEY. This
+        // runs BEFORE the commit below on purpose: `commitChange`'s Hide
+        // derive writes the Select bit of hidden edges, and it must see the
+        // carried marks, not the pre-carry ones.
+        //
+        // THE PARAGRAPH ABOVE ABOUT "`edgeMarks` IS NOT RE-INDEXED" IS STILL
+        // LIVE for every caller that does not ask. Measured 2026-09-05 with a
+        // comment- and string-stripped scan of `source/**.d` for
+        // `\brebuildEdges\s*\(` (excluding the declaration): 39 call
+        // expressions across 12 files, of which 2 pass
+        // `EdgePlaneCarry.byKey` and 37 take the default. On those 37 the
+        // hazard reads exactly as it did — the caller's own
+        // `clearEdgeSelectionResize()` is still what stands between a stale
+        // mark and a live index. Turning the default over is a per-op
+        // behaviour decision with eight measured witnesses; see
+        // `mesh_planes.EdgePlaneCarry` and task 4190.
+        if (edgePlanes == EdgePlaneCarry.byKey) applyEdgePlanes(this, edgeCarry);
+        if (inserted) {
+            // The same three stamps + commit `addEdge` does, ONCE instead of
+            // once per edge. Gated on a real insert for the same reason
+            // `addEdge` gates on one: "nothing appended ⇒ nothing bumped" is
+            // preserved bit for bit.
+            //
+            // The condition that reaches the zero-insert path is precisely
+            // "the loop above visited no CORNER" — an empty `faces`, OR a
+            // non-empty `faces` whose every entry is zero-length. (It is NOT
+            // "no face": that is only the first of the two.) In either case
+            // the derive would also write nothing, and for the same underlying
+            // reason: `hasFace[vi]` is set only from a corner, so with no
+            // corner no vertex passes the derive's `hasFace` gate, and `edges`
+            // is left empty so no edge index is in range.
+            //
+            // Note what the zero-insert path deliberately does NOT do: it
+            // leaves `edgeMapStamp` / `edgeMapState_` untouched, so after the
+            // `edgeIndexMap.clear()` at the top `edgeMapUsable()` can read
+            // true over an EMPTY map. That is byte-identical to the old
+            // behaviour — `addEdge` never fired on that path either, so the
+            // stamps were never touched there — and it is preserved
+            // deliberately. The collapse only makes it a locally visible
+            // decision where it used to be emergent from `addEdge`'s own gate.
+            //
+            // What DOES change is the bump COUNT: E bumps become 1. Audited
+            // repo-wide — every reader of `structVersion` / `mutationVersion`
+            // / `topologyVersion` treats them as monotonic stamps, never as
+            // counts: `loopsValid()` is `loopsStamp == structVersion`,
+            // `edgeMapUsable()` is `edgeMapStamp == structVersion`, and the
+            // tests compare `> before` (changed) or `== before` (untouched).
+            // One bump invalidates a stamp exactly as well as E do — for a
+            // MONOTONE counter, which is what these are at every site but two:
+            // `source/subpatch_osd.d:867` and `:1857` hard-RESET
+            // `mutationVersion = 1` on a freshly built mesh, and the first of
+            // those reaches the DOCUMENT mesh through `*mesh = subdivide(…)`.
+            // Against a reset like that a slower-growing counter shrinks the
+            // distance back to the reset value, i.e. narrows the window in
+            // which a post-reset version cannot collide with a pre-reset one
+            // still held in a cache. That hazard is pre-existing (the reset is
+            // what creates it; the growth rate only sizes the window) and is
+            // covered by the per-mesh-address term every version-keyed cache
+            // carries. So: a qualification of the sentence above, not a new
+            // hazard opened here.
+            ++structVersion;
+            edgeMapStamp  = structVersion;
+            edgeMapState_ = DerivedState.Valid;
+            commitChange(MeshEditScope.Polygons);
+        }
+        else if (hadEdges) {
+            // TASK 1906 STAGE 2d — ZERO INSERTS OVER A NON-EMPTY `edges`, the
+            // case the `inserted` gate alone cannot see, and it is REACHABLE,
+            // not theoretical: `mesh.remove` in Polygons mode with everything
+            // selected calls `deleteFacesByMask(mask, keepOrphans: true)`
+            // (source/commands/mesh/remove.d), which empties `faces` and
+            // leaves `vertices` untouched. `edges` goes N -> 0, the loop above
+            // visits no corner, so `inserted` stays false — yet `edges` HAS
+            // changed, and `edges` is the whole input of the CSR adjacency
+            // memo besides `vertices.length`, which is unchanged here and so
+            // cannot cover for the counter. Measured on a cube before this
+            // arm existed: V=8 E=12 -> E=0 with structVersion +0, and
+            // `vertexAdjacencyCSR` kept serving its 24 stale neighbour
+            // entries for the rest of the session.
+            //
+            // This restores the invalidation the PRE-2d `mutationVersion` key
+            // had for free (the face delete commits and bumps that counter),
+            // so the arm is not a new guarantee — it is the one term the
+            // re-key would otherwise have dropped.
+            //
+            // `++structVersion` alone already makes `edgeMapUsable()` false
+            // (it compares `edgeMapStamp == structVersion`); the explicit
+            // Stale is the same statement made locally, so a reader does not
+            // have to re-derive it from the stamp compare. No `commitChange`
+            // here on purpose: the callers that reach this path
+            // (`deleteFacesByMask`, `mesh_edit_delta`'s replay finalize) commit
+            // their own class for the face removal that caused it, and this
+            // arm must not invent a second publish. The NO-EDGES-BEFORE case
+            // (`hadEdges` false) is untouched and stays byte-identical to the
+            // behaviour the `if (inserted)` arm's own note describes.
+            ++structVersion;
+            edgeMapState_ = DerivedState.Stale;
+        }
+    }
+    void addFace(uint[] idx) {
+        // Task 0831: read the append base BEFORE the append. The tracker hook
+        // at the bottom used to say `faces.length - 1`, which is the same
+        // number read the other way round; taking it here is what makes it a
+        // `FaceIdx` without an `assumeFaceSpace`, and it is also how
+        // `MeshOpEntry`'s own comment describes an AddFaces range ("F0 is the
+        // length of `faces` before the append").
+        const appendBase = faceAppendBase();
+        faces ~= idx.dup;
+        // Add the face's edges without per-corner commits, grow PolyVertex
+        // planes for the appended corners, then publish one structural change
+        // (task 1361). `edgeIndexMap` is complete before it is stamped valid.
+        // See doc/source_prose_policy.md#один-структурный-commit-после-rebuildappend.
+        for (uint i = 0; i < idx.length; i++)
+            insertEdgeDedup(edgeIndexMap, idx[i], idx[(i+1) % idx.length]);
+        // GAP-3 atomic append: addFace does NOT call buildLoops, so without
+        // this the PolyVertex element count (loops.length) would lag the new
+        // face's corners until some later buildLoops. The new face's corners are
+        // appended LAST in CSR loop order, so growing each PolyVertex map by
+        // `idx.length * dim` zeros at the END keeps element-major alignment and
+        // the invariant `data.length == Σ face-arities * dim` holds immediately.
+        growPolyVertexMapsForAppendedCorners(idx.length);
+        // The face plus its edges are one structural change, committed once
+        // (task 1361; it was once per corner through `addEdge`, plus this
+        // one). edgeIndexMap stays fully in sync — every edge above went
+        // through `insertEdgeDedup` on that very map — so re-stamp it Valid at
+        // the new structVersion. Loops are NOT rebuilt here, so
+        // loopsState_/loopsStamp are left as-is (correctly stale relative to
+        // the bumped structVersion, until the caller's terminal buildLoops()).
+        ++structVersion;
+        edgeMapStamp  = structVersion;
+        edgeMapState_ = DerivedState.Valid;
+        commitChange(MeshEditScope.Geometry);
+        // Class P tracker hook — inert unless a batch is open.
+        if (editRecorder_ !is null)
+            editRecorder_.recordAddFace(appendBase, idx);
+    }
+    // Fast version using hash lookup for duplicate checking
+    void addFaceFast(ref uint[ulong] edgeLookup, uint[] idx) {
+        const appendBase = faceAppendBase();   // see addFace (task 0831)
+        faces ~= idx.dup;
+        for (uint i = 0; i < idx.length; i++)
+            insertEdgeDedup(edgeLookup, idx[i], idx[(i+1) % idx.length]);
+        // GAP-3 atomic append — see addFace.
+        growPolyVertexMapsForAppendedCorners(idx.length);
+        // Structural change (face + external-lookup edges appended) — bump
+        // once. This primitive does NOT touch `this.edgeIndexMap` (the
+        // caller supplies its own scratch `edgeLookup` and defers the
+        // canonical map to a terminal buildLoops()), so mark edgeMapState_
+        // Stale — edgeMapUsable() must report false until that buildLoops()
+        // runs. Loops are deferred too; leave loopsState_/loopsStamp as-is.
+        ++structVersion;
+        edgeMapState_ = DerivedState.Stale;
+        commitChange(MeshEditScope.Geometry);
+        // Class P tracker hook — inert unless a batch is open.
+        if (editRecorder_ !is null)
+            editRecorder_.recordAddFace(appendBase, idx);
+    }
+
+    /// Bulk authored-wire append for a loader/builder that owns its scratch
+    /// lookup. ALWAYS records authorship, even when a face already inserted
+    /// the pair. No version/map-state/change writes: terminal buildLoops()
+    /// settles the finished edge table.
+    void addWireEdgeFast(ref uint[ulong] edgeLookup, uint a, uint b) {
+        wireEdgeKeys[edgeKey(a, b)] = true;
+        insertEdgeDedup(edgeLookup, a, b);
+    }
+
+    /// Live edge indices in native-file order: face traversal first, then
+    /// authored pair keys in ascending order. A registry key missing from the
+    /// live edge array is ignored so it cannot shift another edge-map value.
+    uint[] canonicalEdgeOrder() const {
+        uint[ulong] live;
+        foreach (i, ref e; edges) live[edgeKey(e[0], e[1])] = cast(uint)i;
+        bool[ulong] seen;
+        uint[] order;
+        order.reserve(edges.length);
+        foreach (ref face; faces)
+            foreach (i; 0 .. face.length) {
+                const key = edgeKey(face[i], face[(i + 1) % face.length]);
+                if (key in seen) continue;
+                seen[key] = true;
+                if (auto p = key in live) order ~= *p;
+            }
+        if (wireEdgeKeys.length != 0) {
+            auto keys = wireEdgeKeys.keys;
+            sort(keys);
+            foreach (key; keys) {
+                if (key in seen) continue;
+                seen[key] = true;
+                if (auto p = key in live) order ~= *p;
+            }
+        }
+        return order;
+    }
+
+    /// Append one face to `faces` WITHOUT any of `addFace`'s bookkeeping —
+    /// no edge insert, no version bump, no tracker hook — but WITH the one
+    /// step a bare `faces ~= idx` silently skips: growing every PolyVertex
+    /// (per-corner) map by this face's corners.
+    ///
+    /// That step is not a nicety. `resizePolyVertexMaps` (hanging off the tail
+    /// `buildLoops` every kernel ends with) keeps a map only when its length
+    /// already matches the new corner count; otherwise it makes it
+    /// length-correct by ZEROING IT WHOLE. So a bulk kernel that appends
+    /// faces with `faces ~= …` does not merely leave the NEW corners without
+    /// UV — it wipes the UV of every face it never touched (task 0690).
+    /// Bulk kernels (array / mirror / duplicate / paste / cut caps) cannot use
+    /// `addFace` — they rebuild edges once at the end and commit one change —
+    /// so this is their append primitive. Use it instead of `faces ~=`
+    /// whenever a face is appended to a mesh that may outlive the call with
+    /// its maps intact.
+    ///
+    /// Only valid for a TAIL append: the appended corners are last in CSR loop
+    /// order, which is what makes zero-filling at the end of the map the right
+    /// relocation. A kernel that also changes an EXISTING face's arity has
+    /// re-laid the corner space and needs a remap (`remapPolyVertexMaps` /
+    /// `carryPolyVertexMaps`), not this.
+    void appendFaceRaw(uint[] idx) {
+        faces ~= idx;
+        growPolyVertexMapsForAppendedCorners(idx.length);
+    }
+
+    /// --- TASK 1903 STAGE L6: THE DUPLICATION FAMILY'S APPEND PUBLISHER ---
+    ///
+    /// Record ONE `Kind.AddVerts` and ONE `Kind.AddFaces` entry covering a bulk
+    /// kernel's WHOLE append round — everything `vertices` grew by since
+    /// `vertBase` and everything `faces` grew by since `faceBase`.
+    ///
+    /// WHY IT EXISTS AT ALL. `arrayFaces`, `radialArrayFaces`,
+    /// `mirrorFacesPlane` and `duplicateSelectedFaces` grow the mesh with a
+    /// bare `vertices ~= …` and `appendFaceRaw`, and NEITHER reaches a tracker
+    /// hook (`appendFaceRaw` deliberately has none — see its own doc comment;
+    /// `addVertex`'s `recordAddVert` is on the OTHER door). Before this, a
+    /// recording batch around any of the four closed with an op-log that was
+    /// EMPTY over a mesh that really had been duplicated, and
+    /// `acceptRecordedEdit` refuses that pairing — so the command would have
+    /// answered `status:error` over a changed document, with no history entry.
+    /// That is the worst outcome in the family and it is why the two members
+    /// with no weld (`mesh.duplicate`, `mesh.clone`) could not migrate at all
+    /// until this landed.
+    ///
+    /// PER ROUND, NEVER PER ELEMENT, and that is measured rather than tidy.
+    /// A publisher inside `appendFaceRaw` (the tempting shape) would fire once
+    /// per appended FACE: an array of count 8 over a 2 000-face selection
+    /// appends 16 000 faces, so 16 000 `MeshOpEntry` of `MeshOpEntry.sizeof`
+    /// apiece — and, for any kernel that also pays a per-corner payload, an
+    /// O(F) ordered sweep EACH TIME. Card 2260 measured that exact shape at
+    /// 31x (3 600 faces) and 66x (10 000), exponent 1.85 against 0.99.
+    /// `appendFaceRaw` also has eight production call sites across three
+    /// stages (L4's cut caps and the §6.6-declined `paste` among them), so a
+    /// hook there would change three families' settled op-logs at once.
+    /// JUDGED BY TIME: `gcAllocBytes` points the WRONG WAY on this choice
+    /// (task 2160 — an append-grown array is charged by page, a pre-sized one
+    /// by whole payload).
+    ///
+    /// ORDER IS PART OF THE CONTRACT. `AddVerts` must precede `AddFaces` in
+    /// the log, because the reverse replays LIFO: `AddFaces`^-1 truncates
+    /// `faces` back to `faceBase` and only then does `AddVerts`^-1 truncate
+    /// `vertices` back to `vertBase`. The other order leaves a live face
+    /// pointing at a vertex index that no longer exists for one entry, which
+    /// `finalize`'s `rebuildEdges` would then read.
+    ///
+    /// POSITIONS ARE READ AT CALL TIME, so a kernel that writes an appended
+    /// vertex AFTER appending it (`mirrorFacesPlane` reflects its clones)
+    /// must call this AFTER that write — and then owes no `SetPos`. Measured:
+    /// the recorded position equals the reflected position, by value
+    /// (`undo_parity_l6_test`'s mirror cells).
+    ///
+    /// NOT A COMMIT AND NOT A DECLARATION. The kernel's own tail
+    /// `declareCornerAppend()` / `commitChange` still stand; this only writes
+    /// the op-log. The per-corner plane needs nothing from it either:
+    /// `CornerCarry.step` already handles `AddFaces` in reverse by truncating
+    /// its provenance array to `f0`, which is exactly a tail append undone.
+    void recordBulkAppendRound(size_t vertBase, size_t faceBase) {
+        recordAppendedVertsRound(vertBase);
+        recordAppendedFacesRound(faceBase);
+    }
+
+    /// The vertex half alone — for a kernel that appends verts, then rewrites
+    /// EXISTING windings to point at them, and then appends faces.
+    /// `arrayFaces`' detach pass is the one such caller: its
+    /// `Mesh.setFaceWindings` entry has to sit BETWEEN the two vertex rounds so
+    /// the LIFO reverse puts the original windings back BEFORE truncating away
+    /// the vertices the detached ones point at.
+    void recordAppendedVertsRound(size_t vertBase) {
+        if (editRecorder_ is null) return;
+        if (vertices.length <= vertBase) return;
+        editRecorder_.recordAddVerts(cast(uint)vertBase,
+                                     cast(uint)vertices.length,
+                                     vertices[vertBase .. $]);
+    }
+
+    /// ditto, the face half.
+    void recordAppendedFacesRound(size_t faceBase) {
+        if (editRecorder_ is null) return;
+        if (faces.length <= faceBase) return;
+        // `assumeFaceSpace`, and it is earned here for the reason the merge
+        // path's call spells out: an `AddFaces`' `[F0, F1)` is a TAIL BASE in
+        // the array `faces` has just become, not a live index minted from the
+        // pre-op face space.
+        editRecorder_.recordAddFaces(FaceIdx.assumeFaceSpace(faceBase),
+                                     cast(uint)faces.length,
+                                     faces[faceBase .. $]);
+    }
+
+    // Grow every PolyVertex map by `nCorners` zero-filled elements at the END —
+    // the corners an appended face contributes (which are last in CSR loop
+    // order). Keeps `data.length == Σ face-arities * dim` true with NO window,
+    // even though `addFace`/`addFaceFast` defer the loops rebuild. No-op when no
+    // PolyVertex map is registered.
+    private void growPolyVertexMapsForAppendedCorners(size_t nCorners) {
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.PolyVertex) continue;
+            const size_t old = m.data.length;
+            m.data.length = old + nCorners * m.dim;
+            m.data[old .. $] = 0.0f; // float.init is NaN
+        }
+    }
+
+    // The same growth stated as a DESTINATION rather than a delta — how the
+    // `Appended` declaration is applied (task 0830). Idempotent by
+    // construction: a kernel that already grew face-by-face through
+    // `appendFaceRaw` is already at (or past) `totalCorners` and this does
+    // nothing, while a kernel that appended with a bare `faces ~= …` and states
+    // the growth ONCE at the end gets it here, in one pass instead of n.
+    private void growPolyVertexMapsTo(size_t totalCorners) {
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.PolyVertex) continue;
+            const size_t want = totalCorners * m.dim;
+            if (m.data.length >= want) continue;
+            const size_t old = m.data.length;
+            m.data.length = want;
+            m.data[old .. $] = 0.0f; // float.init is NaN
+        }
+    }
+    // Non-allocating "any bit set?" scans straight over the marks arrays.
+    // These run per-frame / per-drag-event from the toolpipe stages and
+    // render path, so they avoid materializing a `bool[]` snapshot first.
+    bool hasAnySelectedVertices() const {
+        foreach (m; vertexMarks) if (m & Marks.Select) return true;
+        return false;
+    }
+    bool hasAnySelectedEdges() const {
+        foreach (m; edgeMarks) if (m & Marks.Select) return true;
+        return false;
+    }
+    bool hasAnySelectedFaces() const {
+        foreach (m; faceMarks) if (m & Marks.Select) return true;
+        return false;
+    }
+    bool hasAnySubpatch() const {
+        foreach (m; faceMarks) if (m & Marks.Subpatch) return true;
+        return false;
+    }
+    bool hasAnyHiddenVertices() const {
+        foreach (m; vertexMarks) if (m & Marks.Hide) return true;
+        return false;
+    }
+    bool hasAnyHiddenEdges() const {
+        foreach (m; edgeMarks) if (m & Marks.Hide) return true;
+        return false;
+    }
+    bool hasAnyHiddenFaces() const {
+        foreach (m; faceMarks) if (m & Marks.Hide) return true;
+        return false;
+    }
+    /// True when the given edit mode has no active selection. By
+    /// convention an empty selection means "operate on the whole mesh",
+    /// so commands and tools treat this as "everything is selected"
+    /// (cf. selectedVertexIndices*, which return all indices when nothing
+    /// is selected). The check is per-element-type because selections are
+    /// kept independent across modes.
+    bool nothingSelected(EditMode mode) const {
+        final switch (mode) {
+            case EditMode.Vertices: return !hasAnySelectedVertices();
+            case EditMode.Edges:    return !hasAnySelectedEdges();
+            case EditMode.Polygons: return !hasAnySelectedFaces();
+        }
+    }
+    /// L1 funnel (doc/hide_geometry_plan.md §3.2) — the single home the "empty
+    /// selection ⇒ whole mesh" convention collapses into once hidden geometry
+    /// exists. Stage 1/3 wired it up and it is now the funnel it was written to
+    /// be: ELEVEN production call sites (`commands/mesh/` jitter, delete,
+    /// remove, smooth, quantize, magnet, vertex_extrude, vertex_bevel;
+    /// `tools/alignment/align_kernels.d`; `tools/edit/` vertex_extrude_tool and
+    /// vertex_bevel_tool), plus two in `tests/unit/`. Counted 2026-08-28,
+    /// task 2440 — the sentence this replaces still read "NOT wired into any
+    /// caller yet".
+    ///
+    /// Returns the vertices touched by `mode`'s current selection — vertex
+    /// selection directly, or the vertices touched by the selected edges /
+    /// faces, exactly the modal fan-in every open-coded copy of this idiom
+    /// already performs (smooth/quantize/jitter/magnet/the align family, and
+    /// the three `selectedVertexIndices{Vertices,Edges,Faces}` accessors).
+    /// When `mode` has no selection, returns every VISIBLE vertex instead of
+    /// every vertex. A real selection can never contain a hidden element
+    /// (§3.1's `Select ∧ Hide = ∅` invariant, enforced in the select*
+    /// writers below), so only the fallback branch needs the subtraction.
+    bool[] operandVertexMask(EditMode mode) const {
+        auto vmask = new bool[](vertices.length);
+        bool any = false;
+        // Bound every scan loop by vmask.length (== vertices.length), not by
+        // the marks array's own length (code review, task 0613): the marks
+        // arrays only grow-and-keep, so clearing the mesh (Mesh.clear())
+        // empties vertices/edges/faces without shrinking vertexMarks /
+        // edgeMarks / faceMarks — a loop bound by the (now stale, longer)
+        // marks length would write vmask[i] out of range.
+        final switch (mode) {
+            case EditMode.Vertices:
+                foreach (i; 0 .. vertexMarks.length) {
+                    if (i >= vmask.length) break;
+                    if (isVertexSelected(i)) { vmask[i] = true; any = true; }
+                }
+                break;
+            case EditMode.Edges:
+                foreach (i; 0 .. edgeMarks.length) {
+                    if (i >= edges.length) break;
+                    if (isEdgeSelected(i))
+                        foreach (vi; edges[i]) if (vi < vmask.length) { vmask[vi] = true; any = true; }
+                }
+                break;
+            case EditMode.Polygons:
+                foreach (i; 0 .. faceMarks.length) {
+                    if (i >= faces.length) break;
+                    if (isFaceSelected(i))
+                        foreach (vi; faces[i]) if (vi < vmask.length) { vmask[vi] = true; any = true; }
+                }
+                break;
+        }
+        if (!any) vmask = visibleVertexMask();
+        return vmask;
+    }
+    // The fallback branch of the L1 funnel, factored out so "the whole mesh
+    // means the VISIBLE mesh" has exactly one body per plane (task 0613, S5).
+    //
+    // Called directly by the handful of whole-mesh fallbacks whose gate is NOT
+    // the plain `nothingSelected(mode)` convention and so CANNOT be routed
+    // through operand*Mask without a behaviour change — the four
+    // mode-gated face commands (`triple`, `quadruple`, `detriangulate`,
+    // `subdivide_faceted`) fall back to the whole mesh when the active mode is
+    // not Polygons EVEN IF a face selection exists. Substituting
+    // operandFaceMask() there would make them start honouring that stale face
+    // selection, which is a real semantic change wearing a refactor's clothes.
+    // They get the hide subtraction; they keep their own gate.
+    bool[] visibleVertexMask() const {
+        auto m = new bool[](vertices.length);
+        foreach (i; 0 .. vertices.length) if (!isVertexHidden(i)) m[i] = true;
+        return m;
+    }
+
+    /// The index-list twin of `visibleVertexMask` above: the same "the whole
+    /// mesh means the VISIBLE mesh" fallback in the `int[]` shape the three
+    /// `selectedVertexIndices{Vertices,Edges,Faces}` accessors return. It was
+    /// open-coded byte-identically in all three of them (task 2440); one body
+    /// now, so the hide subtraction cannot be fixed in one accessor and left
+    /// wrong in the other two.
+    private int[] visibleVertexIndices_() const {
+        int[] idx;
+        foreach (i; 0 .. vertices.length)
+            if (!isVertexHidden(i)) idx ~= cast(int) i;
+        return idx;
+    }
+    bool[] visibleEdgeMask() const {
+        auto m = new bool[](edges.length);
+        foreach (i; 0 .. edges.length) if (!isEdgeHidden(i)) m[i] = true;
+        return m;
+    }
+    bool[] visibleFaceMask() const {
+        auto m = new bool[](faces.length);
+        foreach (i; 0 .. faces.length) if (!isFaceHidden(i)) m[i] = true;
+        return m;
+    }
+    /// L1 funnel, edge plane: the selected edges when any are selected, else
+    /// every VISIBLE edge. No modal fan-in — the edge-flavoured copies of
+    /// this idiom always key off the edge selection itself.
+    bool[] operandEdgeMask() const {
+        auto emask = new bool[](edges.length);
+        bool any = false;
+        // Bound by emask.length, not edgeMarks.length — same stale-marks-
+        // after-clear() hazard as operandVertexMask above.
+        foreach (i; 0 .. edgeMarks.length) {
+            if (i >= emask.length) break;
+            if (isEdgeSelected(i)) { emask[i] = true; any = true; }
+        }
+        if (!any) emask = visibleEdgeMask();
+        return emask;
+    }
+    /// L1 funnel, face plane: the selected faces when any are selected, else
+    /// every VISIBLE face (shapes B/C's face-flavoured fallback).
+    bool[] operandFaceMask() const {
+        auto fmask = new bool[](faces.length);
+        bool any = false;
+        // Bound by fmask.length, not faceMarks.length — same stale-marks-
+        // after-clear() hazard as operandVertexMask above.
+        foreach (i; 0 .. faceMarks.length) {
+            if (i >= fmask.length) break;
+            if (isFaceSelected(i)) { fmask[i] = true; any = true; }
+        }
+        if (!any) fmask = visibleFaceMask();
+        return fmask;
+    }
+    // --- §3.3 backstop: the mask-taking kernels subtract hidden themselves --
+    // L1 (operand*Mask) closes the "empty selection ⇒ whole mesh" fallback at
+    // the point the operand set is BUILT. L3's substitution of the 25
+    // open-coded builders is mechanical, not compiler-enforced, so these three
+    // close the same hole at the point the operand set is CONSUMED: every
+    // `*ByMask` kernel funnels its incoming mask through the matching one
+    // before it does anything. A hand-built mask that reached a hidden element
+    // — through an L3 miss, or through a caller nobody has written yet — still
+    // cannot act on it.
+    //
+    // Returns the caller's own slice UNCHANGED when nothing on that plane is
+    // hidden, which is the overwhelmingly common case (and every existing
+    // unittest): no allocation, no copy, so 25 kernels pay one popcount-free
+    // word scan each. Only a mesh that genuinely has hidden geometry pays a
+    // `.dup`.
+    //
+    // NOT private: these are reached from the kernel bodies in
+    // `mesh_ops/{extrude,bevel}.d`, which are mixin templates whose bodies are
+    // analysed in THEIR module, so D's module-scoped `private` would hide them.
+    const(bool)[] maskMinusHiddenVertices(const(bool)[] mask) const {
+        if (!hasAnyHiddenVertices()) return mask;
+        auto outMask = mask.dup;
+        foreach (i; 0 .. outMask.length) if (isVertexHidden(i)) outMask[i] = false;
+        return outMask;
+    }
+    const(bool)[] maskMinusHiddenEdges(const(bool)[] mask) const {
+        if (!hasAnyHiddenEdges()) return mask;
+        auto outMask = mask.dup;
+        foreach (i; 0 .. outMask.length) if (isEdgeHidden(i)) outMask[i] = false;
+        return outMask;
+    }
+    const(bool)[] maskMinusHiddenFaces(const(bool)[] mask) const {
+        if (!hasAnyHiddenFaces()) return mask;
+        auto outMask = mask.dup;
+        foreach (i; 0 .. outMask.length) if (isFaceHidden(i)) outMask[i] = false;
+        return outMask;
+    }
+    /// The geometry type that mesh.delete / mesh.remove should operate on.
+    ///
+    /// Normally the same as `current` (the caller's active edit mode). But
+    /// when `current` has NO selection while another geometry type DOES hold a
+    /// selection, return that type instead. Without this redirect the
+    /// "empty selection ⇒ whole mesh" convention (see nothingSelected) fires
+    /// against the active mode and wipes the mesh even though a selection
+    /// exists in a different element type (task 0110).
+    ///
+    /// Priority when the active mode is empty and more than one other type
+    /// holds a selection: Polygons > Edges > Vertices. This order is a
+    /// deterministic vibe3d-internal convention; any fixed order is safe
+    /// because the sole objective is to avoid the whole-mesh path.
+    ///
+    /// Returns `current` unchanged when (a) the active mode already holds a
+    /// selection, or (b) no geometry type holds any selection (truly empty
+    /// everywhere — the whole-mesh convention is intentional in that case).
+    EditMode effectiveDeleteMode(EditMode current) const {
+        if (!nothingSelected(current)) return current;  // active mode has a selection
+        if (hasAnySelectedFaces())     return EditMode.Polygons;
+        if (hasAnySelectedEdges())     return EditMode.Edges;
+        if (hasAnySelectedVertices())  return EditMode.Vertices;
+        return current;  // truly nothing selected anywhere → whole-mesh convention
+    }
+    /// Loop-Slice activation from a POLYGON selection (task 0245): the
+    /// "interior" cage edges of the selected face region — every existing edge
+    /// incident to TWO OR MORE selected faces, i.e. the edges that lie
+    /// *between* the selected polygons. For two adjacent selected quads this is
+    /// exactly their single shared edge; a lone selected face, or two
+    /// non-adjacent faces, yields an empty result. The set is deduplicated and
+    /// returned in ascending edge-index order. Reads only the current face
+    /// selection + topology (`edgeIndexMap`); never mutates.
+    ///
+    /// This backs the Loop Slice tool's "act on the edge BETWEEN the selected
+    /// polygons" activation rule: a polygon selection PICKS the loop the same
+    /// way an edge selection names its seed edge(s) — the ring crossing each
+    /// seed edge is what the cut lands on (see `loopSliceRingEdges` /
+    /// `collectEdgeRing`).
+    uint[] interiorEdgesOfSelectedFaces() const {
+        uint[uint] incident;   // edge index → count of selected faces touching it
+        foreach (fi; 0 .. faces.length) {
+            if (!isFaceSelected(fi)) continue;
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                uint ei = edgeIndex(f[k], f[(k + 1) % f.length]);
+                if (ei == ~0u) continue;
+                incident[ei] = (ei in incident ? incident[ei] : 0u) + 1u;
+            }
+        }
+        uint[] res;
+        foreach (ei, c; incident) if (c >= 2) res ~= ei;
+        import std.algorithm : sort;
+        res.sort();
+        return res;
+    }
+    // `allSubpatch()` lived here: "true iff every face is subpatch-marked".
+    // Removed (audit №4) — zero callers, and its doc gated a fast path against
+    // a `catmullClarkSelected` CPU function that no longer exists. OsdAccel
+    // takes the marked SUBSET either way; whether that subset happens to be
+    // the whole cage is not a case anyone branches on.
+
+    void setSubpatch(size_t idx, bool on) {
+        if (idx >= faceMarks.length) return;
+        bool cur = (faceMarks[idx] & Marks.Subpatch) != 0;
+        if (cur != on) {
+            if (on) faceMarks[idx] |=  Marks.Subpatch;
+            else    faceMarks[idx] &= ~Marks.Subpatch;
+            // Subpatch is a Marks-class flip, but it also changes the subpatch
+            // preview's OUTPUT topology, so we keep the topologyVersion bump the
+            // old line carried (commitChange(Marks) alone would not, since Marks
+            // is not a Geometry class). Counters end identical to the raw line.
+            commitChange(MeshEditScope.Marks);
+            ++topologyVersion;
+        }
+    }
+    void clearSubpatch() {
+        bool any = false;
+        foreach (m; faceMarks) if (m & Marks.Subpatch) { any = true; break; }
+        // Mask ONLY the Subpatch bit — Select shares this word.
+        foreach (ref m; faceMarks) m &= ~Marks.Subpatch;
+        // Same as setSubpatch: Marks-class flip that also invalidates subpatch
+        // preview output topology — keep the topologyVersion bump explicitly.
+        if (any) { commitChange(MeshEditScope.Marks); ++topologyVersion; }
+    }
+
+    // --- Hide writers (Marks.Hide, task 0613) — authoritative plane only ---
+    //
+    // THE topologyVersion BUMP, and why all three writers below carry it (S3).
+    // Hide is a Marks-class flip, so `commitChange(Marks)` alone would leave
+    // topologyVersion alone. That is wrong for the same reason it is wrong for
+    // Subpatch (setSubpatch / clearSubpatch above keep an explicit bump), and
+    // the reason is NOT the limit surface — R5 still holds, the OSD *input* is
+    // untouched and the subdivided positions do not move. It is that
+    // topologyVersion is what two consumers use as the preview + GPU LAYOUT
+    // key, and a hide changes the layout:
+    //
+    //   * SubpatchPreview.rebuildIfStale (mesh.d) takes its position-only fast
+    //     path whenever `sourceTopologyVersion == source.topologyVersion`. That
+    //     path re-evaluates positions and NEVER re-runs buildPreview, so the
+    //     preview mesh's Hide marks (stamped from the cage in subpatch_osd.d)
+    //     would stay at their pre-hide values for as long as the preview lives.
+    //   * app.d's upload block picks refreshPositions over a full gpu.upload on
+    //     `gpuUploadedPreviewTopVersion == subpatchPreview.sourceTopologyVersion`.
+    //     refreshPositions cannot change a buffer's SIZE — only a full upload
+    //     re-derives faceTriCount / edgeVertCount / vertCount under the new
+    //     skip predicate.
+    //
+    // So without the bump, hiding a face while the subpatch preview is live is
+    // a no-op on screen. With it, both consumers rebuild exactly as they do for
+    // a Tab toggle. Guarded on an actual bit flip in every writer, so a
+    // no-op hide still costs nothing.
+    //
+    // Single-index face write, same shape as setSubpatch above.
+    void setFaceHidden(size_t idx, bool on) {
+        if (idx >= faceMarks.length) return;
+        bool cur = (faceMarks[idx] & Marks.Hide) != 0;
+        if (cur != on) {
+            if (on) {
+                faceMarks[idx] |= Marks.Hide;
+                // §3.1 Select ∧ Hide = ∅ (BLOCKER, code review task 0613) —
+                // this writer sets the Hide bit directly, not through
+                // refreshHiddenDerived(), so it owes the invariant too: a
+                // face that just became hidden cannot stay selected. Same
+                // word write, order stamp zeroed alongside, bus note only if
+                // it actually flipped.
+                if (faceMarks[idx] & Marks.Select) {
+                    faceMarks[idx] &= ~Marks.Select;
+                    if (idx < faceSelectionOrder.length) faceSelectionOrder[idx] = 0;
+                    noteSelectionChange(SelDomain.Face);
+                }
+            } else {
+                faceMarks[idx] &= ~Marks.Hide;
+            }
+            commitChange(MeshEditScope.Marks | MeshEditScope.Visibility);
+            ++topologyVersion;   // preview + GPU layout key — see the header above
+            // S5 (code review) — a Marks-class commit does not reach
+            // refreshHiddenDerived (commitChange only calls it for a
+            // Geometry-class commit, above), so the derived vertex/edge
+            // planes would otherwise read stale between this hide and the
+            // next geometry-mutating commit. Its own early-out keeps this
+            // free when nothing is hidden anywhere.
+            refreshHiddenDerived();
+        }
+    }
+    // True iff vertex `vi` is referenced by at least one face. O(1): the
+    // same vertLoop-based "isolated vertex" test the fan-walk accessors
+    // above (verticesAroundVertex / edgesAroundVertex / facesAroundVertex)
+    // already rely on — vertLoop[vi] == ~0u means no dart starts at vi, i.e.
+    // no incident face-corner, after buildLoops(); out-of-range reads the
+    // same "no loop" answer, which is also the right answer for a vertex
+    // added since the last build (code review, task 0613: was an O(faces ×
+    // corners) scan — this replaces it, not merely a second copy).
+    private bool hasIncidentFace(size_t vi) const {
+        return vi < vertLoop.length && vertLoop[vi] != ~0u;
+    }
+    // Loose points ONLY. A vertex with at least one incident face has its
+    // Hide bit fully DERIVED by refreshHiddenDerived() — offering a writer
+    // for that case would let a caller fight the derivation and reintroduce
+    // exactly the derived-from-polygons mistake the capture refuted (§1.2).
+    // Returns whether the write landed (code review, task 0613: a debug
+    // assert here crashed an ordinary developer build on a legal user
+    // action — hiding a loose vertex in a mesh that also has face-bound
+    // vertices — while release silently dropped it; `hasIncidentFace` is
+    // private, so the caller had no way to test the precondition itself).
+    // Same silent-refusal contract in both builds now: false means "this
+    // vertex has a face — its Hide bit is derived, not directly settable".
+    bool setVertexHidden(size_t idx, bool on) {
+        if (idx >= vertexMarks.length) return false;
+        if (hasIncidentFace(idx)) return false;
+        bool cur = (vertexMarks[idx] & Marks.Hide) != 0;
+        if (cur != on) {
+            if (on) {
+                vertexMarks[idx] |=  Marks.Hide;
+                // §3.1 Select ∧ Hide = ∅ — owed by EVERY writer of the Hide
+                // plane, this one included (task 0628). It was missing here
+                // and inert while nothing in production ever set a loose
+                // point's bit: refreshHiddenDerived() upholds the invariant
+                // for face-bound vertices, but it steps OVER loose points by
+                // design, so this writer is the only place that can uphold it
+                // for them. mesh.hideInvert in Vertices/Edges mode is the
+                // first production caller that sets the bit — a selected
+                // loose point that the invert hides would otherwise end up
+                // both selected and hidden, with no derivation anywhere able
+                // to heal it. Same shape as setFaceHidden above: cleared in
+                // the SAME word write, order stamp zeroed alongside, bus note
+                // only if it actually flipped.
+                if (vertexMarks[idx] & Marks.Select) {
+                    vertexMarks[idx] &= ~Marks.Select;
+                    if (idx < vertexSelectionOrder.length) vertexSelectionOrder[idx] = 0;
+                    noteSelectionChange(SelDomain.Vertex);
+                }
+            } else {
+                vertexMarks[idx] &= ~Marks.Hide;
+            }
+            commitChange(MeshEditScope.Marks);
+        }
+        return true;
+    }
+    // Masked clear, same shape as clearSubpatch: `&= ~Marks.Hide`, never
+    // `= 0` (Select and Subpatch share these words).
+    //
+    // Scope is EVERY plane, not just the authoritative face one. Stage 0
+    // left the loose-vertex half of this open — a vertex with no incident
+    // face has a settable Hide bit that refreshHiddenDerived deliberately
+    // steps over, so no derivation can ever clear it — and deferred the call
+    // to Stage 2. Stage 2 has now made it (see commands/mesh/hide.d,
+    // MeshUnhideAll): an unhide clears loose bits too, because this is the
+    // only writer that could, and a bit nothing can clear is a one-way trap.
+    // So this clears the face plane AND the vertex plane directly. The
+    // face-bound half of the vertex plane is redundant with the refresh
+    // below (no face hidden ⇒ no face-bound vertex hidden), which is fine:
+    // one masked pass is cheaper than deciding per vertex which half it is
+    // in, and the answer is the same either way.
+    void clearHidden() {
+        uint anyHide = 0;
+        foreach (w; faceMarks)   anyHide |= w;
+        foreach (w; vertexMarks) anyHide |= w;
+        foreach (w; edgeMarks)   anyHide |= w;
+        if (!(anyHide & Marks.Hide)) return;   // nothing hidden anywhere
+        foreach (ref m; faceMarks)   m &= ~Marks.Hide;
+        foreach (ref m; vertexMarks) m &= ~Marks.Hide;
+        foreach (ref m; edgeMarks)   m &= ~Marks.Hide;
+        commitChange(MeshEditScope.Marks | MeshEditScope.Visibility);
+        ++topologyVersion;   // preview + GPU layout key — see the header above
+                             // setFaceHidden. Reached only past the early-out,
+                             // i.e. only when something really was hidden.
+        // S5 (code review) — same reasoning as setFaceHidden above: a
+        // Marks-only commit never reaches refreshHiddenDerived, so an unhide
+        // must call it directly or the derived vertex/edge planes stay
+        // hidden until the next geometry-mutating commit. With all three
+        // planes masked above this call now early-outs by construction; it
+        // stays because it is the funnel that OWNS the derived planes — a
+        // plane added later is the refresh's job to recompute, not this
+        // function's job to remember to mask. Clearing can only ever DROP
+        // Hide bits, never set one, so there is no new Select ∧ Hide
+        // collision for it to fix either way.
+        refreshHiddenDerived();
+    }
+
+    // The clear* setters compare-before-set too: only publish if at least one
+    // Select bit was actually set (clearing an already-empty selection is a
+    // no-op and must not publish — e.g. the unconditional clearVertex/Face
+    // calls topology mutators run on edge-only edits).
+    //
+    // TASK 1906 STAGE 3 — THEY DELIVER, and `noteSelectionChange` beside them
+    // still does not. The difference is measured, not stylistic: the editor's
+    // "click empty space to deselect" and the lasso's replace-mode pre-clear
+    // call these three from `source/input_router.d` OUTSIDE any command and
+    // outside the interactive pick helpers, so before this they reached the bus
+    // only through the per-frame drain — the last four frames of residue the
+    // stage-3 census measured, after the command anchor and `symmetry_pick`
+    // had taken the other ~1670. A bulk clear is an edit boundary by nature
+    // (one call, behind a compare-guard) so a delivery here cannot loop, which
+    // is exactly what is NOT true of the scalar `selectVertex` family and why
+    // that one keeps the accumulate-only funnel and a batch around its caller.
+    // Inside a command or a pick batch this only registers, so the
+    // one-delivery-per-operation count is unchanged.
+    void clearVertexSelection() {
+        bool any = false;
+        foreach (m; vertexMarks) if (m & Marks.Select) { any = true; break; }
+        foreach (ref m; vertexMarks) m &= ~Marks.Select;
+        vertexSelectionOrder[] = 0;
+        vertexSelectionOrderCounter = 0;
+        if (any) { noteSelectionChange(SelDomain.Vertex); deliverPending(); }
+    }
+    void clearEdgeSelection() {
+        bool any = false;
+        foreach (m; edgeMarks) if (m & Marks.Select) { any = true; break; }
+        foreach (ref m; edgeMarks) m &= ~Marks.Select;
+        edgeSelectionOrder[] = 0;
+        edgeSelectionOrderCounter = 0;
+        if (any) { noteSelectionChange(SelDomain.Edge); deliverPending(); }
+    }
+    void clearFaceSelection() {
+        // Mask ONLY the Select bit — Subpatch shares this word and must
+        // survive a selection clear.
+        bool any = false;
+        foreach (m; faceMarks) if (m & Marks.Select) { any = true; break; }
+        foreach (ref m; faceMarks) m &= ~Marks.Select;
+        faceSelectionOrder[] = 0;
+        faceSelectionOrderCounter = 0;
+        if (any) { noteSelectionChange(SelDomain.Face); deliverPending(); }
+    }
+
+    // --- Per-element selection-array resize primitives ---------------------
+    // Grow/shrink the parallel selection-bit + pick-order arrays to match the
+    // current geometry length WITHOUT clearing them. Topology mutators call
+    // one of these (then a clear*, when the bits are no longer valid) instead
+    // of writing the `.length = ...` lines by hand — the boilerplate was
+    // duplicated across resetSelection, weld, compact, delete/dissolve and the
+    // create-style mutators. New per-element flags (hide/lock/…) would only
+    // need to extend the relevant primitive here, not every call site.
+    void resizeVertexSelection() {
+        vertexMarks.length          = vertices.length;
+        vertexSelectionOrder.length = vertices.length;
+        resizeMeshMaps(MapDomain.Point);
+        selSetResizeVertex(this);   // task 1060 — vertexSetMask rides along
+    }
+    void resizeEdgeSelection() {
+        edgeMarks.length          = edges.length;
+        edgeSelectionOrder.length = edges.length;
+        resizeMeshMaps(MapDomain.Edge);
+    }
+    void resizeFaceSelection() {
+        // Only the per-face marks array (folding Select + Subpatch). The
+        // pick-order / subpatch / material arrays are rebuilt in lock-step with
+        // `faces` by the calling mutator.
+        //
+        // `faceSetMask` (task 1060) is deliberately NOT grown here — same
+        // lazy-size convention as `facePart`/`faceMaterial`: it grows on
+        // WRITE (mesh_selsets.writeMembersFromSelection) and reads as 0 past
+        // its length. Do not "fix" that by adding a grow line — there is no
+        // per-face resize hook to hang one on, by design.
+        faceMarks.length = faces.length;
+    }
+
+    // --- Mesh-map registry + lifecycle ------------------------------------
+    // Number of elements in a given domain — the per-domain length a map's
+    // `data` is `dim`-times larger than.
+    size_t elementCount(MapDomain domain) const {
+        final switch (domain) {
+            case MapDomain.Point:      return vertices.length;
+            case MapDomain.Edge:       return edges.length;
+            case MapDomain.PolyVertex: return loops.length;
+        }
+    }
+
+    // Address a face-corner as a PolyVertex element (loop) index. `buildLoops`
+    // lays loops out CSR-style — `faceLoop[fi]` is the first loop of face `fi`,
+    // and corner `c` is at `faceLoop[fi] + c`. This is the canonical
+    // `(face, corner) → element` mapping for the PolyVertex domain; import /
+    // export / codec address corners through this helper rather than
+    // hard-coding the CSR formula. Bounds-guarded: returns `~0u` (size_t.max)
+    // for an out-of-range face or corner so callers can detect it instead of
+    // indexing past `loops`.
+    size_t faceCornerLoop(uint fi, uint corner) const {
+        if (fi >= faceLoop.length) return size_t.max;
+        const size_t base = faceLoop[fi];
+        // The face's corner count is the gap to the next face's first loop
+        // (or to `loops.length` for the last face).
+        const size_t end = (fi + 1 < faceLoop.length) ? faceLoop[fi + 1] : loops.length;
+        if (base + corner >= end) return size_t.max;
+        return base + corner;
+    }
+
+    // Grow/shrink every registered map of `domain` so its `data.length`
+    // matches `elementCount(domain) * dim`. New trailing slots default to 0.
+    // Same grow-and-keep discipline as the selection/marks resize primitives:
+    // values are length-correct but NOT remapped across destructive edits.
+    // Called from resizeVertexSelection (Point) / resizeEdgeSelection (Edge)
+    // so it cannot be forgotten by a topology mutator.
+    void resizeMeshMaps(MapDomain domain) {
+        foreach (ref m; meshMaps) {
+            if (m.domain != domain) continue;
+            resizeMeshMapData(m);
+        }
+    }
+
+    // Resize all registered maps across every domain (used by snapshot restore
+    // and any caller that replaced multiple element arrays at once).
+    void resizeAllMeshMaps() {
+        foreach (ref m; meshMaps)
+            resizeMeshMapData(m);
+    }
+
+    // Bring every PolyVertex map's `data` in step with the current loop layout,
+    // called from `buildLoops` AFTER `loops` is rebuilt. The rule distinguishes
+    // a relocate/append (values already placed) from a topology REWRITE (drop):
+    //
+    //   * If `data.length` ALREADY equals `loops.length * dim`, the values were
+    //     placed deliberately just before this `buildLoops` — by
+    //     `remapPolyVertexMaps` (mechanism a/b) or the atomic `addFace` append,
+    //     or are simply unchanged across a benign rebuild — so KEEP them.
+    //   * Otherwise the face/loop topology was rewritten WITHOUT a relocate (the
+    //     DROP class: EDGE extrude, edge-extend, vertex extrude, smooth shift,
+    //     path-extrude — every declared `CornerDrop.SweptSurfaceNoLaw` site).
+    //     The old per-corner values are meaningless in the new corner space, so
+    //     ZERO the whole map at the new length. This is the conscious,
+    //     length-correct, value-dropped behaviour (D5 drop set); leaving stale
+    //     leading values in new corner slots would be silent corruption.
+    //
+    //     Corrected (task 0901): this list used to also name primitive
+    //     rebuilds, subdivide and bridge. It shouldn't have —
+    //       * subdivide (`commands/mesh/subdivide.d`, all three modes) and
+    //         remesh (`commands/mesh/remesh.d`) REPLACE the whole `Mesh` value
+    //         (`*mesh = result`). The map is not zeroed by this rule at all;
+    //         it disappears WITH the old mesh, because `result` never had one.
+    //         Calling that a "drop" is the inaccuracy task 0682 introduced.
+    //       * primitive create-tools (`tools/create/*`, `mesh_ops/box_geom.d`)
+    //         only ever APPEND via `addFace` into the live scene mesh — see
+    //         `CornerDrop.PrimitiveRebuild`'s doc comment.
+    //       * bridge (`mesh_ops/bridge.d`) is the same shape — append-only via
+    //         `addFace` — see `CornerDrop.SweptSurfaceNoLaw`'s doc comment.
+    //       * the subpatch cage/preview (`subpatch_osd.d`) builds a disposable
+    //         `out Mesh`/`ref Mesh preview` that never registers a PolyVertex
+    //         map in the first place (its hot `refresh()` path only ever
+    //         writes `preview.vertices`, never `preview.faces`), so this rule
+    //         is never reached for it either.
+    //
+    // No-op when no PolyVertex map is registered.
+    void resizePolyVertexMaps() {
+        // --- the DECLARATION is the arbiter (task 0830) -------------------
+        // Consume exactly once: a declaration describes ONE `faces` rewrite,
+        // and a second `buildLoops` must not re-apply it.
+        const CornerProvenance decl = pendingCornerProvenance_;
+        const bool wasArmed         = cornerRewriteArmed_;
+        pendingCornerProvenance_    = CornerProvenance.init;
+        cornerRewriteArmed_         = false;
+
+        if (decl.kind() == CornerProvenance.Kind.Dropped) {
+            // Stated loss. Deferred to here rather than applied at declaration
+            // time because the length it must come out at is the NEW
+            // `loops.length`, which only exists once this rebuild has run.
+            dropPolyVertexMaps();
+            return;
+        }
+        if (decl.declared() && decl.corners() != size_t.max
+                            && decl.corners() != loops.length) {
+            // The kernel described a corner space it did not end in — it
+            // relocated N corners and then changed the corner total again
+            // before the rebuild. Its correspondence addresses corners that do
+            // not exist, so the honest end state is the stated drop (which is
+            // also, exactly, what the length insurance below would have
+            // produced).
+            //
+            // The drop runs FIRST and the shout second, deliberately: a
+            // diagnostic that pre-empts the repair leaves the mesh holding a
+            // length-wrong map, which is a worse state than the one being
+            // reported. Under `-release` the shout is gone and the repair is
+            // all that is left, which is the correct behaviour either way.
+            dropPolyVertexMaps();
+            debug {
+                import std.conv : to;
+                assert(decl.corners() == loops.length,
+                    "corner provenance: declared for a different corner space than "
+                    ~ "the one buildLoops rebuilt (kind "
+                    ~ to!string(decl.kind()) ~ ": declared "
+                    ~ to!string(decl.corners()) ~ " corners, rebuilt "
+                    ~ to!string(loops.length) ~ ")");
+            }
+            return;
+        }
+        if (wasArmed && !decl.declared()) {
+            // A kernel OPENED a corner rewrite and never said what became of
+            // the corners. This is the 0697 failure with its teeth pulled: a
+            // corner-count-NEUTRAL rewrite lands here with the length still
+            // matching, and the insurance below would KEEP every value — each
+            // one now sitting on a foreign corner. Silence is a drop.
+            dropPolyVertexMaps();
+            debug assert(!wasArmed,
+                "corner provenance: a face rewrite reached buildLoops without "
+                ~ "declaring what became of the corners");
+            return;
+        }
+
+        // --- length: the INSURANCE, no longer the arbiter ------------------
+        // Reached by a `buildLoops` that follows no declared rewrite at all —
+        // the overwhelming majority (a rebuild after a vertex move, a fresh
+        // mesh, a snapshot restore). It keeps a length-correct map and zeroes a
+        // length-wrong one, exactly as before task 0830. Every kernel converted
+        // to declare passes through the branches above and never reaches here.
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.PolyVertex) continue;
+            const size_t want = loops.length * m.dim;
+            if (m.data.length == want) continue; // relocate/append/unchanged → keep
+            // Topology rewritten without a relocate ⇒ drop (length-correct, zeroed).
+            // The repair runs FIRST and the diagnostic second, same ordering
+            // rule as the two asserts above: a mesh must never be left holding
+            // a wrong-length map, in either build type.
+            m.data.length = want;
+            m.data[] = 0.0f;
+            // A per-corner plane really did exist and really was thrown away,
+            // and nobody said so — the census 0830 left open (bridge, the
+            // primitive-create commit paths, the subpatch cage build, the
+            // remesh / import paths) is now closed by task 0901: every one of
+            // those either declares (bridge, primitives — Appended) or is
+            // verified NOT APPLICABLE (subpatch cage, remesh, import, load-
+            // mesh, subdivide, topology pen — none of them rewrites a `Mesh`
+            // that still owns a live PolyVertex map). This was a one-time
+            // `fprintf` warning through task 0900; promoted to a `debug
+            // assert` here now that reaching this branch at all is the
+            // failure, not an expected, uncatalogued gap. Under `-release`
+            // this compiles out and the repair above is all that runs — the
+            // correct behaviour either way, matching the two asserts above.
+            debug assert(false,
+                "corner provenance: a face rewrite reached buildLoops without "
+                ~ "declaring what became of the corners, and without arming "
+                ~ "beginCornerRewrite()/beginCornerRelocate() either — a "
+                ~ "kernel outside the task 0830/0901 census. Open a "
+                ~ "beginCornerRewrite()/beginCornerRelocate() capture at the "
+                ~ "site and declare what happened to the corners "
+                ~ "(Unchanged/Appended/Relocated/Carried/Dropped(reason)).");
+        }
+    }
+
+    // --- The corner-provenance obligation (task 0830) ---------------------
+    // The declaration a kernel owes, and the capture it is resolved against.
+    //
+    // THE SHAPE. A kernel that is about to renumber corners opens the rewrite:
+    //
+    //     auto rw = beginCornerRewrite();      // captures the OLD corner space
+    //     …rebuild `faces`…
+    //     declareCornerProvenance(rw.carried(newFaces, srcOfCorner, blends));
+    //     rebuildEdges();
+    //     buildLoops();                        // consumes the declaration
+    //
+    // `beginCornerRewrite` is not ceremony: it returns the two things every
+    // correspondence is resolved against — the old windings and the old CSR
+    // offsets — which five kernels used to capture by hand, five times, with
+    // five different guards. The kernel calls it because it NEEDS the capture;
+    // the obligation rides along.
+    //
+    // WHAT THE ARMING BUYS. From the moment the capture is taken until the
+    // declaration lands, the per-corner plane is IN FLIGHT and its default
+    // outcome is the DROP — not the length test. That is the half of the class
+    // a length check can never see (task 0697): a rewrite that leaves the corner
+    // TOTAL unchanged has a length-correct map at the end, so the insurance
+    // keeps every value, and every value is now on a foreign corner. Under the
+    // arming, saying nothing loses the values instead of scrambling them.
+    //
+    // WHY THE HANDLE HAS A DESTRUCTOR. A kernel may bail after the capture and
+    // before it rewrites anything (an empty mask, a degenerate input). The
+    // destructor disarms, so an abandoned rewrite leaves the plane exactly as it
+    // found it. The two failure directions are deliberately asymmetric:
+    // disarming too EARLY falls back to the length insurance (the pre-0830
+    // behaviour), disarming too LATE drops a plane and goes loudly red in the
+    // UV lanes. Neither can silently keep a wrong value.
+    //
+    // INERT WITHOUT A MAP. With no PolyVertex map registered the capture is
+    // skipped, nothing is armed, and every declaration is a no-op — the same
+    // "don't pay for what isn't there" rule the carry sites already applied by
+    // hand with `if (hasPolyVertexMap())`.
+    struct CornerRewrite {
+        private Mesh*    mesh_;
+        private bool     active_;
+        private bool     haveWindings_;
+        private uint[][] oldFaces_;
+        private uint[]   oldFaceLoop_;
+
+        // One owner. A copied handle would disarm the mesh when the copy died,
+        // leaving the original's declaration to be judged by length again.
+        @disable this(this);
+
+        ~this() {
+            if (mesh_ !is null) mesh_.disarmCornerRewrite();
+        }
+
+        /// True iff there is a per-corner plane to owe anything to AND the
+        /// capture describes it. False makes every builder below produce
+        /// `unchanged()` — a declaration that costs nothing and claims nothing.
+        bool active() const { return active_; }
+
+        /// The windings as they were at capture time. Every correspondence
+        /// resolves its source corners against THESE, never against the live
+        /// `faces` (which the kernel is in the middle of rewriting).
+        const(uint[])[] oldFaces() const { return oldFaces_; }
+
+        /// CSR offsets for `oldFaces`, computed by prefix sum over the captured
+        /// windings rather than copied from `faceLoop`. That is deliberate:
+        /// `weldCoincidentVertices` rewrites windings WITHOUT a `buildLoops`, so
+        /// `faceLoop` can be stale exactly where a kernel needs offsets, and a
+        /// prefix sum over what was captured cannot be (task 0690's stale
+        /// `faceLoop` trap).
+        const(uint)[] oldFaceLoop() const { return oldFaceLoop_; }
+
+        // --- the declarations, bound to this capture ----------------------
+
+        /// Mechanism (c') — per-CORNER source, plus blends for corners standing
+        /// on inserted vertices and `gens` for corners the kernel computes.
+        CornerProvenance carried(const(uint[])[] newFaces,
+                                 const(uint)[]   srcFaceOfNewCorner,
+                                 PolyVertexBlend[uint] blendOfNewVertex,
+                                 const(PolyVertexGen)[] gens = null) {
+            if (!active_) return CornerProvenance.unchanged();
+            assert(haveWindings_,
+                   "a carry resolves its sources by looking a VERTEX up in an "
+                   ~ "old face — open it with beginCornerRewrite(), not "
+                   ~ "beginCornerRelocate()");
+            CornerProvenance.Carry c;
+            c.newFaces           = newFaces;
+            c.srcFaceOfNewCorner = srcFaceOfNewCorner;
+            c.oldFaces           = oldFaces_;
+            c.oldFaceLoop        = oldFaceLoop_;
+            c.blendOfNewVertex   = blendOfNewVertex;
+            c.gens               = gens;
+            return CornerProvenance.carried(c);
+        }
+
+        /// Mechanism (c) — the same, with ONE source face per new FACE. Expands
+        /// to the per-corner form here so the two entries can never drift: what
+        /// the per-corner path does IS what this does, with a constant source
+        /// across each face's corners.
+        CornerProvenance carriedPerFace(const(uint[])[] newFaces,
+                                        const(uint)[]   srcFaceOfNewFace,
+                                        PolyVertexBlend[uint] blendOfNewVertex,
+                                        const(PolyVertexGen)[] gens = null) {
+            if (!active_) return CornerProvenance.unchanged();
+            size_t total = 0;
+            foreach (nf; newFaces) total += nf.length;
+            uint[] srcFaceOfNewCorner = new uint[](total);
+            size_t at = 0;
+            foreach (nfi, nf; newFaces) {
+                const uint sf = (nfi < srcFaceOfNewFace.length)
+                              ? srcFaceOfNewFace[nfi] : ~0u;
+                foreach (_; nf) srcFaceOfNewCorner[at++] = sf;
+            }
+            return carried(newFaces, srcFaceOfNewCorner, blendOfNewVertex, gens);
+        }
+
+        /// Mechanisms (a)/(b) — one old corner per new corner, `~0u` for new.
+        CornerProvenance relocated(const(uint)[] oldLoopOfNewLoop) {
+            if (!active_) return CornerProvenance.unchanged();
+            return CornerProvenance.relocated(oldLoopOfNewLoop);
+        }
+
+        /// The corner space was not renumbered after all.
+        CornerProvenance unchanged() { return CornerProvenance.unchanged(); }
+
+        /// No correspondence can be stated, and here is why.
+        CornerProvenance dropped(CornerDrop why) {
+            return CornerProvenance.dropped(why);
+        }
+    }
+
+    // The declaration the next `buildLoops` will consume, and whether a rewrite
+    // is open. Both are TRANSIENT — they live for the span of one kernel, are
+    // cleared by `resizePolyVertexMaps`, and mean nothing across a copy of the
+    // `Mesh` value (a copy taken mid-kernel is already pathological).
+    private CornerProvenance pendingCornerProvenance_;
+    private bool             cornerRewriteArmed_;
+
+    /// Is a corner-provenance declaration still OUTSTANDING — declared by some
+    /// kernel and not yet consumed by a `buildLoops`?
+    ///
+    /// Task 1903 L0.P1 added this reader for one caller, and the question it
+    /// answers is narrow enough to be worth naming: `mesh_edit_delta`'s
+    /// carved-out fast path SKIPS `buildLoops`, and `buildLoops` is what
+    /// consumes a pending declaration (inside `resizePolyVertexMaps`,
+    /// `declareCornerProvenance` below). Today the skipped call silently EATS
+    /// any declaration someone left outstanding across a command boundary; on
+    /// the fast path there is no such call, so a stale declaration would sit
+    /// there and be consumed by the NEXT `buildLoops` against faces it never
+    /// described. The fast path asserts this is clear, which turns a latent
+    /// invisible repair into a loud red.
+    ///
+    /// `const` and O(1) — it reads the declaration's own `Kind` tag, whose
+    /// zero value is `Undeclared` precisely so a `.init` field cannot pass for
+    /// a claim (see `CornerProvenance` in mesh_corner_maps.d).
+    bool cornerRewritePending() const {
+        return pendingCornerProvenance_.declared();
+    }
+
+    /// Open a corner rewrite: capture the old corner space and arm the drop.
+    /// See the block comment above for what the arming means.
+    CornerRewrite beginCornerRewrite() {
+        return openCornerRewrite(true);
+    }
+
+    /// Open a rewrite that will be described by a RELOCATION rather than a
+    /// carry. Captures the old CSR offsets and arms the drop, but NOT the old
+    /// windings — and that is a statement about the mechanism, not a saving:
+    /// a relocation names each source corner BY INDEX, so it never looks a
+    /// vertex up in an old face, while a carry does exactly that (which is what
+    /// lets it resolve a corner standing on an inserted vertex). Asking for a
+    /// `carried()` declaration off this handle trips an assert rather than
+    /// resolving every corner against an empty winding list.
+    ///
+    /// The saving is real too: the windings dup is O(corners) and the delete /
+    /// dissolve / remove-edges family runs on whole-mesh selections.
+    CornerRewrite beginCornerRelocate() {
+        return openCornerRewrite(false);
+    }
+
+    private CornerRewrite openCornerRewrite(bool captureWindings) {
+        CornerRewrite rw;
+        rw.mesh_ = &this;
+        // Nothing to carry, nothing to lose: skip the capture entirely.
+        if (!hasPolyVertexMap()) return rw;
+        // The map is ALREADY out of step with `faces` (a kernel caught mid-
+        // rewrite). Offsets captured now would address a corner space no map
+        // is in, so decline to arm and let the length insurance state the loss.
+        if (!polyVertexMapsInStepWithFaces()) return rw;
+
+        // Note what is deliberately NOT a precondition: that `loops` describes
+        // the same space. `addEdgePoint` used to require it (`acc !=
+        // loops.length ⇒ do not carry`) and hoisting that guard here turned
+        // `arrayFacesGrid`'s dedup pass red — measured, task 0830. `loops` is a
+        // cache rebuilt only by `buildLoops`, so a MID-kernel capture routinely
+        // runs while it still describes the previous corner space (that kernel
+        // has already appended faces through `appendFaceRaw`, which grows the
+        // map but does not rebuild loops). What the capture's offsets have to
+        // agree with is the MAP, and that is exactly what
+        // `polyVertexMapsInStepWithFaces` asks — the same reasoning its own doc
+        // comment gives for not consulting `loops`.
+        rw.active_       = true;
+        rw.haveWindings_ = captureWindings;
+        if (captureWindings) {
+            rw.oldFaces_.reserve(faces.length);
+            foreach (ref f; faces) rw.oldFaces_ ~= f.dup;
+        }
+        rw.oldFaceLoop_.length = faces.length;
+        uint acc = 0;
+        foreach (fi, ref f; faces) {
+            rw.oldFaceLoop_[fi] = acc;
+            acc += cast(uint)f.length;
+        }
+        cornerRewriteArmed_ = true;
+        return rw;
+    }
+
+    /// State what became of the corners. Applies the correspondence to every
+    /// PolyVertex map NOW (it reads the OLD map data and the OLD windings, both
+    /// of which the tail `buildLoops` would have moved on from) and records the
+    /// declaration for that rebuild to consume.
+    ///
+    /// The one shape applied LATER is `Dropped`: its end state is a zeroed map
+    /// at the NEW `loops.length`, a number that does not exist yet.
+    void declareCornerProvenance(CornerProvenance p) {
+        assert(p.declared(),
+               "declareCornerProvenance: Undeclared is not a declaration — "
+               ~ "name one of the five shapes");
+        cornerRewriteArmed_ = false;
+        // No per-corner plane ⇒ no obligation, and nothing to record. Without
+        // this the mechanism stops being inert on the common path: a bulk
+        // append would leave a corner TOTAL pending on a mesh with no map, a
+        // later pass would legitimately change that total, and the rebuild
+        // would report a mismatch about a plane that does not exist. Measured
+        // — `arrayFacesGrid` on a map-less mesh, 48 declared vs 44 rebuilt.
+        if (!hasPolyVertexMap()) return;
+        final switch (p.kind()) {
+            case CornerProvenance.Kind.Undeclared:
+                break;                                   // refused by the assert
+            case CornerProvenance.Kind.Unchanged:
+                break;                                   // nothing moves
+            case CornerProvenance.Kind.Appended:
+                growPolyVertexMapsTo(p.corners());
+                break;
+            case CornerProvenance.Kind.Relocated:
+                remapPolyVertexMaps(p.oldLoopOfNewLoop());
+                break;
+            case CornerProvenance.Kind.Carried:
+                auto c = p.carry();
+                carryPolyVertexMapsByCorner(c.newFaces, c.srcFaceOfNewCorner,
+                                            c.oldFaces, c.oldFaceLoop,
+                                            c.blendOfNewVertex, c.gens);
+                break;
+            case CornerProvenance.Kind.Dropped:
+                break;                                   // applied at the rebuild
+        }
+        pendingCornerProvenance_ = p;
+    }
+
+    /// Declare the stated loss without opening a rewrite — the shape a kernel in
+    /// the drop set uses. It needs no capture (there is nothing to resolve
+    /// against), so it must not pay for one.
+    void dropCornerProvenance(CornerDrop why) {
+        declareCornerProvenance(CornerProvenance.dropped(why));
+    }
+
+    /// Declare a TAIL append, measuring the resulting corner total off `faces`.
+    /// The bulk-append kernels (array ×3, mirror, duplicate, clipboard paste,
+    /// cut caps) already grew the plane face-by-face through `appendFaceRaw`,
+    /// so this applies nothing — its work is the CROSS-CHECK it earns them.
+    /// `resizePolyVertexMaps` now compares the stated total against the
+    /// `loops.length` the rebuild produced, so a kernel that appends some faces
+    /// through `appendFaceRaw` and others through a bare `faces ~= …` — the
+    /// exact shape of task 0690 — trips a diagnostic instead of silently zeroing
+    /// the UV of every face it never touched.
+    ///
+    /// No capture, no arming: a tail append does not renumber anything.
+    void declareCornerAppend() {
+        declareCornerProvenance(CornerProvenance.appended(cornerCount()));
+    }
+
+    /// Σ face arity — the size of the corner space `faces` currently describes,
+    /// and the number `loops.length` will be after the next `buildLoops`.
+    /// Derived from `faces` on purpose: `loops` is rebuilt only by
+    /// `buildLoops`, so mid-kernel it answers about the PREVIOUS space.
+    size_t cornerCount() const {
+        size_t total = 0;
+        foreach (fi; 0 .. faces.length) total += faces[fi].length;
+        return total;
+    }
+
+    /// State what a WELD pass did to the corners. A weld rewrites windings in
+    /// place and only ever REMOVES a corner (a winding that named the same
+    /// vertex twice after the merge), so the corner TOTAL decides it and
+    /// nothing else has to be tracked:
+    ///
+    ///   * unchanged ⇒ no winding lost a corner, so every corner is still at
+    ///     its own slot. The vertex a corner NAMES may have changed, which is
+    ///     not a corner move — per-corner values are addressed by (face,
+    ///     corner). `Unchanged`.
+    ///   * changed ⇒ the space after the first removal is re-laid, and the weld
+    ///     keeps no record of where each corner went. The stated drop — which
+    ///     is also exactly what the length test produced here before task 0830.
+    ///
+    /// This is measured, not assumed: it was written the other way first (a
+    /// blanket drop after any weld) and turned `test_uv_untouched_faces`'s
+    /// `mirrorFaces+weld` case red, because that weld merges verts BETWEEN the
+    /// original and its mirror image and removes no corner at all.
+    void declareCornerWeld(size_t cornersBeforeWeld) {
+        if (cornerCount() == cornersBeforeWeld)
+            declareCornerProvenance(CornerProvenance.unchanged());
+        else
+            dropCornerProvenance(CornerDrop.WeldTailNoSource);
+    }
+
+    // Called by `CornerRewrite`'s destructor. Clears ONLY the arming: a
+    // declaration already made stands, and clearing it here would undo the very
+    // thing the handle exists to obtain.
+    private void disarmCornerRewrite() { cornerRewriteArmed_ = false; }
+
+    // STATED drop of every PolyVertex map: length-correct for the current
+    // loops, values zeroed (task 0689). The same END STATE `resizePolyVertexMaps`
+    // reaches for the drop class — but reached because the caller SAYS the
+    // corner space was renumbered, not inferred from a length mismatch.
+    //
+    // The distinction is the whole point. `resizePolyVertexMaps` KEEPS a map
+    // whose length already matches, on the reasoning that a matching length
+    // means the values were placed deliberately. A caller that renumbers
+    // corners WITHOUT changing their TOTAL breaks that reasoning: the length
+    // still matches, so every value is kept — sitting on a foreign corner.
+    // That is silent corruption rather than a documented drop, and no length
+    // check can catch it. Such a caller must call THIS instead (or relocate
+    // properly through `remapPolyVertexMaps` / `carryPolyVertexMaps`).
+    //
+    // Its one caller today is the delta replay's FALLBACK (task 0689): the
+    // replay normally carries the plane (`mesh_edit_delta.CornerCarry`) and
+    // only reaches here when the carry declines — no map, maps out of step
+    // with `faces` at replay entry, or its own provenance self-check fired.
+    //
+    // No-op when no PolyVertex map is registered.
+    void dropPolyVertexMaps() {
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.PolyVertex) continue;
+            m.data.length = loops.length * m.dim;
+            m.data[] = 0.0f;
+        }
+    }
+
+    // --- PolyVertex remap lifecycle (the two mechanisms) ------------------
+    // Mechanism (a) — arity-PRESERVING relocate funnel. For mutators that drop /
+    // compact / reorder whole faces but KEEP each surviving face's corner count.
+    // `oldLoopOfNewLoop[newLoopIdx] = oldLoopIdx` (or `~0u` ⇒ a brand-new corner,
+    // zero-filled). Each PolyVertex map's `data` is rebuilt to the new
+    // `oldLoopOfNewLoop.length * dim` by gathering `old.data[oldIdx*dim .. ]`
+    // (or zeros on `~0u`). Call this BEFORE the tail `buildLoops` (which then
+    // sees a length-correct map and no-ops in `resizePolyVertexMaps`).
+    //
+    // The caller builds `oldLoopOfNewLoop` from `oldFaceLoop` (the CSR offsets
+    // captured at mutator entry, before `faces` is rewritten): for each surviving
+    // new face whose old face index is `oldFi`, corner `c` came from old loop
+    // `oldFaceLoop[oldFi] + c`.
+    void remapPolyVertexMaps(const uint[] oldLoopOfNewLoop) {
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.PolyVertex) continue;
+            const ubyte dim = m.dim;
+            float[] nd;
+            nd.length = oldLoopOfNewLoop.length * dim;
+            nd[] = 0.0f;
+            foreach (newIdx, oldIdx; oldLoopOfNewLoop) {
+                if (oldIdx == ~0u) continue; // brand-new corner ⇒ zero
+                const size_t ob = cast(size_t)oldIdx * dim;
+                if (ob + dim > m.data.length) continue; // defensive
+                nd[newIdx * dim .. newIdx * dim + dim] = m.data[ob .. ob + dim];
+            }
+            m.data = nd;
+        }
+    }
+
+    // Mechanism (b) — arity-CHANGING per-face rewrite. For mutators that rewrite
+    // a face's corner LIST (weld / dissolve / edge-merge), new corner `j` of a
+    // rewritten face came from old corner `k` of the SAME old face (or is brand
+    // new). The only place that knows the old→new corner correspondence is the
+    // loop that builds the new face, so each such mutator builds an
+    // `oldLoopOfNewLoop` array IN NEW-FACE / NEW-CORNER ORDER (the same CSR order
+    // `buildLoops` will lay down): for new corner `j` of a new face whose old
+    // face index is `oldFi`, push `oldFaceLoopIndex(oldFi, k)` for the kept old
+    // corner `k`, or `~0u` for a brand-new corner. It then calls
+    // `remapPolyVertexMaps(oldLoopOfNewLoop)` — the SAME funnel as (a); the two
+    // mechanisms differ only in how `oldLoopOfNewLoop` is constructed, not in the
+    // relocate step. `oldFaceLoopIndex` resolves (oldFi, corner) against the
+    // OLD CSR offsets captured at mutator entry.
+    static uint oldFaceLoopIndex(const uint[] oldFaceLoop, uint oldFi, uint corner) {
+        if (oldFi >= oldFaceLoop.length) return ~0u;
+        return oldFaceLoop[oldFi] + corner;
+    }
+
+    // Index of `vertex` in a face's corner list, or `~0u`. First occurrence
+    // wins — a well-formed face lists each vertex once, and a degenerate one
+    // (the same vertex twice) has no better answer to give.
+    static uint cornerOfVertexInFace(const(uint)[] face, uint vertex) {
+        foreach (k, v; face)
+            if (v == vertex) return cast(uint)k;
+        return ~0u;
+    }
+
+    // Mechanism (c) — arity-CHANGING rebuild that also INSERTS vertices
+    // (task 0682). Loop Slice, the bevel family and extrude rebuild `faces`
+    // wholesale AND create vertices that did not exist before (rail midpoints,
+    // chamfer strips, grid interiors). Mechanism (b) cannot describe them: the
+    // funnel copies ONE old corner into ONE new corner, so a corner standing on
+    // a brand-new vertex has no old corner to copy and can only come out `~0u`
+    // ⇒ zero. That is exactly why those ops sat in the v1 DROP set.
+    //
+    // The measured law (tests/fixtures/uv_corner_transfer.json, frozen from the
+    // reference editor) is an INTERPOLATION inside the source face's own UV
+    // island: a vertex inserted at fraction t along edge a→b takes
+    // `lerp(uv(a), uv(b), t)`, where `uv(a)`/`uv(b)` are the corner values OF
+    // THE FACE BEING REBUILT — not of some canonical per-vertex value. That is
+    // what makes a UV seam survive a cut: the two faces meeting at the split
+    // edge each interpolate their own corners and each lands in its own island.
+    //
+    // So the caller supplies, per NEW face, the OLD face it came from
+    // (`srcFaceOfNewFace`, `~0u` for a face with no single source), and per
+    // INSERTED vertex, the blend of ORIGINAL vertices that produced it
+    // (`blendOfNewVertex`). Every new corner is then resolved against the
+    // SOURCE OLD FACE's corner list:
+    //   * its vertex is one the old face already had ⇒ a plain copy, routed
+    //     through the shared `remapPolyVertexMaps` funnel (mechanism (a)/(b));
+    //   * its vertex is a blend of vertices the old face had ⇒ a weighted sum
+    //     of those corners' values, applied in a SECOND pass straight over the
+    //     map data.
+    //
+    // WHY THE SECOND PASS EXISTS: the funnel's contract is one old corner per
+    // new corner. A weighted sum of two or four corners is not expressible in
+    // it without changing the signature every existing caller passes, and it is
+    // a VALUE operation on one map's floats rather than a relocation of corner
+    // identity — the two belong in different passes. The funnel still does all
+    // the relocation; this only fills the corners it had to zero.
+    //
+    // Blend sources are looked up in the OLD face, NOT the new one, so a rail
+    // midpoint whose far endpoint is no longer a corner of the sub-face it
+    // landed in (every ring-split cap face) still interpolates correctly.
+    //
+    // Anything unresolvable is left ZERO — precisely the pre-0682 drop
+    // behaviour, never a guess: a face with no source (a cap polygon stitched
+    // from several ring faces has no single old face to read an island from), a
+    // blend source the old face never had, or an over-wide blend.
+    //
+    // Call BEFORE the tail `buildLoops` and BEFORE `faces` is replaced (it
+    // reads the old `faces` through `oldFaces`); the map is left length-correct
+    // for the new corner count, so `resizePolyVertexMaps` then no-ops.
+    //
+    // PER-FACE ENTRY. A new face reads ONE old face's island, which is true of
+    // every op that only SUBDIVIDES existing faces (Loop Slice, addEdgePoint,
+    // spike). It is not true of a chamfer strip, whose two sides come from the
+    // two faces the beveled edge separated — that caller takes the per-CORNER
+    // entry below. This one expands its per-face array into the per-corner form
+    // and delegates, so the two can never drift apart: whatever the per-corner
+    // implementation does, this is exactly it with a constant source per face.
+    void carryPolyVertexMaps(const(uint[])[] newFaces,
+                             const(uint)[]   srcFaceOfNewFace,
+                             const(uint[])[] oldFaces,
+                             const(uint)[]   oldFaceLoop,
+                             const PolyVertexBlend[uint] blendOfNewVertex) {
+        if (!hasPolyVertexMap()) return;
+        size_t total = 0;
+        foreach (nf; newFaces) total += nf.length;
+        uint[] srcFaceOfNewCorner = new uint[](total);
+        size_t at = 0;
+        foreach (nfi, nf; newFaces) {
+            const uint sf = (nfi < srcFaceOfNewFace.length)
+                          ? srcFaceOfNewFace[nfi] : ~0u;
+            foreach (_; nf) srcFaceOfNewCorner[at++] = sf;
+        }
+        carryPolyVertexMapsByCorner(newFaces, srcFaceOfNewCorner, oldFaces,
+                                    oldFaceLoop, blendOfNewVertex);
+    }
+
+    // Mechanism (c), PER-CORNER entry (task 0697). Same contract as the per-face
+    // form above, except that the source old face is given for each NEW CORNER
+    // (flat, in new-face/new-corner order — the order `buildLoops` will lay
+    // down), so different corners of one new face may read different islands.
+    // `~0u` for a corner with no source ⇒ the honest zero.
+    //
+    // Two callers need that: the edge bevel's chamfer strip takes its two sides
+    // from the two faces the beveled edge separated, and its corner cap takes
+    // each corner from the face whose slide produced it. Resolving such a face
+    // against ONE source would put one side of the strip in the wrong island —
+    // silent corruption on a seam, invisible on a mesh without one.
+    //
+    // `gens` is mechanism (e): corners whose value the KERNEL computes from its
+    // source face's polygon rather than inheriting (see `PolyVertexGen`). The
+    // gen pass runs LAST and OVERWRITES whatever the copy/blend passes wrote at
+    // that corner — an extrude wall's base corner is a corner of its source face
+    // (so the funnel copies it) and is then swept to u=0, and the sweep is the
+    // measured answer.
+    void carryPolyVertexMapsByCorner(const(uint[])[] newFaces,
+                                     const(uint)[]   srcFaceOfNewCorner,
+                                     const(uint[])[] oldFaces,
+                                     const(uint)[]   oldFaceLoop,
+                                     const PolyVertexBlend[uint] blendOfNewVertex,
+                                     const(PolyVertexGen)[] gens = null) {
+        if (!hasPolyVertexMap()) return;
+        import std.math : fabs;
+
+        // One resolved interpolation: which NEW corner, from which OLD corners,
+        // at which weights. Built in the same pass as `oldLoopOfNewLoop` so the
+        // face/corner walk happens once.
+        struct LoopBlend {
+            size_t   newLoop;
+            uint[4]  oldLoop;
+            float[4] w;
+            ubyte    n;
+        }
+
+        uint[]      oldLoopOfNewLoop;
+        LoopBlend[] blends;
+        size_t      newLoop = 0;
+        oldLoopOfNewLoop.reserve(newFaces.length * 4);
+
+        foreach (nfi, nf; newFaces) {
+            foreach (v; nf) {
+                const uint oldFi = (newLoop < srcFaceOfNewCorner.length)
+                                 ? srcFaceOfNewCorner[newLoop] : ~0u;
+                const(uint)[] of = (oldFi < oldFaces.length) ? oldFaces[oldFi] : null;
+                uint copyFrom = ~0u;
+                if (of !is null) {
+                    const uint c = cornerOfVertexInFace(of, v);
+                    if (c != ~0u) {
+                        copyFrom = oldFaceLoopIndex(oldFaceLoop, oldFi, c);
+                    } else if (auto b = v in blendOfNewVertex) {
+                        LoopBlend lb;
+                        lb.newLoop = newLoop;
+                        bool ok = !b.overflow && b.n > 0;
+                        foreach (i; 0 .. b.n) {
+                            const uint sc = cornerOfVertexInFace(of, b.src[i]);
+                            if (sc == ~0u) { ok = false; break; }
+                            lb.oldLoop[i] = oldFaceLoopIndex(oldFaceLoop, oldFi, sc);
+                            lb.w[i]       = b.w[i];
+                            if (lb.oldLoop[i] == ~0u) { ok = false; break; }
+                        }
+                        if (ok) { lb.n = b.n; blends ~= lb; }
+                    }
+                }
+                oldLoopOfNewLoop ~= copyFrom;
+                ++newLoop;
+            }
+        }
+
+        // The funnel REPLACES each map's `data`, and the blend pass reads its
+        // sources in the OLD corner space — so snapshot first.
+        float[][] oldData;
+        oldData.reserve(meshMaps.length);
+        foreach (ref m; meshMaps)
+            oldData ~= (m.domain == MapDomain.PolyVertex) ? m.data : null;
+
+        remapPolyVertexMaps(oldLoopOfNewLoop);
+
+        size_t mi = 0;
+        foreach (ref m; meshMaps) {
+            const float[] src = oldData[mi++];
+            if (m.domain != MapDomain.PolyVertex) continue;
+            const ubyte dim = m.dim;
+            foreach (ref b; blends) {
+                const size_t dst = b.newLoop * dim;
+                if (dst + dim > m.data.length) continue;  // defensive
+                foreach (d; 0 .. dim) m.data[dst + d] = 0.0f;
+                bool complete = true;
+                foreach (i; 0 .. b.n) {
+                    const size_t ob = cast(size_t)b.oldLoop[i] * dim;
+                    if (ob + dim > src.length) { complete = false; break; }
+                    foreach (d; 0 .. dim)
+                        m.data[dst + d] += src[ob + d] * b.w[i];
+                }
+                if (!complete)
+                    foreach (d; 0 .. dim) m.data[dst + d] = 0.0f;
+            }
+
+            // Mechanism (e) — GENERATED corners, last so they win over a copy
+            // (see the doc comment). Plane laws only: a map that is not 2-D has
+            // no polygon to inset and no second component to keep, so its
+            // corners stay whatever the copy/blend passes left.
+            if (dim != 2) continue;
+            foreach (ref g; gens) {
+                const size_t dst = g.newLoop * 2;
+                if (dst + 2 > m.data.length) continue;              // defensive
+                if (g.srcFace >= oldFaces.length) continue;
+                const(uint)[] of = oldFaces[g.srcFace];
+                const size_t N = of.length;
+                if (N < 3 || g.srcCorner >= N) continue;
+                const uint base = (g.srcFace < oldFaceLoop.length)
+                                ? oldFaceLoop[g.srcFace] : ~0u;
+                if (base == ~0u || (cast(size_t)base + N) * 2 > src.length) continue;
+                float[2] uvAt(size_t k) {
+                    const size_t o = (cast(size_t)base + k) * 2;
+                    float[2] r;
+                    r[0] = src[o]; r[1] = src[o + 1];
+                    return r;
+                }
+                if (g.law == PolyVertexGen.Law.SweepU) {
+                    m.data[dst]     = g.amount;
+                    m.data[dst + 1] = uvAt(g.srcCorner)[1];
+                    continue;
+                }
+                // InsetRing: offset every UV edge inward by `d` and take the
+                // vertex at `srcCorner`. `d` is the kernel's geometric ratio
+                // times THIS map's own perimeter — the measured
+                // `inset * uvPerimeter / geomPerimeter`.
+                float perim = 0.0f, area2 = 0.0f;
+                foreach (k; 0 .. N) {
+                    const float[2] p = uvAt(k), q = uvAt((k + 1) % N);
+                    const float dx = q[0] - p[0], dy = q[1] - p[1];
+                    perim += sqrt(dx * dx + dy * dy);
+                    area2 += p[0] * q[1] - q[0] * p[1];
+                }
+                const float d  = g.amount * perim;
+                const float wd = (area2 >= 0.0f) ? 1.0f : -1.0f;  // polygon winding
+                const float[2] P  = uvAt(g.srcCorner);
+                const float[2] Pn = uvAt((g.srcCorner + 1) % N);
+                const float[2] Pp = uvAt((g.srcCorner + N - 1) % N);
+                float e1x = Pn[0] - P[0], e1y = Pn[1] - P[1];
+                float e2x = Pp[0] - P[0], e2y = Pp[1] - P[1];
+                const float l1 = sqrt(e1x * e1x + e1y * e1y);
+                const float l2 = sqrt(e2x * e2x + e2y * e2y);
+                if (l1 < 1e-9f || l2 < 1e-9f) continue;  // degenerate UV edge
+                e1x /= l1; e1y /= l1; e2x /= l2; e2y /= l2;
+                const float crs = e1x * e2y - e1y * e2x;   // sin of the corner angle
+                if (fabs(crs) > 1e-6f) {
+                    // Q = P + (d·w/sinθ)·(ê1 + ê2): the meet of the two offset
+                    // edges. The SIGNED sine carries convexity, `w` the winding,
+                    // so one expression covers convex and reflex corners in both
+                    // windings. A needle-sharp UV corner sends 1/sinθ to
+                    // infinity and would throw the ring corner across the map,
+                    // so the factor is miter-LIMITED — the measured cases are
+                    // right angles (1/sinθ == 1) and never approach it.
+                    enum float kUvMiterLimit = 8.0f;
+                    float inv = 1.0f / crs;
+                    if (inv >  kUvMiterLimit) inv =  kUvMiterLimit;
+                    if (inv < -kUvMiterLimit) inv = -kUvMiterLimit;
+                    const float s = d * wd * inv;
+                    m.data[dst]     = P[0] + s * (e1x + e2x);
+                    m.data[dst + 1] = P[1] + s * (e1y + e2y);
+                } else {
+                    // Straight-through corner: the bisector is undefined, the
+                    // offset is the edge's own inward normal.
+                    m.data[dst]     = P[0] + d * wd * (-e1y);
+                    m.data[dst + 1] = P[1] + d * wd * ( e1x);
+                }
+            }
+        }
+    }
+
+    // True iff at least one PolyVertex map is registered. Mutators take the
+    // remap path only when this is true — otherwise the (cheap) capture +
+    // funnel work is skipped entirely (the common case: no UV map). The drop
+    // class needs no guard: `resizePolyVertexMaps` inside `buildLoops` is itself
+    // a no-op when no PolyVertex map exists.
+    bool hasPolyVertexMap() const {
+        foreach (ref m; meshMaps)
+            if (m.domain == MapDomain.PolyVertex) return true;
+        return false;
+    }
+
+    // True iff every registered PolyVertex map's `data` is length-correct for
+    // the CURRENT `faces` array — i.e. the corner reached by walking the faces
+    // in order (`Σ|faces[0 .. fi]| + c`) really does address corner `c` of face
+    // `fi` in every map.
+    //
+    // `loops`/`faceLoop` are NOT consulted: they are rebuilt only by
+    // `buildLoops`, so mid-kernel (after `faces` has been rewritten but before
+    // the tail rebuild) they describe the PREVIOUS corner space while the maps
+    // still describe the one this predicate is asked about. Deriving the corner
+    // total from `faces` itself is the question actually being asked.
+    //
+    // This is the precondition of the per-corner payload capture below and of
+    // the delta replay's corner carry (`mesh_edit_delta`): both address corners
+    // by that walk, and both must decline rather than guess when the mesh is
+    // caught mid-rewrite (every DROP-set kernel spends most of its body there).
+    // No PolyVertex map registered ⇒ vacuously true.
+    bool polyVertexMapsInStepWithFaces() const {
+        size_t corners = 0;
+        foreach (fi; 0 .. faces.length) corners += faces[fi].length;
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.PolyVertex) continue;
+            if (m.data.length != corners * m.dim) return false;
+        }
+        return true;
+    }
+
+    // --- Per-corner payload for the edit tracker (task 0689) --------------
+    // Record the per-corner (PolyVertex) values of the faces named by
+    // `oldFaceIdx` — indices into the CURRENT `faces` — as a `MeshMapDelta`
+    // entry in the open edit batch.
+    //
+    // WHY THIS EXISTS. A delta replay can RELOCATE the values of corners that
+    // survive it (their values are still in the live map), but a face the
+    // FORWARD op destroyed takes its corner values with it: on the way back,
+    // `RemoveFaces⁻¹` re-inserts the face and there is nothing left in the mesh
+    // to read its UV from. The only place that still holds those values is the
+    // moment just before the kernel drops them — here.
+    //
+    // COST, and it is NOT uniform across the callers (review round 1, MINOR-6
+    // — this paragraph used to read "the whole O(Δ) map channel: `Δ` corners,
+    // not the mesh's", which is true of three callers and false of the
+    // fourth). The size is O(corners of `oldFaceIdx`), so:
+    //   * `deleteFacesByMask` / `dissolveVerticesByMask` / `removeEdgesByMask`
+    //     pass the DESTROYED subset ⇒ `Δ` corners, as advertised;
+    //   * `mesh_planes.rewriteFaces` (task 1903 Stage J) passes EVERY old face
+    //     ⇒ the WHOLE pre-op map. Measured: a one-face extrude on a 9-quad
+    //     grid records all 36 corners (72 floats), of which the forward
+    //     correspondence could not have inverted only 4.
+    // It does not change the entry's ORDER of cost — `newFaceLists` (Stage H)
+    // is already O(mesh) at that same site — but it does change the delta /
+    // snapshot ratio `doc/mesh_edit_seam_plan.md` §8 reasons about, on meshes
+    // that carry a per-corner map. The narrowing that would restore `Δ` there
+    // is named in that section: record only the old faces the correspondence
+    // cannot invert (dropped + winding-changed + blend/gen targets).
+    //
+    // PAIRING is by ADJACENCY: the caller records this IMMEDIATELY BEFORE the
+    // face entry the values belong to (`recordRemoveFaces` / `recordReshapeFaces`),
+    // and `mapArity` runs positionally parallel to that entry's `fIdx`. The
+    // payload carries no face indices of its own, and since task 0703 that is a
+    // pure de-duplication rather than a workaround: every face entry is now
+    // recorded in the LIVE (pre-op) index space this capture reads in, so
+    // `oldFaceIdx` and the following entry's `fIdx` are the same list. Before
+    // 0703 two kernels (`dissolveVerticesByMask`, `removeEdgesByMask`) recorded
+    // faces in a POST-op space, `oldFaceIdx` was in neither, and position was
+    // the only thing all three agreed on — which is also how the wrong space
+    // stayed invisible for as long as it did.
+    //
+    // Declines (records nothing, so the replay falls back to zero-filling those
+    // corners) when there is no PolyVertex map, when the maps are not in step
+    // with `faces` — see `polyVertexMapsInStepWithFaces` — or when `oldFaceIdx`
+    // is not ascending (the corner-base walk below is a single ordered sweep;
+    // all four callers filter `faces` front-to-back, so ascending is what they
+    // produce — the fourth being `mesh_planes.rewriteFaces` (task 1903 Stage J),
+    // which passes EVERY old face rather than a destroyed subset).
+    /// Task 0831: `in FaceIdx[]`, matching the entry it is paired with — the
+    /// pairing is BY ADJACENCY and the two lists must be the same indices in
+    /// the same space, so they must be the same type.
+    void recordPolyVertexPayload(in FaceIdx[] oldFaceIdx) {
+        if (editRecorder_ is null) return;
+        if (oldFaceIdx.length == 0) return;
+        if (!hasPolyVertexMap()) return;
+        if (!polyVertexMapsInStepWithFaces()) return;
+
+        ubyte[] dims;
+        foreach (ref m; meshMaps)
+            if (m.domain == MapDomain.PolyVertex) dims ~= m.dim;
+        size_t stride = 0;
+        foreach (d; dims) stride += d;
+        if (stride == 0) return;
+
+        // Corner base of each requested face, by ONE ordered sweep over `faces`
+        // (no O(faces) prefix array: task 0680 established that a bulk removal's
+        // record path is allocation-sensitive).
+        uint[] arity;  arity.length  = oldFaceIdx.length;
+        size_t[] base; base.length   = oldFaceIdx.length;
+        size_t run = 0, k = 0, totalCorners = 0;
+        foreach (fi; 0 .. faces.length) {
+            while (k < oldFaceIdx.length && oldFaceIdx[k] == fi) {
+                base[k]  = run;
+                arity[k] = cast(uint)faces[fi].length;
+                totalCorners += arity[k];
+                ++k;
+            }
+            run += faces[fi].length;
+        }
+        if (k != oldFaceIdx.length) return;   // out of range or not ascending
+
+        float[] vals;
+        vals.length = totalCorners * stride;
+        vals[] = 0.0f;
+        size_t w = 0;
+        foreach (i; 0 .. oldFaceIdx.length) {
+            foreach (c; 0 .. arity[i]) {
+                const size_t corner = base[i] + c;
+                size_t off = 0;
+                foreach (ref m; meshMaps) {
+                    if (m.domain != MapDomain.PolyVertex) continue;
+                    const size_t s = corner * m.dim;
+                    if (s + m.dim <= m.data.length)
+                        vals[w + off .. w + off + m.dim] = m.data[s .. s + m.dim];
+                    off += m.dim;
+                }
+                w += stride;
+            }
+        }
+        editRecorder_.recordPolyVertexValues(dims, arity, vals);
+    }
+
+    // Capture the CSR corner offsets for the CURRENT faces, to be consulted by
+    // `oldFaceLoopIndex` while rebuilding `oldLoopOfNewLoop`. The live `faceLoop`
+    // is valid at any topology-mutator entry (the prior op left it in step with
+    // `faces` via `buildLoops`), so this is just a defensive `.dup`.
+    uint[] captureFaceLoop() const {
+        return faceLoop.dup;
+    }
+
+    // Grow/shrink one map's data to `elementCount(domain) * dim`, zero-filling
+    // any newly grown slots. `float.init` is NaN in D, so an explicit zero is
+    // required for new entries to read back as 0 (the documented default).
+    private void resizeMeshMapData(ref MeshMap m) {
+        const size_t want = elementCount(m.domain) * m.dim;
+        const size_t old  = m.data.length;
+        m.data.length = want;
+        if (want > old) m.data[old .. $] = 0.0f;
+        // Presence rides the same resize, at ONE entry per ELEMENT — no
+        // `* dim` (task 1069; the invariant is on `MeshMap`). New trailing
+        // slots default to 0 == ABSENT, which is right for both morph kinds:
+        // a newly appended vertex has no delta (relative) and stays at its
+        // base (absolute). `ubyte.init` is already 0 — unlike `float.init`,
+        // which is NaN — but the fill is written explicitly anyway so the
+        // next reader does not have to know that to trust the line.
+        if (kindInfo(m.kind).tracksPresence) {
+            const size_t wantP = elementCount(m.domain);
+            const size_t oldP  = m.present.length;
+            m.present.length = wantP;
+            if (wantP > oldP) m.present[oldP .. $] = 0;
+        }
+    }
+
+    // Register a new per-element float channel. `dim` must be >= 1; `name`
+    // must be non-empty and not already registered; PolyVertex is reserved.
+    // Returns a pointer to the stored map (data zero-initialised to the right
+    // length), or null on rejection. Defensive, like the rest of mesh.d.
+    MeshMap* addMeshMap(string name, ubyte dim, MapDomain domain,
+                        MapKind kind = MapKind.unclassified) {
+        if (name.length == 0) return null;
+        if (dim == 0) return null;
+        // PolyVertex (per-corner) is live: sized to `loops.length * dim` via
+        // `elementCount` below, same as Point/Edge. Its values are relocated
+        // across face-mutating edits by the two-mechanism lifecycle
+        // (remapPolyVertexMaps / rebuildPolyVertexAtFace); see the meshMaps
+        // field comment for the wired vs drop sets.
+        if (meshMap(name) !is null) return null; // names are unique per mesh
+        // Kernel-only DoS backstop (task 1069). There is no Param layer to
+        // clamp — `mesh.morph.create` in a script loop is the vector — so the
+        // cap lives at the one function every creation path funnels through.
+        if (meshMaps.length >= MAX_MESH_MAPS) return null;
+        MeshMap m;
+        m.name   = name;
+        m.dim    = dim;
+        m.domain = domain;
+        m.kind   = kind;
+        m.data.length = elementCount(domain) * dim;
+        m.data[] = 0.0f; // float.init is NaN; default mesh-map value is 0
+        if (kindInfo(kind).tracksPresence) {
+            m.present.length = elementCount(domain); // per ELEMENT, no `* dim`
+            m.present[] = 0;                         // created ABSENT everywhere
+        }
+        meshMaps ~= m;
+        return &meshMaps[$ - 1];
+    }
+
+    // Lookup by name → pointer to the stored map, or null if absent.
+    MeshMap* meshMap(string name) return {
+        foreach (ref m; meshMaps)
+            if (m.name == name) return &m;
+        return null;
+    }
+
+    // const overload for read-only call sites.
+    const(MeshMap)* meshMap(string name) const return {
+        foreach (ref m; meshMaps)
+            if (m.name == name) return &m;
+        return null;
+    }
+
+    // Remove a registered map by name. Returns true if one was removed.
+    bool removeMeshMap(string name) {
+        foreach (i, ref m; meshMaps) {
+            if (m.name == name) {
+                meshMaps = meshMaps[0 .. i] ~ meshMaps[i + 1 .. $];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Read element `elemIdx`'s components from map `name`. Returns an empty
+    // slice if the map is missing or the index is out of range (defensive).
+    // The returned slice is a fresh copy (`dup`), safe to hold across edits.
+    float[] meshMapValue(string name, size_t elemIdx) const {
+        auto m = meshMap(name);
+        if (m is null) return [];
+        const size_t base = elemIdx * m.dim;
+        if (base + m.dim > m.data.length) return [];
+        return m.data[base .. base + m.dim].dup;
+    }
+
+    // Write element `elemIdx`'s components into map `name`. `values.length`
+    // must equal the map's `dim`. No-op (returns false) on a missing map,
+    // out-of-range index, or dim mismatch. Bumps `mutationVersion` on a real
+    // write so caches that depend on map values can detect the change.
+    bool setMeshMapValue(string name, size_t elemIdx, const float[] values) {
+        auto m = meshMap(name);
+        if (m is null) return false;
+        if (values.length != m.dim) return false;
+        const size_t base = elemIdx * m.dim;
+        if (base + m.dim > m.data.length) return false;
+        m.data[base .. base + m.dim] = values[];
+        // Mesh-map value write (UV / weight / crease — continuous per-element
+        // data). No dedicated Maps class exists yet (reserved until #5 UV work),
+        // and this is NOT a topology change, so we classify it as Material —
+        // the only non-Geometry tag-class flag — to preserve the version parity
+        // (mutationVersion bumps, topologyVersion does not). Reclassify to Maps
+        // when that flag lands. (See report: ambiguous site.)
+        commitChange(MeshEditScope.Material);
+        return true;
+    }
+
+    /// Return names of all registered `MapDomain.Point, dim==1` weight maps.
+    ///
+    /// The kind test is deliberately NEGATIVE (task 1069). A positive
+    /// `kind == MapKind.vertexWeight` filter would return EMPTY for every
+    /// weight map that predates this task and for every one a pre-1069 `.v3d`
+    /// reader creates — all of which are `unclassified` — which empties the
+    /// falloff weight-map dropdown (`toolpipe/stages/falloff.d`) and makes
+    /// `select.byStat` reject a map that exists. Note honestly that the
+    /// exclusion is REDUNDANT today: morph maps are dim 3, so `dim == 1`
+    /// already keeps them out. It is here so a future dim-1 morph variant
+    /// cannot leak into the weight surface, written negatively so an
+    /// unclassified legacy map can never be dropped.
+    string[] weightMapNames() const {
+        string[] names;
+        foreach (ref m; meshMaps)
+            if (m.domain == MapDomain.Point && m.dim == 1 && !isMorphKind(m.kind))
+                names ~= m.name;
+        return names;
+    }
+
+    /// Convenience: add a Point dim-1 weight map, CLASSIFIED as such so it is
+    /// not indistinguishable from a raw `addMeshMap` of the same shape.
+    MeshMap* addWeightMap(string name) {
+        return addMeshMapOfKind(MapKind.vertexWeight, name);
+    }
+
+    /// Register a new map of a known `MapKind`, deriving domain + dim from
+    /// `kindInfo` instead of open-coding them at the call site (task 1062 /
+    /// 1060 §1 amendment 1). `name` defaults to the kind's reserved name
+    /// (uv / creaseWeight); pass a name explicitly for `vertexWeight`, which
+    /// reserves none (many independently-named instances per mesh).
+    MeshMap* addMeshMapOfKind(MapKind kind, string name = "") {
+        const info = kindInfo(kind);
+        const string useName = name.length ? name : info.reservedName;
+        auto m = addMeshMap(useName, info.dim, info.domain, kind);
+        debug if (m !is null)
+            assert(m.dim == info.dim && m.domain == info.domain && m.kind == kind,
+                "addMeshMapOfKind: stored map fields do not match its kind's declaration");
+        return m;
+    }
+
+    /// The reserved subdivision-crease map (Edge, dim 1), or null if this
+    /// mesh has never had a weight set on it. `debug`-asserts an existing
+    /// instance's shape against `MapKind.creaseWeight`'s declaration — the
+    /// same check `addMeshMapOfKind` runs at creation, repeated here because
+    /// a hand-edited `.v3d` could in principle register something
+    /// differently-shaped under the reserved name.
+    MeshMap* creaseWeightMap() return {
+        auto m = meshMap(kCreaseWeightMapName);
+        debug if (m !is null) {
+            const info = kindInfo(MapKind.creaseWeight);
+            assert(m.domain == info.domain && m.dim == info.dim,
+                "creaseWeightMap: existing '" ~ kCreaseWeightMapName
+              ~ "' map does not match MapKind.creaseWeight's declaration");
+        }
+        return m;
+    }
+    // const overload for read-only call sites (subpatch_osd.d's buildPreview
+    // takes `ref const Mesh cage`).
+    const(MeshMap)* creaseWeightMap() const return {
+        auto m = meshMap(kCreaseWeightMapName);
+        debug if (m !is null) {
+            const info = kindInfo(MapKind.creaseWeight);
+            assert(m.domain == info.domain && m.dim == info.dim,
+                "creaseWeightMap: existing '" ~ kCreaseWeightMapName
+              ~ "' map does not match MapKind.creaseWeight's declaration");
+        }
+        return m;
+    }
+
+    /// Per-edge crease-weight read. Returns 0.0 (no crease) on a missing map
+    /// or an out-of-range index — 0.0 is a real stored value elsewhere in
+    /// this map and behaves identically to "never set" (fixture's
+    /// `law.storage` note).
+    ///
+    /// **Dense-vs-sparse note (checked live against the reference engine,
+    /// 2026-08-17).** Querying the reference's own map-type registry
+    /// confirms the crease channel IS an edge-domain map (dimension 1) —
+    /// distinct from its ordinary (vertex-domain) weight map, which the
+    /// owner's own instinct expected here; the two share the vague
+    /// "vertex map" umbrella term but differ in domain, a separately
+    /// queryable property. The same registry reports the crease type has
+    /// **no zero default**, unlike the ordinary weight map — i.e. the
+    /// reference distinguishes "this edge has no entry in the map" from
+    /// "this edge's entry is 0.0". `MeshMap.data` here does NOT make that
+    /// distinction: it is a dense `float[]`, zero-filled for every edge as
+    /// soon as the map is created (`addMeshMap`/`resizeMeshMapData`), so an
+    /// edge that was never explicitly written reads identically to one
+    /// explicitly cleared to 0.0. This is accepted, not overlooked: (1) the
+    /// fixture's own `law.storage` note says a stored 0.0 behaves as no
+    /// crease GEOMETRICALLY, so the ambiguity carries no law difference;
+    /// (2) the `.v3d` codec writes the map's FULL `data` array verbatim
+    /// (native.d) — it never prunes a zero entry, so nothing is lost across
+    /// save/load that wasn't already collapsed in memory; (3) this is the
+    /// same dense-array-with-zero-default contract every other `MeshMap`
+    /// already ships (`vertexWeight` mirrors the reference's ordinary
+    /// weight map, which DOES have a zero default, so no divergence there);
+    /// and (4) no UI surface in this task's scope (§5 of the plan) exposes
+    /// "was this edge ever touched" as a distinct state. If a future
+    /// feature needs that distinction (e.g. a "reset to default" UI
+    /// affordance), it needs its OWN presence channel — do not read it back
+    /// out of this dense array.
+    float edgeCreaseWeight(size_t ei) const {
+        auto m = creaseWeightMap();
+        if (m is null) return 0.0f;
+        if (ei >= m.data.length) return 0.0f;
+        return m.data[ei];
+    }
+
+    /// Per-edge crease-weight write. ABSOLUTE (not additive); stores `w`
+    /// VERBATIM, including out-of-range values — the clamp to [0, saturate]
+    /// lives exclusively in `subpatch_osd.creaseSharpnessFromWeight`, not
+    /// here (task 1062 §4: the `.v3d` codec must round-trip −1.0 / 5.0
+    /// unchanged). Creates the reserved map on first use.
+    ///
+    /// Bumps `topologyVersion` directly, like `setSubpatch` — and
+    /// DELIBERATELY does not route through the generic `setMeshMapValue`
+    /// (which only bumps `mutationVersion` via a Material-class
+    /// `commitChange`). The subpatch preview's OUTPUT topology depends on
+    /// crease weights exactly as it depends on subpatch marks: without this
+    /// bump, `SubpatchPreview.rebuildIfStale`'s position-only fast path
+    /// (source/mesh.d) never re-runs `buildPreview` and a written weight
+    /// presents as "does nothing" (task 1062 §3, the headline risk).
+    ///
+    /// No-op guard, matching `setSubpatch` (source/mesh.d, `:5591-5603`):
+    /// re-writing the SAME value must not bump either version, or the
+    /// commonest UI gesture — open the dialog, press OK with the unchanged
+    /// default — forces a full preview rebuild, a GPU re-upload and an undo
+    /// entry for nothing. `isIdentical`, not `==`, because a plain `==`
+    /// guard is never true for NaN (even NaN compared to itself), so a
+    /// NaN-to-NaN re-write would keep bumping versions forever despite
+    /// changing nothing observable — `isIdentical` compares bit patterns and
+    /// treats that case as no change too.
+    bool setCreaseWeight(size_t ei, float w) {
+        auto m = creaseWeightMap();
+        if (m is null) m = addMeshMapOfKind(MapKind.creaseWeight);
+        if (m is null) return false;
+        if (ei >= m.data.length) return false;
+        if (isIdentical(m.data[ei], w)) return true;
+        m.data[ei] = w;
+        commitChange(MeshEditScope.Material);
+        ++topologyVersion;
+        return true;
+    }
+
+    /// Per-vertex weight read. Returns 0.0 on missing map or out-of-range index.
+    ///
+    /// Task 1069: the shape gate below needs no morph-kind exclusion — a morph
+    /// map is Point dim 3, so `dim != 1` already refuses it. Said here so the
+    /// next reader does not have to re-derive it from the kind registry.
+    float vertexWeight(string name, size_t vi) const {
+        auto m = meshMap(name);
+        if (m is null) return 0.0f;
+        if (m.domain != MapDomain.Point || m.dim != 1) return 0.0f;
+        if (vi >= m.data.length) return 0.0f;
+        return m.data[vi];
+    }
+
+    /// Per-vertex weight write. Returns true on success.
+    bool setVertexWeight(string name, size_t vi, float w) {
+        return setMeshMapValue(name, vi, [w]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Morph channels (task 1069). Point domain, dim 3, presence-tracked.
+    //
+    // Two reads, deliberately different, matching the two the reference SDK
+    // exposes as separate methods: `morphValue` reports PRESENCE and refuses
+    // to invent a value; `morphEvaluate` substitutes the kind's declared
+    // default and can therefore never tell you whether an entry exists. Code
+    // that needs to know "does this vertex have an entry" MUST use the first —
+    // the second cannot answer it, by construction.
+    // -----------------------------------------------------------------------
+
+    /// Names of every registered map of `kind`, in registration order.
+    string[] mapNamesOfKind(MapKind kind) const {
+        string[] names;
+        foreach (ref m; meshMaps)
+            if (m.kind == kind) names ~= m.name;
+        return names;
+    }
+
+    /// Names of every registered morph map (either kind), in registration
+    /// order. The list the UI and the `.v3d`/`.lwo` codecs iterate.
+    string[] morphMapNames() const {
+        string[] names;
+        foreach (ref m; meshMaps)
+            if (isMorphKind(m.kind)) names ~= m.name;
+        return names;
+    }
+
+    /// The kind of the map registered under `name`, or `unclassified` when no
+    /// such map exists. Used by the routing seam, which resolves its target
+    /// BY NAME on every use (`removeMeshMap` splices the array and invalidates
+    /// every outstanding `MeshMap*` — plan R3).
+    MapKind mapKind(string name) const {
+        auto m = meshMap(name);
+        return (m is null) ? MapKind.unclassified : m.kind;
+    }
+
+    /// Resolve a morph map for a mid-drag WRITE loop: the map registered under
+    /// `name` if and only if it is a morph kind, else null. The routing kernel
+    /// resolves ONCE PER APPLY through this and then uses `MeshMap.setEntry` /
+    /// `MeshMap.entryOr` per vertex — it must never cache the pointer across a
+    /// drag, because `removeMeshMap` splices the registry array and
+    /// invalidates every outstanding `MeshMap*` (plan R3).
+    MeshMap* morphMapForWrite(string name) return {
+        auto m = meshMap(name);
+        if (m is null || !isMorphKind(m.kind)) return null;
+        return m;
+    }
+
+    /// PRESENCE read. `true` + the stored triple when vertex `vi` has an entry
+    /// in morph map `name`; `false` and `v == Vec3(0,0,0)` when it does not,
+    /// when the map is missing, or when it is not a morph map. The `false`
+    /// case's zero is NOT a value — do not read it as one; use
+    /// `morphEvaluate` if you want the kind's default substituted.
+    bool morphValue(string name, size_t vi, out Vec3 v) const {
+        v = Vec3(0, 0, 0);
+        auto m = meshMap(name);
+        if (m is null) return false;
+        if (!isMorphKind(m.kind)) return false;
+        const size_t b = vi * 3;
+        if (b + 3 > m.data.length) return false;
+        if (!m.isPresent(vi)) return false;
+        v = Vec3(m.data[b], m.data[b + 1], m.data[b + 2]);
+        return true;
+    }
+
+    /// EVALUATE read — the stored triple with the KIND'S DEFAULT substituted
+    /// when the entry is absent. For `morphRelative` the default is the zero
+    /// delta; for `morphAbsolute` it is the vertex's own base position, which
+    /// is what "stay at the base" means in that kind's own units. So the
+    /// result is always in the map's storage semantics and
+    /// `morphApply(vertices[vi], morphEvaluate(name, vi), kind, 1.0f)` is the
+    /// displayed position for BOTH kinds.
+    ///
+    /// (The plan's Stage-7 sketch wrote this as `vertices[vi] +
+    /// morphEvaluate(...)`. That is right for the relative kind and WRONG for
+    /// the absolute one, whose stored value is a position, not a
+    /// displacement — `morphApply` is the form that holds for both.)
+    Vec3 morphEvaluate(string name, size_t vi) const {
+        auto m = meshMap(name);
+        const Vec3 base = (vi < vertices.length) ? vertices[vi] : Vec3(0, 0, 0);
+        if (m is null || !isMorphKind(m.kind)) return base;
+        const size_t b = vi * 3;
+        if (b + 3 > m.data.length || !m.isPresent(vi))
+            return (m.kind == MapKind.morphRelative) ? Vec3(0, 0, 0) : base;
+        return Vec3(m.data[b], m.data[b + 1], m.data[b + 2]);
+    }
+
+    /// Write one entry AND set its presence. Absolute (not additive). Returns
+    /// false on a missing / non-morph map or an out-of-range vertex.
+    ///
+    /// This is the ONE-SHOT / command-level write: it `commitChange`s, so it
+    /// bumps `mutationVersion`. The mid-drag routing kernel must NOT use it —
+    /// see `morphMapForWrite` + `MeshMap.setEntry`, which write without any
+    /// notification so the version stays stable for the whole gesture.
+    bool setMorphValue(string name, size_t vi, Vec3 v) {
+        auto m = meshMap(name);
+        if (m is null) return false;
+        if (!isMorphKind(m.kind)) return false;
+        const size_t b = vi * 3;
+        if (b + 3 > m.data.length) return false;
+        m.data[b]     = v.x;
+        m.data[b + 1] = v.y;
+        m.data[b + 2] = v.z;
+        if (vi < m.present.length) m.present[vi] = 1;
+        // Maps-class, not Material: a morph write changes what is DRAWN
+        // (Phase 0 measured the viewport at base+delta), so it must reach
+        // `DisplayRefreshMask` — which `Material` does not carry for this
+        // purpose. See mesh_edit_delta.MeshEditScope.Maps.
+        commitChange(MeshEditScope.Maps);
+        return true;
+    }
+
+    /// Remove one entry — presence goes to 0 and the stored components are
+    /// zeroed so a later dense reader cannot resurrect a stale value. This is
+    /// NOT "set it to zero": for `morphAbsolute` an absent entry MOVES the
+    /// vertex back to its base, and for either kind an absent entry is a
+    /// different thing on the wire from a stored zero.
+    bool clearMorphValue(string name, size_t vi) {
+        auto m = meshMap(name);
+        if (m is null) return false;
+        if (!isMorphKind(m.kind)) return false;
+        const size_t b = vi * 3;
+        if (b + 3 > m.data.length) return false;
+        m.data[b .. b + 3] = 0.0f;
+        if (vi < m.present.length) m.present[vi] = 0;
+        commitChange(MeshEditScope.Maps);
+        return true;
+    }
+
+    /// How many vertices have an entry in morph map `name`. 0 for a missing
+    /// or non-morph map. The quantity the fixture's `entries[]` counts.
+    size_t morphEntryCount(string name) const {
+        auto m = meshMap(name);
+        if (m is null || !isMorphKind(m.kind)) return 0;
+        size_t n = 0;
+        const size_t elems = m.data.length / 3;
+        foreach (i; 0 .. elems) if (m.isPresent(i)) ++n;
+        return n;
+    }
+
+    // Resize the per-edge arrays to `edges` length and drop every edge
+    // selection bit. The pick-order array is resized but NOT zeroed and the
+    // counter is left alone (callers that reach here have already replaced the
+    // topology, so surviving order values are stale-but-harmless) — this is
+    // the exact triplet the topology mutators ran after a `rebuildEdges()`.
+    void clearEdgeSelectionResize() {
+        resizeEdgeSelection();
+        bool any = false;
+        foreach (m; edgeMarks) if (m & Marks.Select) { any = true; break; }
+        foreach (ref m; edgeMarks) m &= ~Marks.Select;
+        // Publishes the Edge domain when a topology edit drops a live edge
+        // selection. The enclosing mutator already publishes Geometry; the
+        // selection-domain bit rides the same per-frame flush.
+        if (any) noteSelectionChange(SelDomain.Edge);
+    }
+
+    // Resize the per-face selection-bit array to `faces` length and drop every
+    // face selection bit. The pick-order / subpatch / material arrays are
+    // managed by the caller. Extracted from the identical pair the topology
+    // mutators ran after assigning a freshly filtered `faces` array.
+    void clearFaceSelectionResize() {
+        resizeFaceSelection();
+        // Mask ONLY the Select bit — Subpatch shares this word and the
+        // calling mutator has already written it (B3 ordering).
+        bool any = false;
+        foreach (m; faceMarks) if (m & Marks.Select) { any = true; break; }
+        foreach (ref m; faceMarks) m &= ~Marks.Select;
+        if (any) noteSelectionChange(SelDomain.Face);
+    }
+
+    // --- Subpatch resize / write surface ----------------------------------
+    // Grow/shrink the per-face subpatch-flag array to match `faces` length
+    // WITHOUT clearing it (same grow-and-keep convention as the selection
+    // resize primitives). The parallel pick-order / material arrays are
+    // managed separately by the calling mutator.
+    void resizeSubpatch() {
+        // faceMarks folds both Select and Subpatch for faces; keep its length
+        // in lock-step with `faces` (resizeFaceSelection may not have been
+        // called on the subpatch-only resize path).
+        faceMarks.length = faces.length;
+    }
+
+    // Single-index subpatch write. Bounds-guarded; does NOT bump the
+    // mutation/topology version (callers that need a version bump on a
+    // user-facing toggle use `setSubpatch`). Used by bulk/internal writers.
+    void setFaceSubpatch(size_t fi, bool flag) {
+        if (fi >= faceMarks.length) return;
+        if (flag) faceMarks[fi] |=  Marks.Subpatch;
+        else      faceMarks[fi] &= ~Marks.Subpatch;
+    }
+
+    // Single-index HIDE write in the same raw shape as setFaceSubpatch above:
+    // bounds-guarded, no commitChange, no version bump, NO refreshHiddenDerived
+    // — deliberately, because it exists for one caller shape, the bulk
+    // face-plane stamps in subpatch_osd.d (task 0613 S3), which write every
+    // face of a freshly built preview and then call refreshHiddenDerived()
+    // ONCE. Routing those through the user-facing `setFaceHidden` instead would
+    // pay a commitChange + a full O(V+E+F) derivation PER FACE, i.e. O(F²) on a
+    // 400 K-face preview.
+    //
+    // Both branches are written, never a bare `|=`: the preview mesh is a
+    // long-lived reused struct whose faceMarks survive a rebuild, so a
+    // set-only stamp would leave a previously-hidden face hidden forever.
+    //
+    // NOT a general-purpose hide writer. Anything user-facing wants
+    // setFaceHidden / setFaceHiddenFrom, which own the Select ∧ Hide = ∅
+    // invariant, the change publish and the layout-key bump.
+    void setFaceHiddenBit(size_t fi, bool flag) {
+        if (fi >= faceMarks.length) return;
+        if (flag) faceMarks[fi] |=  Marks.Hide;
+        else      faceMarks[fi] &= ~Marks.Hide;
+    }
+
+    // --- Whole-array selection/subpatch replace (resize-then-copy) ---------
+    // Each setter touches ONLY its own concept (Select bit for vertices /
+    // edges / faces, or the Subpatch flag) so the two face concepts stay
+    // order-independent. `src` is treated as the new authoritative array;
+    // the backing array is resized to `src.length`, then copied.
+    // The bulk setters COMPARE-BEFORE-SET for the bus publish (Stage 5): they
+    // already iterate, so detecting "did any Select bit actually flip" is free,
+    // and it stops a no-op restore (re-applying an identical selection — common
+    // on undo/redo snapshot replay) from spuriously publishing a selection
+    // change. A length change is itself a change. The Marks WRITE stays
+    // unconditional (cheap, and keeps the array length correct even on a
+    // value-identical-but-length-changed src).
+    // Grow-before-index: the order array must reach src.length before the
+    // loop below can write to it, or a shorter order array (e.g. right
+    // after a geometry-growing op that hasn't synced order yet) would
+    // RangeError. Growing never shrinks, so trailing order[i >= old
+    // length] entries default to 0 (int.init) — consistent with "not
+    // manually selected". If a future caller ever passes a SHORTER src
+    // than the current order array, the extra trailing order[i >=
+    // src.length] slots are simply left untouched (harmless stale data,
+    // matching the array's pre-existing grow-only behavior elsewhere).
+    private void applySelectedFrom_(ref uint[] marks, ref int[] order, const bool[] src, SelDomain dom) {
+        bool changed = (marks.length != src.length);
+        marks.length = src.length;
+        if (order.length < src.length)
+            order.length = src.length;
+        foreach (i, s; src) {
+            // Invariant (doc/hide_geometry_plan.md §3.1): Select ∧ Hide = ∅,
+            // enforced in the WRITER so it holds for every caller — including
+            // undo/redo snapshot replay, which is exactly the path a
+            // per-caller guard would miss. A hidden element simply cannot be
+            // asked to select; it is not an error, it is a silent refusal.
+            const bool want = s && (marks[i] & Marks.Hide) == 0;
+            const cur = (marks[i] & Marks.Select) != 0;
+            if (cur != want) changed = true;
+            if (want) marks[i] |=  Marks.Select;
+            else { marks[i] &= ~Marks.Select; order[i] = 0; }
+        }
+        // TASK 1906 STAGE 3 — DELIVERS, for the same reason the `clear*` trio
+        // beside it does, and with a caller that proves the point: the census
+        // found ONE residual frame after the command anchor and the pick
+        // helpers, and it was `select.set.apply` — a command that walks EVERY
+        // foreground layer and writes marks on meshes that are not its own
+        // `Command.mesh`, so the anchor's single offer could not reach them.
+        // A bulk write behind a compare-guard is an edit boundary and cannot
+        // loop; inside a batch this only registers, so the per-operation
+        // delivery count is unchanged.
+        if (changed) { noteSelectionChange(dom); deliverPending(); }
+    }
+    void setVerticesSelectedFrom(const bool[] src) {
+        applySelectedFrom_(vertexMarks, vertexSelectionOrder, src, SelDomain.Vertex);
+    }
+    void setEdgesSelectedFrom(const bool[] src) {
+        applySelectedFrom_(edgeMarks, edgeSelectionOrder, src, SelDomain.Edge);
+    }
+    void setFacesSelectedFrom(const bool[] src) {
+        // Resize once, then touch ONLY the Select bit so this stays
+        // order-independent with setFaceMarksFrom (B4 — snapshot restore
+        // writes Select and Subpatch/Hide as two separate assigns). Resizing
+        // preserves the other bits of any pre-existing entries.
+        applySelectedFrom_(faceMarks, faceSelectionOrder, src, SelDomain.Face);
+    }
+    // Raw face-mark bulk write: preserve only `keepMask` and do not publish
+    // (task 0613). The caller owes one final commit/derived-hide refresh; a
+    // local hide-derive batch would combine nothing.
+    // SELF-ALIASING IS SUPPORTED and is what the `setFaceMarksFrom(faceMarks,
+    // ~Marks.Select)` call sites pass — safe for THIS body, not in general:
+    // with `src is faceMarks` the length assign is a no-op (nothing moves, no
+    // slot is zero-filled) and each slot is read into `w` and written back in
+    // the SAME iteration, so no index is ever read after a later one was
+    // written. A body that resized, or that read an index it had written,
+    // would not inherit this.
+    // See doc/source_prose_policy.md#удалённый-отдельный-hide-derive-batch.
+    void setFaceMarksFrom(const uint[] src, uint keepMask) {
+        faceMarks.length = src.length;
+        foreach (i, w; src) faceMarks[i] = w & keepMask;
+    }
+    // Bulk face-plane write, same shape as setFaceMarksFrom above (raw —
+    // no commitChange, used by bulk/internal writers; a user-facing bulk
+    // hide command calls this then refreshHiddenDerived() itself, exactly
+    // the two-step S2 will use). Resize once, touch ONLY the Hide bit, so
+    // this stays order-independent with setFacesSelectedFrom /
+    // setFaceMarksFrom (all three share the same word).
+    void setFaceHiddenFrom(const bool[] src) {
+        faceMarks.length = src.length;
+        // §3.1 Select ∧ Hide = ∅ (BLOCKER, code review task 0613) — same
+        // invariant as the scalar setFaceHidden above, owed by every writer
+        // of the Hide plane, not only the single-index one. Raw shape (no
+        // commitChange — the caller does that, same as setFaceMarksFrom),
+        // but a Select-domain change is still noted here if one happens, so
+        // it is never silently lost regardless of what the caller does next.
+        bool selChanged  = false;
+        bool hideChanged = false;
+        foreach (i, s; src) {
+            immutable bool cur = (faceMarks[i] & Marks.Hide) != 0;
+            if (cur != s) hideChanged = true;
+            if (s) {
+                faceMarks[i] |= Marks.Hide;
+                if (faceMarks[i] & Marks.Select) {
+                    faceMarks[i] &= ~Marks.Select;
+                    if (i < faceSelectionOrder.length) faceSelectionOrder[i] = 0;
+                    selChanged = true;
+                }
+            } else {
+                faceMarks[i] &= ~Marks.Hide;
+            }
+        }
+        if (selChanged) noteSelectionChange(SelDomain.Face);
+        // Two obligations of a Hide-plane write, both parked HERE in the
+        // writer rather than in the four hide commands — a raw
+        // topologyVersion bump and a bare noteChange are both orthogonal to
+        // commitChange (mesh_edit_delta.d does the same), so keeping them with
+        // the plane's writer means a fifth command cannot forget one and ship
+        // a hide that does nothing on screen:
+        //
+        //   * ++topologyVersion — the preview + GPU LAYOUT key. See the header
+        //     above setFaceHidden.
+        //   * noteChange(Visibility) — the DISPLAY-REFRESH class. The caller's
+        //     commitChange(Marks) ORs into the same pending set, and Marks is
+        //     deliberately NOT in mesh_edit_delta.DisplayRefreshMask (it would
+        //     re-upload on every selection click), so a hide published as
+        //     Marks alone never reaches app.d's bus-driven cage upload and
+        //     never reaches the screen. MEASURED, not reasoned: with the
+        //     Marks-only publish, hiding a cube face left /api/gpu/face-vbo's
+        //     faceVertCount at 36.
+        if (hideChanged) {
+            noteChange(MeshEditScope.Visibility);
+            ++topologyVersion;
+        }
+    }
+
+    // --- The derivation (doc/hide_geometry_plan.md §1.2) --------------------
+    // Recompute the DERIVED hidden planes (vertexMarks / edgeMarks) from the
+    // AUTHORITATIVE one (faceMarks) — the measured law:
+    //   * a vertex is hidden iff it has >= 1 incident face and EVERY one of
+    //     them is hidden (a loose vertex — no incident face — keeps its own
+    //     settable bit, untouched here — see setVertexHidden above);
+    //   * an edge is hidden iff AT LEAST ONE endpoint vertex is hidden —
+    //     derived from VERTICES, not polygons (measured: two adjacent hidden
+    //     polygons do NOT hide the edge they share, because both endpoints
+    //     still touch a third, visible face — T-S0a's discriminator).
+    //
+    // Self-guarding and deliberately owns NO cached field (REV2/objection 5
+    // — a `hiddenFaceCount_`-style counter has no snapshot-restore path: a
+    // wholesale `faceMarks = faceMarks.dup` + commitChange bypasses any
+    // writer-maintained counter, so undo/redo INTO a hidden state would skip
+    // the refresh while `faceMarks` says otherwise). Instead: a three-plane
+    // word-OR computed fresh from the arrays about to be read. A mesh with
+    // nothing hidden anywhere — the overwhelmingly common case — pays three
+    // tight scans (one load + one OR per element, no branch, no allocation)
+    // and returns.
+    //
+    // Called from every geometry-mutating commitChange (mesh.d, the single
+    // geometry-mutation funnel — see commitChange() below), so a topology
+    // edit can never leave these planes stale; also called directly by the
+    // hide commands (Stage 2) right after they write the face plane, and by
+    // setFaceHidden/clearHidden above (S5 — a Marks-only commit does not
+    // reach here through commitChange, so those two call it explicitly).
+    //
+    // Reused scratch buffers (S6 — code review, task 0613): grow-only,
+    // mirroring mesh_gpu.d's upload() scratch pattern, so a mesh of stable
+    // size pays the allocation only the first time it grows, not on every
+    // call — this matters because this function is reachable from an
+    // interactive drag (a preview tool restores a snapshot and re-runs its
+    // kernel per mouse-move, both of which commit geometry). Confirmed
+    // unreachable from any per-frame draw/pick path — those commit a
+    // Position-only scope, which carries no Geometry class and never reaches
+    // commitChange's refreshHiddenDerived() call.
+    private bool[] hiddenDerivedHasFaceScratch_;
+    private bool[] hiddenDerivedAllHiddenScratch_;
+
+    // ---- Hide-derive batching (task 1330) ---------------------------------
+    // `refreshHiddenDerived()` runs from every geometry-mutating commit — and
+    // the per-ELEMENT mutators commit per element (`addEdge` once per edge,
+    // `addFace` once per face). A bulk op therefore paid one full-mesh pass
+    // per appended element. Measured on a 100K-face grid: seven commands at
+    // scaling exponent ~2.0 (per-face bevel 74 s, poly_inset 72 s,
+    // edge_extrude 66 s).
+    //
+    // THE RULE THAT MAKES DEFERRAL SAFE, and the reason no audit of the
+    // derived planes' READERS is needed: the derive is skipped only while
+    // NOTHING IS HIDDEN ANYWHERE — and in that state `refreshHiddenDerived`
+    // returns at its own three-plane word-OR early-out WITHOUT WRITING A
+    // SINGLE BIT. Skipping a call that provably writes nothing is invisible
+    // to every reader, including the ones that DO read the derived planes
+    // mid-operation: `selectVertex`/`selectEdge` (which refuse a hidden
+    // element), `applySelectedFrom_`, `selectedVertexIndices*`,
+    // `visibleVertexMask`/`visibleEdgeMask`, `maskMinusHiddenVertices/Edges`.
+    // Those readers are why the first cut of this fix was WRONG: it deferred
+    // unconditionally, so a vertex un-hidden by newly appended geometry was
+    // still marked Hide when the kernel selected its output, and the select
+    // was silently refused.
+    //
+    // The moment anything IS hidden, deferral is cancelled for the rest of
+    // the batch (`refreshHiddenDerived` clears the flag when its scan finds a
+    // Hide bit) and every commit derives eagerly, exactly as before this
+    // change — correct, and still quadratic in that state (task 1333).
+    //
+    // The state lives at MODULE scope, not in `Mesh`: three Operator commands
+    // (`mesh.subdivide`, `mesh.subdivide_faceted`, `mesh.remesh`) replace the
+    // whole struct with `*mesh = …` inside their kernel, which would reset an
+    // in-struct depth counter and leave the close unbalanced — an assert
+    // death in assert-live builds and a silent, STICKY underflow (the
+    // optimization permanently off, with no symptom) under `-release`.
+    // Module scope is thread-local in D, which is what we want: a worker
+    // mutating its own Mesh gets its own counter.
+    // TASK 1906 review S3 — THIS PAIR OWNS THE DELIVERY BATCH TOO, and that
+    // coupling is the fix rather than a convenience.
+    //
+    // `Mesh.commitChange`'s path (a) — a `Geometry` commit while the derive is
+    // DEFERRED — is only safe if a delivery batch is open, because on that path
+    // the derived hidden-vertex/hidden-edge planes are brought up to date by
+    // `endHideDeriveBatch` and by nothing else. Delivering there at depth 0
+    // would hand listeners a mesh whose derived state contradicts its marks.
+    //
+    // That safety used to be PROSE plus a declaration-order convention in
+    // `Command.apply` (delivery pair declared first, so LIFO `scope(exit)`
+    // closed it last). Two things were wrong with it: the convention is
+    // invisible at every OTHER `beginHideDeriveBatch` call site — eight
+    // unittests in this file open a hide-derive batch with no delivery batch and
+    // would have delivered with stale planes — and a reader who "tidies" the two
+    // blocks into a nicer order in `command.d` silently breaks it.
+    //
+    // Opening and closing the delivery batch HERE makes the hazard
+    // unrepresentable instead of merely forbidden: `g_hideDeriveDepth > 0`
+    // now IMPLIES `g_deliveryDepth > 0` by construction, at every call site
+    // that exists or will exist, and the close order (derive flush, THEN
+    // delivery) is one function's statement order rather than two `scope(exit)`
+    // bodies in another file. `commitChange`'s path (a) asserts the implication
+    // so a stray direct `endDeliveryBatch()` cannot quietly undo it.
+    //
+    // The 1903 convergence contract is unaffected: delivery still happens
+    // inside `commitChange`, the depth pair is still internal, and this is not
+    // the undo-tracker batch (`beginEditBatch`/`endEditBatch`) being implemented
+    // in terms of anything.
+    void beginHideDeriveBatch() {
+        beginDeliveryBatch();          // strictly encloses the hide-derive batch
+        if (g_hideDeriveDepth == 0)
+            g_hideDeriveDeferSafe = !anyHideBitSet();
+        ++g_hideDeriveDepth;
+        noteHideDerivePending(&this);
+    }
+
+    void endHideDeriveBatch() {
+        // Clamped, not asserted: an imbalance must not be a process death in
+        // one build kind and a silent permanent de-optimization in the other.
+        // `endDeliveryBatch` clamps the same way, so an unbalanced close leaves
+        // both counters at 0 rather than one of them stuck.
+        if (g_hideDeriveDepth <= 0) {
+            g_hideDeriveDepth = 0;
+            flushHideDerivePending();
+            endDeliveryBatch();
+            return;
+        }
+        if (--g_hideDeriveDepth == 0)
+            flushHideDerivePending();
+        // AFTER the derive flush on every path — this statement order IS the
+        // ordering guarantee `tests/unit/delivery_after_hide_derive_test.d`
+        // pins. What the flush itself publishes is a `noteSelectionChange` (the
+        // Select ∧ Hide = ∅ clear inside `refreshHiddenDerived`) — an
+        // ACCUMULATE-ONLY funnel, not a commit: it ORs into `undelivered*_` and
+        // never calls `deliverPending`. So those bits ride the ONE delivery
+        // this close is about to make for the same mesh rather than making a
+        // second one — and they ride it because the deferred `commitChange`
+        // already put that mesh in `g_deliveryPendingMeshes`; an accumulate-only
+        // note puts nothing there itself.
+        endDeliveryBatch();
+    }
+
+    // The three-plane word-OR on its own — the question `refreshHiddenDerived`
+    // asks before deciding it has nothing to do.
+    private bool anyHideBitSet() const {
+        uint any = 0;
+        foreach (w; faceMarks)   any |= w;
+        foreach (w; vertexMarks) any |= w;
+        foreach (w; edgeMarks)   any |= w;
+        return (any & Marks.Hide) != 0;
+    }
+
+
+
+
+
+
+
+
+
+
+
+    void refreshHiddenDerived() {
+        version (unittest) ++g_hideDeriveRuns;
+        uint anyHide = 0;
+        foreach (w; faceMarks)   anyHide |= w;
+        foreach (w; vertexMarks) anyHide |= w;
+        foreach (w; edgeMarks)   anyHide |= w;
+        if (!(anyHide & Marks.Hide)) return;   // nothing hidden anywhere ⇒ nothing to derive
+        // Something IS hidden: from here on the derive WRITES, so deferring it
+        // would be observable (task 1330). Cancel deferral for the rest of the
+        // batch — every later commit in it derives eagerly, as before.
+        g_hideDeriveDeferSafe = false;
+        // TASK 1903 §3.1 B3 — the edit batch takes the SAME disarm. A batch
+        // that hides something mid-op stops deferring the derive from that
+        // commit on; it is never re-armed inside a batch.
+        if (auto bf = currentBatchFrame(&this)) bf.deferSafe = false;
+
+        if (hiddenDerivedHasFaceScratch_.length < vertexMarks.length)
+            hiddenDerivedHasFaceScratch_.length = vertexMarks.length;
+        if (hiddenDerivedAllHiddenScratch_.length < vertexMarks.length)
+            hiddenDerivedAllHiddenScratch_.length = vertexMarks.length;
+        auto hasFace   = hiddenDerivedHasFaceScratch_[0 .. vertexMarks.length];
+        auto allHidden = hiddenDerivedAllHiddenScratch_[0 .. vertexMarks.length];
+        hasFace[]   = false;  // reused buffer: a prior call's data must not leak in
+        allHidden[] = true;   // AND-reduced below; a vertex with no incident
+                               // face never flips this, so hasFace gates it.
+
+        foreach (fi, face; faces) {
+            const bool faceHidden = fi < faceMarks.length && (faceMarks[fi] & Marks.Hide) != 0;
+            foreach (vi; face) {
+                if (vi >= hasFace.length) continue;   // transient desync (mid-grow) — self-heals next refresh
+                hasFace[vi] = true;
+                if (!faceHidden) allHidden[vi] = false;
+            }
+        }
+
+        // §3.1 Select ∧ Hide = ∅ — this derivation is ITSELF a Hide writer
+        // (BLOCKER, code review task 0613): a vertex/edge that transitions to
+        // hidden here cannot stay selected, or the invariant is breakable
+        // with Stage 0 code alone — select a vertex, hide the faces around
+        // it, let this funnel run, and (before this fix) it ends up both
+        // selected and hidden, with no hide COMMAND anywhere in the call
+        // stack for a later stage to guard. Cleared in the SAME word write
+        // that sets Hide; the order stamp is zeroed alongside (a stale
+        // nonzero order on a non-selected element is the corruption fixed
+        // elsewhere in this stage); the selection-change bus note fires only
+        // if something actually flipped.
+        bool vertSelChanged = false;
+        foreach (vi; 0 .. vertexMarks.length) {
+            if (!hasFace[vi]) continue;   // loose point: own bit stays, untouched
+            if (allHidden[vi]) {
+                if (vertexMarks[vi] & Marks.Select) {
+                    vertexMarks[vi] &= ~Marks.Select;
+                    if (vi < vertexSelectionOrder.length) vertexSelectionOrder[vi] = 0;
+                    vertSelChanged = true;
+                }
+                vertexMarks[vi] |= Marks.Hide;
+            } else {
+                vertexMarks[vi] &= ~Marks.Hide;
+            }
+        }
+        if (vertSelChanged) noteSelectionChange(SelDomain.Vertex);
+
+        bool edgeSelChanged = false;
+        foreach (ei; 0 .. edgeMarks.length) {
+            if (ei >= edges.length) continue;
+            const e = edges[ei];
+            const bool hidden =
+                (e[0] < vertexMarks.length && (vertexMarks[e[0]] & Marks.Hide) != 0) ||
+                (e[1] < vertexMarks.length && (vertexMarks[e[1]] & Marks.Hide) != 0);
+            if (hidden) {
+                if (edgeMarks[ei] & Marks.Select) {
+                    edgeMarks[ei] &= ~Marks.Select;
+                    if (ei < edgeSelectionOrder.length) edgeSelectionOrder[ei] = 0;
+                    edgeSelChanged = true;
+                }
+                edgeMarks[ei] |= Marks.Hide;
+            } else {
+                edgeMarks[ei] &= ~Marks.Hide;
+            }
+        }
+        if (edgeSelChanged) noteSelectionChange(SelDomain.Edge);
+    }
+
+
+
+
+    // === S5 ==================================================================
+
+
+
+    // --- Bulk SELECT (as opposed to bulk RESTORE) --------------------------
+    // `setXSelectedFrom` above is a state-RESTORE setter: it writes the Select
+    // bit and NOTHING else, which is exactly right for undo/redo snapshot
+    // replay and for the post-topology re-selects that carry a rebuilt
+    // `XSelectionOrder` array alongside the new Select bits.
+    //
+    // It is the WRONG primitive for a command that COMPUTES a new selection
+    // (a loop walk, a flood fill, a region fill). Such a command is selecting
+    // elements on the user's behalf, and every consumer of selection history
+    // — select.loop's seed scan, select.more / select.less / select.between,
+    // and mesh.makePolygon, which derives face WINDING from vertex click order
+    // — reads `XSelectionOrder` with the convention "0 = not manually
+    // selected, sorts last". An element committed through the restore setter
+    // lands with order 0, so it sorts behind anything clicked afterwards even
+    // though it was selected first.
+    //
+    // `selectXFrom` is that missing primitive: commit the selection AND stamp
+    // the elements it newly selects, reproducing `selectX`'s own contract
+    // (an element that was not already selected takes the next counter value;
+    // an already-selected one keeps the order it had; a dropped one is
+    // cleared by the setter). The `bool[]` carries no traversal order, so the
+    // stamp runs in ascending index order — which is also the tie-break the
+    // consumers' sorts already apply among equal-order elements.
+    //
+    // Rule of thumb: restoring remembered state -> `setXSelectedFrom`;
+    // selecting on the user's behalf -> `selectXFrom`.
+    void selectVerticesFrom(const bool[] src) {
+        bool[] added = new bool[](src.length);
+        foreach (i, s; src) added[i] = s && !isVertexSelected(i);
+        setVerticesSelectedFrom(src);   // also grows vertexSelectionOrder
+        // Re-check isVertexSelected AFTER the call: `added` was computed from
+        // the request, but setVerticesSelectedFrom's Select ∧ Hide = ∅ guard
+        // may have silently refused a hidden element — stamping its order
+        // anyway would leave a nonzero order entry for something that was
+        // never actually selected.
+        foreach (i, a; added)
+            if (a && isVertexSelected(i)) vertexSelectionOrder[i] = ++vertexSelectionOrderCounter;
+    }
+    void selectEdgesFrom(const bool[] src) {
+        bool[] added = new bool[](src.length);
+        foreach (i, s; src) added[i] = s && !isEdgeSelected(i);
+        setEdgesSelectedFrom(src);      // also grows edgeSelectionOrder
+        foreach (i, a; added)
+            if (a && isEdgeSelected(i)) edgeSelectionOrder[i] = ++edgeSelectionOrderCounter;
+    }
+    void selectFacesFrom(const bool[] src) {
+        bool[] added = new bool[](src.length);
+        foreach (i, s; src) added[i] = s && !isFaceSelected(i);
+        setFacesSelectedFrom(src);      // also grows faceSelectionOrder
+        foreach (i, a; added)
+            if (a && isFaceSelected(i)) faceSelectionOrder[i] = ++faceSelectionOrderCounter;
+    }
+
+    /// The selected vertices IN SELECTION ORDER — the canonical reading of
+    /// `vertexSelectionOrder`, so the two commands that care about "which one
+    /// was picked last" cannot drift apart on the tie-breaks.
+    ///
+    /// The order is: click-ordered vertices first, by ascending stamp; then
+    /// the ones whose stamp is 0, by ascending index. A 0 means "selected by a
+    /// path that assigned no click order" — and today that is only a RESTORE
+    /// path (`SelectionSnapshot.restore` and friends), because every path a
+    /// user can reach goes through `selectVertex` / `selectVerticesFrom`,
+    /// including the RMB lasso and every `select.*` command (surveyed task
+    /// 1210). Sorting them last rather than first is the convention
+    /// `mesh.makePolygon` already established for winding.
+    ///
+    /// Two consumers, and they read opposite ends of the same list:
+    /// `mesh.makePolygon` walks it forwards for the ring winding, `vert.join`
+    /// takes its LAST entry as the vertex that survives the weld (task 1210,
+    /// ledger row 11).
+    uint[] selectedVerticesBySelectionOrder() const {
+        import std.algorithm : sort;
+        struct VOrder { uint vi; int order; }
+        VOrder[] pairs;
+        foreach (vi; 0 .. vertices.length) {
+            if (!isVertexSelected(vi)) continue;
+            const int ord = (vi < vertexSelectionOrder.length)
+                          ? vertexSelectionOrder[vi] : 0;
+            pairs ~= VOrder(cast(uint) vi, ord);
+        }
+        sort!((a, b) {
+            const int oa = (a.order > 0) ? a.order : int.max;
+            const int ob = (b.order > 0) ? b.order : int.max;
+            if (oa != ob) return oa < ob;
+            return a.vi < b.vi;
+        })(pairs);
+        uint[] outIdx;
+        outIdx.length = pairs.length;
+        foreach (i, p; pairs) outIdx[i] = p.vi;
+        return outIdx;
+    }
+
+    // selectVertex / selectEdge / selectFace: the direct scalar writers.
+    // Same invariant as applySelectedFrom_ above (§3.1) — refuse to select a
+    // hidden element. Checked first so a refusal touches neither the order
+    // counter nor the bus publish.
+    //
+    // TASK 1906 STAGE 3 — THESE SIX DELIVER, and after them EVERY selection
+    // write on a `Mesh` does. That is the point: `noteSelectionChange` stays
+    // accumulate-only (it is also the funnel `refreshHiddenDerived` uses
+    // mid-commit, where an early delivery would break `commitChange`'s
+    // documented "deliver after the derive" order), while the WRITERS a caller
+    // actually reaches are delivering publishers. The census reached this
+    // conclusion by exhaustion rather than by design: the command anchor took
+    // ~1670 residual frames, `symmetry_pick` the interactive picks, the bulk
+    // `clear*`/`applySelectedFrom_` trio the rest — and the last frame standing
+    // was a TOOL (Topology Pen's undo path) calling `selectVertex` at delivery
+    // depth 0, because a tool gesture is not a `Command.apply`.
+    //
+    // The cost of delivering per element rather than per gesture is paid only
+    // OUTSIDE a batch: inside one — every command, and the pick helpers — this
+    // registers the mesh and the close still delivers exactly once. The
+    // unbatched loops that remain are tool-sized (a loop, a ring), not
+    // mesh-sized.
+    void selectVertex(int idx) {
+        if (vertexMarks[idx] & Marks.Hide) return;
+        // ALREADY SELECTED IS A NO-OP, AND SINCE STAGE 3 THAT HAS A PRICE
+        // (review of stage 3, M1). This setter DELIVERS, so re-selecting
+        // an element that is already selected cost a whole bus delivery
+        // and a fan-out to every listener for a mark that did not move.
+        // It is not a corner case: a paint stroke picks TWICE per cursor
+        // position — once from the motion event (`doSelectPickAt`) and
+        // once from the frame's own picker sweep — and the second pick
+        // lands on the element the first just took. MEASURED on a
+        // 120-motion stroke over `grid n=32`: 280 deliveries without this
+        // guard, i.e. 2.34 per motion, where the stroke changes the
+        // selection at most once per motion.
+        //
+        // The guard is the whole of the write: the order slot is ALREADY
+        // only assigned on the 0->1 transition below, so an element whose
+        // Select bit is set has nothing left for this call to do. Refusing
+        // here therefore also skips `marksVersion`, which is correct —
+        // `selectionSignature` is a function of the marks, and the marks
+        // did not change.
+        if (vertexMarks[idx] & Marks.Select) return;
+        vertexSelectionOrder[idx] = ++vertexSelectionOrderCounter;
+        vertexMarks[idx] |= Marks.Select;
+        noteSelectionChange(SelDomain.Vertex);
+        deliverPending();
+    }
+    void deselectVertex(int idx) {
+        // COMPARE BEFORE SET, like the three bulk `clear*` siblings and
+        // for the same reason, which got sharper at stage 3 (review MINOR
+        // 6): these setters DELIVER now, so a redundant deselect — the
+        // ordinary case for a ctrl-drag paint stroke passing twice over an
+        // unselected element — costs a whole bus delivery and a fan-out to
+        // every listener for a mark that did not move. The state this
+        // writes is exactly (Select bit, pick order), so the guard reads
+        // both; a `Marks.Select`-only test would skip a stale order value.
+        if ((vertexMarks[idx] & Marks.Select) == 0 && vertexSelectionOrder[idx] == 0) return;
+        vertexMarks[idx] &= ~Marks.Select;
+        vertexSelectionOrder[idx] = 0;
+        noteSelectionChange(SelDomain.Vertex);
+        deliverPending();
+    }
+
+    void selectEdge(int idx) {
+        if (edgeMarks[idx] & Marks.Hide) return;
+        // ALREADY SELECTED IS A NO-OP, AND SINCE STAGE 3 THAT HAS A PRICE
+        // (review of stage 3, M1). This setter DELIVERS, so re-selecting
+        // an element that is already selected cost a whole bus delivery
+        // and a fan-out to every listener for a mark that did not move.
+        // It is not a corner case: a paint stroke picks TWICE per cursor
+        // position — once from the motion event (`doSelectPickAt`) and
+        // once from the frame's own picker sweep — and the second pick
+        // lands on the element the first just took. MEASURED on a
+        // 120-motion stroke over `grid n=32`: 280 deliveries without this
+        // guard, i.e. 2.34 per motion, where the stroke changes the
+        // selection at most once per motion.
+        //
+        // The guard is the whole of the write: the order slot is ALREADY
+        // only assigned on the 0->1 transition below, so an element whose
+        // Select bit is set has nothing left for this call to do. Refusing
+        // here therefore also skips `marksVersion`, which is correct —
+        // `selectionSignature` is a function of the marks, and the marks
+        // did not change.
+        if (edgeMarks[idx] & Marks.Select) return;
+        edgeSelectionOrder[idx] = ++edgeSelectionOrderCounter;
+        edgeMarks[idx] |= Marks.Select;
+        noteSelectionChange(SelDomain.Edge);
+        deliverPending();
+    }
+    void deselectEdge(int idx) {
+        // COMPARE BEFORE SET, like the three bulk `clear*` siblings and
+        // for the same reason, which got sharper at stage 3 (review MINOR
+        // 6): these setters DELIVER now, so a redundant deselect — the
+        // ordinary case for a ctrl-drag paint stroke passing twice over an
+        // unselected element — costs a whole bus delivery and a fan-out to
+        // every listener for a mark that did not move. The state this
+        // writes is exactly (Select bit, pick order), so the guard reads
+        // both; a `Marks.Select`-only test would skip a stale order value.
+        if ((edgeMarks[idx] & Marks.Select) == 0 && edgeSelectionOrder[idx] == 0) return;
+        edgeMarks[idx] &= ~Marks.Select;
+        edgeSelectionOrder[idx] = 0;
+        noteSelectionChange(SelDomain.Edge);
+        deliverPending();
+    }
+
+    void selectFace(int idx) {
+        if (faceMarks[idx] & Marks.Hide) return;
+        // ALREADY SELECTED IS A NO-OP, AND SINCE STAGE 3 THAT HAS A PRICE
+        // (review of stage 3, M1). This setter DELIVERS, so re-selecting
+        // an element that is already selected cost a whole bus delivery
+        // and a fan-out to every listener for a mark that did not move.
+        // It is not a corner case: a paint stroke picks TWICE per cursor
+        // position — once from the motion event (`doSelectPickAt`) and
+        // once from the frame's own picker sweep — and the second pick
+        // lands on the element the first just took. MEASURED on a
+        // 120-motion stroke over `grid n=32`: 280 deliveries without this
+        // guard, i.e. 2.34 per motion, where the stroke changes the
+        // selection at most once per motion.
+        //
+        // The guard is the whole of the write: the order slot is ALREADY
+        // only assigned on the 0->1 transition below, so an element whose
+        // Select bit is set has nothing left for this call to do. Refusing
+        // here therefore also skips `marksVersion`, which is correct —
+        // `selectionSignature` is a function of the marks, and the marks
+        // did not change.
+        if (faceMarks[idx] & Marks.Select) return;
+        faceSelectionOrder[idx] = ++faceSelectionOrderCounter;
+        faceMarks[idx] |= Marks.Select;
+        noteSelectionChange(SelDomain.Face);
+        deliverPending();
+    }
+    void deselectFace(int idx) {
+        // COMPARE BEFORE SET, like the three bulk `clear*` siblings and
+        // for the same reason, which got sharper at stage 3 (review MINOR
+        // 6): these setters DELIVER now, so a redundant deselect — the
+        // ordinary case for a ctrl-drag paint stroke passing twice over an
+        // unselected element — costs a whole bus delivery and a fan-out to
+        // every listener for a mark that did not move. The state this
+        // writes is exactly (Select bit, pick order), so the guard reads
+        // both; a `Marks.Select`-only test would skip a stale order value.
+        if ((faceMarks[idx] & Marks.Select) == 0 && faceSelectionOrder[idx] == 0) return;
+        faceMarks[idx] &= ~Marks.Select;
+        faceSelectionOrder[idx] = 0;
+        noteSelectionChange(SelDomain.Face);
+        deliverPending();
+    }
+
+    void clear() {
+        vertices = []; edges = []; faces = [];
+        loops = []; faceLoop = []; vertLoop = [];
+        edgeIndexMap.clear();   // stale keys would shadow new addEdge calls
+        // Reused-buffer guard: a prior Valid stamp over the now-empty loops/
+        // edgeMap would read valid without a rebuild. Same class markDerivedEmpty
+        // closes for the subpatch preview mesh; keep it consistent here.
+        markDerivedEmpty();
+    }
+
+    /// Compute the unit normal of face fi by NEWELL's method over the whole
+    /// polygon (the summary line here used to say "using the first triangle
+    /// (v0, v1, v2)", contradicting its own body two lines down — and that is
+    /// the distinction the picking/snap divergence turns on, see CLAUDE.md's
+    /// Picking Strategy). Returns (0,1,0) for degenerate or tiny faces.
+    Vec3 faceNormal(uint fi) const {
+        // Newell's method: sums signed cross-product contributions from every
+        // consecutive vertex pair. Robust to (a) collinear leading triples
+        // (e.g. after splitting an edge — the inserted midpoint sits on the
+        // line through its two original neighbors) and (b) slightly non-planar
+        // n-gons. The naive "cross of the first two edges" fails on (a) and
+        // produces a poor approximation on (b).
+        const uint[] face = faces[fi];
+        if (face.length < 3) return Vec3(0, 1, 0);
+        float nx = 0, ny = 0, nz = 0;
+        foreach (i; 0 .. face.length) {
+            Vec3 a = vertices[face[i]];
+            Vec3 b = vertices[face[(i + 1) % face.length]];
+            nx += (a.y - b.y) * (a.z + b.z);
+            ny += (a.z - b.z) * (a.x + b.x);
+            nz += (a.x - b.x) * (a.y + b.y);
+        }
+        float len = sqrt(nx*nx + ny*ny + nz*nz);
+        return len > 1e-6f ? Vec3(nx / len, ny / len, nz / len) : Vec3(0, 1, 0);
+    }
+
+    /// Per-face normal approximation used by `MeshSmooth`'s `lockSharp`
+    /// dihedral test and the AI support-loop candidate generator
+    /// (`ai.support_loop_candidates`): cross of a face's first 3 vertices,
+    /// normalized. Deliberately NOT `faceNormal()` (Newell's method, used
+    /// everywhere else in this file) — kept as its own smaller function so
+    /// extracting the dihedral test out of `commands/mesh/smooth.d`'s inline
+    /// computation does not change `MeshSmooth`'s existing numeric behavior
+    /// (it always used this simpler 3-vertex-cross approximation — "exact
+    /// for planar quads/triangles, a non-averaged approximation for
+    /// non-planar n-gons").
+    Vec3 faceNormalTri3(uint fi) const {
+        const uint[] f = faces[fi];
+        if (f.length < 3) return Vec3(0, 1, 0);
+        Vec3 a = vertices[f[0]];
+        Vec3 b = vertices[f[1]];
+        Vec3 c = vertices[f[2]];
+        Vec3 n = cross(b - a, c - a);
+        float len = n.length;
+        return len > 1e-9f ? n * (1.0f / len) : Vec3(0, 1, 0);
+    }
+
+    /// Per-edge dihedral sharpness, indexed like `edges[]`. Shared by
+    /// `MeshSmooth.lockSharp` (`commands/mesh/smooth.d`) and the AI
+    /// support-loop candidate generator (`ai.support_loop_candidates`) so the
+    /// definition of "sharp edge" can never drift between the two call
+    /// sites. Walks the half-edge loops exactly once per undirected INTERIOR
+    /// edge (`li < twin` dedup — identical to the original inline
+    /// `lockSharp` loop this replaces) and compares `faceNormalTri3` normals
+    /// via the monotone `dot < cos(threshold)` test (cos is
+    /// decreasing on [0, π], so this avoids an `acos` per edge and is
+    /// numerically identical to the pre-extraction code). Boundary edges
+    /// (`twin == uint.max`) are left at `EdgeSharpness.init`.
+    ///
+    /// A NON-MANIFOLD edge is answered separately, at the bottom (task 1290).
+    /// It also carries `twin == uint.max` on every one of its darts, so before
+    /// that it fell through the `continue` above and came back "not interior,
+    /// never sharp" — an edge where three sheets meet reported as smooth, so
+    /// `MeshSmooth.lockSharp` did not lock it and smoothing dragged the sheets
+    /// through each other. There is no single dihedral to report on such an
+    /// edge; the number given is the LARGEST over its incident face pairs,
+    /// which is well defined and independent of the order the faces happen to
+    /// be stored in, and `sharp` is forced true regardless of it, because
+    /// three sheets meeting IS a crease however nearly coplanar they are.
+    /// That last part is a stated choice, not a measurement.
+    EdgeSharpness[] computeEdgeSharpness(float thresholdDeg) const {
+        import std.math : cos, acos, PI;
+
+        auto result = new EdgeSharpness[](edges.length);
+        auto fn = new Vec3[](faces.length);
+        foreach (fi; 0 .. faces.length) fn[fi] = faceNormalTri3(cast(uint)fi);
+
+        immutable cosThreshold = cos(thresholdDeg * (PI / 180.0f));
+        foreach (li, ref l; loops) {
+            if (l.twin == uint.max) continue;
+            if (cast(uint)li > l.twin) continue;
+            if (li >= loopEdge.length) continue;
+            immutable ei = loopEdge[li];
+            if (ei >= result.length) continue;
+
+            immutable faceB = loops[l.twin].face;
+            Vec3 n1 = fn[l.face];
+            Vec3 n2 = fn[faceB];
+            float dot = n1.x * n2.x + n1.y * n2.y + n1.z * n2.z;
+            immutable dotClamped = dot < -1.0f ? -1.0f : (dot > 1.0f ? 1.0f : dot);
+
+            result[ei].interior = true;
+            result[ei].angleDeg = acos(dotClamped) * (180.0f / PI);
+            result[ei].sharp    = dot < cosThreshold;
+            result[ei].faceA    = l.face;
+            result[ei].faceB    = faceB;
+        }
+
+        // Task 1290: the non-manifold edges the loop above could not see.
+        // `edgeNonManifold_` is empty until a `buildLoops`, and this whole
+        // function already requires one, so an unbuilt array simply means
+        // "no such edge" and the block is inert — as it is on every ordinary
+        // mesh, which has none.
+        foreach (ei; 0 .. result.length) {
+            if (!isEdgeNonManifold(cast(uint) ei)) continue;
+            uint[] inc;
+            foreach (fi; facesAroundEdge(cast(uint) ei)) inc ~= fi;
+            if (inc.length < 2) continue;
+            float worstDot = 1.0f;
+            uint  wa = inc[0], wb = inc[1];
+            foreach (i; 0 .. inc.length)
+                foreach (j; i + 1 .. inc.length) {
+                    Vec3 n1 = fn[inc[i]], n2 = fn[inc[j]];
+                    immutable float d = n1.x * n2.x + n1.y * n2.y + n1.z * n2.z;
+                    if (d < worstDot) { worstDot = d; wa = inc[i]; wb = inc[j]; }
+                }
+            immutable dc = worstDot < -1.0f ? -1.0f : (worstDot > 1.0f ? 1.0f : worstDot);
+            result[ei].interior = true;
+            result[ei].angleDeg = acos(dc) * (180.0f / PI);
+            result[ei].sharp    = true;
+            result[ei].faceA    = wa;
+            result[ei].faceB    = wb;
+        }
+        return result;
+    }
+
+
+    /// Return the other endpoint of edge `ei` given one of its vertices `vi`.
+    /// In debug builds, asserts that `vi` is actually one of the edge's endpoints.
+    pragma(inline, true)
+    uint edgeOtherVertex(uint ei, uint vi) const {
+        uint a = edges[ei][0];
+        uint b = edges[ei][1];
+        debug assert(vi == a || vi == b,
+                     "edgeOtherVertex: vi does not belong to edge ei");
+        return (vi == a) ? b : a;
+    }
+
+    /// Return a range over all consecutive vertex pairs (directed edges) of face `fi`.
+    FaceEdgeRange faceEdges(uint fi) const { return FaceEdgeRange(faces[fi]); }
+
+    /// True when vertex `vi`'s dart fan enumerates in a meaningful cyclic
+    /// ORDER and the twin-walk visits it completely (task 0447:
+    /// doc/vertex_fan_walk_foreign_edge_plan.md). False when the fan rests on
+    /// a same-direction shared edge (inconsistent winding) — such a vertex is
+    /// served by the CSR fallback (complete, arbitrary order), and
+    /// slot-position consumers (`bevelEdgesByMask`,
+    /// `symmetry.rebuildPairingTopological`) must check this and decline
+    /// rather than trust slot k. Keyed STRICTLY on same-directionness, NOT on
+    /// the overloaded `twin==~0u` sentinel — with ONE addition made by task
+    /// 1290: a genuine non-manifold ("book") vertex is now marked unordered
+    /// too, because treatment A gives every dart on its 3-face edge
+    /// `twin==~0u` and the ordered walk therefore truncates there exactly as
+    /// at an open rim, enumerating only the sub-fan it started in. Such a
+    /// vertex now takes the CSR fallback (complete, arbitrary order) like a
+    /// same-direction one. Backed by a persistent per-vertex bool array
+    /// rebuilt in `buildLoops` — O(1).
+    bool vertexFanOrdered(uint vi) const {
+        return vi >= vertFanOrdered_.length || vertFanOrdered_[vi];
+    }
+
+    /// True when edge `ei` carries THREE OR MORE incident face corners — a
+    /// non-manifold ("book") edge. The single fact that separates the two
+    /// meanings of `twin == ~0u`: an OPEN BOUNDARY edge (one incident face)
+    /// and a non-manifold one (three or more) are otherwise indistinguishable
+    /// to every twin reader in the tree, and that ambiguity is the root of the
+    /// wrong answers task 1290 collected — `isEdgeBorder` calling a 3-face
+    /// edge a border, `computeEdgeSharpness` calling it never-sharp,
+    /// `computeOrientationFlipMask` treating it as a hard component wall.
+    ///
+    /// Answers from the array `buildLoops` fills, so it is O(1) and needs no
+    /// pass over `faces[]`. PRECONDITION: `buildLoops()` since the last
+    /// topology edit — an unbuilt/stale-length array reads as "manifold"
+    /// everywhere, which is the same conservative answer the tree gave before
+    /// this existed. When the loops may be stale, ask `edgePolygonCounts`
+    /// instead: it answers off `faces[]` alone and cannot undercount.
+    bool isEdgeNonManifold(uint ei) const {
+        // The length equality is the staleness gate, not decoration: a kernel
+        // that shrank or grew `edges[]` without a rebuild would otherwise have
+        // an in-range index land on a FLAG THAT BELONGS TO A DIFFERENT EDGE.
+        // Answering "manifold" there is the same conservative answer the tree
+        // gave before this array existed.
+        return edgeNonManifold_.length == edges.length
+            && ei < edgeNonManifold_.length && edgeNonManifold_[ei];
+    }
+
+    /// Return a range over all vertices directly connected to vertex `vi` by an edge.
+    VertexNeighborRange verticesAroundVertex(uint vi) const {
+        uint first = (vi < vertLoop.length) ? vertLoop[vi] : ~0u;
+        // Task 0447: an unordered fan (rests on a same-direction edge) cannot
+        // be trusted to the twin-walk — enumerate it completely from the CSR.
+        if (vi < vertices.length && !vertexFanOrdered(vi))
+            return VertexNeighborRange.fromCsr(loops, vertDartStart, vertDartAdj, vi);
+        return VertexNeighborRange(loops, first);
+    }
+
+    /// Return a range over all edge indices incident to vertex `vi`.
+    /// Correctly handles boundary vertices: emits the extra boundary edge at the end.
+    /// Requires buildLoops() to have been called (uses vertLoop and loopEdge).
+    VertexEdgeRange edgesAroundVertex(uint vi) const {
+        uint first = (vi < vertLoop.length) ? vertLoop[vi] : ~0u;
+        if (vi < vertices.length && !vertexFanOrdered(vi))
+            return VertexEdgeRange.fromCsr(loops, loopEdge, vertDartStart, vertDartAdj, vi);
+        return VertexEdgeRange(loops, loopEdge, first);
+    }
+
+    /// Return a range over all faces incident to vertex `vi`.
+    VertexFaceRange facesAroundVertex(uint vi) const {
+        uint first = (vi < vertLoop.length) ? vertLoop[vi] : ~0u;
+        if (vi < vertices.length && !vertexFanOrdered(vi))
+            return VertexFaceRange.fromCsr(loops, vertDartStart, vertDartAdj, vi);
+        return VertexFaceRange(loops, first);
+    }
+
+    /// Return a range over the 1–2 faces incident to edge `ei`.
+    ///
+    /// MANIFOLD ONLY, and the "1–2" above is a hard ceiling, not a typical
+    /// case: this walks the half-edge rings, which have no representation for
+    /// a NON-MANIFOLD fan. Probed on three quads sharing one edge, the range
+    /// yields ONE face — not three, and not even two. So `n >= 2` over this
+    /// range is NOT "is this edge interior": a non-manifold edge reads as a
+    /// border edge, silently and with no diagnostic.
+    ///
+    /// Repairing the rings is a `buildLoops`/dart-representation change and is
+    /// deliberately not attempted here. Any caller that needs a COUNT — rather
+    /// than "give me a neighbouring face" — must use `edgePolygonCounts`
+    /// below, which counts straight off `faces[]` and cannot undercount.
+    EdgeFaceRange facesAroundEdge(uint ei) const {
+        return EdgeFaceRange(loops, edges, vertLoop, vertFanOrdered_,
+                             vertDartStart, vertDartAdj, ei);
+    }
+
+    /// How many polygons border each edge, BY EDGE INDEX — counted straight
+    /// off `faces[]`, so a non-manifold fan is reported at its true size (3
+    /// quads sharing an edge give 3) and a bare wire edge gives 0.
+    ///
+    /// The truthful counterpart to `facesAroundEdge` (whose ring walk cannot
+    /// witness a third incident polygon — see its note) and to
+    /// `buildEdgeFaces` (whose two-slot `int[2]` cannot even store one). Use
+    /// this whenever the QUESTION is a count or a threshold — "exactly two",
+    /// "at least two", "zero" — and reserve the ring walk for "hand me a
+    /// neighbouring face".
+    ///
+    /// O(E + Σ face arity), one pass, and independent of `edgeIndexMap`'s
+    /// validity stamp: the key→index table is built from `edges[]` right here,
+    /// so this is safe to call mid-op, before a `buildLoops()` has re-stamped
+    /// the map. Returns a zero-filled `int[edges.length]` when there are no
+    /// faces (every edge is then a wire, and 0 is the true answer).
+    ///
+    /// The count is the same one either arm below produces; only the way the
+    /// corner→edge mapping is obtained differs (task 0694):
+    ///
+    ///   VALID loops — `loopEdge[li]` already IS "the edge of the corner that
+    ///   dart `li` starts", filled by `buildLoops` from this same `edges[]`
+    ///   through this same last-wins key table, and `loops.length` is exactly
+    ///   Σ face arity. So one dart is one corner: tallying `++n[loopEdge[li]]`
+    ///   over the darts visits every corner exactly once and lands on the same
+    ///   edge index, with no hashing at all. `~0u` (buildLoops' missing-edge
+    ///   sentinel) fails the bounds guard, matching the `in idx` miss below.
+    ///
+    ///   STALE loops — the hashed path, unchanged. It is the reason this
+    ///   function exists (it answers off `faces[]` alone, mid-op, before any
+    ///   rebuild has run), so it stays the fallback rather than being traded
+    ///   away: `captureLooseGeometry` calls this at the TOP of a dissolve, and
+    ///   the Topology Pen calls it between its own edits.
+    ///
+    /// `faceLoop.length == faces.length` is part of the gate, not decoration:
+    /// `appendFaceRaw` grows `faces[]` with NO version bump by design, so the
+    /// stamp alone would still read Valid while the darts no longer cover
+    /// every face. That check is O(1) and rejects exactly that window.
+    ///
+    /// Measured on the perf lane's 99 856-face / 200 344-edge grid: the hashed
+    /// arm costs ~12-17 ms per call (200 344 keyed inserts + 399 424 lookups)
+    /// and was 47% of `dissolveVerticesByMask`; the dart arm is ~0.5 ms.
+    int[] edgePolygonCounts() const {
+        auto n = new int[](edges.length);
+        if (edges.length == 0 || faces.length == 0) return n;
+        if (loopsValid() && loopEdge.length == loops.length
+                         && faceLoop.length == faces.length) {
+            foreach (li; 0 .. loopEdge.length) {
+                immutable uint e = loopEdge[li];
+                if (e < n.length) ++n[e];
+            }
+            return n;
+        }
+        uint[ulong] idx;
+        foreach (i; 0 .. edges.length)
+            idx[edgeKey(edges[i][0], edges[i][1])] = cast(uint)i;
+        foreach (ref f; faces)
+            foreach (k; 0 .. f.length)
+                if (auto p = edgeKey(f[k], f[(k + 1) % f.length]) in idx)
+                    ++n[*p];
+        return n;
+    }
+
+    /// How many edges are incident on each vertex, BY VERTEX INDEX — counted
+    /// straight off `edges[]`, so a vertex on a bare FLOATING edge (no face
+    /// at all) is counted correctly. This is the honest counterpart to
+    /// `vertexValence` (above), which walks the half-edge fan seeded from
+    /// `vertLoop` — and `vertLoop` is populated ONLY from face corners
+    /// (`edgeNeighbors`'s doc comment, `source/mesh.d:7887-7899`, spells
+    /// this out), so a vertex that sits on a floating edge but touches no
+    /// face reads as degree 0 through the fan even though `edges[]`
+    /// genuinely lists an edge on it. Any caller that needs a per-vertex
+    /// COUNT (task 1061's `select.byStat.vertex test:edgeCount`) must use
+    /// this, not `vertexValence`, for the same reason `edgePolygonCounts`
+    /// exists instead of a `facesAroundEdge` ring-walk tally. O(E), one pass.
+    uint[] vertexEdgeCounts() const {
+        auto n = new uint[](vertices.length);
+        foreach (ref e; edges) {
+            if (e[0] < n.length) ++n[e[0]];
+            if (e[1] < n.length) ++n[e[1]];
+        }
+        return n;
+    }
+
+    /// How many polygons are incident on each vertex, BY VERTEX INDEX —
+    /// counted straight off `faces[]` corners. A per-vertex "last face
+    /// stamped" array makes a face that lists the same vertex twice (a
+    /// degenerate corner) count once, not twice — the same defensiveness
+    /// `vertexPolygonCounts`'s caller (`select.byStat.vertex
+    /// test:polygonCount`, task 1061) needs and a raw per-corner tally does
+    /// not give. O(V + Σ face arity).
+    uint[] vertexPolygonCounts() const {
+        auto n = new uint[](vertices.length);
+        auto lastFace = new int[](vertices.length);
+        lastFace[] = -1;
+        foreach (fi; 0 .. faces.length) {
+            foreach (v; faces[fi]) {
+                if (v < n.length && lastFace[v] != cast(int) fi) {
+                    lastFace[v] = cast(int) fi;
+                    ++n[v];
+                }
+            }
+        }
+        return n;
+    }
+
+    /// Return a range over all faces that share an edge with face `fi`.
+    /// Uses twin links from the half-edge structure — no hash map needed.
+    AdjacentFaceRange adjacentFaces(uint fi) const {
+        uint start = (fi < faceLoop.length) ? faceLoop[fi] : ~0u;
+        return AdjacentFaceRange(loops, start);
+    }
+
+    /// Return a rolling FNV-1a hash of the Select bit across the marks array
+    /// for edit mode `m` (vertexMarks / edgeMarks / faceMarks). A cheap
+    /// per-run change-detector: selection writes bump no version counter, so
+    /// callers that need to know "did the selection change since I last
+    /// looked" fold this into a cache key alongside `mutationVersion`. Folds
+    /// in `marks.length` then one bit per selected index, so both WHICH
+    /// elements are selected and HOW MANY are captured. A collision would
+    /// only ever produce a stale same-run cache hit — never wrong output —
+    /// so this is safe for cache-key use but must never be persisted or
+    /// compared across runs. The single canonical replacement for the
+    /// formerly-duplicated per-stage `selectionSignature()` copies in
+    /// FalloffStage / ActionCenterStage and the older `selectionHash{V,E,F}`
+    /// family (a different, weaker `h*31` hash over the same selection).
+    ulong selectionSignature(EditMode m) const {
+        ulong h = 1469598103934665603UL; // FNV-1a offset basis
+        void mix(ulong x) { h ^= x; h *= 1099511628211UL; }
+        const(uint)[] marks;
+        final switch (m) {
+            case EditMode.Vertices: marks = vertexMarks; break;
+            case EditMode.Edges:    marks = edgeMarks;   break;
+            case EditMode.Polygons: marks = faceMarks;   break;
+        }
+        mix(marks.length);
+        foreach (i, mk; marks) {
+            if (mk & Marks.Select) mix(cast(ulong)i + 1);
+            // R6 (task 0613). Once the whole-mesh fallback means "all VISIBLE"
+            // (§3.2), hiding element i changes the operand set of an
+            // empty-selection op WITHOUT changing its selection — so a
+            // Select-only signature leaves the falloff / action-centre caches
+            // stale. Folded with a DISTINCT mix value so hiding i and
+            // selecting i cannot collide: selecting mixes (i+1), hiding mixes
+            // (i+1) | (1UL << 63), a bit no index can reach.
+            if (mk & Marks.Hide)   mix((cast(ulong)i + 1) | (1UL << 63));
+        }
+        return h;
+    }
+
+    /// Return the vertex indices touched by the current vertex selection.
+    /// If nothing is selected, returns every VISIBLE vertex index (§3.2 shape
+    /// A, task 0613 — the whole-mesh fallback means "all visible", never "all";
+    /// the selected branch needs no filter because §3.1's Select ∧ Hide = ∅
+    /// invariant makes a hidden vertex unselectable).
+    int[] selectedVertexIndicesVertices() const {
+        { import vibe3d.util.profiling.perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
+        int[] idx;
+        if (hasAnySelectedVertices()) {
+            foreach (i; 0 .. vertices.length)
+                if (isVertexSelected(i)) idx ~= cast(int)i;
+        } else {
+            idx = visibleVertexIndices_();
+        }
+        return idx;
+    }
+
+    /// Edge (ordered key) → up to 2 incident faces; slot [1] == -1 means the
+    /// edge is on the boundary of the CONSIDERED face set. A 3rd+ incident
+    /// face and an edge a single face lists twice are ignored (matches the
+    /// inline idiom every *ByMask op used before this helper existed).
+    ///
+    /// Face-set selection (mutually usable):
+    ///   * faceLimit — consider only faces [0 .. min(faceLimit, faces.length));
+    ///                 default size_t.max = all faces. Reproduces
+    ///                 boundaryLoops's prefix limit so an edge shared with a
+    ///                 face BEYOND the limit stays correctly "open" within
+    ///                 the prefix.
+    ///   * faceMask  — when non-empty, additionally require faceMask[fi]; a
+    ///                 face with fi >= faceMask.length is skipped.
+    ///
+    /// PRECONDITION: a length-0 faceMask means "no mask" (all faces), NOT
+    /// "select nothing." This is safe for the only masked caller
+    /// (selectMergeEdges, reached only when mask.length == faces.length —
+    /// its callers guard `mask.length != faces.length` before calling in),
+    /// so a length-0 mask reaches here only when faces.length == 0. A future
+    /// caller wanting a genuine empty selection must NOT pass a length-0
+    /// mask expecting an empty result — it would consider all faces.
+    int[2][ulong] buildEdgeFaces(in bool[] faceMask = null,
+                                 size_t faceLimit = size_t.max) const {
+        int[2][ulong] m;
+        const size_t nf = faceLimit < faces.length ? faceLimit : faces.length;
+        foreach (fi; 0 .. nf) {
+            if (faceMask.length && (fi >= faceMask.length || !faceMask[fi])) continue;
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKey(f[k], f[(k+1) % f.length]);
+                auto p = key in m;
+                if (p is null) m[key] = [cast(int)fi, -1];
+                else if ((*p)[1] == -1 && (*p)[0] != cast(int)fi) (*p)[1] = cast(int)fi;
+            }
+        }
+        return m;
+    }
+
+    /// Full per-edge incident-face count, indexed like `edges[]` — NOT
+    /// capped at 2, unlike `buildEdgeFaces`'s `int[2]` slots which silently
+    /// cannot witness a 3rd+ incident face (task 0402 Phase 4 risk #3: a
+    /// non-manifold edge shared by ≥3 faces must be detectable, not just
+    /// "has a 2nd face"). O(F) using the already-built `edgeIndexMap`.
+    /// PRECONDITION: `edgeIndexMap` must already reflect the current
+    /// `faces` (i.e. `buildLoops()` has been called since the last topology
+    /// edit) — same precondition as `buildEdgeFaces`/`boundaryLoops`. A face
+    /// edge whose key is absent from `edgeIndexMap` (stale precondition) is
+    /// silently skipped rather than indexing out of bounds.
+    uint[] edgeFaceUseCounts() const {
+        auto counts = new uint[](edges.length);
+        foreach (fi; 0 .. faces.length) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKey(f[k], f[(k + 1) % f.length]);
+                if (auto p = key in edgeIndexMap)
+                    if (*p < counts.length) counts[*p]++;
+            }
+        }
+        return counts;
+    }
+
+    /// Vertex degree — the number of edges incident on `vi`. O(degree(vi))
+    /// via the half-edge ring (`edgesAroundVertex`), so summing this over
+    /// every vertex costs O(V + E) total, not O(V²) (task 0402 Phase 4 risk
+    /// #1). No existing API exposed this directly before task 0402.
+    /// PRECONDITION: same as `edgesAroundVertex` — `buildLoops()` must have
+    /// been called since the last topology edit.
+    uint vertexValence(uint vi) const {
+        uint n = 0;
+        foreach (ei; edgesAroundVertex(vi)) ++n;
+        return n;
+    }
+
+    /// Opposite endpoints of every edge in `edges[]` incident to `v` — a raw
+    /// scan of the flat edge array (task 0477, topology-pen P3 KILLER-1),
+    /// UNLIKE `edgesAroundVertex`/`vertexValence` above, which walk the
+    /// half-edge fan seeded from `vertLoop[v]`. `vertLoop` is populated ONLY
+    /// from `faces[]` (`buildLoops`'s vert-loop seed pass walks face
+    /// corners), so a vertex that sits on a bare floating edge but no face at
+    /// all keeps `vertLoop[v] == ~0u` and every loop-fan helper reads it as
+    /// isolated/degree-0 — even though `edges[]` genuinely lists an edge
+    /// touching it. This is the ONLY correct way to test "does this vertex
+    /// have an incident edge" when floating (non-face-bounded) edges are in
+    /// play — e.g. topology-pen's bare `addEdge` build case, which the
+    /// loop-fan helpers cannot see. O(E); fine for an interactive retopo
+    /// cage, not intended for hot per-frame loops over large meshes.
+    uint[] edgeNeighbors(uint v) const {
+        uint[] r;
+        foreach (e; edges) {
+            if (e[0] == v) r ~= e[1];
+            else if (e[1] == v) r ~= e[0];
+        }
+        return r;
+    }
+
+    /// Return, for each edge, the indices of every OTHER edge that shares one
+    /// of its two endpoint vertices (relation A: edge→edges-sharing-a-vertex).
+    /// Result length == `edges.length`. No dedup pass — two distinct edges
+    /// can share at most one vertex, so an edge can never appear twice in
+    /// another edge's neighbor list. Order is whatever `edgesAroundVertex`
+    /// yields (order-independent for every current consumer — set-building
+    /// / BFS reachability). Verbatim body of the private builder formerly
+    /// duplicated in `commands/select/expand.d`, `contract.d` and
+    /// `connect.d` (all three Edges-mode adjacency loops) — see
+    /// `doc/tasks/work/0190-select-adjacency-provider.md`.
+    int[][] edgeAdjacencySharingVertex() const {
+        int[][] edgeAdj = new int[][](edges.length);
+        foreach (i; 0 .. edges.length)
+            foreach (vi; edges[i])
+                foreach (ni; edgesAroundVertex(vi))
+                    if (ni != i) edgeAdj[i] ~= cast(int)ni;
+        return edgeAdj;
+    }
+
+    /// Return, for each face, the indices of every OTHER face that shares
+    /// ≥1 vertex with it (relation C: face→faces-sharing-a-vertex — this
+    /// INCLUDES diagonal neighbours, which makes it a different relation
+    /// from `adjacentFaces` (edge-adjacent only); do not conflate the two).
+    /// Result length == `faces.length`. Verbatim body of the private
+    /// builder formerly duplicated in `commands/select/expand.d` and
+    /// `contract.d` (Polygons-mode adjacency loops) — see
+    /// `doc/tasks/work/0190-select-adjacency-provider.md`.
+    int[][] faceAdjacencySharingVertex() const {
+        uint[][] vertFaces = new uint[][](vertices.length);
+        foreach (fi, face; faces)
+            foreach (vi; face)
+                vertFaces[vi] ~= cast(uint)fi;
+
+        int[][] faceAdj = new int[][](faces.length);
+        foreach (fi, face; faces) {
+            bool[int] seen;
+            foreach (vi; face)
+                foreach (adjFi; vertFaces[vi])
+                    if (adjFi != cast(uint)fi && (cast(int)adjFi) !in seen) {
+                        seen[cast(int)adjFi] = true;
+                        faceAdj[fi] ~= cast(int)adjFi;
+                    }
+        }
+        return faceAdj;
+    }
+
+
+    /// Connected components of every face `fi` where `want[fi]` is true,
+    /// via the shared-vertex adjacency relation `faceAdj` (see
+    /// `faceAdjacencySharingVertex` above — this deliberately INCLUDES
+    /// diagonal-only touches, unlike the shared-EDGE island BFS used by
+    /// e.g. `extrudeFacesByMask`; callers that need edge-only islands must
+    /// build their own adjacency instead of reusing this one).
+    /// `faceAdj.length` must equal `want.length`. Each returned component is
+    /// a non-empty, arbitrary-order list of face indices; every face with
+    /// `want[fi]==true` appears in exactly one component. A small, generic,
+    /// reusable BFS idiom — shared by `fillSelectionHoles` below and (task
+    /// 0386) `remesh.remesh_job`'s per-component region split.
+    static uint[][] faceComponentsOf(const(bool)[] want, const(int[][]) faceAdj) {
+        auto compId = new int[](want.length);
+        compId[] = -1;
+        uint[][] components;
+        // EXPLICIT STACK POINTER — the slice is NEVER shrunk (task 2130).
+        // `stack = stack[0 .. $ - 1]` breaks the GC's in-place-append
+        // invariant: `~=` extends a block in place only while `ptr + length`
+        // equals the used-length recorded in that block, so the first push
+        // after EVERY pop reallocated and copied the whole stack. Measured on
+        // a 40 000-face single-component walk: 735 MB before, 0.35 MB after.
+        // `sp` is the live depth; the slice only ever grows, at the top, and
+        // is reused across components rather than rebuilt per component.
+        //
+        // THE VISIT ORDER IS UNCHANGED AND IS PINNED. `stack[--sp]` reads the
+        // element `stack[$ - 1]` read and `stack[sp]` writes the slot `~=`
+        // wrote, so this is the same LIFO sequence. The doc comment above
+        // calls each component "arbitrary-order", but `select.fill`,
+        // `remesh.remesh_job` and `fillSelectionHoles` all consume these
+        // lists, so the order is frozen by
+        // `tests/unit/island_walk_alloc_test.d` rather than left to that
+        // adjective — do not "tidy" this into a queue.
+        uint[] stack;
+        size_t sp = 0;
+        foreach (start; 0 .. want.length) {
+            if (!want[start] || compId[start] != -1) continue;
+            const int cid = cast(int) components.length;
+            uint[] comp;
+            if (sp == stack.length) stack ~= cast(uint) start;
+            else stack[sp] = cast(uint) start;
+            ++sp;
+            compId[start] = cid;
+            while (sp) {
+                const uint cur = stack[--sp];
+                comp ~= cur;
+                foreach (nb; faceAdj[cur]) {
+                    if (nb < 0 || !want[nb] || compId[nb] != -1) continue;
+                    compId[nb] = cid;
+                    if (sp == stack.length) stack ~= cast(uint) nb;
+                    else stack[sp] = cast(uint) nb;
+                    ++sp;
+                }
+            }
+            components ~= comp;
+        }
+        return components;
+    }
+
+    /// Auto-fill small, fully-enclosed holes in a face selection mask (task
+    /// 0386, follow-up to the local quad-remesh's boundary-pinned stitch —
+    /// see `remesh.region_stitch`; also planned reuse for a `select.fill.holes`
+    /// command, task 0387 — do NOT fork this logic per caller): a user
+    /// selecting a CONNECTED patch but missing a few interior faces leaves
+    /// those faces as tiny unselected "holes" — extra internal boundary
+    /// loops that break downstream region operations expecting a single
+    /// outer boundary (region_stitch failed with "patch has fewer boundary
+    /// loops than the region" on exactly this shape of selection).
+    ///
+    /// An unselected connected component (shared-VERTEX flood fill via
+    /// `faceComponentsOf`/`faceAdjacencySharingVertex`) is folded INTO the
+    /// selection iff:
+    ///   (a) it is fully enclosed — every one of its boundary edges borders
+    ///       a SELECTED face, never the mesh's own open boundary; and
+    ///   (b) its face count is strictly less than the number of originally
+    ///       selected faces, so the "rest of the model" component can never
+    ///       be swallowed by an inverted/near-total selection.
+    /// Returns a NEW mask (same length as `faces`); `selectedFaceMask` is
+    /// read-only. A folded-in hole is real mesh geometry reclassified from
+    /// keep to region — nothing is synthesized.
+    bool[] fillSelectionHoles(const(bool)[] selectedFaceMask) const {
+        const size_t nf = faces.length;
+        auto mask = new bool[](nf);
+        foreach (fi; 0 .. nf) mask[fi] = fi < selectedFaceMask.length && selectedFaceMask[fi];
+
+        size_t selCount = 0;
+        foreach (b; mask) if (b) ++selCount;
+        if (selCount == 0 || selCount >= nf) return mask; // nothing to fill
+
+        auto faceAdj   = faceAdjacencySharingVertex();
+        auto edgeFaces = buildEdgeFaces();
+
+        auto unselected = new bool[](nf);
+        foreach (fi; 0 .. nf) unselected[fi] = !mask[fi];
+        auto holes = faceComponentsOf(unselected, faceAdj);
+
+        const(uint[])[] allFaces = faces.range;
+        foreach (comp; holes) {
+            if (comp.length >= selCount) continue; // would swallow the rest of the model
+
+            bool enclosed = true;
+            outer: foreach (fi; comp) {
+                auto face = allFaces[fi];
+                const size_t n = face.length;
+                foreach (k; 0 .. n) {
+                    const ulong key = edgeKey(face[k], face[(k + 1) % n]);
+                    auto p = key in edgeFaces;
+                    if (p is null) continue; // shouldn't happen — defensive
+                    const int other = (*p)[0] == cast(int) fi ? (*p)[1] : (*p)[0];
+                    // -1 = the mesh's own open boundary. A same-component
+                    // unselected neighbour can never appear here: sharing a
+                    // full EDGE implies sharing a vertex, so it would
+                    // already be part of THIS component (shared-vertex
+                    // flood fill), not a different one.
+                    if (other == -1 || !mask[other]) { enclosed = false; break outer; }
+                }
+            }
+            if (enclosed) foreach (fi; comp) mask[fi] = true;
+        }
+
+        return mask;
+    }
+
+
+
+
+    /// Return the vertex indices touched by the current edge selection.
+    /// Each vertex is included at most once.
+    /// If nothing is selected, returns every VISIBLE vertex index (§3.2 shape
+    /// A, task 0613 — see selectedVertexIndicesVertices above).
+    int[] selectedVertexIndicesEdges() const {
+        { import vibe3d.util.profiling.perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
+        int[] idx;
+        if (hasAnySelectedEdges()) {
+            bool[] added = new bool[](vertices.length);
+            foreach (i, edge; edges) {
+                if (!isEdgeSelected(i)) continue;
+                if (!added[edge[0]]) { added[edge[0]] = true; idx ~= cast(int)edge[0]; }
+                if (!added[edge[1]]) { added[edge[1]] = true; idx ~= cast(int)edge[1]; }
+            }
+        } else {
+            idx = visibleVertexIndices_();
+        }
+        return idx;
+    }
+
+    /// Return the vertex indices touched by the current face selection.
+    /// Each vertex is included at most once.
+    /// If nothing is selected, returns every VISIBLE vertex index (§3.2 shape
+    /// A, task 0613 — see selectedVertexIndicesVertices above).
+    int[] selectedVertexIndicesFaces() const {
+        { import vibe3d.util.profiling.perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
+        int[] idx;
+        if (hasAnySelectedFaces()) {
+            bool[] added = new bool[](vertices.length);
+            foreach (i, face; faces) {
+                if (!isFaceSelected(i)) continue;
+                foreach (vi; face)
+                    if (!added[vi]) { added[vi] = true; idx ~= cast(int)vi; }
+            }
+        } else {
+            idx = visibleVertexIndices_();
+        }
+        return idx;
+    }
+
+    /// The currently SELECTED face indices, in SELECTION (click) order rather
+    /// than ascending index (task 1054 — the Loop Slice selection-band walk
+    /// consumes selection order as an input to its cut law, doc/
+    /// loop_slice_corner_plan.md §1/§3.5). Same house idiom as
+    /// `mesh_ops.select_loop.selectLoopFaces` (`select_loop.d:773-784`) —
+    /// reused verbatim rather than invented a second time: filter by
+    /// `isFaceSelected` FIRST (a stale non-zero stamp on an unselected face
+    /// is a known hazard, `edge_bevel.d`/`extrude.d` leave one behind), THEN
+    /// sort by `faceSelectionOrder`'s 1-based rank stamp (`0` — "never
+    /// manually stamped" — sorts LAST as `int.max`), ties broken by ascending
+    /// index. A stamp-less selection (RMB lasso, a `.v3d` load, `select.invert`
+    /// — see the plan's gesture survey) is therefore a well-defined input:
+    /// every rank ties at `int.max` and the result degenerates to ascending
+    /// index, i.e. today's order.
+    ///
+    /// Bounds-defended against `faceSelectionOrder` (R4): `resizeFaceSelection`
+    /// deliberately does NOT resize it (`:5773-5778`, unlike the vertex/edge
+    /// twins), so a face born after the array last grew reads past its end —
+    /// indexing it raw here would `RangeError` on exactly that face.
+    uint[] selectedFaceIndicesInSelectionOrder() const {
+        uint[] sel;
+        foreach (i; 0 .. faces.length)
+            if (isFaceSelected(i)) sel ~= cast(uint)i;
+        static int fOrderOf(const int[] ord, size_t i) {
+            return (i < ord.length && ord[i] > 0) ? ord[i] : int.max;
+        }
+        import std.algorithm.sorting : sort;
+        sel.sort!((x, y) {
+            int ox = fOrderOf(faceSelectionOrder, x), oy = fOrderOf(faceSelectionOrder, y);
+            return ox != oy ? ox < oy : x < y;
+        });
+        return sel;
+    }
+
+    /// The one or two most recently selected elements of `mode`'s plane, by
+    /// the 1-based `*SelectionOrder` rank stamp. `last` is the SELECTED
+    /// element carrying the highest stamp, `secondLast` the SELECTED element
+    /// carrying the next-highest; either is `-1` when the plane holds fewer
+    /// than that many *stamped* selected elements.
+    ///
+    /// The third home of the "read the selection in click order" law, beside
+    /// `selectedFaceIndicesInSelectionOrder` directly above and
+    /// `selectedVerticesBySelectionOrder`, and it exists because
+    /// `select.less` / `select.more` / `select.between` wanted only the top
+    /// one or two and had NINE hand-written copies of this scan between them
+    /// (task 2440). They had drifted three ways, and the first way was a
+    /// defect: none of the nine applied the SELECTED-FIRST filter.
+    ///
+    /// SELECTED FIRST, THEN THE STAMP — the same order the two readers above
+    /// spell, for the reason stated there: a stale non-zero stamp on an
+    /// UNSELECTED element is a known state, not a corruption. Two kernels
+    /// produce it on purpose (`mesh_ops/bevel_vertex.d:382`,
+    /// `mesh_ops/extrude.d:2467`): both re-mask the face marks word with
+    /// `~Marks.Select` and zero the stamp only over the *newly created* face
+    /// range, so every SURVIVING face keeps the stamp its last click gave it
+    /// while losing its Select bit — `faceSelectionOrder` is a carried plane
+    /// (`mesh_planes.kFacePlanes`), so the head of the rewrite keeps its
+    /// values. Measured on `makeGridPlane(4)` with faces 0..3 clicked and two
+    /// vertices bevelled: the selection is `[16, 17]` (the two caps, stamps
+    /// 1 and 2) over an order plane still reading `[1, 2, 3, 4, 0 … 0, 1, 2]`.
+    /// Scanning that for "the highest stamp" answers face 3, which is not
+    /// selected at all, and `select.less` then spends its one deselect on a
+    /// face nobody can see — a silent no-op. `snapshot.d:452-462` and
+    /// `commands/mesh/selection_undo.d:174-208` scrub these stamps on the
+    /// paths they own, which is why the state is survivable rather than
+    /// endemic; a reader must not assume it has been scrubbed.
+    ///
+    /// AN UNSTAMPED SELECTED ELEMENT IS NOT A CANDIDATE, and that is the one
+    /// place this reader deliberately parts company with the two above. They
+    /// sort a whole selection and give stamp `0` the value `int.max` so it
+    /// sorts LAST; taking their last entry would make an element the user
+    /// never clicked — an RMB lasso, a `.v3d` load, `select.invert` — answer
+    /// "most recently selected". These three commands have always required a
+    /// positive stamp (their loops started `lastOrd = 0` and only took
+    /// `ord > lastOrd`), and `tests/test_select_derived_order.d` pins the
+    /// consequence for `select.fill.insideLoop`: a fully unstamped selection
+    /// leaves `select.less` with nothing to drop. That behaviour is carried
+    /// over unchanged; only the missing filter is fixed.
+    ///
+    /// BOUNDS: the loop is over the ELEMENT count, not over the marks array,
+    /// and both plane reads are guarded — `is*Selected` bounds-checks the
+    /// marks word itself and a stamp past the end of `*SelectionOrder` reads
+    /// as 0, i.e. as "unstamped", and is skipped. `resizeFaceSelection`
+    /// deliberately does not grow `faceSelectionOrder` (`:5773`), so the
+    /// short-plane state is reachable and a raw index here would `RangeError`
+    /// on exactly the face that reaches past it. A consequence the callers
+    /// rely on: `last`/`secondLast` are always < `faceMarks.length` AND <
+    /// `faceSelectionOrder.length`, so `deselect*` — which indexes both raw —
+    /// is safe on whatever this returns.
+    static struct LastSelectedPair {
+        int last       = -1;
+        int secondLast = -1;
+    }
+
+    LastSelectedPair lastSelectedInSelectionOrder(EditMode mode) const {
+        final switch (mode) {
+            case EditMode.Vertices:
+                return topTwoByOrder_(vertexMarks, vertexSelectionOrder, vertices.length);
+            case EditMode.Edges:
+                return topTwoByOrder_(edgeMarks, edgeSelectionOrder, edges.length);
+            case EditMode.Polygons:
+                return topTwoByOrder_(faceMarks, faceSelectionOrder, faces.length);
+        }
+    }
+
+    /// The plane-agnostic body of `lastSelectedInSelectionOrder`. Reads the
+    /// Select bit exactly as `is*Selected` does (`i < marks.length &&
+    /// (marks[i] & Marks.Select)`) rather than calling it, so the three planes
+    /// share ONE loop instead of three that could drift apart again.
+    private static LastSelectedPair topTwoByOrder_(
+            const uint[] marks, const int[] order, size_t elementCount) {
+        LastSelectedPair r;
+        int lastOrd = 0, secondOrd = 0;
+        foreach (i; 0 .. elementCount) {
+            if (i >= marks.length || (marks[i] & Marks.Select) == 0) continue;
+            const int ord = (i < order.length) ? order[i] : 0;
+            if (ord <= 0) continue;
+            if (ord > lastOrd) {
+                r.secondLast = r.last;      secondOrd = lastOrd;
+                r.last       = cast(int) i; lastOrd   = ord;
+            } else if (ord > secondOrd) {
+                r.secondLast = cast(int) i; secondOrd = ord;
+            }
+        }
+        return r;
+    }
+
+    /// Return the centroid of the current vertex selection (or all vertices if none selected).
+    Vec3 selectionCentroidVertices() const {
+        bool any = hasAnySelectedVertices();
+        Vec3 sum = Vec3(0, 0, 0);
+        int  count = 0;
+        foreach (i, v; vertices) {
+            if (!any || isVertexSelected(i)) {
+                sum += v;
+                count++;
+            }
+        }
+        return count > 0 ? sum / cast(float)count : Vec3(0, 0, 0);
+    }
+
+    /// Return the centroid of vertices belonging to the current edge selection
+    /// (or all edge vertices if none selected).  Each vertex is counted once.
+    Vec3 selectionCentroidEdges() const {
+        bool any = hasAnySelectedEdges();
+        bool[] vis = new bool[](vertices.length);
+        Vec3 sum = Vec3(0, 0, 0);
+        int  count = 0;
+        foreach (i, edge; edges) {
+            if (any && !isEdgeSelected(i)) continue;
+            foreach (vi; edge) {
+                if (!vis[vi]) {
+                    sum += vertices[vi];
+                    count++;
+                    vis[vi] = true;
+                }
+            }
+        }
+        return count > 0 ? sum / cast(float)count : Vec3(0, 0, 0);
+    }
+
+    /// Return the centroid of vertices belonging to the current face selection
+    /// (or all face vertices if none selected).  Each vertex is counted once.
+    Vec3 selectionCentroidFaces() const {
+        bool any = hasAnySelectedFaces();
+        bool[] vis = new bool[](vertices.length);
+        Vec3 sum = Vec3(0, 0, 0);
+        int  count = 0;
+        foreach (i, face; faces) {
+            if (any && !isFaceSelected(i)) continue;
+            foreach (vi; face) {
+                if (!vis[vi]) {
+                    sum += vertices[vi];
+                    count++;
+                    vis[vi] = true;
+                }
+            }
+        }
+        return count > 0 ? sum / cast(float)count : Vec3(0, 0, 0);
+    }
+
+    // ---- BBOX CENTER variants ------------------------------------------
+    //
+    // Same selection logic as `selectionCentroid*` but return (min+max)/2
+    // per axis instead of the vertex-position mean. Used by ACEN.Select /
+    // .Border / .Auto for the empirical "selection-center" pivot, which
+    // is the bounding-box midpoint of the selected verts (not the vertex
+    // average). For symmetric selections the two coincide; only
+    // asymmetric / clustered selections distinguish them. Phase 2 of the
+    // action-center parity plan.
+
+    // SPACE (task 0649). `ms` is the layer's item transform, and every point
+    // is carried THROUGH it BEFORE the min/max. The order is the finding, not
+    // a detail: the reference takes the box of the transformed vertices, and
+    // the box of transformed points is NOT the transform of the box —
+    // measured 0.85 apart on a rotated stand (0648 D2). So a caller that
+    // wants a world-space answer must hand the space in HERE; transforming
+    // the returned point afterwards answers a different question.
+    //
+    // Defaulted to the identity, where every arm is byte-identical to the
+    // pre-0649 body (the `isIdentity` early-out in `toWorldPoint`'s caller
+    // below is not even needed — `applyAffine(identity, v) == v` exactly —
+    // but the branch is kept so the common path does no matrix work at all).
+    Vec3 selectionBBoxCenterVertices(ModelSpace ms = ModelSpace.init) const {
+        bool any = hasAnySelectedVertices();
+        Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
+        Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        bool seen = false;
+        foreach (i, v0; vertices) {
+            if (any && !isVertexSelected(i)) continue;
+            Vec3 v = ms.isIdentity ? v0 : ms.toWorldPoint(v0);
+            if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+            if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+            if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+            seen = true;
+        }
+        return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
+    }
+
+    /// Selection bbox extent (min, max) along world axes. Falls back
+    /// to the whole geometry when nothing is selected, mirroring the
+    /// `selectionBBoxCenter*` family. `seen` is false only on an
+    /// empty mesh — caller can synthesise a sensible default. Used by
+    /// the FalloffStage's auto-size path (phase 7.5).
+    void selectionBBoxMinMaxVertices(out Vec3 mn, out Vec3 mx, out bool seen) const {
+        bool any = hasAnySelectedVertices();
+        mn = Vec3(float.infinity, float.infinity, float.infinity);
+        mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        seen = false;
+        foreach (i, v; vertices) {
+            if (any && !isVertexSelected(i)) continue;
+            if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+            if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+            if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+            seen = true;
+        }
+    }
+
+    void selectionBBoxMinMaxEdges(out Vec3 mn, out Vec3 mx, out bool seen) const {
+        bool any = hasAnySelectedEdges();
+        bool[] vis = new bool[](vertices.length);
+        mn = Vec3(float.infinity, float.infinity, float.infinity);
+        mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        seen = false;
+        foreach (i, edge; edges) {
+            if (any && !isEdgeSelected(i)) continue;
+            foreach (vi; edge) {
+                if (vis[vi]) continue;
+                vis[vi] = true;
+                Vec3 v = vertices[vi];
+                if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+                if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+                if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+                seen = true;
+            }
+        }
+    }
+
+    void selectionBBoxMinMaxFaces(out Vec3 mn, out Vec3 mx, out bool seen) const {
+        bool any = hasAnySelectedFaces();
+        bool[] vis = new bool[](vertices.length);
+        mn = Vec3(float.infinity, float.infinity, float.infinity);
+        mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        seen = false;
+        foreach (i, face; faces) {
+            if (any && !isFaceSelected(i)) continue;
+            foreach (vi; face) {
+                if (vis[vi]) continue;
+                vis[vi] = true;
+                Vec3 v = vertices[vi];
+                if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+                if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+                if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+                seen = true;
+            }
+        }
+    }
+
+    /// `ms` — see `selectionBBoxCenterVertices` for why the space is applied
+    /// per point rather than to the result.
+    Vec3 selectionBBoxCenterEdges(ModelSpace ms = ModelSpace.init) const {
+        bool any = hasAnySelectedEdges();
+        bool[] vis = new bool[](vertices.length);
+        Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
+        Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        bool seen = false;
+        foreach (i, edge; edges) {
+            if (any && !isEdgeSelected(i)) continue;
+            foreach (vi; edge) {
+                if (vis[vi]) continue;
+                vis[vi] = true;
+                Vec3 v = ms.isIdentity ? vertices[vi]
+                                       : ms.toWorldPoint(vertices[vi]);
+                if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+                if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+                if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+                seen = true;
+            }
+        }
+        return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
+    }
+
+    /// `ms` — see `selectionBBoxCenterVertices` for why the space is applied
+    /// per point rather than to the result.
+    Vec3 selectionBBoxCenterFaces(ModelSpace ms = ModelSpace.init) const {
+        bool any = hasAnySelectedFaces();
+        bool[] vis = new bool[](vertices.length);
+        Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
+        Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        bool seen = false;
+        foreach (i, face; faces) {
+            if (any && !isFaceSelected(i)) continue;
+            foreach (vi; face) {
+                if (vis[vi]) continue;
+                vis[vi] = true;
+                Vec3 v = ms.isIdentity ? vertices[vi]
+                                       : ms.toWorldPoint(vertices[vi]);
+                if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+                if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+                if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+                seen = true;
+            }
+        }
+        return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
+    }
+
+    /// Bounding-box center of the selection's BORDER vertices — verts on
+    /// edges with exactly one selected adjacent face and at least one
+    /// unselected adjacent face. For a cube top face this is the
+    /// perimeter (same as `selectionBBoxCenterFaces`); for a sphere top
+    /// hemisphere it's only the equator ring (the inner verts are NOT
+    /// on a border edge). This is `actr.border` semantics.
+    /// Falls back to `selectionBBoxCenterFaces` when there's no border
+    /// edge (every selected face's edges are also adjacent to other
+    /// selected faces — closed selection on a closed manifold).
+    /// `ms` — see `selectionBBoxCenterVertices` for why the space is applied
+    /// per point rather than to the result.
+    Vec3 selectionBorderBBoxCenterFaces(ModelSpace ms = ModelSpace.init) const {
+        if (!hasAnySelectedFaces()) return Vec3(0, 0, 0);
+        bool[] onBorder = new bool[](vertices.length);
+        bool   any      = false;
+        // For each edge, count selected and unselected adjacent faces.
+        foreach (ei; 0 .. cast(uint)edges.length) {
+            int sel = 0, unsel = 0;
+            foreach (fi; facesAroundEdge(ei)) {
+                if (isFaceSelected(fi)) sel++;
+                else                    unsel++;
+            }
+            if (sel == 1 && unsel >= 1) {
+                onBorder[edges[ei][0]] = true;
+                onBorder[edges[ei][1]] = true;
+                any = true;
+            }
+        }
+        if (!any) return selectionBBoxCenterFaces(ms);
+        Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
+        Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        foreach (vi, on; onBorder) if (on) {
+            Vec3 v = ms.isIdentity ? vertices[vi] : ms.toWorldPoint(vertices[vi]);
+            if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+            if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+            if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+        }
+        return (mn + mx) * 0.5f;
+    }
+
+    /// Return the centroid (average position) of face `fi`.
+    Vec3 faceCentroid(uint fi) const {
+        const uint[] face = faces[fi];
+        Vec3 s = Vec3(0, 0, 0);
+        foreach (vi; face) s += vertices[vi];
+        float inv = 1.0f / cast(float)face.length;
+        return s * inv;
+    }
+
+    /// Return the canonical edge key for edge `ei` (order-independent hash of its two vertices).
+    pragma(inline, true)
+    ulong edgeKeyOf(uint ei) const {
+        return edgeKey(edges[ei][0], edges[ei][1]);
+    }
+
+    /// Return the index in `edges[]` of the edge connecting vertices `a` and `b`.
+    /// Returns `~0u` if no such edge exists.  O(1) via `edgeIndexMap`.
+    pragma(inline, true)
+    uint edgeIndex(uint a, uint b) const {
+        if (auto p = edgeKey(a, b) in edgeIndexMap) return *p;
+        return ~0u;
+    }
+
+    /// Same as `edgeIndex` but accepts a pre-computed canonical key.
+    pragma(inline, true)
+    uint edgeIndexByKey(ulong key) const {
+        if (auto p = key in edgeIndexMap) return *p;
+        return ~0u;
+    }
+
+    // -----------------------------------------------------------------------
+    // Quad-loop / ring helpers
+    // -----------------------------------------------------------------------
+
+    /// Given edge `ei` and one of its incident faces `fi`, return the index of
+    /// the other face sharing `ei`.  Returns -1 if `ei` is a boundary edge.
+    int adjacentFaceThrough(uint ei, uint fi) const {
+        foreach (f; facesAroundEdge(ei))
+            if (f != fi) return cast(int)f;
+        return -1;
+    }
+
+    /// Find the winding-order position of the edge with canonical key `ek` in
+    /// face `fi`.  Returns -1 if not found.
+    int findEdgeInFace(uint fi, ulong ek) const {
+        const face = faces[fi];
+        for (int j = 0; j < cast(int)face.length; j++)
+            if (edgeKey(face[j], face[(j+1) % face.length]) == ek) return j;
+        return -1;
+    }
+
+    /// True when `ring` names the same vertex twice. Small-n quadratic on
+    /// purpose: a face ring is a handful of entries and an associative-array
+    /// probe per corner costs more than the compare. Used by `spinEdge`'s
+    /// repeated-corner guard (task 1200), which is the only refusal left in it
+    /// that is about the SHAPE of the result rather than the input.
+    private static bool hasRepeatedVertex_(const(uint)[] ring) {
+        foreach (i; 0 .. ring.length)
+            foreach (j; i + 1 .. ring.length)
+                if (ring[i] == ring[j]) return true;
+        return false;
+    }
+
+    /// Reconnect the shared edge of two adjacent faces to the next diagonal of
+    /// the combined boundary polygon.  Returns true iff the mesh was mutated.
+    ///
+    /// **The gate is the reference editor's** (task 1200, ledger rows 9+16+17):
+    /// the edge has exactly two incident faces, and each has at least three
+    /// sides. That is the whole of it — the two faces need NOT have the same
+    /// valence, need not be triangles or quads, and the new diagonal is allowed
+    /// to be an edge that already exists.
+    ///
+    /// Before 1200 the gate was narrower in three ways at once, and the ledger
+    /// read them as one law being applied too tightly:
+    ///   row 9  — a triangle and a quad sharing an edge: refused, reference spins.
+    ///   row 16 — two pentagons: refused (equal valence, but neither 3 nor 4),
+    ///            reference spins and both stay pentagons.
+    ///   row 17 — the new diagonal already belongs to a THIRD face: refused by a
+    ///            fold-over guard, reference spins anyway. The result is
+    ///            NON-MANIFOLD by construction — that diagonal ends up with
+    ///            three incident faces and the edge count DROPS (6 -> 5 on the
+    ///            frozen cell), because the "new" edge was already there.
+    /// The owner's call was to match the reference, non-manifold results
+    /// included; `tests/fixtures/spin_gate_narrower.json` freezes all three.
+    ///
+    /// Direction: the new diagonal is (c, e) where c = successor-of-b in f1 and
+    ///   e = successor-of-a in f2 (f1 being the face that traverses a→b). This
+    ///   is the vibe3d default and it reproduces the reference on all three
+    ///   frozen cells, rings included. Both faces KEEP their valence: f1 loses b
+    ///   and gains e, f2 loses a and gains c.
+    ///   Period: 2 for tri pairs, 3 for quad pairs (a second spin advances to the
+    ///   (d,f) diagonal, not back to the original).
+    ///
+    /// Guards (all → false, no crash):
+    ///   - `ei` out of range.
+    ///   - Edge not bordered by exactly 2 faces (a boundary edge, a wire edge, or
+    ///     a fan the ring walk cannot see past — see `facesAroundEdge`).
+    ///   - Either face has fewer than 3 sides.
+    ///   - The spin would build a face with a REPEATED vertex: `c == e`, or `e`
+    ///     already in f1's ring away from b, or `c` already in f2's ring away
+    ///     from a. This covers the two-faces-share-two-edges cases (the old
+    ///     `d == e` / `c == f_` among the quad's six boundary vertices) without
+    ///     forbidding the reference's non-manifold result, which repeats no
+    ///     vertex inside either face.
+    ///
+    /// Vertex count never changes; only face vertex lists and the derived
+    /// edge + half-edge structure are rewritten. The EDGE count may fall (row
+    /// 17) when the diagonal the spin creates was already in the mesh.
+    bool spinEdge(uint ei) {
+        uint[2] discard;
+        return spinEdge(ei, discard);
+    }
+
+    /// Same, reporting the PRODUCT: `newDiagonal` receives the two endpoints of
+    /// the diagonal this spin created — the element the reference re-points the
+    /// selection at (task 1180, `selection_product.d`).
+    ///
+    /// `newDiagonal` is meaningful ONLY when the return is `true`. It is an
+    /// `out` parameter, so D zero-initialises it on entry regardless of which
+    /// guard below refuses: on a refusal the caller reads `[0, 0]`, which is a
+    /// legal-looking vertex pair. Gate on the bool; never on the value.
+    bool spinEdge(uint ei, out uint[2] newDiagonal) {
+        if (!spinEdgeRings_(ei, newDiagonal)) return false;
+        // TASK 4059 — the first (and today the only) caller to ask for the
+        // per-edge plane carry. A spin rewrites WINDINGS and renumbers no
+        // vertex, so the edge keys the carry is built on are in one numbering
+        // start to finish; that is the soundness precondition
+        // `mesh_planes.EdgePlaneCarry` states, and it is why this site may ask
+        // and `compactUnreferenced` may not.
+        rebuildEdges(EdgePlaneCarry.byKey);
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return true;
+    }
+
+    /// The RINGS half of a spin: every guard, the ring computation and the two
+    /// `faces[]` writes — and NOT the three derived-structure calls
+    /// (`rebuildEdges` / `buildLoops` / `commitChange`) the public overload
+    /// above adds.
+    ///
+    /// Task 1471. Splitting it out is what lets a BULK spin pay those three
+    /// once per round instead of once per edge. One apply of `mesh.spinEdge`
+    /// over a polygon selection performs S spins, and S grows with the mesh,
+    /// so S x O(M) is the measured exponent 1.98 (145.7 ms at 576 faces ->
+    /// 7072.5 ms at 4096). Profiled 2026-08-20 at n=64 with `perf record
+    /// --call-graph fp` on a `profile-fp` build: inside the 19.4% of cycles
+    /// this kernel owns, `buildLoops` is 9.1% and `rebuildEdges` 7.5% — 85% of
+    /// it — while `MeshSnapshot.capture` and the GPU upload do not appear at
+    /// all.
+    ///
+    /// This is exactly the pattern `rebuildEdges`' own comment reserves for
+    /// callers (`insertEdgeDedup` is the non-committing primitive underneath
+    /// it for the same reason): the derive is the CALLER's to place.
+    ///
+    /// Leaves `edges`, `edgeIndexMap` and the half-edge rings STALE. Any
+    /// caller must run `rebuildEdges(); buildLoops(); commitChange(Geometry);`
+    /// before the mesh is read again.
+    private bool spinEdgeRings_(uint ei, out uint[2] newDiagonal) {
+        FaceIdx[] idx;
+        uint[][]  wind;
+        if (!spinEdgeRingsCollect_(ei, newDiagonal, idx, wind)) return false;
+        installSpinRings_(idx, wind);
+        return true;
+    }
+
+    /// `spinEdgeRings_`, except that the two new windings are APPENDED to the
+    /// caller's accumulators instead of being installed.
+    ///
+    /// TASK 1903 STAGE L2-b — THE SPLIT EXISTS FOR ONE MEASURED REASON, and
+    /// the number is large. `Mesh.setFaceWindings` records a per-corner payload
+    /// whose corner-base walk is ONE ORDERED SWEEP over `faces`, so a caller
+    /// that takes the door once per spin pays O(S·F). Measured on this lane at
+    /// 99 856 faces / 99 540 spin keys: **179.77 ms unrecorded against
+    /// 6 843.65 ms recorded, a 38x regression** — the same quadratic shape
+    /// task 2260 measured for the writer's per-element form (2.22 ms against
+    /// 146 ms at ten thousand faces) arriving through a different caller.
+    /// `spinEdgesByKeys` therefore collects a whole ROUND and installs it with
+    /// ONE bulk call, which is legal precisely because a round's face pairs are
+    /// pairwise disjoint (its `faceUsed` gate) — no spin in a round reads a
+    /// face another spin in that round wrote, so deferring the installs to the
+    /// end of the round changes nothing a spin can observe.
+    ///
+    /// The single-edge caller above keeps the eager form; at one spin the
+    /// sweep is paid once either way.
+    private bool spinEdgeRingsCollect_(uint ei, out uint[2] newDiagonal,
+                                       ref FaceIdx[] outIdx, ref uint[][] outWind) {
+        if (ei >= edges.length) return false;
+
+        // Collect at most 2 incident faces, and the bound is written HERE
+        // rather than relied on from the range: since task 1290
+        // `EdgeFaceRange` has a `_spill` (`mesh_topo.d`'s `_push`), so it is no
+        // longer capped at its own `uint[2] _faces`. Task 1200 made a
+        // three-face edge an ordinary product of this very function, and a
+        // `uint[2]` filled by an unbounded `[n++]` is a stack-buffer overflow.
+        // Same shape as `mesh_ops/loop_slice.d`'s collector.
+        //
+        // The bounded write stays CORRECT for a second reason, and it is not
+        // "the range yields three": `facesAroundEdge` is "hand me a
+        // neighbouring face", not a counter. Its ring walk has no
+        // representation for a non-manifold fan and reports three quads
+        // sharing an edge as ONE face (its own note at `facesAroundEdge`); the
+        // true count only comes out of the CSR arm, which engages solely when
+        // one endpoint's fan is already marked unordered
+        // (`mesh_topo.d`'s `fromCsr` branch). What this collector needs is
+        // "exactly two or not", and `nFaces != 2` below answers that either
+        // way. A caller that needs the COUNT must use `edgePolygonCounts`.
+        uint[2] incFaces;
+        uint nFaces = 0;
+        foreach (fi; facesAroundEdge(ei)) {
+            if (nFaces >= 2) { nFaces = 3; break; }   // 3 = "more than two"
+            incFaces[nFaces++] = fi;
+        }
+        if (nFaces != 2) return false;   // boundary or non-manifold
+
+        uint f1i = incFaces[0], f2i = incFaces[1];
+
+        // The reference's whole gate (task 1200): two faces, each with at least
+        // three sides. No equal-valence demand, no {3,4} restriction.
+        uint n1 = cast(uint)faces[f1i].length;
+        uint n2 = cast(uint)faces[f2i].length;
+        if (n1 < 3 || n2 < 3) return false;
+
+        uint a = edges[ei][0], b = edges[ei][1];
+        ulong ek = edgeKey(a, b);
+
+        int j1 = findEdgeInFace(f1i, ek);
+        int j2 = findEdgeInFace(f2i, ek);
+        if (j1 < 0 || j2 < 0) return false;  // shouldn't happen, defensive
+
+        // Orient so f1i traverses a→b (faces[f1i][j1] == a).
+        // findEdgeInFace guarantees faces[f1i][j1] ∈ {a, b}.
+        if (faces[f1i][j1] == b) {
+            uint tmp = f1i; f1i = f2i; f2i = tmp;
+            int jtmp = j1; j1 = j2; j2 = jtmp;
+            uint ntmp = n1; n1 = n2; n2 = ntmp;
+        }
+        // Invariant after possible swap:
+        //   faces[f1i][j1]          == a   (a→b dart in f1)
+        //   faces[f1i][(j1+1)%n1]   == b
+        //   faces[f2i][j2]          == b   (b→a dart in f2)
+        //   faces[f2i][(j2+1)%n2]   == a
+
+        uint c = faces[f1i][(j1 + 2) % n1];   // successor of b in f1  (= p for n1=3)
+        uint e = faces[f2i][(j2 + 2) % n2];   // successor of a in f2  (= q for n2=3)
+
+        // The two rings the spin will write, for any valences n1, n2 ≥ 3:
+        //   f1' = f1 with b replaced — walk f1 from c round to a, then append e
+        //   f2' = f2 with a replaced — walk f2 from e round to b, then append c
+        // Each keeps its own length, which is why a triangle+quad pair stays a
+        // triangle and a quad (ledger row 9) and two pentagons stay pentagons
+        // (row 16). For n1 == n2 == 3 this is exactly the old [c,a,e] / [e,b,c];
+        // for n1 == n2 == 4, exactly the old [c,d,a,e] / [e,f_,b,c].
+        uint[] ring1;
+        ring1.reserve(n1);
+        foreach (k; 2 .. n1) ring1 ~= faces[f1i][(j1 + k) % n1];   // c … pred(a)
+        ring1 ~= a;
+        ring1 ~= e;
+        uint[] ring2;
+        ring2.reserve(n2);
+        foreach (k; 2 .. n2) ring2 ~= faces[f2i][(j2 + k) % n2];   // e … pred(b)
+        ring2 ~= b;
+        ring2 ~= c;
+
+        // Guard: neither new ring may repeat a vertex. `c == e` is the whole of
+        // it for a tri–tri pair; the other two arms are what the old six-way
+        // "all 2n boundary vertices distinct" test was actually catching on
+        // quads (d == e, c == f_) — two faces sharing two edges, which passes
+        // the two-incident-faces test and would build a face with a doubled
+        // corner. It deliberately does NOT reject the reference's non-manifold
+        // spin (row 17): there the new diagonal already exists in a THIRD face,
+        // which repeats nothing inside f1' or f2'.
+        if (c == e) return false;
+        if (hasRepeatedVertex_(ring1) || hasRepeatedVertex_(ring2)) return false;
+
+        // NO fold-over guard. The reference has none, and removing ours is the
+        // whole of ledger row 17: `edgeIndex(c, e) != ~0u` used to refuse here,
+        // and the mesh the spin now produces has one edge with three incident
+        // faces. `rebuildEdges()` below dedups the diagonal, so the edge count
+        // FALLS by one on that cell instead of staying put.
+
+        // --- TASK 1903 STAGE L2-b: THE TWO WINDING INSTALLS GO THROUGH THE DOOR
+        //
+        // These two lines used to be `faces[f1i] = ring1; faces[f2i] = ring2;`
+        // — two indexed installs that reach no hook, so a recording batch
+        // around `spinEdgesByKeys` came back with an EMPTY op-log and
+        // `MeshEditDelta.revert` answered `true` while both spun faces kept
+        // their new windings. A spin is arity-PRESERVING on both faces, so the
+        // face, vertex and edge counts are identical either way and only a
+        // per-winding compare can see the difference.
+        //
+        // (This site is also a row §5.3's other audit does not have: that
+        // census's needle was `faces._store =` / `faces =` / `faces[fi] =` over
+        // `mesh.d` + `mesh_ops/**`, and these two ARE `faces[fi] =`.)
+        //
+        // ASCENDING, because `setFaceWindings` requires it: the per-corner
+        // payload resolves each face's corner base by ONE ordered sweep over
+        // `faces` and silently DECLINES on an unordered list, which would leave
+        // the entry unpaired and the per-corner plane re-derived slot-for-slot
+        // instead of restored verbatim. `f1i`/`f2i` are NOT ordered here —
+        // the a→b orientation swap above may exchange them — so the pair is
+        // sorted at the door rather than assumed.
+        //
+        // BULK, not two `setFaceWinding` calls: the per-element door is
+        // quadratic (one ordered sweep over `faces` per call) and would record
+        // two entries and two payloads where one of each is correct. At two
+        // faces the time is noise; the ENTRY SHAPE is not, and
+        // `flip_and_spin_delta_test.d` asserts it is one pair.
+        outIdx  ~= faceIndexAt(f1i);
+        outWind ~= ring1;
+        outIdx  ~= faceIndexAt(f2i);
+        outWind ~= ring2;
+        newDiagonal = [c, e];   // the product, for the post-op selection
+        return true;
+    }
+
+    /// Install a collected set of windings through `Mesh.setFaceWindings` —
+    /// ONE call, ONE op-log entry, ONE per-corner payload for the whole set.
+    ///
+    /// SORTS FIRST, because the door requires a STRICTLY ASCENDING index list:
+    /// its payload's corner-base walk is a single ordered sweep and silently
+    /// DECLINES on an unordered one, which would leave the `ReshapeFaces`
+    /// entry unpaired and the per-corner plane re-derived slot-for-slot instead
+    /// of restored verbatim. The collector produces neither order (a spin's
+    /// `a`->`b` orientation swap may exchange its two faces, and a round
+    /// collects its spins in caller order), so the sort is not a tidy-up.
+    ///
+    /// The indices within one round are DISTINCT by construction (the round's
+    /// `faceUsed` gate), so "ascending" and "strictly ascending" coincide and
+    /// no de-duplication is owed.
+    private void installSpinRings_(FaceIdx[] idx, uint[][] wind) {
+        import std.algorithm.sorting : makeIndex;
+        import std.array : uninitializedArray;
+        assert(idx.length == wind.length,
+            "Mesh.installSpinRings_: index and winding arrays differ in length");
+        if (idx.length == 0) return;
+        // ONE sort path and no special case for the two-element (single-spin)
+        // set, deliberately: a swap-if-descending branch is not reachable on
+        // any stand in the suite — measured, every single spin on the 3x3 grid
+        // stand collects its pair already ascending — so it would be an
+        // UNTESTED branch bought for an allocation a spin's `rebuildEdges`
+        // dwarfs. The general sort is exercised by every multi-spin round.
+        auto ord = new size_t[](idx.length);
+        makeIndex!((a, b) => a.raw < b.raw)(idx, ord);
+        auto si = uninitializedArray!(FaceIdx[])(idx.length);
+        auto sw = uninitializedArray!(uint[][])(idx.length);
+        foreach (i, o; ord) { si[i] = idx[o]; sw[i] = wind[o]; }
+        setFaceWindings(si, sw);
+    }
+
+    /// A spin round may not run more than this many times. Task 1471's
+    /// kernel-cap: `spinEdgesByKeys` loops until every target is resolved, and
+    /// the round count is bounded by the CONFLICT GRAPH, not by a parameter —
+    /// which is a conjecture (the graph is rebuilt between rounds), not a
+    /// theorem. Without a ceiling a defect in the greedy pick is an infinite
+    /// loop on the main thread. 64 is a backstop and NOT a working regime:
+    /// `tests/unit/spin_edge_cost_test.d`'s K2-cap arm asserts it never fires.
+    enum size_t MAX_SPIN_ROUNDS = 64;
+
+    /// Spin EVERY edge named in `keys`, paying the derived-structure rebuild
+    /// once per ROUND instead of once per edge. Returns how many spins were
+    /// performed and appends each spin's product diagonal to `productKeys`, in
+    /// the order the spins happened.
+    ///
+    /// TASK 1471, and the cost is the whole point. `spinEdge` rebuilds edges,
+    /// rebuilds loops and commits — all three O(M) — so a bulk caller that
+    /// loops over S targets pays S x O(M). On a grid S grows with the mesh, so
+    /// that is quadratic: measured 145.7 ms at 576 faces and 7072.5 ms at 4096,
+    /// exponent 1.98, extrapolating to ~66 minutes for ONE apply on the
+    /// 99 856-face lane mesh.
+    ///
+    /// THE KERNEL DOES NOT SORT `keys`, and that is not a style choice. The
+    /// two callers hand it two DIFFERENT orders on purpose and both are
+    /// observable: `commands/mesh/spin_edge.d`'s Edges branch collects its keys
+    /// by walking `selectedEdges`, i.e. in EDGE-INDEX order, and its
+    /// `productKeys` inherit that order straight into `repointToEdgeKeys`,
+    /// which stamps `edgeSelectionOrder[]` one `selectEdge` at a time — stamps
+    /// that live in `MeshSnapshot` and survive undo. Sorting here would
+    /// silently rewrite the post-spin selection ORDER. The Polygons branch
+    /// hands over an already-sorted array because IT wants determinism; that
+    /// is its call to make, not this function's.
+    ///
+    /// One round:
+    ///   1. walk the still-pending keys IN CALLER ORDER, resolving each through
+    ///      the real derived structures (`edgeIndexByKey` + `facesAroundEdge`);
+    ///   2. greedily take the ones whose two incident faces have not already
+    ///      been rewritten this round — the same disjointness idea as the
+    ///      Edges branch's transaction gate, except this SELECTS rather than
+    ///      refusing;
+    ///   3. apply them with `spinEdgeRings_`, which touches no derived array;
+    ///   4. rebuild + commit ONCE;
+    ///   5. repeat with the deferred remainder, in its original relative order.
+    ///
+    /// A pending key whose edge is the PRODUCT of a spin already taken this
+    /// round is deferred too, and that is what keeps the Edges branch's result
+    /// the same as the one-at-a-time loop it replaced. A spin's only side effect on
+    /// any edge other than its own is on the diagonal it creates: of the two
+    /// rewritten rings, `(a,b)` disappears, `(b,c)` and `(a,e)` merely change
+    /// which of the two faces owns them, and `(c,e)` is the one edge that GAINS
+    /// incidences. So a later target can only be disturbed by being that
+    /// diagonal — sequentially it would then see 3+ incident faces and refuse
+    /// (`spinEdgeRings_`'s `nFaces != 2` guard), and deferring it to the next
+    /// round, where the topology has been rebuilt, reproduces that.
+    ///
+    /// The residual, stated rather than papered over: the deferred target is
+    /// re-evaluated at the START of round 2, which is LATER in the sequence
+    /// than its own turn would have been. If some other round-1 spin had
+    /// meanwhile taken the third face back off that edge, the retry could
+    /// succeed where the sequential pass refused. No fixture reaches that on
+    /// the Edges branch — the transaction gate already demands pairwise
+    /// disjoint face pairs there, and `K4-geometry` in
+    /// `tests/unit/spin_edge_cost_test.d` measures the reachable case (the
+    /// retry refuses, both paths spin exactly one) — so "identical" here means
+    /// "identical on everything measured", not "proved for all topologies".
+    ///
+    /// Round-start topology is what steps 1-2 read: `edges`, `edgeIndexMap`
+    /// and the half-edge rings are deliberately left stale until step 4. That
+    /// is safe only because of the two deferrals above; do not add a target
+    /// filter here that assumes fresh derived arrays.
+    ///
+    /// No spins at all ⇒ no `rebuildEdges`, no `commitChange`, no
+    /// `mutationVersion` bump — the caller's existing "no work, no change"
+    /// contract.
+    size_t spinEdgesByKeys(const(ulong)[] keys, ref ulong[] productKeys) {
+        version (unittest) {
+            g_spinRounds       = 0;
+            g_spinRoundsCapped = false;
+            g_spinCollisions   = 0;
+            g_spinCollisionKeys = null;
+            g_spinsApplied     = 0;
+        }
+        if (keys.length == 0) return 0;
+
+        ulong[] pending = keys.dup;
+        size_t affected = 0;
+        size_t rounds   = 0;
+        auto faceUsed   = new bool[](faces.length);
+
+        while (pending.length > 0) {
+            if (rounds >= MAX_SPIN_ROUNDS) {
+                version (unittest) g_spinRoundsCapped = true;
+                break;
+            }
+            ++rounds;
+            if (faceUsed.length < faces.length) faceUsed.length = faces.length;
+            faceUsed[] = false;
+            bool[ulong] roundProducts;
+            ulong[] deferred;
+            size_t spunThisRound = 0;
+            // The round's collected windings. `reserve`d rather than counted:
+            // how many of `pending` will actually spin is not knowable before
+            // the walk, and a per-element `~=` here is O(S) total, against the
+            // O(S·F) the eager door cost.
+            FaceIdx[] roundIdx;
+            uint[][]  roundWind;
+            roundIdx.reserve(pending.length * 2);
+            roundWind.reserve(pending.length * 2);
+
+            foreach (k; pending) {
+                immutable uint ei = edgeIndexByKey(k);
+                if (ei == ~0u) continue;            // consumed by an earlier round
+                if ((k in roundProducts) !is null) { deferred ~= k; continue; }
+
+                uint[2] inc;
+                uint nInc = 0;
+                foreach (fi; facesAroundEdge(ei)) {
+                    if (nInc >= 2) { nInc = 3; break; }   // 3 = "more than two"
+                    inc[nInc++] = fi;
+                }
+                if (nInc != 2) continue;            // spinEdgeRings_ refuses these too
+                if ((inc[0] < faceUsed.length && faceUsed[inc[0]]) ||
+                    (inc[1] < faceUsed.length && faceUsed[inc[1]])) {
+                    deferred ~= k;
+                    continue;
+                }
+
+                uint[2] diag;
+                // COLLECT, do not install: see `spinEdgeRingsCollect_` for the
+                // 38x measurement that makes the round the recording unit.
+                if (!spinEdgeRingsCollect_(ei, diag, roundIdx, roundWind))
+                    continue;   // a real refusal — drop it
+
+                immutable ulong pk = edgeKey(diag[0], diag[1]);
+                version (unittest) {
+                    // Row 17: the new diagonal already existed, so `rebuildEdges`
+                    // will dedup it into a three-face edge and the edge count
+                    // falls. Read against round-start `edges` plus this round's
+                    // own products, which together are the state a sequential
+                    // pass would have seen.
+                    if (edgeIndexByKey(pk) != ~0u || (pk in roundProducts) !is null) {
+                        ++g_spinCollisions;
+                        g_spinCollisionKeys ~= pk;
+                    }
+                }
+                roundProducts[pk] = true;
+                if (inc[0] < faceUsed.length) faceUsed[inc[0]] = true;
+                if (inc[1] < faceUsed.length) faceUsed[inc[1]] = true;
+                productKeys ~= pk;
+                ++affected;
+                ++spunThisRound;
+            }
+
+            if (spunThisRound == 0) break;   // the remainder is all refusals
+            // ONE bulk install for the whole round, BEFORE the derived arrays
+            // are rebuilt: `setFaceWindings` reads the pre-op `faces` for its
+            // before-image and its corner payload, and both must be the state
+            // the round started from.
+            installSpinRings_(roundIdx, roundWind);
+            rebuildEdges(EdgePlaneCarry.byKey);   // task 4059 — see Mesh.spinEdge
+            buildLoops();
+            commitChange(MeshEditScope.Geometry);
+            pending = deferred;
+        }
+
+        version (unittest) {
+            g_spinRounds   = rounds;
+            g_spinsApplied = affected;
+        }
+        return affected;
+    }
+
+    /// Walk an edge loop starting from `startEdge` in the direction given by
+    /// `startFace`.  Returns ordered edge indices; `startEdge` is first.
+    /// Stops at non-quad faces, boundaries, or when the loop closes.
+    int[] walkEdgeLoop(int startEdge, int startFace) const {
+        if (startFace < 0 || startFace >= cast(int)faces.length) return [];
+        const sfv = faces[startFace];
+        if (sfv.length != 4) return [];
+        int si = findEdgeInFace(cast(uint)startFace, edgeKeyOf(cast(uint)startEdge));
+        if (si < 0) return [];
+        uint a = sfv[si], b = sfv[(si+1)%4];
+        int curEdge = startEdge, curFace = startFace;
+        int[] res; bool[ulong] vis;
+        while (true) {
+            ulong ck = edgeKey(a, b);
+            if (ck in vis) break;
+            vis[ck] = true;
+            res ~= curEdge;
+            const face = faces[curFace];
+            if (face.length != 4) break;
+            int jb = -1;
+            for (int j = 0; j < 4; j++) if (face[j] == b) { jb = j; break; }
+            if (jb < 0) break;
+            uint prev = face[(jb-1+4)%4], next = face[(jb+1)%4], c;
+            if      (prev == a) c = next;
+            else if (next == a) c = prev;
+            else break;
+            uint sei = edgeIndex(b, c); if (sei == ~0u) break;
+            int nf = adjacentFaceThrough(sei, cast(uint)curFace); if (nf < 0) break;
+            const nface = faces[nf];
+            if (nface.length != 4) break;
+            int jb2 = -1;
+            for (int j = 0; j < 4; j++) if (nface[j] == b) { jb2 = j; break; }
+            if (jb2 < 0) break;
+            uint p2 = nface[(jb2-1+4)%4], n2 = nface[(jb2+1)%4], d;
+            if      (p2 == c) d = n2;
+            else if (n2 == c) d = p2;
+            else break;
+            uint bd_ei = edgeIndex(b, d); if (bd_ei == ~0u) break;
+            a = b; b = d; curEdge = cast(int)bd_ei; curFace = nf;
+        }
+        return res;
+    }
+
+    /// Walk a vertex loop in the direction `startVert`→`nextVert`.
+    /// Returns ordered vertex indices starting with `startVert`.
+    /// Stops at non-quad faces, boundaries, or when the loop closes.
+    uint[] walkVertexLoop(uint startVert, uint nextVert) const {
+        uint sei = edgeIndex(startVert, nextVert);
+        if (sei == ~0u) return [];
+        int startFace = -1;
+        foreach (fi; facesAroundEdge(sei)) {
+            const fv = faces[fi];
+            if (fv.length != 4) continue;
+            for (int j = 0; j < 4; j++)
+                if (fv[j] == startVert && fv[(j+1)%4] == nextVert) { startFace = cast(int)fi; break; }
+            if (startFace >= 0) break;
+        }
+        if (startFace < 0) return [];
+        uint a = startVert, b = nextVert;
+        int curFace = startFace;
+        uint[] res; bool[ulong] vis;
+        while (true) {
+            ulong ck = edgeKey(a, b);
+            if (ck in vis) break;
+            vis[ck] = true;
+            res ~= a;
+            const face = faces[curFace];
+            if (face.length != 4) break;
+            int jb = -1;
+            for (int j = 0; j < 4; j++) if (face[j] == b) { jb = j; break; }
+            if (jb < 0) break;
+            uint prev = face[(jb-1+4)%4], next = face[(jb+1)%4], c;
+            if      (prev == a) c = next;
+            else if (next == a) c = prev;
+            else break;
+            uint seis = edgeIndex(b, c); if (seis == ~0u) break;
+            int nf = adjacentFaceThrough(seis, cast(uint)curFace); if (nf < 0) break;
+            const nface = faces[nf];
+            if (nface.length != 4) break;
+            int jb2 = -1;
+            for (int j = 0; j < 4; j++) if (nface[j] == b) { jb2 = j; break; }
+            if (jb2 < 0) break;
+            uint p2 = nface[(jb2-1+4)%4], n2 = nface[(jb2+1)%4], d;
+            if      (p2 == c) d = n2;
+            else if (n2 == c) d = p2;
+            else break;
+            a = b; b = d; curFace = nf;
+        }
+        return res;
+    }
+
+    /// Walk a face loop entered via `entryKey` into `startFace`.
+    /// Returns ordered face indices; `startFace` is first.
+    int[] walkFaceLoop(int startFace, ulong entryKey) const {
+        int[] res; bool[int] vis;
+        int cur = startFace; ulong entry = entryKey;
+        while (true) {
+            if (cur in vis) break;
+            vis[cur] = true;
+            res ~= cur;
+            const face = faces[cur];
+            if (face.length != 4) break;
+            int ei = findEdgeInFace(cast(uint)cur, entry);
+            if (ei < 0) break;
+            ulong oppKey = edgeKey(face[(ei+2)%4], face[(ei+3)%4]);
+            uint opp_idx = edgeIndexByKey(oppKey);
+            if (opp_idx == ~0u) break;
+            int nf = adjacentFaceThrough(opp_idx, cast(uint)cur);
+            if (nf < 0) break;
+            cur = nf; entry = oppKey;
+        }
+        return res;
+    }
+
+    /// Walk an edge ring starting from `startEdge` in the direction given by
+    /// `startFace`.  Returns the opposite edge indices encountered at each quad.
+    /// The starting edge itself is NOT included — the caller handles it.
+    int[] walkEdgeRing(int startEdge, int startFace) const {
+        int[] res; bool[int] vis;
+        int curFace = startFace;
+        ulong curKey = edgeKeyOf(cast(uint)startEdge);
+        while (true) {
+            if (curFace in vis) break;
+            const face = faces[curFace];
+            if (face.length != 4) break;
+            int j = findEdgeInFace(cast(uint)curFace, curKey);
+            if (j < 0) break;
+            vis[curFace] = true;
+            int oppJ = (j+2)%4;
+            ulong oppKey = edgeKey(face[oppJ], face[(oppJ+1)%4]);
+            uint opp_ei = edgeIndexByKey(oppKey);
+            if (opp_ei == ~0u) break;
+            res ~= cast(int)opp_ei;
+            int nf = adjacentFaceThrough(opp_ei, cast(uint)curFace);
+            if (nf < 0) break;
+            curFace = nf; curKey = oppKey;
+        }
+        return res;
+    }
+
+
+    // Loop-slice ring walk + insertion kernel family (loopSliceRingEdges /
+    // collectEdgeRing / insertEdgeLoops / insertEdgeLoopsMulti) + capShellCycles
+    // + `EdgeRingEntry` is NO LONGER a mixin either: task 1903 Stage F1 made it
+    // module-level free functions in source/mesh_ops/loop_slice.d — the two
+    // insert entries over `ref MeshEditBatch`, the four ring-walk entries over
+    // `ref const(Mesh)` — imported directly by their callers. `capShellCycles`
+    // in particular is no longer a `static` member, so
+    // `mesh_ops/cut.d` spells it BARE again (it had to say `Mesh.capShellCycles`
+    // between Stage E3 and Stage F1, while cut.d was converted and this file was
+    // not). Do not reinstate the `MeshLoopSliceOps` mixin here — see the note on
+    // the select.loop family just below for why a member would silently take
+    // every call site back (loop_slice.d's own `static assert` tripwire refuses
+    // it at build time as well).
+    // select.loop family (border predicates / selectLoopEdges / selectLoopVertices
+    // / selectLoopFaces + the head-restart oracles) is NO LONGER a mixin: task
+    // 1903 Stage C made it module-level free functions over `ref const(Mesh)` in
+    // source/mesh_ops/select_loop.d, imported explicitly by its callers. Do not
+    // reinstate the `MeshSelectLoopOps` mixin here — a
+    // member BEATS a same-name UFCS free function, so the mixin would silently
+    // take every call back and the conversion would mean nothing
+    // (`doc/mesh_edit_seam_plan.md` Revision 2 caveat 1;
+    // tests/unit/commit_seam_census_test.d reddens by name if it returns).
+
+    /// Return an input range over all loop indices (darts) incident to vertex `vi`.
+    /// Each yielded value is a uint loop index `li` with `loops[li].vert == vi`.
+    /// Traversal follows twin(prev(li)); stops at a boundary or a full circle.
+    /// If `startLi == ~0u`, uses `vertLoop[vi]` as the first dart.
+    /// Returns an empty range when the vertex is isolated (vertLoop[vi] == ~0u).
+    VertexDartRange dartsAroundVertex(uint vi, uint startLi = ~0u) const {
+        uint first = (startLi != ~0u) ? startLi : vertLoop[vi];
+        debug if (first != ~0u)
+            assert(loops[first].vert == vi,
+                   "dartsAroundVertex: startLi does not belong to vertex vi");
+        return VertexDartRange(loops, first);
+    }
+
+    /// Rebuild the half-edge loop structure from the current faces/vertices.
+    /// Must be called after any topology change (addFace, catmullClarkOsd,
+    /// bevel, etc.).
+    ///
+    /// CONTRACT (task 0447 §7): this re-syncs `loops`/`loopEdge`/`vertLoop`
+    /// against the CURRENT `edges[]` — it does NOT rebuild the edge set. A
+    /// caller that assigns `faces` directly (bypassing `addFace`, which grows
+    /// `edges` incrementally) must call `rebuildEdges()` /
+    /// `rebuildEdgesFromFaces()` BEFORE this, or every `loopEdge` stays `~0u`
+    /// and the vertex-fan edge walk yields garbage edge indices.
+    /// `scene.loadMesh` follows the correct order (rebuildEdgesFromFaces then
+    /// buildLoops); `/api/model` never reads edges, so a live instance is
+    /// unaffected. Semantics are otherwise unchanged.
+    ///
+    /// Always repopulates the undirected edgeKey → edge index `edgeIndexMap`
+    /// AA alongside the loops family (task 0790 — the `rebuildEdgeIndexMap`
+    /// opt-out this doc used to describe had zero callers from the day a
+    /// faster path replaced its only caller, `subpatch_osd.OsdAccel.buildPreview`,
+    /// which now skips `buildLoops` on the preview mesh entirely rather than
+    /// calling it with the map suppressed).
+    void buildLoops() {
+        version (unittest) ++g_buildLoopsRuns;     // task 1471 instrument
+
+        // Pre-compute total loop count + per-face start offset in one
+        // pass. Lets pass 1 below run in parallel — each face writes
+        // to a disjoint loops[faceLoop[fi] .. faceLoop[fi]+N] slice.
+        faceLoop.length = faces.length;
+        size_t total = 0;
+        foreach (fi, f; faces) {
+            faceLoop[fi] = cast(uint)total;
+            total += f.length;
+        }
+
+        loops.length    = total;
+        vertLoop.length = vertices.length;
+        loopEdge.length = total;
+
+        // Initialise sentinels in bulk (the SIMD-friendly default is
+        // ~0u, which is the boundary marker for `twin` and the
+        // missing-edge marker for loopEdge).
+        vertLoop[] = ~0u;
+        loopEdge[] = ~0u;
+
+        // Pass 1: fill vert, face, next, prev. Independent across
+        // faces — each writes to its own slice of `loops`. Skip
+        // vertLoop seeding inside the parallel body (it's a shared
+        // write to the same vert from multiple faces, which races on
+        // last-writer-wins; do it in a separate serial pass for
+        // determinism).
+        enum size_t PARALLEL_BUILD_MIN = 4096;
+        void fillOneFace(size_t fi) {
+            auto face = faces[fi];
+            uint li = faceLoop[fi];
+            uint N = cast(uint)face.length;
+            foreach (i; 0 .. N) {
+                loops[li + i].vert = face[i];
+                loops[li + i].face = cast(uint)fi;
+                loops[li + i].next = li + (i + 1) % N;
+                loops[li + i].prev = li + (i + N - 1) % N;
+                loops[li + i].twin = ~0u;
+            }
+        }
+        if (faces.length >= PARALLEL_BUILD_MIN) {
+            parallelForWithCompletion!fillOneFace(faces.length);
+        } else {
+            foreach (fi; 0 .. faces.length) fillOneFace(fi);
+        }
+
+        // Serial vertLoop seed pass — every loop writes vertLoop[its vert].
+        foreach (idx; 0 .. total) {
+            vertLoop[loops[idx].vert] = cast(uint)idx;
+        }
+
+
+        // Pass 2: fill loopEdge[] for every half-edge by looking up
+        // its undirected edge index, rebuilding the AA `edgeIndexMap`
+        // along the way. External callers (bevel, subpatch_osd's cage
+        // reads, edgeIndex/edgeIndexByKey) need the AA, so this always
+        // runs — task 0790 removed the CSR-adjacency / binary-search
+        // opt-out that used to skip it (`rebuildEdgeIndexMap=false`);
+        // its only caller was replaced same-day by a faster path that
+        // skips `buildLoops` on the preview mesh entirely (see the
+        // function doc comment above).
+        edgeIndexMap = null;
+        foreach (i, e; edges) edgeIndexMap[edgeKey(e[0], e[1])] = cast(uint)i;
+        void fillLoopEdge(size_t idx) {
+            uint u = loops[idx].vert;
+            uint v = loops[loops[idx].next].vert;
+            if (auto p = edgeKey(u, v) in edgeIndexMap)
+                loopEdge[idx] = *p;
+        }
+        if (total >= PARALLEL_BUILD_MIN) {
+            parallelForWithCompletion!fillLoopEdge(total);
+        } else {
+            foreach (idx; 0 .. total) fillLoopEdge(idx);
+        }
+
+
+        // Pass 3: twin pairing via (max 2) loops-per-edge. The slot
+        // assignment (first → A, second → B) needs serial order to
+        // avoid a race on the -1-sentinel comparison; the writeback
+        // pass (twin from A/B) is parallelisable.
+        //
+        // Treatment A for non-manifold edges (3+ loops sharing one edge):
+        // on the third loop for an edge, reset A=B=-1 and mark it in
+        // edgeNonManifold so fillTwin's b==-1 short-circuit fires for ALL
+        // its loops, leaving twin=~0u (boundary-like).  This makes the twin
+        // graph consistent (involutive) on non-manifold input.  Manifold
+        // edges (≤2 loops after addEdge dedup) never reach the third-loop
+        // branch — byte-stable by construction.
+        int[]  edgeLoopA        = new int[] (edges.length);
+        int[]  edgeLoopB        = new int[] (edges.length);
+        bool[] edgeNonManifold  = new bool[](edges.length);  // zero-inited
+        // Task 1290: set the moment the third dart is seen, so the endpoint
+        // marking further down costs a clean mesh ONE bool test instead of a
+        // scan over every edge. buildLoops runs per frame under a subpatch
+        // preview drag; a new unconditional O(E) pass here is not free.
+        bool anyNonManifold = false;
+        edgeLoopA[] = -1;
+        edgeLoopB[] = -1;
+        foreach (idx; 0 .. total) {
+            uint ei = loopEdge[idx];
+            if (ei == ~0u) continue;
+            if (edgeNonManifold[ei]) continue;          // already flagged — skip
+            if (edgeLoopA[ei] == -1)      edgeLoopA[ei] = cast(int)idx;
+            else if (edgeLoopB[ei] == -1) edgeLoopB[ei] = cast(int)idx;
+            else {
+                // Third (or later) loop for this edge: non-manifold.
+                // Reset A/B so fillTwin's b==-1 guard fires → all loops
+                // on this edge keep twin=~0u.
+                //
+                // THIS LINE IS WHERE `~0u` BECOMES OVERLOADED, and it is the
+                // root of the whole 1290 cascade. From here on the sentinel
+                // means EITHER "open rim, one incident face" OR "non-manifold,
+                // three or more" — byte-identical, with no diagnostic. Six
+                // separate consumers asked "is there a twin?", got "no", and
+                // concluded "border"; see `Loop.twin`'s comment for the list.
+                //
+                // Clearing the slots is still right: a 3-face edge has no
+                // unique partner and a half-truth ("here are two of the three")
+                // would be worse than none. What was missing is that the
+                // OTHER meaning was never published. `edgeNonManifold` is now
+                // carried out of this function (`edgeNonManifold_` /
+                // `isEdgeNonManifold`) precisely so a caller can tell the two
+                // apart, and both endpoints below are marked fan-unordered so
+                // the walks stop trusting the sentinel as a rim.
+                edgeNonManifold[ei] = true;
+                anyNonManifold        = true;
+                edgeLoopA[ei] = -1;
+                edgeLoopB[ei] = -1;
+            }
+        }
+        void fillTwin(size_t idx) {
+            uint ei = loopEdge[idx];
+            if (ei == ~0u) return;
+            int a = edgeLoopA[ei];
+            int b = edgeLoopB[ei];
+            if (b == -1) return;
+            loops[idx].twin = (a == cast(int)idx) ? cast(uint)b : cast(uint)a;
+        }
+        if (total >= PARALLEL_BUILD_MIN) {
+            parallelForWithCompletion!fillTwin(total);
+        } else {
+            foreach (idx; 0 .. total) fillTwin(idx);
+        }
+
+        // Task 0447 (KEEP-TWIN): per-vertex fan-order tracking. Pass 3 above
+        // leaves same-direction twins POPULATED (byte-identical to before);
+        // here we DETECT them straight from `loops[]` — a same-direction pair
+        // (li, tw) of one edge has EQUAL tails `loops[tw].vert ==
+        // loops[li].vert` (an antiparallel twin gives different tails; a
+        // boundary / non-manifold edge gives `twin==~0u` and never enters
+        // here). Both endpoints of every such edge are marked NOT fan-ordered.
+        // Always (re)size `vertFanOrdered_` (cheap, same class as `vertLoop`);
+        // the single `foreach` over loops has no per-edge allocation (Risk #1).
+        vertFanOrdered_.length = vertices.length;
+        vertFanOrdered_[] = true;
+        bool anySameDir = false;
+        foreach (li; 0 .. total) {
+            uint tw = loops[li].twin;
+            if (tw != ~0u && loops[tw].vert == loops[li].vert) {
+                vertFanOrdered_[loops[li].vert] = false;
+                vertFanOrdered_[loops[loops[li].next].vert] = false;
+                anySameDir = true;
+            }
+        }
+        // Task 1290: publish the non-manifold flag and mark BOTH endpoints of
+        // every non-manifold edge unordered as well. `edgeNonManifold` above
+        // is the same array the twin pass already filled; it costs one copy of
+        // one bool per edge and it is the only thing in the mesh that can tell
+        // an open boundary edge from a three-face one. The endpoint marking is
+        // what makes the fan walks COMPLETE at such a vertex — treatment A
+        // gives every dart on that edge `twin==~0u`, so the ordered walk stops
+        // there as at a rim and enumerates only the sub-fan it started in.
+        edgeNonManifold_ = edgeNonManifold;
+        if (anyNonManifold)
+            foreach (ei; 0 .. edges.length) {
+                if (!edgeNonManifold[ei]) continue;
+                foreach (v; edges[ei])
+                    if (v < vertFanOrdered_.length) vertFanOrdered_[v] = false;
+            }
+        if (anySameDir || anyNonManifold) {
+            // CSR vertex→dart adjacency: same count / prefix-sum / fill shape
+            // as the edgeIndexMap build above, keyed by `loops[idx].vert`
+            // instead of an edge's two endpoints, one entry per dart since
+            // each dart has exactly one tail vertex. Built ONLY here (some
+            // edge is same-direction, or — task 1290 — non-manifold), so the
+            // clean manifold fast path never allocates it (Risk #1). The
+            // fan-walk ranges use it to enumerate the WHOLE fan of an
+            // unordered vertex, complete and winding-independent (but in
+            // arbitrary order — only consumers tolerant of any order reach it,
+            // since slot-position consumers decline on !vertexFanOrdered).
+            vertDartStart.length = vertices.length + 1;
+            vertDartStart[] = 0;
+            foreach (idx; 0 .. total) ++vertDartStart[loops[idx].vert + 1];
+            foreach (i; 1 .. vertDartStart.length)
+                vertDartStart[i] += vertDartStart[i - 1];
+            vertDartAdj.length = total;
+            auto vertDartCursor = new uint[](vertices.length);
+            vertDartCursor[] = 0;
+            foreach (idx; 0 .. total) {
+                uint v = loops[idx].vert;
+                vertDartAdj[vertDartStart[v] + vertDartCursor[v]++] = cast(uint)idx;
+            }
+
+            // Only the SAME-DIRECTION finding is a winding fault the user can
+            // repair; a non-manifold edge is legal state (Edge Extend makes
+            // them on purpose, an LWO import brings them in) and must not be
+            // reported as bad winding (task 1290).
+            if (anySameDir) {
+                import vibe3d.util.log.log : logWarnOnce;
+                logWarnOnce("mesh", "sameDirTwin",
+                    "buildLoops: inconsistently-wound faces detected (a shared "
+                    ~ "edge traversed the same direction by both faces) — the "
+                    ~ "affected vertex fans are unordered/incomplete for "
+                    ~ "slot-position consumers. Run mesh.fixOrientation to repair "
+                    ~ "winding.");
+            }
+        } else {
+            // Keep the CSR arrays empty on the clean fast path (the ranges
+            // only ever read them when !vertexFanOrdered, which never happens
+            // when neither anySameDir nor anyNonManifold is set).
+            vertDartStart.length = 0;
+            vertDartAdj.length   = 0;
+        }
+
+        // Anchor walk — independent per vertex; for BOUNDARY verts,
+        // walk back via next(twin(cur)) until the open start of the
+        // fan. For closed meshes (every edge has both A and B loops)
+        // the walk just re-traverses a closed ring and ends at `orig`
+        // — the resulting vertLoop[vi] is some loop in the same ring
+        // we started in, which is what we already had. Detect that
+        // case ONCE and skip the per-vertex walk entirely — it's the
+        // single biggest cost (~29% of CPU during a subpatch-mode
+        // sphere drag profile) for closed-manifold inputs, which are
+        // the common case in subpatch preview meshes.
+        //
+        // Non-manifold (treatment A) edges also set hasBoundary=true so
+        // the anchor walk runs and gives each affected vertex a deterministic
+        // start dart.  The walk still breaks on the first twin==~0u, so it
+        // re-seeds only one fan — NOT a complete fan enumeration.
+        bool hasBoundary = false;
+        foreach (ei; 0 .. edges.length) {
+            if (edgeNonManifold[ei] ||
+                (edgeLoopA[ei] != -1 && edgeLoopB[ei] == -1)) {
+                hasBoundary = true;
+                break;
+            }
+        }
+        if (hasBoundary) {
+            void anchorOneVert(size_t vi) {
+                if (vertLoop[vi] == ~0u) return;
+                uint cur  = vertLoop[vi];
+                uint orig = cur;
+                foreach (_; 0 .. faces.length + 4) {
+                    if (loops[cur].twin == ~0u) break;
+                    // Task 0447 (KEEP-TWIN): a same-direction ("meaning-3")
+                    // twin has the SAME tail as `cur`; crossing it would jump
+                    // to the OTHER endpoint's fan. Treat it as a boundary.
+                    if (loops[loops[cur].twin].vert == loops[cur].vert) break;
+                    uint back = loops[loops[cur].twin].next;
+                    if (back == orig) break;
+                    cur = back;
+                }
+                vertLoop[vi] = cur;
+            }
+            if (vertices.length >= PARALLEL_BUILD_MIN) {
+                parallelForWithCompletion!anchorOneVert(vertices.length);
+            } else {
+                foreach (vi; 0 .. vertices.length) anchorOneVert(vi);
+            }
+        }
+
+        // PolyVertex (per-corner) maps run parallel to `loops`. Now that the
+        // loop layout is rebuilt, bring every such map to `loops.length * dim`.
+        // For mutators that already relocated values (remapPolyVertexMaps) this
+        // is a length-correct no-op; for the DROP class (primitive rebuilds,
+        // subdivide, extrude, …) this is the conscious length-correct,
+        // value-zeroed behaviour. No-op when no PolyVertex map is registered.
+        resizePolyVertexMaps();
+
+        // Stamp validity at the current structVersion. The loops family and
+        // edgeIndexMap are both fully rebuilt above, so both are always
+        // Valid here (task 0790 removed the branch that could leave
+        // edgeIndexMap `DeliberatelyEmpty` while loops read Valid — the only
+        // remaining producer of `DeliberatelyEmpty` is `markDerivedEmpty()`,
+        // which drops both states together).
+        loopsStamp    = structVersion;
+        loopsState_   = DerivedState.Valid;
+        edgeMapStamp  = structVersion;
+        edgeMapState_ = DerivedState.Valid;
+    }
+
+    // -----------------------------------------------------------------------
+    // Make Polygon (mesh.makePolygon)
+    // -----------------------------------------------------------------------
+
+    /// Which of this kernel's four REFUSALS are in force. Task 1200: the
+    /// reference editor's Make Polygon has none of them — it builds a zero-area
+    /// triangle from three collinear points, a two-point polygon from two, a
+    /// self-intersecting ring from a bow-tie click order, and a DUPLICATE face
+    /// on the ring of an existing one (ledger row 7). The `mesh.makePolygon`
+    /// COMMAND therefore asks for `MakePolyGates.none`.
+    ///
+    /// The flag exists rather than a blanket removal because the gates are not
+    /// all one law: the Topology Pen builds every one of its faces through this
+    /// kernel and RELIES on the zero-area refusal to reject a collapsed
+    /// triangle mid-gesture (`tools/edit/topology_pen/tool.d`), and that tool
+    /// is a different tool with a deliberately different law (the same way
+    /// `orientationAdmits` is). So the default stays `all`, every existing
+    /// caller keeps the behaviour it was written against, and only the command
+    /// opts out.
+    ///
+    /// The bow-tie is not on this list because there was never a ring-crossing
+    /// test to switch off — a self-intersecting ring already passed every gate.
+    enum MakePolyGates : uint {
+        none       = 0,
+        /// < 3 corners after collapsing consecutive duplicates, or a ring whose
+        /// Newell normal is shorter than 1e-6 (collinear / zero area).
+        degenerate = 1 << 0,
+        /// A face on the same UNORDERED vertex set already exists.
+        duplicate  = 1 << 1,
+        /// Some boundary edge of the new ring already carries two faces, so the
+        /// ring would push it to three (task 0316; non-manifold).
+        manifold   = 1 << 2,
+        all        = degenerate | duplicate | manifold,
+    }
+
+    /// Build one face from an ORDERED list of vertex indices.
+    /// Winding follows `orderedIdx` order; `flip` reverses it.
+    /// Generates missing deduped edges via addEdge. Returns the new face
+    /// index, or -1 on rejection.
+    ///
+    /// Rejections (each one switchable off through `gates`, see MakePolyGates):
+    ///   - any index >= vertices.length                       [never switchable]
+    ///   - fewer than 2 corners after collapsing consecutive
+    ///     dupes                                              [never switchable]
+    ///   - fewer than 3 corners, or collinear / zero area
+    ///     (Newell normal magnitude < 1e-6)                   [gate: degenerate]
+    ///   - duplicate of an existing face (same unordered
+    ///     vertex set)                                        [gate: duplicate]
+    ///   - a boundary edge of the new ring already carries
+    ///     two faces                                          [gate: manifold]
+    ///
+    /// The floor of TWO corners is not a gate and does not move with `gates`: a
+    /// one-corner face is a shape nobody has measured on either engine, and a
+    /// zero-corner one has no ring at all. Two is the smallest ring the
+    /// reference was actually seen to build (ledger row 7, `two_points_only`).
+    ///
+    /// `autoOrient` (task 0477, topology-pen P3): when true (default, every
+    /// pre-task-0477 caller), the majority-vote `orientFaceConsistent` below
+    /// may reverse `idx` to stay winding-consistent with existing neighbors
+    /// (task 0394 parity). Set `false` to bypass that and emit `orderedIdx`
+    /// (post-`flip`) VERBATIM — for a caller building a fixed
+    /// construction-order convention (e.g. topology-pen's captured
+    /// `[hub, newest, older-neighbor]` triangle winding) that must not be
+    /// re-derived from adjacency. `autoOrient` is orthogonal to `gates`:
+    /// consecutive-duplicate collapse and the index bounds check run whatever
+    /// either says, and whichever gates `gates` leaves on run whatever
+    /// `autoOrient` says.
+    int makePolygonFromVerts(const(uint)[] orderedIdx, bool flip, bool autoOrient = true,
+                             MakePolyGates gates = MakePolyGates.all) {
+        immutable size_t minRing = (gates & MakePolyGates.degenerate) ? 3 : 2;
+        if (orderedIdx.length < minRing) return -1;
+
+        // --- 1. copy + optional winding reversal ---
+        uint[] idx = orderedIdx.dup;
+        if (flip) {
+            foreach (i; 0 .. idx.length / 2) {
+                uint tmp = idx[i]; idx[i] = idx[$ - 1 - i]; idx[$ - 1 - i] = tmp;
+            }
+        }
+
+        // --- 2. bounds check ---
+        foreach (vi; idx)
+            if (vi >= vertices.length) return -1;
+
+        // --- 3. collapse consecutive duplicates (including last→first wrap) ---
+        // Build deduped list: skip a vertex if it equals its predecessor.
+        uint[] deduped;
+        deduped.reserve(idx.length);
+        foreach (i; 0 .. idx.length) {
+            uint prev = idx[(i + idx.length - 1) % idx.length];
+            if (idx[i] != prev) deduped ~= idx[i];
+        }
+        // Also remove the last element if it equals the first (wrap-around dup).
+        while (deduped.length >= 2 && deduped[$ - 1] == deduped[0])
+            deduped = deduped[0 .. $ - 1];
+        if (deduped.length < minRing) return -1;
+        idx = deduped;
+
+        // --- 4. collinearity / zero-area via Newell normal ---
+        if (gates & MakePolyGates.degenerate) {
+            float nx = 0, ny = 0, nz = 0;
+            foreach (i; 0 .. idx.length) {
+                Vec3 a = vertices[idx[i]];
+                Vec3 b = vertices[idx[(i + 1) % idx.length]];
+                nx += (a.y - b.y) * (a.z + b.z);
+                ny += (a.z - b.z) * (a.x + b.x);
+                nz += (a.x - b.x) * (a.y + b.y);
+            }
+            float len = sqrt(nx*nx + ny*ny + nz*nz);
+            if (len < 1e-6f) return -1;
+        }
+
+        // --- 5. duplicate-face guard (same unordered vertex set) ---
+        if (gates & MakePolyGates.duplicate) {
+            foreach (const ref f; faces) {
+                if (f.length != idx.length) continue;
+                if (makePolyVertexSetMatch_(f[], idx[])) return -1;
+            }
+        }
+
+        // --- 5.5. adjacency-driven auto-orient + manifold-safety guard.
+        // Build edge→incident-faces once; reused for both.
+        auto edgeFaces = buildEdgeFaces();
+
+        // --- 5.6. auto-orient by adjacency (task 0394; majority-vote refined
+        // for reference-editor parity): a hand-picked vertex order (or
+        // `flip`) can traverse a shared edge the SAME direction as an
+        // already-existing neighbor face, corrupting the half-edge fan at
+        // that edge's endpoints (facesAroundEdge / collectEdgeRing then see
+        // nothing there — the bug this task fixes). Reference-editor parity
+        // (owner): Make Polygon has no flip prompt at all — it just orients
+        // correctly from context. Factored into `orientFaceConsistent` (task
+        // 0395) so Bridge's new open-row strip/fan faces reuse the exact
+        // same invariant. `autoOrient:false` (task 0477) bypasses this
+        // entirely so the caller's own construction-order winding survives
+        // verbatim — every guard below still runs regardless.
+        if (autoOrient) orientFaceConsistent(idx, edgeFaces);
+
+        // --- 5.7. manifold-safety guard: reject if any boundary edge of the
+        // new face is already shared by 2 existing faces — adding a 3rd
+        // would exceed the ≤2-faces-per-edge manifold invariant (e.g. a new
+        // face reusing an edge already shared by two faces of a closed
+        // solid). Fuzz-found: task 0316. (Orientation-independent — reject
+        // check is unaffected by the auto-orient reversal above.)
+        if (gates & MakePolyGates.manifold) {
+            foreach (i; 0 .. idx.length) {
+                ulong key = edgeKey(idx[i], idx[(i + 1) % idx.length]);
+                auto p = key in edgeFaces;
+                if (p !is null && (*p)[1] != -1) return -1;
+            }
+        }
+
+        // --- 6. append face + rebuild ---
+        addFace(idx);
+        buildLoops();
+        syncSelection();
+        return cast(int)(faces.length - 1);
+    }
+
+    /// Auto-orient a candidate face's vertex order to be winding-consistent
+    /// with its EXISTING mesh neighbors (task 0394's `makePolygonFromVerts`
+    /// auto-orient, factored out here so task 0395's Bridge open-row
+    /// strip/fan faces reuse the identical invariant instead of a fixed
+    /// convention). `edgeFaces` must be a `buildEdgeFaces()` snapshot taken
+    /// BEFORE any of the caller's own new faces were added (same convention
+    /// `makePolygonFromVerts` and `bridgeLoopsPaired`/`bridgeStripPaired`
+    /// already use), so only PRE-EXISTING neighbors vote.
+    ///
+    /// Majority-vote over every edge of `idx` that already has an existing
+    /// neighbor in `edgeFaces`: a manifold requires the two faces sharing an
+    /// edge to traverse it in OPPOSITE directions, so a same-direction
+    /// neighbor is a vote to flip. `idx` is reversed in place iff
+    /// same-direction votes strictly outnumber opposite-direction votes — a
+    /// TIE (including 0-0: no shared edge at all, e.g. a disconnected
+    /// island) leaves `idx` untouched, which is the deliberate fallback for
+    /// unconnected topology (task 0395 rr-capture: the neighbor-orientation
+    /// rule only has a signal to act on when at least one boundary edge
+    /// already borders existing geometry).
+    /// NOT `private`, since task 1903 Stage D3 (plan §2.6). Its only caller
+    /// outside this file is `mesh_ops/bridge.d` (`bridgeStripPaired` and
+    /// `bridgeFanRows`), which reached it as a mixin body and cannot any more;
+    /// `makePolygonFromVerts` above is the in-file caller. Narrow it back the
+    /// day bridge.d stops calling it — the census row in
+    /// tests/unit/commit_seam_census_test.d asserts both halves.
+    void orientFaceConsistent(uint[] idx, const int[2][ulong] edgeFaces) const {
+        int sameDirVotes = 0, oppositeDirVotes = 0;
+        foreach (i; 0 .. idx.length) {
+            uint u = idx[i], v = idx[(i + 1) % idx.length];
+            auto p = edgeKey(u, v) in edgeFaces;
+            if (p is null) continue;                 // brand-new edge, no neighbor yet
+            int nbrFi = (*p)[0];
+            if (nbrFi < 0 || nbrFi >= cast(int)faces.length) continue;
+            auto nf = faces[nbrFi];
+            foreach (k; 0 .. nf.length) {
+                uint a = nf[k], b = nf[(k + 1) % nf.length];
+                if (a == u && b == v) { ++sameDirVotes;     break; }
+                if (a == v && b == u) { ++oppositeDirVotes; break; }
+            }
+        }
+        if (sameDirVotes > oppositeDirVotes) {
+            foreach (j; 0 .. idx.length / 2) {
+                uint tmp = idx[j]; idx[j] = idx[$ - 1 - j]; idx[$ - 1 - j] = tmp;
+            }
+        }
+    }
+
+    /// Register a just-`addFace`d face's own edges into a LIVE (mutable,
+    /// caller-owned) `edgeFaces`-shaped map, keyed the same way
+    /// `buildEdgeFaces()` builds one. Incremental counterpart used by
+    /// `bridgeStripPaired`/`bridgeFanRows` (task 0395 winding-consistency
+    /// follow-up) so a LATER face in the SAME strip/fan loop's
+    /// `orientFaceConsistent` vote sees its already-placed SIBLING bridge
+    /// faces too — not just faces that existed before the bridge call
+    /// started. Without this, a STATIC snapshot taken once at the top of
+    /// the loop is blind to a strip's own internal rung edges: if one new
+    /// face gets reversed (because it borders a pre-existing face) and its
+    /// immediate neighbor in the same strip does not (a 0-0 tie, no
+    /// pre-existing signal of its own), the two new faces can settle on
+    /// the SAME direction for the rung edge they share — exactly the
+    /// half-edge corruption `orientFaceConsistent` exists to prevent.
+    /// `idx` must be the face's FINAL (post-orient) vertex order — call
+    /// this only after `addFace(idx)`, so `faces[newFi]` already matches.
+    /// NOT `private`, since task 1903 Stage D3 (plan §2.6) — same widening,
+    /// same reason and same single external caller as `orientFaceConsistent`
+    /// above: `mesh_ops/bridge.d`'s `bridgeStripPaired` / `bridgeFanRows`.
+    void registerNewFaceEdges(ref int[2][ulong] liveEdgeFaces, uint newFi,
+                              const(uint)[] idx) const {
+        foreach (i; 0 .. idx.length) {
+            ulong key = edgeKey(idx[i], idx[(i + 1) % idx.length]);
+            auto p = key in liveEdgeFaces;
+            if (p is null)
+                liveEdgeFaces[key] = [cast(int)newFi, -1];
+            else if ((*p)[0] < 0)
+                (*p)[0] = cast(int)newFi;
+            else if ((*p)[1] < 0)
+                (*p)[1] = cast(int)newFi;
+            // else: edge already carries 2 registered faces (manifold slot
+            // saturated) — leave untouched rather than overwrite.
+        }
+    }
+
+    // Helper: true iff `a` and `b` contain the same multiset of vertex indices.
+    // O(n²) but n is typically small (poly arities ≤ 64 in practice). Widened
+    // from `private` (task 0417, mesh_ops.cleanup extraction): a unifyFaces
+    // unittest (now in source/mesh_ops/cleanup.d) uses this as the O(F²)
+    // reference oracle for its O(F) hash-bucket rewrite — that test is
+    // module-level code in a different module, which a private struct member
+    // is not visible to (unlike a mixin-template body, which is transparent
+    // to Mesh's private members regardless of which module declares the
+    // template). See mesh_ops/cleanup.d's own comment at the call site.
+    static bool makePolyVertexSetMatch_(const uint[] a, const uint[] b) {
+        if (a.length != b.length) return false;
+        bool[] used = new bool[](b.length);
+        outer: foreach (ai; a) {
+            foreach (j; 0 .. b.length) {
+                if (!used[j] && ai == b[j]) { used[j] = true; continue outer; }
+            }
+            return false;
+        }
+        return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Bridge (task 0100): stitch two equal-length closed vertex loops.
+    // ------------------------------------------------------------------
+
+    /// Return the ordered vertex cycle of face `fi` — the face's vertex
+    /// list as a plain uint[].  Used by the bridge command (Polygon mode).
+    uint[] faceVertexRing(uint fi) const {
+        return faces[fi].dup;
+    }
+
+    /// Extract all disjoint simple closed vertex cycles from the currently
+    /// selected edges.  Each cycle is an ordered uint[] with no repeated
+    /// vertex (implied closed: last connects back to first).
+    ///
+    /// Returns [] if no edges are selected OR if any connected component
+    /// is not a simple closed cycle (vertex degree ≠ 2).
+    uint[][] extractSelectedEdgeCycles() const {
+        // Build adjacency restricted to selected edges.
+        uint[][uint] adj;
+        foreach (ei; 0 .. edges.length) {
+            if (ei >= edgeMarks.length) continue;
+            if (!(edgeMarks[ei] & Marks.Select)) continue;
+            uint a = edges[ei][0], b = edges[ei][1];
+            adj[a] ~= b;
+            adj[b] ~= a;
+        }
+        if (adj.length == 0) return [];
+
+        // Every selected vertex must have exactly two selected-edge neighbors.
+        foreach (v, nbrs; adj) {
+            if (nbrs.length != 2) return [];
+        }
+
+        // Walk connected components into ordered cycles.
+        bool[uint] visited;
+        uint[][] cycles;
+        foreach (startV; adj.byKey) {
+            if (startV in visited) continue;
+            uint[] cycle;
+            uint cur  = startV;
+            uint prev = uint.max;
+            while (!(cur in visited)) {
+                visited[cur] = true;
+                cycle ~= cur;
+                auto nbrs = adj[cur];
+                uint next = (nbrs[0] != prev) ? nbrs[0] : nbrs[1];
+                prev = cur;
+                cur  = next;
+            }
+            if (cur != startV) return [];   // did not close
+            if (cycle.length < 3) return [];
+            cycles ~= cycle;
+        }
+        return cycles;
+    }
+
+    /// One connected component of `extractSelectedEdgeChains` — either an
+    /// open row (`closed == false`, walked endpoint-to-endpoint) or a
+    /// closed cycle (`closed == true`, implicit wrap, no repeated vertex).
+    static struct EdgeChain {
+        uint[] verts;
+        bool   closed;
+    }
+
+    /// Extract ALL disjoint chains — open rows AND closed cycles — from the
+    /// currently selected edges (task 0395: Bridge's edge mode generalizes
+    /// from "exactly 2 closed cycles" to also accept 2 OPEN rows). This is
+    /// the plural, multi-component sibling of `extractSelectedEdgeChain`
+    /// (single component, open-or-closed) and `extractSelectedEdgeCycles`
+    /// (multi-component, closed-only) — BOTH of those are left completely
+    /// UNTOUCHED so their existing callers/unittests stay byte-identical;
+    /// this is new, additive surface.
+    ///
+    /// Returns [] if: no edges selected, or any vertex has selected-edge
+    /// degree > 2 (branching — a component that isn't a simple path/cycle).
+    /// Each returned component's own malformed-walk case (defensive; should
+    /// be unreachable once the degree<=2 guard holds, since a component
+    /// with max degree 2 is necessarily a simple path or a simple cycle)
+    /// also aborts the whole call with [].
+    ///
+    /// Component/walk-start order is arbitrary (AA key iteration order), so
+    /// which chain comes first, and which of an open chain's two physical
+    /// endpoints is `verts[0]`, are NOT pinned — callers that need a
+    /// canonical correspondence between two chains must resolve it
+    /// themselves by geometry (see `orientOpenChainB`), not by trusting
+    /// this function's output order.
+    EdgeChain[] extractSelectedEdgeChains() const {
+        // Build adjacency restricted to selected edges.
+        uint[][uint] adj;
+        foreach (ei; 0 .. edges.length) {
+            if (ei >= edgeMarks.length) continue;
+            if (!(edgeMarks[ei] & Marks.Select)) continue;
+            uint a = edges[ei][0], b = edges[ei][1];
+            adj[a] ~= b;
+            adj[b] ~= a;
+        }
+        if (adj.length == 0) return [];
+
+        // Reject any branching vertex (degree > 2) — same gate as both
+        // single-purpose extractors.
+        foreach (v, nbrs; adj)
+            if (nbrs.length > 2) return [];
+
+        bool[uint] visited;
+        EdgeChain[] chains;
+
+        // Pass 1 — open rows: walk from every unvisited degree-1 vertex.
+        // Walking from one endpoint necessarily visits the whole chain
+        // (including its far endpoint), so that far endpoint is already
+        // `visited` by the time this loop reaches it — no double-walk.
+        foreach (v, nbrs; adj) {
+            if (nbrs.length != 1) continue;
+            if (v in visited) continue;
+
+            uint[] chain;
+            uint cur = v, prev = uint.max;
+            while (cur !in visited) {
+                visited[cur] = true;
+                chain ~= cur;
+                uint next = uint.max;
+                foreach (n; adj[cur])
+                    if (n != prev) { next = n; break; }
+                if (next == uint.max) break;   // reached the far endpoint
+                prev = cur;
+                cur  = next;
+            }
+            if (chain.length < 2) return [];   // defensive; degree-1 start implies >=1 edge
+            chains ~= EdgeChain(chain, false);
+        }
+
+        // Pass 2 — closed cycles: every vertex left unvisited here has
+        // degree exactly 2 (pass 1 consumed every degree-1 vertex already).
+        foreach (v, nbrs; adj) {
+            if (v in visited) continue;
+            uint[] cycle;
+            uint cur = v, prev = uint.max;
+            while (cur !in visited) {
+                visited[cur] = true;
+                cycle ~= cur;
+                auto cnbrs = adj[cur];
+                uint next = (cnbrs[0] != prev) ? cnbrs[0] : cnbrs[1];
+                prev = cur;
+                cur  = next;
+            }
+            if (cur != v) return [];            // did not close → malformed
+            if (cycle.length < 3) return [];
+            chains ~= EdgeChain(cycle, true);
+        }
+
+        return chains;
+    }
+
+
+    // Bridge kernel family (bridgeLoopsPaired / bridgeLoops / bridgeLoopsSpans /
+    // bridgeStripPaired / bridgeOpenRows, plus facesBoundedByLoop and the
+    // pairing helpers) is NO LONGER a mixin: task 1903 Stage D3 made it
+    // module-level free functions in source/mesh_ops/bridge.d — the five
+    // mutating entry points over `ref MeshEditBatch`, the read-only lookup and
+    // the three pairing helpers over `ref const(Mesh)` — re-exported by the
+    // `public import` at the top of this file. `maxBridgeSpans` went with them
+    // to module scope (plan §2.7, §11), so `Mesh.maxBridgeSpans` no longer
+    // resolves. Do not reinstate the `MeshBridgeOps` mixin here — a member
+    // BEATS a same-name UFCS free function, so the mixin would silently take
+    // every call back, the batch receiver would go with it, and the conversion
+    // would mean nothing (`doc/mesh_edit_seam_plan.md` Revision 2 caveat 1;
+    // tests/unit/commit_seam_census_test.d reddens by name if it returns, and
+    // bridge.d's own `static assert` reddens at build).
+
+    /// Oriented open-boundary loops over faces 0..faceLimit.
+    /// Each loop is an ordered uint[] of vertex indices along the directed
+    /// boundary half-edge as it appears in its sole face.
+    /// Returns [] for a closed surface (no boundary edges).
+    /// Non-manifold boundary vertices (two outgoing boundary edges) are skipped.
+    uint[][] boundaryLoops(size_t faceLimit = size_t.max) const {
+        const size_t nf = faceLimit < faces.length ? faceLimit : faces.length;
+
+        // Build edgeFaces map: open edge has slot [1] == -1. Pass the SAME
+        // prefix limit (never a null-mask all-faces build) so an edge shared
+        // with a face beyond `nf` stays correctly "open" within the prefix.
+        auto edgeFaces = buildEdgeFaces(null, faceLimit);
+
+        // Collect directed boundary half-edges into a next[] map.
+        uint[uint] next;
+        foreach (fi; 0 .. nf) {
+            auto f = faces[fi];
+            foreach (k; 0 .. f.length) {
+                uint a = f[k], b = f[(k + 1) % f.length];
+                ulong key = edgeKey(a, b);
+                auto p = key in edgeFaces;
+                if (p !is null && (*p)[1] == -1) {
+                    if (a !in next)
+                        next[a] = b;
+                    // non-manifold: two outgoing boundary edges from one vert — skip
+                }
+            }
+        }
+
+        // Chain loops by following next[] until returning to start.
+        bool[uint] visited;
+        uint[][] loops;
+        foreach (start, _; next) {
+            if (start in visited) continue;
+            uint[] loop;
+            uint cur = start;
+            while (cur !in visited) {
+                if (cur !in next) break;
+                visited[cur] = true;
+                loop ~= cur;
+                cur = next[cur];
+            }
+            if (loop.length >= 3)
+                loops ~= loop;
+        }
+        return loops;
+    }
+
+    // ------------------------------------------------------------------
+    // Profile extraction and revolve (surface of revolution)
+    // ------------------------------------------------------------------
+
+    /// Extract a single ordered vertex chain from the currently selected edges.
+    /// Returns the ordered vertex list and sets `isClosed` accordingly.
+    ///
+    /// Closed cycle (all participating vertices degree 2):
+    ///   `isClosed = true`; chain length >= 3.
+    ///
+    /// Open chain (exactly two degree-1 endpoints):
+    ///   `isClosed = false`; chain walked endpoint-to-endpoint; length >= 2.
+    ///
+    /// Returns [] if: no edges selected, any vertex degree > 2 (branching),
+    /// more than one connected component, or chain too short for its type.
+    ///
+    /// Note: walk start is arbitrary (AA iteration order), so chain direction
+    /// — and hence the swept surface's in/out normal — is not pinned
+    /// (vibe3d-divergence, v1; see doc/radial_sweep_plan.md Phase 4).
+    uint[] extractSelectedEdgeChain(out bool isClosed) const {
+        isClosed = false;
+
+        // Build adjacency restricted to selected edges.
+        uint[][uint] adj;
+        foreach (ei; 0 .. edges.length) {
+            if (ei >= edgeMarks.length) continue;
+            if (!(edgeMarks[ei] & Marks.Select)) continue;
+            uint a = edges[ei][0], b = edges[ei][1];
+            adj[a] ~= b;
+            adj[b] ~= a;
+        }
+        if (adj.length == 0) return [];
+
+        // Reject any branching vertex (degree > 2).
+        foreach (v, nbrs; adj)
+            if (nbrs.length > 2) return [];
+
+        // Find degree-1 endpoint vertices.
+        uint startV        = uint.max;
+        uint endpointCount = 0;
+        foreach (v, nbrs; adj) {
+            if (nbrs.length == 1) {
+                ++endpointCount;
+                if (startV == uint.max) startV = v;
+            }
+        }
+
+        if (endpointCount == 0) {
+            // All degree 2 → closed cycle; pick any start vertex.
+            isClosed = true;
+            foreach (v, nbrs; adj) { startV = v; break; }
+        } else if (endpointCount == 2) {
+            // Two endpoints → open chain; startV already set to one endpoint.
+            isClosed = false;
+        } else {
+            return [];   // malformed degree combination
+        }
+
+        // Walk from startV, avoiding backtracking.
+        bool[uint] visited;
+        uint[] chain;
+        uint cur  = startV;
+        uint prev = uint.max;
+        while (cur !in visited) {
+            visited[cur] = true;
+            chain ~= cur;
+            // Pick the neighbor that is not the previous vertex.
+            uint next = uint.max;
+            foreach (n; adj[cur])
+                if (n != prev) { next = n; break; }
+            if (next == uint.max) break;   // reached far endpoint (degree 1)
+            prev = cur;
+            cur  = next;
+        }
+
+        // Validate closure / minimum chain length.
+        if (isClosed) {
+            if (cur != startV) return [];   // didn't close → multi-component
+            if (chain.length < 3) return [];
+        } else {
+            if (chain.length < 2) return [];
+        }
+
+        // Single-component: every adj vertex must have been visited.
+        foreach (v, nbrs; adj)
+            if (v !in visited) { isClosed = false; return []; }
+
+        return chain;
+    }
+
+
+    // Radial Sweep / Revolve + Path-follow extrude kernel family is NO
+    // LONGER a mixin: task 1903 Stage E2 made it module-level free functions
+    // in source/mesh_ops/revolve.d — `revolveProfile`, `revolveProfileEx`,
+    // `extrudePathStep_` and `extrudeAlongPath` over `ref MeshEditBatch`, the
+    // align-to-path pivot `maskVertexCentroid_` over `ref const(Mesh)`, and
+    // the two angle predicates `revolveSweepClosed` /
+    // `revolveSweepClosedWithOffset` with no receiver at all. `RevolveParams`
+    // moved to that module's scope with them, so `Mesh.RevolveParams` no
+    // longer resolves and the five call sites that spelled it moved in the
+    // same commit (§2.7, the route D3's `maxBridgeSpans` took).
+    //
+    // The stage ALSO removed a debt it had inherited: `revolveProfileEx` used
+    // to open a TRANSITIONAL `MeshEditBatch` of its own around the
+    // closed-profile ring loop, because `bridgeLoopsPaired` had crossed the
+    // seam at Stage D3 while this body was still a mixin with no caller-held
+    // batch to take (plan §4.4a). The batch is the caller's now and both sweep
+    // arms defer to one `close()`: `mesh.sweep`'s `unbatchedGeometryCommits`
+    // went +49 → +0 on the open profile, and the closed profile's residual +2
+    // is the polygon-mode source-face deletion, which sits outside the batch by
+    // the command's own choice (see commands/mesh/sweep.d — stage L10).
+    //
+    // Callers import the family directly. Do not
+    // reinstate the mixin: a member of `Mesh` BEATS a same-name UFCS free
+    // function silently, so it would rebind every call site to a dead body
+    // (`static assert` at the foot of that file, and the named roster in
+    // tests/unit/commit_seam_census_test.d).
+
+    // Mesh hygiene + orientation-repair kernel family is NO LONGER a mixin:
+    // task 1903 Stage E1 made it module-level free functions in
+    // source/mesh_ops/cleanup.d — the four mutating entries over
+    // `ref MeshEditBatch`, so a hygiene sweep can no longer be reached without
+    // a batch and one `mesh.cleanup` stamps, derives and delivers ONCE instead
+    // of once per internal commit; the three read-only detectors
+    // `source/mesh_analysis.d` shares stay `ref const(Mesh)` and their call
+    // sites are unchanged. Callers import this family directly. Do not
+    // reinstate the mixin: a member of `Mesh` BEATS a
+    // same-name UFCS free function silently, so it would rebind every call
+    // site to a dead body (`static assert` at the foot of that file, and the
+    // named roster in tests/unit/commit_seam_census_test.d).
+
+    // Polygon decimation kernel (reduceToTarget) is NO LONGER a mixin: task
+    // 1903 Stage D2 made it a module-level free function in
+    // source/mesh_ops/decimate.d, over `ref MeshEditBatch` — the first
+    // MUTATING family to cross the seam, so the kernel can no longer be
+    // reached without a batch, and one reduce now stamps, derives and
+    // delivers ONCE instead of once per internal commit. Callers import the
+    // family directly. Do not reinstate the
+    // `MeshDecimateOps` mixin here — a member BEATS a same-name UFCS free
+    // function, so the mixin would silently take every call back, the batch
+    // receiver would go with it, and the conversion would mean nothing
+    // (`doc/mesh_edit_seam_plan.md` Revision 2 caveat 1;
+    // tests/unit/commit_seam_census_test.d reddens by name if it returns, and
+    // decimate.d's own `static assert` reddens at build).
+
+    // Plane-cut kernel family (cutByPlane / cutByPlaneRestricted / planeCutCore /
+    // cutByPlaneClipped / PlaneCutLoops / cutByPlaneEx / deleteComponentsInSlab /
+    // cutByPlaneSplitGap / extractCutLoops / splitAlongCutLoop) — NO LONGER a
+    // mixin. Task 1903 Stage E3 converted it to module-level free functions
+    // over `ref MeshEditBatch` / `ref const(Mesh)` in source/mesh_ops/cut.d,
+    // and `struct PlaneCutLoops` went to module scope with it. Callers import
+    // the family directly; this family's mixin, reinstated HERE,
+    // would silently SHADOW them (a member beats a same-name UFCS free
+    // function), so cut.d carries its own `static assert(!__traits(hasMember,
+    // Mesh, n))` for every family name AND for `PlaneCutLoops`
+    // (`doc/mesh_edit_seam_plan.md` Revision 2 caveat 1, §2.7).
+
+    // The four bevel families. Until task 0717 the word "bevel" named one
+    // module plus a thousand lines in the middle of THIS file, which is the
+    // search trap audit 0678 §2B-M4 recorded; each family now has one home:
+    //
+    //   edge_bevel.d   bevelEdgesByMask + the valence-4 free-end cap parity
+    //                  fields it owns (0407 §B.V2 — this is the old bevel.d)
+    //   poly_bevel.d   bevelFacesByMask / insetFacesByMask / spikeFacesByMask
+    //                  + their corner, normal and boundary-contour helpers
+    //   bevel_fin.d    the two non-manifold fin-bundle spine kernels
+    //                  bevelEdgesByMask hands a fin bundle over to
+    //   bevel_vertex.d bevelVerticesByMask
+    //
+    // (the curve math they share — boundary Béziers, the fillet-rail law, the
+    // two junction Gregory-ring evaluators — is plain functions in
+    // source/mesh_ops/bevel_curves.d, not a mixin)
+    // `mixin MeshEdgeBevelOps;` is GONE — task 1903 Stage G converted the
+    // manifold edge bevel to ONE module-level free function over
+    // `ref MeshEditBatch` in source/mesh_ops/edge_bevel.d. The three parity
+    // fields that template used to INJECT are declared below in this struct
+    // instead (search `bevelPinnedOrphans_`); a `static assert` tripwire at
+    // the foot of edge_bevel.d refuses a member — or an in-struct alias — of
+    // `bevelEdgesByMask` coming back; callers import the family directly.
+
+    // --- edge.bevel valence-4 planar free-end cap parity ----------------------
+    // TASK 1903 Stage G MOVED THESE THREE DECLARATIONS HERE, AND MOVED NOTHING
+    // ELSE. They were injected into this struct by `mixin MeshEdgeBevelOps;`
+    // (source/mesh_ops/edge_bevel.d); a free function cannot inject a field, so
+    // the declaration lands in the struct that already owned it. Every spelling
+    // at every site is unchanged — the three resets and the three appends in
+    // `mesh_ops/edge_bevel.d`, the three reads in `tests/unit/mesh_bevel_census_test.d`,
+    // the two in `tests/unit/mesh_ops/edge_bevel_test.d`. They are PUBLIC
+    // because a mixin-injected member with no access specifier always was, so
+    // this is a move and not a widening; plan §2.7 keeps cross-module output
+    // state on `Mesh` rather than folding it into a result struct, which would
+    // be a second edit hiding inside a move. What holds the decision is the
+    // census row naming this declaration site and both reader files — NOT the
+    // build: `private` in D restricts name lookup only, so a green build here
+    // would be green whatever those readers did (plan §2.7, F1 review).
+    //
+    // WHAT THEY MEAN. At a valence-4 / planar / K==1 free-end whose single
+    // selected edge terminates on a valence-4 full-hub junction, the reference
+    // cap keeps TWO coincident referenced verts at the free-end position (one
+    // anchors the reduced side faces, one the chamfer strips) PLUS one ORPHAN
+    // slide along the edge opposite the selected one (derived from measured
+    // reference dumps only). These are the intended artefacts of that exact
+    // cap and are recorded per-bevel so (a) the intended orphan survives the
+    // tail compaction (pinned), and (b) the soundness census can exempt
+    // exactly these coincident/orphan verts while still flagging any others.
+    // All three are reset at the top of every `bevelEdgesByMask` call and
+    // consumed only within that call (+ read by the census immediately after).
+    uint[] bevelPinnedOrphans_;      // vertex indices to keep through compaction
+    Vec3[] bevelCapCoincidentPos_;   // free-end positions holding the coincident pair
+    Vec3[] bevelCapOrphanPos_;       // opposite-edge-slide positions (intended orphan)
+    // `mixin MeshPolyBevelOps;` is GONE — task 1903 Stage F2 converted the
+    // polygon bevel family to module-level free functions over
+    // `ref MeshEditBatch` (the three entries) and `ref const(Mesh)` (the two
+    // reading helpers) in source/mesh_ops/poly_bevel.d, and the six unittest
+    // blocks that lived inside that template moved out with them. Callers
+    // import the family directly; a `static assert`
+    // tripwire at the foot of poly_bevel.d refuses a member — or an
+    // in-struct alias — of any family name coming back.
+
+    // The fin-bundle spine family (bevelIsolatedFinBundleSpine /
+    // bevelFinBundleSpineMultiEdge) and the vertex chamfer
+    // (bevelVerticesByMask, with its corner record VertexBevelCorner) are NO
+    // LONGER mixins. Task 1903 Stage E4 converted both to module-level free
+    // functions over `ref MeshEditBatch` in source/mesh_ops/bevel_fin.d and
+    // source/mesh_ops/bevel_vertex.d, and `VertexBevelCorner` went to module
+    // scope with them. Callers import both families directly; either mixin,
+    // reinstated HERE, would silently SHADOW them (a member beats a same-name
+    // UFCS free function), so each file carries its own
+    // `static assert(!__traits(hasMember, Mesh, n))` over every family name
+    // AND the moved type, and tests/unit/commit_seam_census_test.d names both
+    // templates in its converted-family roster.
+
+    // `mixin MeshExtrudeOps;` is GONE — task 1903 Stage H converted the
+    // extrude/extend family (extrudeEdgesByMask / extrudeVerticesByMask /
+    // extendEdgesByMask / extrudeFacesByMask / smoothShiftFacesByMask) to
+    // FIVE module-level free functions over `ref MeshEditBatch` in
+    // source/mesh_ops/extrude.d. A `static assert` tripwire at the foot of
+    // that file refuses a member — or an in-struct alias — of any of the
+    // five coming back; callers import the family directly. This is the LAST
+    // mixin in `struct Mesh`: task 1903 Stage I's gate (§4.5) asserts the
+    // count below is 0.
+
+    // Connected-component vertex mask (connectedComponentMask BFS) +
+    // edgeCentroid — extracted from xfrm_transform.d (xfrm Phase B) — is NO
+    // LONGER a mixin: task 1903 Stage D1 made it module-level free functions in
+    // source/mesh_ops/connected_mask.d (`connectedComponentMask` over
+    // `ref Mesh`, because it calls the memoizing `vertexAdjacencyCSR` and so
+    // cannot be `const`; `edgeCentroid` over `ref const(Mesh)`). Task 4602
+    // removed the base-module re-export; callers import the operation family
+    // directly. Do not reinstate the
+    // `MeshConnectedMaskOps` mixin here — a member BEATS a same-name UFCS free
+    // function, so the mixin would silently take every call back and the
+    // conversion would mean nothing (`doc/mesh_edit_seam_plan.md` Revision 2
+    // caveat 1; tests/unit/commit_seam_census_test.d reddens by name if it
+    // returns, and connected_mask.d's own `static assert` reddens at build).
+
+    // The EDGE-SLICE FAMILY is GONE from this struct — task 3240 moved
+    // `insertEdgePoint` / `addEdgePoint` / `rebuildFacesWithChordSplits` /
+    // `edgeIndexOfVerts` / `edgeIndexOf` / `EdgeSliceResult` / `findChordPath` /
+    // `edgeSliceReachable` / `edgeSliceEx` / `edgeSlice` / `splitFaceByVertices`
+    // to module-level free functions over `ref Mesh` / `const ref Mesh` in
+    // source/mesh_edge_slice.d (step 3 of doc/tasks/work/2910-mesh-struct-seams.md).
+    // The `public import mesh_edge_slice;` at the top of this file is what keeps
+    // every `import mesh;` client and every `m.edgeSlice(...)` UFCS call site
+    // resolving. Do NOT reinstate any of the eleven as a member — a member BEATS
+    // a same-name UFCS free function, so the member would silently take every
+    // call back and this step would mean nothing (plan 2910 §2.1, trap 2;
+    // `doc/mesh_edit_seam_plan.md` Revision 2 caveat 1). A `static assert`
+    // tripwire at the foot of mesh_edge_slice.d refuses exactly that, and the
+    // three `Widening` rows in tests/unit/commit_seam_census_test.d now pin the
+    // declarations to that file rather than to this one.
+
+}
+
+// ---------------------------------------------------------------------------
+// MeshEditBatch — the write surface (task 1903 §2)
+// ---------------------------------------------------------------------------
+//
+// The noun for the thing `Mesh.beginEditBatch` already opens: one mutation
+// handle over one `Mesh`, whose CLOSE is the only thing that advances a
+// version stamp for the whole edit.
+//
+// WHY IT LIVES IN THIS FILE. D's `private` is module-private, and plain
+// `package` on a member of a dotless root module (`module mesh;`) is reachable
+// from NO other module at all — measured, with `package(mesh)` rejected
+// outright as a name conflict. A handle declared in its own module could not
+// touch the batch stack or `commitStamps` without making all of it `public`,
+// which is a wider door on `Mesh` than the one this task is closing.
+//
+// WHAT IT ADDS TO `Mesh`: nothing but `setVertexPos`. `alias mesh this`
+// reaches every existing mutator — `addVertex`, `addFace`, `deleteFacesByMask`,
+// the marks setters, the map setters — all of which are already tracker-hooked.
+// A parallel `MeshEditBatch.addFace` beside `Mesh.addFace` would be one guard
+// spelled twice, and the second spelling is the one that drifts.
+struct MeshEditBatch {
+    private Mesh* m_;
+    private bool  open_;
+
+    @disable this(this);   // non-copyable: a copy would double-close
+    @disable this();       // there is no batch without a subject
+
+    private this(Mesh* m, uint declared, MeshEditTracker* rec) {
+        m_ = m;
+        pushEditFrame(m, declared, rec);
+        open_ = true;
+    }
+
+    /// A RECORDING batch: the mutation hooks append to an op-log, and `close()`
+    /// hands back the invertible delta. This is the COMMIT path.
+    ///
+    /// The tracker is allocated on the GC and the frame holds the pointer, not
+    /// the mesh — a `*mesh = result` mid-batch therefore cannot orphan it.
+    this(return ref Mesh m, uint declared) {
+        this(&m, declared, new MeshEditTracker);
+    }
+
+    /// An UNRECORDED batch: no op-log, so every tracker hook takes its existing
+    /// `if (editRecorder_ is null) return;` first line and costs one predictable
+    /// branch — exactly today's batchless behaviour — while the STAMPS still
+    /// defer to `close()`. This is the interactive preview path (plan §9): a
+    /// recording batch opened per drag frame would build and throw away a full
+    /// op-log at 60 Hz. `close()` returns `MeshEditDelta.init`.
+    static MeshEditBatch unrecorded(return ref Mesh m, uint declared) {
+        return MeshEditBatch(&m, declared, null);
+    }
+
+    /// NEVER ASSERT HERE. This destructor runs during unwinding: an `Error`
+    /// raised in it REPLACES the exception the caller is already handling, and
+    /// the command funnel's `catch (Exception)` never sees it — the caller gets
+    /// a process exit instead of `status:error`. That is not hypothetical;
+    /// `source/commands/mesh` holds 66 `enforce`/`throw new` sites.
+    ///
+    /// Popping is not optional either. The frame is module-level, so leaving it
+    /// would make every later `commitChange` on this mesh defer forever: the
+    /// app keeps running and silently stops publishing. What the leak path
+    /// skips is the version bump, the derive and the delivery; what it does NOT
+    /// skip is `noteChange`, which already ran BEFORE the deferral early-out,
+    /// so the flags are still in `undeliveredChanges_`/`undeliveredSelDomains_`
+    /// and the next commit on this mesh carries them.
+    ~this() {
+        if (!open_) return;
+        popLeakedEditFrame(m_);
+        ++changeBus.batchLeaks;     // the observable, asserted 0 by the suite
+        open_ = false;
+    }
+
+    /// The subject. `alias mesh this` makes every `Mesh` member reachable
+    /// through the handle, so a converted kernel taking `ref MeshEditBatch`
+    /// keeps its existing body verbatim.
+    ref inout(Mesh) mesh() inout return { return *m_; }
+    alias mesh this;
+
+    /// THE ONLY COMMITTER. At the outermost depth this stamps once with
+    /// everything the batch's deferred `commitChange` calls accumulated, ORed
+    /// with `extraFlags`; a nested close folds its flags into the outer frame
+    /// and returns an empty delta.
+    MeshEditDelta close(uint extraFlags = 0) {
+        if (!open_) return MeshEditDelta.init;
+        // THIS HANDLE OWNS THE INNERMOST FRAME FOR ITS MESH. There is at most
+        // one frame per `Mesh*` — a nested open finds the existing frame and
+        // increments its depth rather than pushing a second — so "the
+        // innermost frame for `m_`" is the only frame for `m_`, and an open
+        // handle must find it. It cannot, in exactly one way: someone called
+        // the older `Mesh.endEditBatch()` (or `abortEditBatch()`) on a mesh a
+        // live handle owns, mixing the two spellings on one edit. That close
+        // has already stamped, and this one would then fall through to a
+        // silent `MeshEditDelta.init` — the delta the caller is about to
+        // install as a history entry, empty. Always-on `assert`, not `debug`:
+        // the suite lane compiles with a bare `dmd -unittest` and no `-debug`,
+        // and this is not a destructor, so raising here cannot replace an
+        // exception already in flight.
+        assert(currentBatchFrame(m_) !is null,
+            "MeshEditBatch.close: this handle is open but its mesh has no "
+          ~ "frame — the batch was already closed through the older "
+          ~ "Mesh.endEditBatch()/abortEditBatch() spelling. One edit, one "
+          ~ "spelling: mixing them loses the delta this close would return");
+        open_ = false;
+        return closeEditFrame(m_, extraFlags);
+    }
+
+    /// True while this batch is recording an op-log. Replaces the
+    /// `editRecorder_ !is null` spelling for code outside `mesh.d`.
+    bool recording() const {
+        auto f = currentBatchFrame(m_);
+        return f !is null && f.rec !is null && !f.errored;
+    }
+
+    /// The op-log recorder. Only valid while `recording()`.
+    ref MeshEditTracker rec() {
+        auto f = currentBatchFrame(m_);
+        assert(f !is null && f.rec !is null,
+            "MeshEditBatch.rec: this batch is not recording — guard with "
+          ~ "recording(), or open the batch with the recording constructor");
+        return *f.rec;
+    }
+
+    /// The one genuinely NEW write primitive (plan §2.5).
+    ///
+    /// A raw coordinate write is the single class of mutation the existing
+    /// hooks do not see: `mesh_ops/decimate.d` and `mesh_ops/extrude.d` both
+    /// assign `vertices[i]` directly, and under an open batch that produces no
+    /// op-log entry — so a delta undo would restore the topology and leave the
+    /// coordinates at their post-op values. `Kind.SetPos` has had a complete
+    /// forward+reverse apply in `mesh_edit_delta.d` and ZERO publishers; this
+    /// is its first.
+    ///
+    /// `alias mesh this` means `ed.vertices[i] = p` still compiles and still
+    /// records nothing. This method does not close that hole — it provides the
+    /// recorded alternative; the counted position-write census (plan §5.7) is
+    /// what closes it, per family.
+    /// BIT identity, not `==`, and this is the whole no-op predicate for both
+    /// setters below.
+    ///
+    /// `==` on floats says `-0.0 == +0.0`, so an `==` skip does not merely
+    /// "record nothing" — it declines to WRITE, and the vertex keeps the sign
+    /// the caller asked it to drop. That is a forward-result difference
+    /// between this primitive and the raw `vertices[i] = p` loop it replaces,
+    /// and it is REACHABLE: measured at Stage D2 on `reduceToTarget` over a
+    /// 6×6 triangulated grid carrying one zero-length edge whose endpoints
+    /// differ only in the sign of x — 9 of 320 (edge × target × preserveBoundary)
+    /// cells came out with `80000000` where the pre-conversion kernel wrote
+    /// `00000000`. The trailing `weldVerticesByMask` does NOT launder it: with
+    /// `average=false` the survivor is the lowest-indexed cluster member and
+    /// keeps its own bits, and `meshPlanesJson` prints `%.9g`, i.e. `-0`, so a
+    /// plane fixture sees the sign.
+    ///
+    /// Comparing bits makes the substitution EXACT — every other equal-compare
+    /// already implied identical bits, so this only ever adds writes that the
+    /// raw loop also made. `Kind.SetPos` has no other publisher, so no op-log
+    /// consumer can be surprised by the extra entries either.
+    ///
+    /// Spelled as a 32-bit compare of the float bits rather than as
+    /// `isIdentical` (task 2160). `std.math.isIdentical` takes `real`, so on
+    /// x86-64 each of the six operands makes an x87 round trip: MEASURED at
+    /// 0.94 ms per 100 489 vertices against 0.08 ms for this form, on the
+    /// short-circuiting case (`x` differs), which is the one a moved vertex
+    /// takes. The predicate is UNCHANGED — for `float` inputs, bit equality
+    /// and `isIdentical` agree on every pair, including `-0.0` vs `+0.0` and
+    /// distinct NaN payloads, and where they could differ at all (an SNaN
+    /// quieted by the x87 load) this form is the STRICTER one, i.e. it writes
+    /// where the old one skipped, which is the direction the paragraph above
+    /// already licenses.
+    ///
+    /// Mutation: put `a == b` back → `tests/unit/mesh_edit_batch_test.d`'s
+    /// signed-zero block reddens ("setVertexPositions skipped a write whose
+    /// new value is `==` but not identical to the old one"), and the Stage D2
+    /// `-0.0` sweep goes back to 9 diverging cells.
+    private static bool sameBits(Vec3 a, Vec3 b) {
+        return *cast(const(uint)*)&a.x == *cast(const(uint)*)&b.x
+            && *cast(const(uint)*)&a.y == *cast(const(uint)*)&b.y
+            && *cast(const(uint)*)&a.z == *cast(const(uint)*)&b.z;
+    }
+
+    void setVertexPos(uint vi, Vec3 p) {
+        if (vi >= m_.vertices.length) return;
+        const Vec3 before = m_.vertices[vi];
+        if (sameBits(before, p)) return;      // a no-op write records nothing
+        m_.vertices[vi] = p;
+        if (auto f = currentBatchFrame(m_))
+            if (f.rec !is null && !f.errored)
+                f.rec.recordSetPos([vi], [before], [p]);
+        m_.commitChange(MeshEditScope.Position);
+    }
+
+    /// The bulk form: one op-log entry and one `commitChange` for the whole
+    /// set, which is what keeps a kernel that moves N vertices from declaring
+    /// N times. Indices out of range, and writes that change nothing, are
+    /// dropped from BOTH the write and the record so the entry's before/after
+    /// arrays stay in step with each other.
+    ///
+    /// THE BOOKKEEPING IS PAID ONLY WHEN SOMETHING READS IT (task 2160).
+    ///
+    /// The first shape of this method built `hitIdx`/`before`/`after`
+    /// unconditionally and then handed them to `recordSetPos`, which COPIED
+    /// all three. On an UNRECORDED batch — the redo arm, the legacy arm and
+    /// every interactive preview — the three arrays were built and dropped
+    /// with no reader at all; on a recording one they were built, copied, and
+    /// the originals dropped. At the perf lane's n=316 grid (100 489 verts,
+    /// `/whole`) that is 2.68 MB of temporaries plus 2.68 MB of copies per
+    /// apply, and it is what made the four migrated `/whole` cases 104–155 %
+    /// dearer at task 1903 §L0-d than the hand-rolled capture they replaced.
+    ///
+    /// So the recording state is resolved ONCE, up front, and the two paths
+    /// are separate: no recorder ⇒ write and commit, nothing else; a recorder
+    /// ⇒ build the three arrays exactly once and hand OWNERSHIP of them to the
+    /// entry. Both paths keep the `sameBits` filter and the out-of-range
+    /// `continue` verbatim, so which vertices are WRITTEN, and what the entry
+    /// holds, are unchanged — this removes copies, not behaviour.
+    ///
+    /// Mutation: make the fast arm record (drop the `recording` test) and
+    /// `tests/unit/commands/mesh/position_delta_test.d`'s redo cells see a
+    /// SECOND delta over the first; make the slow arm skip recording and the
+    /// same file's `armed(c)` / `d.log.length >= 1` cells redden on every one
+    /// of the nine commands.
+    ///
+    /// THE OUT-OF-RANGE ARM IS A BEHAVIOUR CHANGE FROM THE RAW WRITE IT
+    /// REPLACES, and it is the quiet direction (noted at the F1 review, n2).
+    /// `vertices[vi] = p` raises `ArrayIndexError` on a bad index; this
+    /// `continue`s and reports nothing, so a future index bug in a migrated
+    /// kernel becomes a SILENT no-op instead of a crash with a stack. It is
+    /// unreachable on every migrated site today — every index passed in is an
+    /// `addVertex` return or an index derived from one — which is why the arm
+    /// is a guard and not an assert. If a stage migrates a site whose indices
+    /// come from anywhere else (a user id, a serialized set, a remap table),
+    /// that site owes its own bounds check BEFORE the call; do not lean on
+    /// this one to report it.
+    /// TASK 1903 STAGE L2-h — THE BODY MOVED TO `Mesh`, THIS IS THE FORWARD.
+    ///
+    /// Same argument `Mesh.setFaceWindings` records for the winding door:
+    /// `alignFacesByMask` remains a `Mesh` member with no batch handle, while
+    /// the extracted `thickenSurface` kernel uses this same door through its
+    /// batch's mesh. The door is on `Mesh`, keyed —
+    /// like `editRecorder_` — on the module-level frame stack rather than on a
+    /// field, and this forward keeps every existing `ed.setVertexPositions(...)`
+    /// call site reading exactly as it did.
+    void setVertexPositions(in uint[] idx, in Vec3[] to) {
+        m_.setVertexPositions(idx, to);
+    }
+
+    /// THE SECOND RECORDER (plan §L0.3, writer shape (D); task 1903 §L0-b).
+    /// Record the position writes some OTHER writer already made, by diffing
+    /// the live array against a pre-op image: ONE `Kind.SetPos` entry, the same
+    /// BIT predicate as `setVertexPositions`, and NO write of its own.
+    ///
+    /// WHY A SECOND RECORDER EXISTS AT ALL, because the obvious spelling is a
+    /// silent no-op: a post-hoc `ed.setVertexPositions(idx, alreadyWritten)`
+    /// records NOTHING. The bits are already equal, so `sameBits` short-circuits
+    /// the write AND the record, and the command ships with an empty delta while
+    /// its forward geometry is perfect. `magnet`'s shape — the external writer
+    /// hands back the index list it touched, and the command calls
+    /// `rec().recordSetPos` on it — stays the cheaper default and is what L0-d's
+    /// nine use. This primitive is for the writer that hands back NO usable
+    /// index list.
+    ///
+    /// THE WRITER IT WAS BUILT FOR: `source/symmetry.d`'s `applySymmetryMirror`
+    /// and `applySymmetryMirrorDelta`. Their `outAlsoTouched` array looks like
+    /// such a list and is not one — it UNDER-reports (an on-plane vertex is
+    /// projected in place through `vertices[i]` and sets no bit) and OVER-reports
+    /// (a mirror write landing on the value already there sets one). That was
+    /// measured before this stage existed and written down at
+    /// `commands/mesh/symmetrize.d`'s movement gate. Under-reporting is fatal for
+    /// a delta: the missing vertex comes back at its POST-op position on undo.
+    /// So the recorder reads the array rather than the writer's opinion of it.
+    ///
+    /// NOT RECORDING IS FREE — the early-out precedes the O(V) compare, so the
+    /// redo and tracker-off arms pay nothing. The `.dup` that builds `before` is
+    /// the CALLER's, though, so a caller that does not otherwise need the image
+    /// should guard the snapshot with `ed.recording()`.
+    ///
+    /// `before` shorter or longer than `vertices` is not an error: the diff runs
+    /// over the common prefix. A writer that APPENDED vertices is out of scope
+    /// here — `addVertex` is hooked and records its own `Kind.AddVerts`.
+    void recordPositionDiff(in Vec3[] before) {
+        auto f = currentBatchFrame(m_);
+        if (f is null || f.rec is null || f.errored) return;
+        const size_t n = before.length < m_.vertices.length
+                       ? before.length : m_.vertices.length;
+        uint[] hitIdx;
+        Vec3[] bef, aft;
+        foreach (i; 0 .. n) {
+            if (sameBits(before[i], m_.vertices[i])) continue;
+            hitIdx ~= cast(uint)i;
+            bef    ~= before[i];
+            aft    ~= m_.vertices[i];
+        }
+        if (hitIdx.length == 0) return;
+        f.rec.recordSetPos(hitIdx, bef, aft);
+        m_.commitChange(MeshEditScope.Position);
+    }
+
+    /// Record the map-value writes some OTHER writer already made, by diffing
+    /// the live map against a pre-op image. ONE op-log entry, no write of its
+    /// own — `recordPositionDiff` directly above, for the map plane.
+    ///
+    /// WHY A SECOND RECORDER EXISTS AT ALL. The map setters on `Mesh` are
+    /// hooked for their own bookkeeping, but a kernel that has ALREADY written
+    /// `data[]` cannot be made to re-announce it: calling
+    /// `setMeshMapValue(name, i, alreadyWritten)` after the fact records
+    /// nothing useful and re-publishes a change class per element. So the
+    /// vouching primitive reads the live map and the caller's image, and the
+    /// diff is the record.
+    ///
+    /// THE WRITERS IT WAS BUILT FOR: `source/uv_transform.d`'s `applyUvAffine`,
+    /// `source/uv_relax.d`'s `uvRelax` and `source/uv_unwrap.d`'s `uvUnwrap` —
+    /// all of which take a `const ref Mesh` and live in a zone no axis-1 stage
+    /// owns. They ship UNCHANGED; this is the door their commands will use at
+    /// Stage L1-e.
+    ///
+    /// NOT RECORDING IS FREE — the early-out precedes every allocation and the
+    /// O(N) compare, so the redo and tracker-off arms pay nothing. The `.dup`
+    /// that builds `dataBefore` is the CALLER's, though, so a caller that does
+    /// not otherwise need the image must guard the snapshot with
+    /// `ed.recording()`.
+    ///
+    /// THE SPARSE/DENSE CHOICE IS MEASURED, NOT ASSUMED, and it is REPORTED:
+    /// one COUNT pass decides `Listed` vs `WholeArray` by which payload is
+    /// smaller, and the winner comes back in `outWholeArray` so a harness can
+    /// print it — task 2210's numbers are checkable precisely because its
+    /// harness printed which branch won. Never sparsify a whole-map rewrite
+    /// (the sparse form is strictly larger there), and never `~=` the payload:
+    /// `uninitializedArray` + indexed writes, because `~=` is a runtime call
+    /// per element (2.39–3.27 ms against 0.12–1.08 ms per 100 489, measured at
+    /// task 2160).
+    ///
+    /// Bit identity, not `==`, for the same reason `setVertexPos` uses it: an
+    /// `==` no-op filter treats `-0.0` and `+0.0` as one value, and
+    /// `meshPlanesJson` prints `%.9g`, so a plane fixture sees the sign.
+    ///
+    /// `publishScope` IS A PARAMETER AND NOT A CONSTANT, and the reason is a
+    /// rule rather than a taste (task 1903 Stage L1-b, the first callers).
+    /// `recordPositionDiff` above can hard-code `Position` because there is
+    /// only one position class; a map write has TWO live ones. Every command
+    /// this primitive vouches for already publishes something — the UV and
+    /// weight families publish `Material`, `morph.d` publishes `Maps` — and it
+    /// calls this from its RECORDED arm only. A hard-coded class here would
+    /// therefore OR a second bit into the recorded arm's stamp and not into
+    /// the redo arm's, making the commit seam depend on which arm ran and
+    /// moving `docRevision()` — the unsaved-changes
+    /// asterisk — by a different amount on each. Reclassifying those
+    /// publishers is a real behaviour question (`MeshEditScope.Maps`'s own doc
+    /// says the pre-existing `setMeshMapValue` publishers keep `Material` so
+    /// that no existing consumer changes behaviour) and it is carried open,
+    /// not decided here as a migration side effect.
+    ///
+    /// Returns true iff an entry was recorded.
+    bool recordMapValueDiff(string mapName, in float[] dataBefore,
+                            in ubyte[] presentBefore,
+                            uint publishScope = MeshEditScope.Maps,
+                            bool* outWholeArray = null) {
+        auto f = currentBatchFrame(m_);
+        if (f is null || f.rec is null || f.errored) return false;   // FREE
+        auto live = m_.meshMap(mapName);
+        if (live is null) return false;
+        if (dataBefore.length != live.data.length) return false;
+        const bool tracks = kindInfo(live.kind).tracksPresence;
+        if (tracks && presentBefore.length != live.present.length) return false;
+
+        import std.array : uninitializedArray;
+
+        // Pass 1: COUNT. Nothing is allocated until the shape is known.
+        const size_t elems = live.dim ? live.data.length / live.dim : 0;
+        size_t hits = 0;
+        foreach (i; 0 .. elems) {
+            if (mapElementDiffers(live, dataBefore, presentBefore, tracks, i))
+                ++hits;
+        }
+        if (hits == 0) return false;
+
+        // `Listed` costs one index + dim floats (+1 presence byte) per hit;
+        // `WholeArray` costs the two full images. Compare the payload, not the
+        // hit count — a dim-3 presence-tracked map is a different trade from a
+        // dim-1 one.
+        const size_t listedBytes = hits * (uint.sizeof + live.dim * float.sizeof
+                                           + (tracks ? 2 * ubyte.sizeof : 0));
+        const size_t wholeBytes  = 2 * (live.data.length * float.sizeof
+                                        + (tracks ? live.present.length : 0));
+        const bool whole = wholeBytes <= listedBytes;
+        if (outWholeArray !is null) *outWholeArray = whole;
+
+        if (whole) {
+            f.rec.recordMapValuesOwned(live.name, live.dim, live.domain, live.kind,
+                MeshOpEntry.MapAddressing.WholeArray, null,
+                dataBefore.dup, live.data.dup,
+                tracks ? presentBefore.dup : null,
+                tracks ? live.present.dup  : null);
+        } else {
+            auto idx  = uninitializedArray!(uint[])(hits);
+            auto bef  = uninitializedArray!(float[])(hits * live.dim);
+            auto aft  = uninitializedArray!(float[])(hits * live.dim);
+            ubyte[] pb, pa;
+            if (tracks) {
+                pb = uninitializedArray!(ubyte[])(hits);
+                pa = uninitializedArray!(ubyte[])(hits);
+            }
+            size_t k = 0;
+            foreach (i; 0 .. elems) {
+                if (!mapElementDiffers(live, dataBefore, presentBefore, tracks, i))
+                    continue;
+                idx[k] = cast(uint)i;
+                const size_t b = i * live.dim;
+                bef[k * live.dim .. (k + 1) * live.dim] = dataBefore[b .. b + live.dim];
+                aft[k * live.dim .. (k + 1) * live.dim] = live.data[b .. b + live.dim];
+                if (tracks) { pb[k] = presentBefore[i]; pa[k] = live.present[i]; }
+                ++k;
+            }
+            assert(k == hits, "recordMapValueDiff: the count pass and the "
+                            ~ "gather pass disagree about how many elements "
+                            ~ "moved — the arrays are out of step with each "
+                            ~ "other and the entry would be refused at replay");
+            f.rec.recordMapValuesOwned(live.name, live.dim, live.domain, live.kind,
+                MeshOpEntry.MapAddressing.Listed, idx, bef, aft, pb, pa);
+        }
+        m_.commitChange(cast(MeshEditScope) publishScope);
+        return true;
+    }
+
+    // One element's compare, bitwise per component plus the presence byte.
+    private static bool mapElementDiffers(const(MeshMap)* live,
+                                          in float[] dataBefore,
+                                          in ubyte[] presentBefore,
+                                          bool tracks, size_t i) {
+        const size_t b = i * live.dim;
+        foreach (c; 0 .. live.dim) {
+            const float x = dataBefore[b + c], y = live.data[b + c];
+            if (*cast(const(uint)*)&x != *cast(const(uint)*)&y) return true;
+        }
+        return tracks && presentBefore[i] != live.present[i];
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// CleanupOptions / CleanupResult  (used by `cleanupMesh`, which lives in
+// source/mesh_ops/cleanup.d — these two types stay HERE because
+// source/commands/mesh/cleanup.d constructs CleanupOptions directly and
+// moving them would be a second edit hiding inside a move, task 0417)
+// ---------------------------------------------------------------------------
+
+/// Options for `cleanupMesh` (source/mesh_ops/cleanup.d). All boolean stages default to their most
+/// commonly useful values. The merge takes no distance: it welds at
+/// `kCoincidentDistance`, as the automatic vertex merge does (K-W1).
+struct CleanupOptions {
+    bool   dropDegenerate  = true;   /// Remove degenerate / zero-area faces.
+    bool   unify           = true;   /// Remove faces with a duplicate vertex set.
+    bool   removeOrphans   = true;   /// Remove unreferenced (floating) vertices.
+    bool   dissolve2Valent = false;  /// Dissolve 2-valent vertices (opt-in).
+    bool   mergeVerts      = true;   /// Weld coincident vertices first.
+}
+
+/// Per-stage counts returned by `cleanupMesh` (source/mesh_ops/cleanup.d).
+struct CleanupResult {
+    size_t welded;       /// Vertices merged by weldCoincidentVertices.
+    size_t degenerate;   /// Faces removed/rewritten by cleanDegenerateFaces.
+    size_t unified;      /// Faces removed by unifyFaces.
+    size_t orphans;      /// Vertices removed by the intermediate compactUnreferenced.
+    size_t dissolved;    /// Vertices removed by dissolveDegree2Verts.
+    size_t finalOrphans; /// Vertices removed by the final compactUnreferenced (only runs when removeOrphans is set).
+    /// True if any stage reported work done.
+    bool anyAffected() const {
+        return welded + degenerate + unified + orphans + dissolved + finalOrphans > 0;
+    }
+}
+
+
+// `edgeKey` — the canonical (min, max) undirected-edge key — lives in
+// mesh_topo.d and is re-exported by the `public import` at the top of this
+// file (task 4066: one definition for the tree).
+
+
+
+
+Mesh makeCube() {
+    Mesh m;
+    m.vertices = [
+        Vec3(-0.5f, -0.5f, -0.5f), // 0
+        Vec3( 0.5f, -0.5f, -0.5f), // 1
+        Vec3( 0.5f,  0.5f, -0.5f), // 2
+        Vec3(-0.5f,  0.5f, -0.5f), // 3
+        Vec3(-0.5f, -0.5f,  0.5f), // 4
+        Vec3( 0.5f, -0.5f,  0.5f), // 5
+        Vec3( 0.5f,  0.5f,  0.5f), // 6
+        Vec3(-0.5f,  0.5f,  0.5f), // 7
+    ];
+    m.addFace([0, 3, 2, 1]);
+    m.addFace([4, 5, 6, 7]);
+    m.addFace([0, 4, 7, 3]);
+    m.addFace([1, 2, 6, 5]);
+    m.addFace([3, 7, 6, 2]);
+    m.addFace([0, 1, 5, 4]);
+    m.buildLoops();
+    return m;
+}
+
+// Double-sided quad: 4 verts in a diamond pattern at slight ±Z offsets so
+// the front and back quads have well-defined non-degenerate normals. Each
+// vertex has valence=2 (only the two adjacent diamond-boundary edges) — a
+// rare manifold configuration that exercises the weld case for bevels at
+// non-collinear angles. Only realistic way to construct this in vibe3d.
+Mesh makeDiamond() {
+    Mesh m;
+    m.vertices = [
+        Vec3(-1.0f,  0.0f,  0.05f),  // 0  left
+        Vec3( 0.0f, -1.0f, -0.05f),  // 1  bottom
+        Vec3( 1.0f,  0.0f,  0.05f),  // 2  right
+        Vec3( 0.0f,  1.0f, -0.05f),  // 3  top
+    ];
+    m.addFace([0, 1, 2, 3]);   // front quad (+Z-ish)
+    m.addFace([0, 3, 2, 1]);   // back quad  (-Z-ish, opposite winding)
+    m.buildLoops();
+    return m;
+}
+
+// Regular octahedron centered at origin with verts on the unit axes. Every
+// vertex has valence=4, every face is a triangle, and the 3 face normals
+// meeting at any vertex are NON-perpendicular (the dihedral is ~109.47°).
+// Useful for testing the cube-corner cap algorithm on non-orthogonal frame
+// normals (the unit-cube affine map handles any linearly-independent normals).
+Mesh makeOctahedron() {
+    Mesh m;
+    m.vertices = [
+        Vec3( 1, 0, 0),  // 0  +X
+        Vec3(-1, 0, 0),  // 1  -X
+        Vec3( 0, 1, 0),  // 2  +Y
+        Vec3( 0,-1, 0),  // 3  -Y
+        Vec3( 0, 0, 1),  // 4  +Z
+        Vec3( 0, 0,-1),  // 5  -Z
+    ];
+    // 8 triangular faces, one per octant. Winding is CCW from outside.
+    m.addFace([4, 0, 2]);  // +X +Y +Z
+    m.addFace([4, 2, 1]);  // -X +Y +Z
+    m.addFace([4, 1, 3]);  // -X -Y +Z
+    m.addFace([4, 3, 0]);  // +X -Y +Z
+    m.addFace([5, 2, 0]);  // +X +Y -Z
+    m.addFace([5, 1, 2]);  // -X +Y -Z
+    m.addFace([5, 3, 1]);  // -X -Y -Z
+    m.addFace([5, 0, 3]);  // +X -Y -Z
+    m.buildLoops();
+    return m;
+}
+
+// L-shaped extrusion in the XY plane, depth 1 along Z. Profile (CCW from +Z):
+//   (-1,-1) → (1,-1) → (1,0) → (0,0) → (0,1) → (-1,1)
+// The vertex at (0, 0, ±0.5) sits at a CONCAVE corner — its interior
+// dihedral on the L's bulk side is 270° (reflex), so the vertical edge
+// connecting the two reflex corners is the canonical reflex/miter test edge.
+Mesh makeLShape() {
+    Mesh m;
+    m.vertices = [
+        Vec3(-1.0f, -1.0f,  0.5f), //  0 front: bottom-left
+        Vec3( 1.0f, -1.0f,  0.5f), //  1 front: bottom-right
+        Vec3( 1.0f,  0.0f,  0.5f), //  2 front: inner-bottom
+        Vec3( 0.0f,  0.0f,  0.5f), //  3 front: REFLEX corner
+        Vec3( 0.0f,  1.0f,  0.5f), //  4 front: inner-top
+        Vec3(-1.0f,  1.0f,  0.5f), //  5 front: top-left
+        Vec3(-1.0f, -1.0f, -0.5f), //  6 back: bottom-left
+        Vec3( 1.0f, -1.0f, -0.5f), //  7 back: bottom-right
+        Vec3( 1.0f,  0.0f, -0.5f), //  8 back: inner-bottom
+        Vec3( 0.0f,  0.0f, -0.5f), //  9 back: REFLEX corner
+        Vec3( 0.0f,  1.0f, -0.5f), // 10 back: inner-top
+        Vec3(-1.0f,  1.0f, -0.5f), // 11 back: top-left
+    ];
+    m.addFace([0, 1, 2, 3, 4, 5]);     // front cap (+Z)
+    m.addFace([6, 11, 10, 9, 8, 7]);   // back cap  (-Z)
+    m.addFace([0, 6, 7, 1]);           // bottom side (-Y)
+    m.addFace([1, 7, 8, 2]);           // right side  (+X, lower half)
+    m.addFace([2, 8, 9, 3]);           // inner-bottom side (+Y, inner)
+    m.addFace([3, 9, 10, 4]);          // inner-side       (+X, inner)
+    m.addFace([4, 10, 11, 5]);         // top side    (+Y)
+    m.addFace([5, 11, 6, 0]);          // left side   (-X)
+    m.buildLoops();
+    return m;
+}
+
+// Dense flat grid of quads on the XZ plane (y = 0), centered at the origin
+// and spanning [-1, 1] on both axes — a regression-friendly perf mesh
+// (predictable poly count; a flat plane is clean for falloff radius and
+// symmetry pairing). `n` is the number of quads per side, so the grid has
+// (n+1)×(n+1) vertices and n×n quad faces. 316 → 100 K faces.
+//
+// Built the same way as makeCube/makeOctahedron: lay out the vertices, then
+// `addFace` each quad (which deduplicates the shared interior edges) and call
+// buildLoops() so the result is a fully valid editable Mesh — loops,
+// faceLoop, vertLoop, loopEdge, marks and edge dedup all populated. Selection,
+// picking and symmetry pairing all depend on that half-edge structure.
+Mesh makeGridPlane(int n) {
+    Mesh m;
+    if (n < 1) n = 1;
+    immutable int side = n + 1;            // verts per row/column
+
+    // Row-major vertex grid: index(i, j) = i * side + j, with i along Z
+    // and j along X. Span the fixed [-1, 1] extent on both axes.
+    m.vertices.length = cast(size_t)side * side;
+    foreach (i; 0 .. side) {
+        immutable float z = -1.0f + 2.0f * cast(float)i / cast(float)n;
+        foreach (j; 0 .. side) {
+            immutable float x = -1.0f + 2.0f * cast(float)j / cast(float)n;
+            m.vertices[cast(size_t)i * side + j] = Vec3(x, 0.0f, z);
+        }
+    }
+
+    // One quad per cell. CCW winding when viewed from +Y (the up axis):
+    // (i,j) → (i,j+1) → (i+1,j+1) → (i+1,j). addFace dedups the interior
+    // edges shared between neighbouring cells.
+    foreach (i; 0 .. n) {
+        foreach (j; 0 .. n) {
+            immutable uint v00 = cast(uint)(cast(size_t)i * side + j);
+            immutable uint v01 = v00 + 1;
+            immutable uint v10 = cast(uint)(cast(size_t)(i + 1) * side + j);
+            immutable uint v11 = v10 + 1;
+            m.addFace([v00, v01, v11, v10]);
+        }
+    }
+    m.buildLoops();
+    return m;
+}
+
+
+
+
+
+
+// ===========================================================================
+// Twin-graph invariant tests — cube control guard (R1) + non-manifold book.
+//
+// The cube-control test is the primary manifold byte-stability guard: no
+// existing test asserted twin values or verticesAroundVertex multisets before
+// this task.  The book test confirms treatment (A) — non-manifold spine loops
+// get twin==~0u (boundary-like) — and that all ring walks terminate cleanly.
+// ===========================================================================
+
+
+
+/// Task 1290's arity rule, reused by task 5911 Phase 4a: true exactly when a
+/// masked cage face is refined as a surface. Short faces stay legal without
+/// activating edges, booking centroids, or joining the surface relax set;
+/// the task-1290 two-corner cell, SD-smooth, and U-W1 pin those false results.
+bool facetedRefinesSurface(ref const Mesh m, const bool[] faceMask, size_t fi)
+    pure nothrow @nogc
+{
+    return fi < faceMask.length && faceMask[fi] && m.faces[fi].length >= 3;
+}
+
+/// Faceted subdivide restricted to a face mask: each face where faceMask[fi]
+/// is true is split into n quads using its centroid and edge midpoints — no
+/// vertex smoothing, unlike Catmull-Clark. Non-selected faces sharing an edge
+/// with a selected face are widened to include that edge's midpoint, keeping
+/// the mesh manifold (no T-junctions). `faceMask` may be shorter than
+/// m.faces.length — missing entries are treated as false. If no face is
+/// selected the mesh is returned topologically unchanged.
+Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask,
+                      uint[]* faceOriginOut = null) {
+    uint nV = cast(uint)m.vertices.length;
+    uint nF = cast(uint)m.faces.length;
+    uint nE = cast(uint)m.edges.length;
+
+    // Map edge key → index in m.edges.
+    uint[ulong] edgeLookup;
+    foreach (i, e; m.edges)
+        edgeLookup[edgeKey(e[0], e[1])] = cast(uint)i;
+
+    // An edge is "active" (gets a midpoint) iff at least one adjacent face is
+    // selected. Walking selected face perimeters is enough — an unselected
+    // face by itself never activates its edges.
+    bool[] edgeActive = new bool[](nE);
+    foreach (fi, face; m.faces) {
+        if (!facetedRefinesSurface(m, faceMask, fi)) continue;
+        uint len = cast(uint)face.length;
+        foreach (i; 0 .. len) {
+            uint ei = edgeLookup[edgeKey(face[i], face[(i + 1) % len])];
+            edgeActive[ei] = true;
+        }
+    }
+
+    // Output vertex layout:
+    // [original] [edge midpoints] [selected centroids] [short midpoints].
+    uint[] edgeMidIdx      = new uint[](nE);  edgeMidIdx[]      = uint.max;
+    uint[] faceCentroidIdx = new uint[](nF);  faceCentroidIdx[] = uint.max;
+    uint[] shortMidIdx     = new uint[](nF);  shortMidIdx[]     = uint.max;
+
+    uint outVCount = nV;
+    foreach (ei; 0 .. nE) if (edgeActive[ei]) {
+        edgeMidIdx[ei] = outVCount++;
+    }
+    foreach (fi; 0 .. nF) if (facetedRefinesSurface(m, faceMask, fi)) {
+        faceCentroidIdx[fi] = outVCount++;
+    }
+    foreach (fi; 0 .. nF) {
+        const face = m.faces[fi];
+        immutable bool marked = fi < faceMask.length && faceMask[fi];
+        if (!marked || face.length != 2 || face[0] == face[1]) continue;
+        auto p = edgeKey(face[0], face[1]) in edgeLookup;
+        if (p is null || !edgeActive[*p])
+            shortMidIdx[fi] = outVCount++;
+    }
+
+    Mesh result;
+    result.vertices.length = outVCount;
+    foreach (vi; 0 .. nV) result.vertices[vi] = m.vertices[vi];
+    foreach (ei; 0 .. nE) if (edgeActive[ei]) {
+        Vec3 a = m.vertices[m.edges[ei][0]];
+        Vec3 b = m.vertices[m.edges[ei][1]];
+        result.vertices[edgeMidIdx[ei]] = (a + b) * 0.5f;
+    }
+    foreach (fi; 0 .. nF) if (facetedRefinesSurface(m, faceMask, fi)) {
+        result.vertices[faceCentroidIdx[fi]] = m.faceCentroid(cast(uint)fi);
+    }
+    foreach (fi; 0 .. nF) if (shortMidIdx[fi] != uint.max) {
+        const face = m.faces[fi];
+        Vec3 a = m.vertices[face[0]];
+        Vec3 b = m.vertices[face[1]];
+        result.vertices[shortMidIdx[fi]] = a + (b - a) * 0.5f;
+    }
+
+    uint[ulong] resultEdgeLookup;
+    // Hide (task 0632): the cage face every output face came from, recorded as
+    // the faces are emitted. `addFaceFast` appends EXACTLY one face per call
+    // (`faces ~= idx.dup`), so this array stays index-parallel with
+    // `result.faces` without a second walk.
+    uint[] outFaceOrigin;
+    outFaceOrigin.reserve(m.faces.length);
+    foreach (fi, face; m.faces) {
+        uint len = cast(uint)face.length;
+        // Task 5911. A marked two-corner face splits through the active edge
+        // point when a surface face owns that pair, otherwise through a fresh
+        // midpoint. Other short faces keep their arity and corner order.
+        if (len < 3) {
+            immutable bool marked = fi < faceMask.length && faceMask[fi];
+            if (marked && len == 2 && face[0] != face[1]) {
+                auto p = edgeKey(face[0], face[1]) in edgeLookup;
+                immutable uint s = p !is null && edgeActive[*p]
+                    ? edgeMidIdx[*p] : shortMidIdx[fi];
+                result.addFaceFast(resultEdgeLookup, [face[0], s]);
+                outFaceOrigin ~= cast(uint)fi;
+                result.addFaceFast(resultEdgeLookup, [s, face[1]]);
+                outFaceOrigin ~= cast(uint)fi;
+            } else {
+                result.addFaceFast(resultEdgeLookup, face.dup);
+                outFaceOrigin ~= cast(uint)fi;
+            }
+            continue;
+        }
+        if (facetedRefinesSurface(m, faceMask, fi)) {
+            uint cIdx = faceCentroidIdx[fi];
+            foreach (i; 0 .. len) {
+                uint vi0  = face[i];
+                uint vi1  = face[(i + 1) % len];
+                uint vim1 = face[(i + len - 1) % len];
+                uint eFwd  = edgeLookup[edgeKey(vi0, vi1)];
+                uint eBack = edgeLookup[edgeKey(vim1, vi0)];
+                result.addFaceFast(resultEdgeLookup,
+                    [vi0, edgeMidIdx[eFwd], cIdx, edgeMidIdx[eBack]]);
+                outFaceOrigin ~= cast(uint)fi;
+            }
+        } else {
+            // Keep shape but splice in midpoints of any edge that is shared
+            // with a selected face.
+            uint[] widened;
+            foreach (i; 0 .. len) {
+                uint v0 = face[i];
+                uint v1 = face[(i + 1) % len];
+                widened ~= v0;
+                uint ei = edgeLookup[edgeKey(v0, v1)];
+                if (edgeMidIdx[ei] != uint.max)
+                    widened ~= edgeMidIdx[ei];
+            }
+            result.addFaceFast(resultEdgeLookup, widened);
+            outFaceOrigin ~= cast(uint)fi;
+        }
+    }
+
+    result.buildLoops();
+    if (faceOriginOut !is null)
+        *faceOriginOut = outFaceOrigin;
+
+    // Hide (task 0632): the rebuild used to DROP the Hide bit outright — the
+    // result is a freshly constructed Mesh and nothing copied `faceMarks`
+    // across — so a hidden face came back visible. That is the "dropped"
+    // reading the measured law rules out; a hidden face must survive the
+    // operation as exactly one hidden face. Each output face inherits its cage
+    // face's bit, mirroring the same stamp in `catmullClarkOsd`
+    // (subpatch_osd.d): a split face hands it to every child, an un-split face
+    // carries its own across whole.
+    //
+    // Whether a hidden face is in the operand AT ALL is the caller's decision,
+    // not this kernel's — the command layer passes `visibleFaceMask()`, so the
+    // "hands it to every child" arm is unreachable from there. Keeping the
+    // stamp unconditional means a caller that DOES refine a hidden face still
+    // gets a defined answer instead of a silently cleared mark.
+    result.resizeVertexSelection();
+    result.resizeEdgeSelection();
+    result.resizeFaceSelection();
+    foreach (k, parentFi; outFaceOrigin)
+        result.setFaceHiddenBit(k, m.isFaceHidden(parentFi));
+
+    // MATERIAL (task 1220, ledger row 35a) — the same class of drop the Hide
+    // block above describes, and it was still open for the surface tag: the
+    // result is a freshly constructed Mesh, so `surfaces`, `faceMaterial`,
+    // `facePart` and `faceSetMask` were all empty and every output face came
+    // back on the default surface. Measured against the reference: paint one
+    // face of a non-planar pair, subdivide it, and the tag rides ALL FOUR
+    // children — a 1 + 4 partition where we returned a single group of 5.
+    //
+    // `outFaceOrigin[k]` is the cage face that emitted output face k, which is
+    // exactly the carry vector: a split face hands its tag to every child, an
+    // un-split face carries its own across whole — the same shape as the Hide
+    // stamp directly above. The registry travels too; a face index into a
+    // registry that did not survive names nothing.
+    result.surfaces = m.surfaces.dup;
+    result.faceMaterial.length = result.faces.length;
+    result.facePart.length     = result.faces.length;
+    result.faceSetMask.length  = result.faces.length;
+    foreach (k, parentFi; outFaceOrigin) {
+        result.faceMaterial[k] = parentFi < m.faceMaterial.length ? m.faceMaterial[parentFi] : 0u;
+        result.facePart[k]     = parentFi < m.facePart.length     ? m.facePart[parentFi]     : 0u;
+        result.faceSetMask[k]  = parentFi < m.faceSetMask.length  ? m.faceSetMask[parentFi]  : 0UL;
+    }
+    // Derived vertex/edge planes, computed on the OUTPUT topology. Must come
+    // AFTER the three resizes — refreshHiddenDerived writes vertexMarks /
+    // edgeMarks in place — and it early-outs to three word-OR scans when
+    // nothing is hidden, so the common path pays nothing.
+    result.refreshHiddenDerived();
+    return result;
+}
+
+
+/// Smooth subdivide: faceted (linear) topology + one uniform-Laplacian relax
+/// pass (λ = 0.5, 1 iteration, boundary-pinned). This is the "smooth" mode
+/// of `mesh.subdivide` — it produces positions strictly between the flat
+/// (faceted) limit and the Catmull-Clark limit.
+///
+/// Smoothing formula (Jacobi step): for each relaxable vert,
+///   new[v] = old[v] + 0.5·(avg(edge-neighbors) − old[v])
+/// where "old" is a snapshot taken before any updates (all updates are
+/// simultaneous). This is the same convention as `mesh.smooth` (smooth.d).
+///
+/// In-scope divergence: this kernel uses a *uniform* Laplacian (all
+/// edge-neighbors equally weighted). The reference smooth mode is
+/// angle-weighted (driven by a max-smooth-angle parameter) — different math;
+/// bit-parity with the reference is an explicit non-goal for this feature.
+/// Boundary pinning is load-bearing for open meshes (prevents border collapse)
+/// even though the unit-test cube is closed — do not remove as "dead code".
+///
+/// Partial-mask safety: only verts incident to ≥1 newly-created sub-face are
+/// relaxed. Pre-existing cage verts that border only unrefined faces are
+/// pinned, preventing silent corruption of faces the user never selected.
+/// Under a full mask every vert is incident to a new sub-face, so the relax
+/// set equals all non-boundary verts — reproduces the closed-cube analytic
+/// golden: corner ≈ 5/12 ≈ 0.41667.
+Mesh smoothSubdivide(ref const Mesh m, const bool[] faceMask,
+                     uint[]* faceOriginOut = null)
+{
+    uint nFOrig = cast(uint)m.faces.length;
+
+    // If nothing is selected, facetedSubdivide returns the mesh topologically
+    // unchanged and the relax set is empty — return early.
+    bool hadAny = false;
+    foreach (fi; 0 .. nFOrig)
+        if (facetedRefinesSurface(m, faceMask, fi)) { hadAny = true; break; }
+    if (!hadAny)
+        return facetedSubdivide(m, faceMask, faceOriginOut);
+
+    uint[] origin;
+    Mesh sub = facetedSubdivide(m, faceMask, &origin);
+    if (faceOriginOut !is null)
+        *faceOriginOut = origin;
+
+    // -----------------------------------------------------------------------
+    // Build the relax set: verts incident to ≥1 newly-created sub-face.
+    // A sub-face is "new" when it came from a *selected* input face.
+    // The kernel's origin record is the authority: one entry per emitted face,
+    // independent of source-face arity and of whether that face was refined.
+    // -----------------------------------------------------------------------
+    bool[] faceIsNew = new bool[](sub.faces.length);
+    foreach (k, parentFi; origin)
+        faceIsNew[k] = facetedRefinesSurface(m, faceMask, parentFi);
+
+    bool[] relaxable = new bool[](sub.vertices.length);
+    foreach (fi; 0 .. sub.faces.length) {
+        if (!faceIsNew[fi]) continue;
+        foreach (vi; sub.faces[fi])
+            relaxable[vi] = true;
+    }
+
+    // Task 5911. A face with fewer than three corners takes no part in the
+    // relax: its darts do not make an edge a rim or non-manifold, and its
+    // edges give no neighbours. Cell U-SD9 in tests/unit/mesh_test.d.
+    uint[] surfaceDarts = new uint[](sub.edges.length);
+    foreach (li, ref l; sub.loops)
+        if (sub.faces[l.face].length >= 3 && sub.loopEdge[li] != uint.max)
+            ++surfaceDarts[sub.loopEdge[li]];
+
+    foreach (ei, e; sub.edges)
+        if (surfaceDarts[ei] == 1 || surfaceDarts[ei] >= 3) {
+            relaxable[e[0]] = false;
+            relaxable[e[1]] = false;
+        }
+
+    // Surface-only CSR, retaining edge-index order so a mesh without short
+    // faces accumulates every floating-point neighbour sum identically.
+    size_t[] adjOff = new size_t[](sub.vertices.length + 1);
+    foreach (ei, e; sub.edges) if (surfaceDarts[ei] >= 1) {
+        ++adjOff[e[0] + 1];
+        ++adjOff[e[1] + 1];
+    }
+    foreach (vi; 1 .. adjOff.length)
+        adjOff[vi] += adjOff[vi - 1];
+    uint[] adjNbrs = new uint[](adjOff[$ - 1]);
+    size_t[] cursor = adjOff.dup;
+    foreach (ei, e; sub.edges) if (surfaceDarts[ei] >= 1) {
+        adjNbrs[cursor[e[0]]++] = e[1];
+        adjNbrs[cursor[e[1]]++] = e[0];
+    }
+
+    // One Jacobi Laplacian pass (λ = 0.5): read from `prev`, write to `cur`.
+    Vec3[] prev = sub.vertices.dup;
+    Vec3[] cur  = sub.vertices.dup;
+    foreach (vi; 0 .. sub.vertices.length) {
+        if (!relaxable[vi]) continue;
+        auto nbrs = adjNbrs[adjOff[vi] .. adjOff[vi + 1]];
+        if (nbrs.length == 0) continue;
+        Vec3 sum = Vec3(0, 0, 0);
+        foreach (nb; nbrs) sum = sum + prev[nb];
+        Vec3 avg = sum * (1.0f / cast(float)nbrs.length);
+        cur[vi].x = prev[vi].x + 0.5f * (avg.x - prev[vi].x);
+        cur[vi].y = prev[vi].y + 0.5f * (avg.y - prev[vi].y);
+        cur[vi].z = prev[vi].z + 0.5f * (avg.z - prev[vi].z);
+    }
+    sub.vertices = cur;
+
+    return sub;
+}
+
+
+/// Back-references mapping a subdivided mesh's vertices/edges/faces to an
+/// "ultimate source" mesh (typically the cage). Indices are into the source
+/// mesh; `uint.max` means the element was introduced by subdivision and has
+/// no direct counterpart in the source. `subpatch` is the per-face mask that
+/// drives the next subdivision pass.
+struct SubpatchTrace {
+    uint[] vertOrigin;
+    uint[] edgeOrigin;
+    uint[] faceOrigin;
+    bool[] subpatch;
+
+    /// Identity trace for `m`: every vert/edge/face traces to itself.
+    /// `initialSubpatch` is copied into `subpatch`; missing entries default false.
+    static SubpatchTrace identity(ref const Mesh m, const bool[] initialSubpatch) {
+        SubpatchTrace t;
+        t.vertOrigin = new uint[](m.vertices.length);
+        t.edgeOrigin = new uint[](m.edges.length);
+        t.faceOrigin = new uint[](m.faces.length);
+        t.subpatch   = new bool[](m.faces.length);
+        foreach (i; 0 .. m.vertices.length) t.vertOrigin[i] = cast(uint)i;
+        foreach (i; 0 .. m.edges.length)    t.edgeOrigin[i] = cast(uint)i;
+        foreach (i; 0 .. m.faces.length)    t.faceOrigin[i] = cast(uint)i;
+        foreach (i; 0 .. m.faces.length)
+            t.subpatch[i] = (i < initialSubpatch.length) && initialSubpatch[i];
+        return t;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// edgeLoopRing — ordered quad edge-LOOP walk
+// ---------------------------------------------------------------------------
+//
+// Given a seed edge (v0, v1), walk the quad EDGE LOOP it belongs to and
+// return the ORDERED ring of vertex indices the loop passes through.
+//
+// "Edge loop" here is the classic modeling edge loop (NOT the edge RING):
+// from a directed edge (prev → cur), the loop continues at vertex `cur`
+// across to the one edge of `cur` that shares NO face with the incoming
+// edge. On a valence-4 quad vertex that is the edge "straight across" the
+// vertex (the two faces of the incoming edge sit on either side of it), so
+// the loop runs perpendicular to those faces — e.g. on a subdivided cube a
+// loop seeded by any edge of the band where the x=c plane cuts the cube
+// follows that whole planar perimeter, wrapping the four side faces.
+//
+// The walk goes in BOTH directions from the seed and splices: forward from
+// (v0 → v1) and backward from (v1 → v0). It terminates when it closes back
+// on v0 (a closed ring) or when a vertex offers zero or >1 continuation
+// (a boundary / pole / non-quad fan — an open or ambiguous loop). On a
+// closed quad manifold the forward half closes and the full ordered ring
+// is returned.
+//
+// Falls back to `[v0, v1]` (the seed edge endpoints) when the loop cannot
+// be walked (degenerate edge, or the seed edge is absent), so callers
+// always get a usable ≥2-vert ring.
+//
+// Pure: reads only `m.faces`; allocates the adjacency tables and the
+// result on the GC, mutates nothing.
+uint[] edgeLoopRing(const ref Mesh m, uint v0, uint v1) {
+    const size_t nV = m.vertices.length;
+    const size_t nF = m.faces.length;
+    if (v0 == v1 || v0 >= nV || v1 >= nV) return [v0, v1];
+
+    // Keyed by `edgeKey` (undirected, (min,max) packed). Build, per edge:
+    //   * the set of incident face indices (edgeFaces)
+    //   * per-vertex list of incident undirected-edge keys (vertEdges)
+    int[][ulong] edgeFaces;
+    ulong[][uint] vertEdges;
+    foreach (fi; 0 .. nF) {
+        auto f = m.faces[fi];
+        const size_t k = f.length;
+        if (k < 2) continue;
+        foreach (c; 0 .. k) {
+            uint a = f[c];
+            uint b = f[(c + 1) % k];
+            if (a == b) continue;
+            ulong ek = edgeKey(a, b);
+            edgeFaces[ek] ~= cast(int)fi;
+            // Track membership without duplicates (small valence).
+            bool haveA = false, haveB = false;
+            foreach (x; vertEdges.get(a, null)) if (x == ek) { haveA = true; break; }
+            foreach (x; vertEdges.get(b, null)) if (x == ek) { haveB = true; break; }
+            if (!haveA) vertEdges[a] ~= ek;
+            if (!haveB) vertEdges[b] ~= ek;
+        }
+    }
+
+    if (edgeKey(v0, v1) !in edgeFaces) return [v0, v1];
+
+    static uint otherEnd(ulong ek, uint v) {
+        uint a = cast(uint)(ek >> 32);
+        uint b = cast(uint)(ek & 0xffffffff);
+        return (a == v) ? b : a;
+    }
+
+    // From the directed edge (prev → cur), find the single continuation
+    // vertex of the edge loop at `cur`: the neighbor across an edge that
+    // shares NO face with the incoming edge (prev,cur). Returns uint.max
+    // when there is not exactly one such candidate (boundary / pole /
+    // ambiguous fan → loop stops).
+    uint nextLoopVert(uint prev, uint cur) {
+        ulong inEk = edgeKey(prev, cur);
+        auto inFaces = edgeFaces.get(inEk, null);
+        uint found = uint.max;
+        int count = 0;
+        foreach (ek; vertEdges.get(cur, null)) {
+            if (ek == inEk) continue;
+            // Reject edges that share a face with the incoming edge — those
+            // are the "ring" / co-face edges, not the loop continuation.
+            bool sharesFace = false;
+            foreach (f1; edgeFaces.get(ek, null))
+                foreach (f0; inFaces)
+                    if (f1 == f0) { sharesFace = true; break; }
+            if (sharesFace) continue;
+            count++;
+            found = otherEnd(ek, cur);
+        }
+        return (count == 1) ? found : uint.max;
+    }
+
+    // Forward walk from (v0 → v1).
+    uint[] fwd;
+    {
+        uint prev = v0, cur = v1;
+        uint guard = 0;
+        const uint maxSteps = cast(uint)(nV + 4);
+        while (guard < maxSteps) {
+            guard++;
+            uint nx = nextLoopVert(prev, cur);
+            if (nx == uint.max) break;          // open end / ambiguous
+            if (nx == v0) { fwd ~= uint.max; break; }   // closed marker
+            // Stop on any unexpected revisit (degenerate topology).
+            bool dup = (nx == v1);
+            foreach (x; fwd) if (x == nx) { dup = true; break; }
+            if (dup) break;
+            fwd ~= nx;
+            prev = cur; cur = nx;
+        }
+    }
+
+    bool closed = (fwd.length > 0 && fwd[$ - 1] == uint.max);
+    if (closed) {
+        uint[] ring;
+        ring ~= v0;
+        ring ~= v1;
+        foreach (x; fwd) if (x != uint.max) ring ~= x;
+        if (ring.length >= 3) return ring;
+    }
+
+    // Open / failed-to-close: also walk backward (v1 → v0) and splice
+    // [reversed-back] + v0 + v1 + [forward].
+    uint[] back;
+    {
+        uint prev = v1, cur = v0;
+        uint guard = 0;
+        const uint maxSteps = cast(uint)(nV + 4);
+        while (guard < maxSteps) {
+            guard++;
+            uint nx = nextLoopVert(prev, cur);
+            if (nx == uint.max || nx == v1) break;
+            bool dup = (nx == v0);
+            foreach (x; back) if (x == nx) { dup = true; break; }
+            if (dup) break;
+            back ~= nx;
+            prev = cur; cur = nx;
+        }
+    }
+
+    uint[] ring;
+    foreach_reverse (x; back) ring ~= x;
+    ring ~= v0;
+    ring ~= v1;
+    foreach (x; fwd) if (x != uint.max) ring ~= x;
+    if (ring.length >= 2) return ring;
+    return [v0, v1];
+}
+
+// ---------------------------------------------------------------------------
+// version (unittest) fixture helpers, module scope.
+// ---------------------------------------------------------------------------
+// Task 0717 (M5) moved the blocks that use these next to the kernels they
+// pin, inside `struct Mesh`. The helpers stayed behind: a struct cannot host
+// a free function, and changing a free function into a static member would
+// have made that move an edit. Each says below which blocks it serves.
+
+// The raw builder behind the five bevelFacesByMask blocks and the
+// makePolygonFromVerts adjacency cases.
+// PUBLIC (still `version (unittest)`) since task 1903 Stage F2 — a §2.6
+// widening with a census row naming its caller. It was `private`, and
+// `mesh_ops/poly_bevel.d`'s five `bevelFacesByMask` blocks reached it only
+// because a `mixin template` body is looked up in its INSTANTIATION scope,
+// i.e. here. F2 made those blocks ordinary module unittests of
+// mesh_ops.poly_bevel, so that lookup is gone and the name has to be visible.
+// The alternative — a local copy in poly_bevel.d — was declined for a
+// measurable reason, not a stylistic one: it would put an `m.vertices = verts;`
+// back into that file and turn its §5.7 raw-position-write row from a clean
+// `== 0` into a `kAllow` entry. The surface this opens exists only in a
+// unittest build.
+version (unittest) Mesh buildRawMesh(Vec3[] verts, uint[][] faceList) {
+    Mesh m;
+    m.vertices = verts;
+    m.faces    = faceList;
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    return m;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// computation (naive O(V²) all-pairs scan). Kept ONLY so the two blocks next
+
+// Helper: convert size_t to string for assert messages.
+string uintToStr(size_t v) {
+    if (v == 0) return "0";
+    char[20] buf;
+    size_t i = buf.length;
+    do { buf[--i] = cast(char)('0' + v % 10); v /= 10; } while (v);
+    return buf[i .. $].idup;
+}
+
+// ---------------------------------------------------------------------------
+// Edge Slide kernel
+// ---------------------------------------------------------------------------
+
+/// BFS 2-colouring of faces relative to a selected-edge boundary.
+/// Crossing a selected edge flips the colour (0 ↔ 1); crossing an
+/// unselected edge preserves it.  Seeds from the first incident face of
+/// the lowest-index selected edge (colour 0).  Faces unreachable from
+/// the selection stay at -1.
+/// Precondition: buildLoops() has been called.
+private int[] colorFacesForSlide(const ref Mesh m, const bool[] edgeMask)
+{
+    int[] color = new int[](m.faces.length);
+    color[] = -1;
+
+    // Find seed: first incident face of the lowest-index selected edge.
+    uint seedFace = ~0u;
+    outer: foreach (ei; 0 .. (edgeMask.length < m.edges.length
+                              ? edgeMask.length : m.edges.length)) {
+        if (!edgeMask[ei]) continue;
+        foreach (fi; m.facesAroundEdge(cast(uint)ei)) {
+            seedFace = fi;
+            break outer;
+        }
+    }
+    if (seedFace == ~0u) return color;
+    color[seedFace] = 0;
+
+    uint[] queue;
+    uint   head = 0;
+    queue ~= seedFace;
+
+    while (head < queue.length) {
+        uint fi = queue[head++];
+        foreach (fe; m.faceEdges(fi)) {
+            uint ei = m.edgeIndex(fe.a, fe.b);
+            if (ei == ~0u) continue;
+            bool sel    = (ei < edgeMask.length) && edgeMask[ei];
+            int  adjCol = sel ? (1 - color[fi]) : color[fi];
+            foreach (adjFi; m.facesAroundEdge(ei)) {
+                if (adjFi == fi) continue;
+                if (adjFi >= m.faces.length) continue;
+                if (color[adjFi] == -1) {
+                    color[adjFi] = adjCol;
+                    queue       ~= adjFi;
+                }
+                // Bipartite conflict → v1 fall-through (winner unchanged).
+            }
+        }
+    }
+    return color;
+}
+
+/// Compute new vertex positions for an edge-slide of magnitude `t ∈ [-1, 1]`.
+///
+/// Each endpoint of every selected edge (the "slid set") moves linearly
+/// toward one of its two rail neighbours — the vertex at the far end of
+/// the non-selected face-edge at that vertex inside a flanking face.
+/// `sign(t)` chooses the side: face colour 1 when t > 0, colour 0 when
+/// t < 0.  t = ±1 places the vertex exactly on the rail neighbour (clamped).
+/// If no rail exists on the requested side the vertex is left unchanged
+/// (graceful degradation — no crash). A candidate rail neighbour that is
+/// itself an endpoint of a selected edge (i.e. also sliding this frame,
+/// e.g. 3 of a quad's 4 edges selected) is likewise treated as no-rail —
+/// otherwise the two mutually-railing vertices would walk toward each
+/// other's original position and coincide at t = ±0.5 (task 0307).
+///
+/// Positional only: topology is unchanged.
+/// Precondition: m.buildLoops() has been called.
+Vec3[] edgeSlidePositions(const ref Mesh m, const bool[] edgeMask, float t)
+{
+    return edgeSlidePositions(m, m.vertices, edgeMask, t);
+}
+
+/// Explicit-position form used by preview result builders. Topology and rail
+/// selection come from `m`; every positional read comes from `positions`.
+/// Precondition: positions.length == m.vertices.length.
+Vec3[] edgeSlidePositions(const ref Mesh m, const(Vec3)[] positions,
+                          const bool[] edgeMask, float t)
+{
+    assert(positions.length == m.vertices.length,
+        "edgeSlidePositions position image must match mesh topology");
+    Vec3[] out_ = positions.dup;
+
+    if (t < -1.0f) t = -1.0f;
+    if (t >  1.0f) t =  1.0f;
+    if (t == 0.0f) return out_;   // identity — no work
+
+    float absT    = t < 0.0f ? -t : t;
+    bool  wantPos = t > 0.0f;     // true → use colour-1 rail
+
+    // Build slid-vertex set from edge endpoints (snapshot edgeMask once).
+    bool[] slidVert = new bool[](m.vertices.length);
+    bool   anyEdge  = false;
+    size_t minE     = edgeMask.length < m.edges.length
+                      ? edgeMask.length : m.edges.length;
+    foreach (ei; 0 .. minE) {
+        if (!edgeMask[ei]) continue;
+        slidVert[m.edges[ei][0]] = true;
+        slidVert[m.edges[ei][1]] = true;
+        anyEdge = true;
+    }
+    if (!anyEdge) return out_;
+
+    int[] faceColor = colorFacesForSlide(m, edgeMask);
+
+    foreach (size_t vi; 0 .. m.vertices.length) {
+        if (!slidVert[vi]) continue;
+        uint uvi     = cast(uint)vi;
+        uint railPos = ~0u;   // colour-1 (positive) side rail neighbour
+        uint railNeg = ~0u;   // colour-0 (negative) side rail neighbour
+
+        foreach (fi; m.facesAroundVertex(uvi)) {
+            if (fi >= m.faces.length) continue;
+            int fc = (fi < faceColor.length) ? faceColor[fi] : -1;
+            if (fc < 0) continue;  // face not reachable from selection
+
+            // Collect the two face-edges at uvi in this face.
+            uint selEdge  = ~0u;
+            uint railEdge = ~0u;
+            foreach (fe; m.faceEdges(fi)) {
+                if (fe.a != uvi && fe.b != uvi) continue;
+                uint ei = m.edgeIndex(fe.a, fe.b);
+                if (ei == ~0u) continue;
+                bool isSel = (ei < edgeMask.length) && edgeMask[ei];
+                if (isSel) selEdge  = ei;
+                else       railEdge = ei;
+            }
+            // Valid rail: exactly one selected face-edge and one unselected.
+            if (selEdge == ~0u || railEdge == ~0u) continue;
+
+            uint nb = m.edgeOtherVertex(railEdge, uvi);
+            // Mutual-rail guard (task 0307): if the candidate rail neighbour
+            // is itself an endpoint of a selected edge, it is also sliding
+            // this frame rather than being a stable anchor. Using it would
+            // move both vertices toward each other's *original* (pre-slide)
+            // position — harmless at the documented t = ±1 (vi lands on a
+            // stationary neighbour there), but at an ordinary t (e.g. 3 of a
+            // quad's 4 edges selected, so the lone unselected edge's two
+            // endpoints rail off each other) the pair walks toward one
+            // another and coincides at t = ±0.5. Skip this face's candidate
+            // — same graceful "no rail on this side" degradation already
+            // used when a face offers no valid rail at all.
+            if (slidVert[nb]) continue;
+            if (fc == 1) { if (railPos == ~0u) railPos = nb; }
+            else         { if (railNeg == ~0u) railNeg = nb; }
+        }
+
+        uint rail = wantPos ? railPos : railNeg;
+        if (rail == ~0u) continue;   // no rail on this side → unchanged
+
+        Vec3 orig = positions[vi];
+        Vec3 dest = positions[rail];
+        out_[vi]  = orig + absT * (dest - orig);
+    }
+    return out_;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// The extracted tail (`applyVertexRemapAndRebuild`) deliberately gets no test
+// of its own: it is `weldVerticesByMask`'s own body, unchanged, and the
+// collapse/weld tests already in this file are its net. Verified by mutation —
+// dropping the post-remap consecutive-duplicate strip, and dropping the
+// head/tail wrap strip — both now in `collapseFacesThroughRemap` — each break
+// `collapseFacesByMask` before any weld test is reached. (Cited by symbol, not
+// by line: the two line numbers this note carried had already rotted.)
+
+// ---------------------------------------------------------------------------
+// Task 0502 — LOOSE (face-less) GEOMETRY SURVIVES A DISSOLVE.
+//
+// Every dissolve tail is `rebuildEdges()` + `compactUnreferenced()`, and both
+// re-derive from `faces[]` MESH-WIDE. Before this task one edge dissolve
+// therefore took every bare wire edge and every loose point in the mesh with
+// it, arbitrarily far from the edit — silent destruction of ordinary
+// intermediate retopo state (a placed point; a chain drawn before any polygon
+// closes over it).
+//
+// Every fixture below puts the loose geometry AT A DISTANCE — coordinates 10
+// and 20 against a unit grid — and never lets it touch the edited region, so a
+// green result cannot come from the edit happening to spare a neighbour. The
+// shared helpers address it by POSITION, because a fix that preserves the
+// geometry is still free to renumber it.
+// ---------------------------------------------------------------------------
+version (unittest) private int looseTestVertAt(in Mesh m, Vec3 p) {
+    foreach (i, ref v; m.vertices)
+        if (v.x == p.x && v.y == p.y && v.z == p.z) return cast(int)i;
+    return -1;
+}
+
+version (unittest) private bool looseTestHasWire(in Mesh m, Vec3 a, Vec3 b) {
+    immutable int ia = looseTestVertAt(m, a), ib = looseTestVertAt(m, b);
+    if (ia < 0 || ib < 0) return false;
+    // Scanned straight off `edges[]` — never through `edgeIndexMap`, so the
+    // assertion cannot pass on a stale lookup table alone.
+    foreach (ref e; m.edges)
+        if ((e[0] == ia && e[1] == ib) || (e[0] == ib && e[1] == ia)) return true;
+    return false;
+}
+
+private enum Vec3 kLoosePoint = Vec3(10, 10, 10);
+private enum Vec3 kLooseWireA = Vec3(20, 0, 0);
+private enum Vec3 kLooseWireB = Vec3(21, 0, 0);
+
+/// `makeGridPlane(n)` plus, FAR from it, one loose point and one bare wire
+/// edge — neither referenced by any polygon.
+version (unittest) private Mesh makeGridWithLooseGeometry(int n) {
+    Mesh m = makeGridPlane(n);
+    m.addVertex(kLoosePoint);
+    immutable uint w0 = m.addVertex(kLooseWireA);
+    immutable uint w1 = m.addVertex(kLooseWireB);
+    m.addEdge(w0, w1);
+    m.buildLoops();
+    m.syncSelection();
+    // The fixture must actually contain what the tests are about.
+    assert(looseTestVertAt(m, kLoosePoint) >= 0, "fixture: the loose point");
+    assert(looseTestHasWire(m, kLooseWireA, kLooseWireB), "fixture: the bare wire edge");
+    return m;
+}
+
+
+
+// ===========================================================================
+// MODULE-SCOPE `unittest` blocks that read `Mesh`'s PRIVATE state
+// (task 3160 -- step 1 of `doc/tasks/work/2910-mesh-struct-seams.md`).
+//
+// These eighteen blocks stood INSIDE `struct Mesh`'s body. They are here, and
+// not in `tests/unit/`, for the criterion `tests/unit/README.md` already
+// states and task 0706 set: each of them reads a `private` name, and widening
+// visibility to satisfy a file move is not an acceptable trade. The other
+// thirty-two blocks, which compile against the public API alone, went to
+// `tests/unit/mesh_*_test.d`.
+//
+// WHY MODULE SCOPE IS ENOUGH, and it is not a workaround: `private` in D is
+// MODULE-scoped, so a module-level `unittest` in `mesh.d` sees exactly what a
+// struct-body one saw. The move costs nothing but QUALIFICATION -- a member
+// enum written `Marks` inside the body is `Mesh.Marks` out here, and a
+// `static` member called bare is `Mesh.f(...)`. Four such edits were owed
+// (`Mesh.stripWalkCorners` x3, `Mesh.kMaxEarClipRing` x1); the bodies are
+// otherwise byte-identical to what stood in the struct, dedented by four
+// columns.
+//
+// THREE PRIVATE FIXTURES DID NOT STAY, and the difference is the reader set:
+// `makeWeldPairStrip`, `naiveWeldRemap_` and `countOpenEdges` had NO reader
+// outside the blocks that moved, so they travelled with them and are `private`
+// in their new modules. `looseTestVertAt` / `looseTestHasWire` /
+// `makeGridWithLooseGeometry` / `kLoose*` are read by blocks on BOTH sides, so
+// they stayed -- and that is why the loose-geometry block above is here while
+// its subject is public.
+//
+// DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT. `mesh.d` is one module:
+// a mutation that should redden two of these only ever proves the first.
+// ===========================================================================
+
+// --- was in the body of `struct Mesh`: 0401 / 1906 -- vertexAdjacencyCSR is TOPOLOGY-keyed (reads `_adjCsrStructVer`)
+// ---------------------------------------------------------------------------
+// Task 0401 — negative/regression check: a TOPOLOGY-keyed cache must NOT
+// rebuild on a position-only edit. vertexAdjacencyCSR is connectivity-keyed
+// by design (topology never changed by a vertex move) — unlike the 3 caches
+// task 0401 fixed (subpatch preview / symmetry pairing / snap grid), which
+// needed a Position-driven invalidation ON TOP of their version key. This
+// test proves that fix did not widen — the version-silent
+// noteChange(Position) contract stays exactly as silent as before, so
+// vertexAdjacencyCSR provably does not thrash on every gizmo drag frame.
+//
+// TASK 1906 STAGE 2d — THIS BLOCK ALONE DOES NOT TEST THE KEY, and saying
+// so is the point of the second cell below. Cell 1 (0401's, unchanged)
+// drives the VERSION-SILENT half: `noteChange` bumps no counter at all, so
+// it passes under `mutationVersion` keying and under `structVersion`
+// keying alike — reverting stage 2d's re-key leaves it GREEN. Cell 2
+// drives the SCRIPTED half, which is the half the re-key is about.
+// ---------------------------------------------------------------------------
+version (unittest) version (MeshSnapshotFixtures) {
+@("mesh-snapshot-private-cells")
+unittest {
+    import vibe3d.mesh.change.change_bus : MeshEditScope;
+    import std.conv   : to;
+
+    // ---- CELL 1 (task 0401): the version-SILENT position edit. --------
+    Mesh m = makeCube();
+    const(size_t)[] offA;
+    const(uint)[]    nbA;
+    m.vertexAdjacencyCSR(offA, nbA);
+    ulong csrVerAfterBuild = m._adjCsrStructVer;
+    ulong mutVerBefore     = m.mutationVersion;
+
+    // Version-silent edit — exactly what an interactive gizmo drag/commit
+    // does: mutate a vertex, note the Position change class, never bump
+    // mutationVersion.
+    m.vertices[0] = m.vertices[0] + Vec3(0.5f, 0, 0);
+    m.noteChange(MeshEditScope.Position);
+    assert(m.mutationVersion == mutVerBefore,
+        "test setup must stay version-silent to mirror the gizmo path");
+
+    const(size_t)[] offB;
+    const(uint)[]    nbB;
+    m.vertexAdjacencyCSR(offB, nbB);
+    assert(m._adjCsrStructVer == csrVerAfterBuild,
+        "task 0401: a position-only edit must NOT force the adjacency CSR "
+        ~ "to rebuild — it stays topology-keyed by design and must be "
+        ~ "unaffected by the Position-bus invalidation this task adds to "
+        ~ "the subpatch preview / symmetry pairing / snap grid caches");
+    assert(offA is offB && nbA is nbB,
+        "no rebuild occurred ⇒ vertexAdjacencyCSR must hand back the "
+        ~ "exact same cached arrays, not freshly rebuilt ones");
+
+    // ---- CELL 2 (task 1906 stage 2d): the SCRIPTED position edit. -----
+    // `commitChange(Position)` is what `/api/transform` and every scripted
+    // move command end in. It bumps `mutationVersion` and touches no
+    // connectivity, so under the old key it threw the whole CSR away — for
+    // a table that is a pure function of `edges`. THIS is the assert the
+    // re-key exists for, and cell 1 above cannot see it.
+    const ulong structVerBeforeCommit = m.structVersion;
+    const ulong csrVerBeforeCommit    = m._adjCsrStructVer;
+    m.vertices[1] = m.vertices[1] + Vec3(0, 0.25f, 0);
+    m.commitChange(MeshEditScope.Position);
+    assert(m.mutationVersion != mutVerBefore,
+        "setup: commitChange(Position) MUST bump mutationVersion — if it "
+        ~ "stopped doing so this cell would pass vacuously under either key");
+    assert(m.structVersion == structVerBeforeCommit,
+        "setup: a position commit must move no connectivity counter");
+
+    const(size_t)[] offC;
+    const(uint)[]    nbC;
+    m.vertexAdjacencyCSR(offC, nbC);
+    assert(m._adjCsrStructVer == csrVerBeforeCommit,
+        "task 1906 §3.4 row 12: a SCRIPTED position edit (commitChange("
+        ~ "Position), which DOES bump mutationVersion) must NOT rebuild the "
+        ~ "adjacency CSR. The table is a pure function of `edges`; keyed on "
+        ~ "mutationVersion it was thrown away by every scripted move, every "
+        ~ "selection click and every material write");
+    assert(offB is offC && nbB is nbC,
+        "no rebuild occurred ⇒ the same cached arrays must come back");
+
+    // ---- CELL 3: the restore path, which bypasses every primitive. ----
+    // `MeshSnapshot.restore` assigns `edges` DIRECTLY. Under a
+    // connectivity key that is only sound because the restore bumps
+    // `structVersion` itself; without that bump an undo that changes the
+    // edge list while the vertex count holds serves the pre-undo adjacency.
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+    auto snap = MeshSnapshot.capture(m);
+    // Drop two ADJACENT faces so their shared edge loses every owner: the
+    // edge COUNT changes while the vertex count does not, which is what
+    // makes the `vertices.length` guard unable to cover for the key.
+    size_t victim = size_t.max;
+    foreach (fi; 1 .. m.faces.length) {
+        int sharedVerts = 0;
+        foreach (v; m.faces[fi])
+            foreach (v0; m.faces[0])
+                if (v == v0) ++sharedVerts;
+        if (sharedVerts >= 2) { victim = fi; break; }
+    }
+    assert(victim != size_t.max, "setup: a cube face must have a neighbour");
+    uint[][] keptFaces;
+    foreach (fi, f; m.faces) if (fi != 0 && fi != victim) keptFaces ~= f.dup;
+    m.faces = keptFaces;
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    const size_t nVertsCut = m.vertices.length;
+    const size_t nEdgesCut = m.edges.length;
+    const(size_t)[] offD;
+    const(uint)[]    nbD;
+    m.vertexAdjacencyCSR(offD, nbD);
+    assert(nbD.length == nEdgesCut * 2, "setup: CSR must describe the cut mesh");
+
+    snap.restore(m);
+    assert(m.vertices.length == nVertsCut,
+        "setup: the restore must NOT change the vertex count, or the length "
+        ~ "guard would rebuild the CSR and this cell would be vacuous");
+    assert(m.edges.length != nEdgesCut,
+        "setup: the restore MUST change the edge list, or there is nothing "
+        ~ "for a stale CSR to be wrong about");
+    const(size_t)[] offE;
+    const(uint)[]    nbE;
+    m.vertexAdjacencyCSR(offE, nbE);
+    assert(nbE.length == m.edges.length * 2,
+        "task 1906 stage 2d: a snapshot restore that changes connectivity "
+        ~ "MUST invalidate the adjacency CSR. `MeshSnapshot.restore` writes "
+        ~ "`edges` directly, bypassing every structural primitive, so it "
+        ~ "bumps `structVersion` itself — delete that bump and this reads "
+        ~ "the pre-undo adjacency, silently, for the rest of the session");
+
+    // ---- CELL 3b: the SECOND restore entry point. ---------------------
+    // `snapshot.d` bumps `structVersion` in TWO places, and cell 3 above
+    // witnesses only the first. `restoreGeometryKeepSelection` is the
+    // geometry-only undo path (a revert that keeps the live
+    // selection); it writes `edges`/`faces` directly exactly as `restore`
+    // does, so it needs — and has — its own bump. Delete THAT one and
+    // cell 3 stays green, which is what makes this arm a separate cell
+    // rather than a second assert on the same call.
+    //
+    // The setup that reaches it is the same shape and not a coincidence:
+    // the element counts must DIFFER from the live mesh for the CSR to
+    // have anything to be wrong about, and differing counts are precisely
+    // what sends the method down its snapshot-marks branch.
+    auto snap2 = MeshSnapshot.capture(m);
+    const size_t nVertsFull = m.vertices.length;
+    const size_t nEdgesFull = m.edges.length;
+    uint[][] keptFaces2;
+    foreach (fi, f; m.faces) if (fi != 0 && fi != victim) keptFaces2 ~= f.dup;
+    m.faces = keptFaces2;
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    const size_t nEdgesCut2 = m.edges.length;
+    assert(m.vertices.length == nVertsFull,
+        "setup: the cut must not change the vertex count, or the length "
+        ~ "guard rebuilds the CSR and this cell is vacuous");
+    assert(nEdgesCut2 != nEdgesFull,
+        "setup: the cut must change the edge list");
+    const(size_t)[] offF;
+    const(uint)[]    nbF;
+    m.vertexAdjacencyCSR(offF, nbF);
+    assert(nbF.length == nEdgesCut2 * 2, "setup: CSR must describe the cut mesh");
+
+    snap2.restoreGeometryKeepSelection(m);
+    assert(m.vertices.length == nVertsFull,
+        "setup: the restore must NOT change the vertex count");
+    assert(m.edges.length != nEdgesCut2,
+        "setup: the restore MUST change the edge list");
+    const(size_t)[] offG;
+    const(uint)[]    nbG;
+    m.vertexAdjacencyCSR(offG, nbG);
+    assert(nbG.length == m.edges.length * 2,
+        "task 1906 stage 2d: `restoreGeometryKeepSelection` writes `edges` "
+        ~ "directly too, so it carries its own `++structVersion`. Delete "
+        ~ "that second bump and a geometry-only undo serves the pre-undo "
+        ~ "adjacency — cell 3 above does not cover it, it drives the other "
+        ~ "entry point");
+
+    // ---- CELL 4 (task 1906 stage 2d): `edges` EMPTIED, nothing back. --
+    // The one reachable edit where BOTH guard terms are silent under the
+    // `structVersion` key: `rebuildEdges` clears `edges` unconditionally
+    // and used to bump only when it inserted something back, so a mesh
+    // whose every face is gone took `edges` N -> 0 at structVersion delta
+    // 0, with `vertices.length` held by `keepOrphans`. Reachable from
+    // `mesh.remove` in Polygons mode with everything selected
+    // (`commands/mesh/remove.d` -> `deleteFacesByMask(mask, keepOrphans:
+    // true)`); the pre-2d `mutationVersion` key caught it for free because
+    // the face delete commits. `rebuildEdges`'s `else if (hadEdges)` arm
+    // is what puts it back — revert that arm and the assert below reads
+    // the cube's 24 stale neighbour entries.
+    //
+    // `MeshEditDelta.revert` needs no bump of its own: its `finalize`
+    // calls `rebuildEdges`, so the same arm covers the replay path.
+    Mesh z = makeCube();
+    const(size_t)[] offZ;
+    const(uint)[]    nbZ;
+    z.vertexAdjacencyCSR(offZ, nbZ);
+    assert(nbZ.length == z.edges.length * 2 && nbZ.length > 0,
+        "setup: the cube's CSR must be built and non-empty, or there is "
+        ~ "nothing for a stale table to serve");
+    const size_t nVertsZ  = z.vertices.length;
+    const ulong  structZ0 = z.structVersion;
+    // Nothing is selected, so the operand mask is the whole mesh — the
+    // funnel test_operand_mask_gate prescribes over a hand-filled `[] = true`.
+    bool[] everyFace = z.operandFaceMask();
+    assert(everyFace.length == z.faces.length && everyFace[0] && everyFace[$ - 1],
+        "setup: an unselected cube's operand mask must cover every face");
+    z.deleteFacesByMask(everyFace, /*keepOrphans*/ true);
+    assert(z.edges.length == 0 && z.faces.length == 0,
+        "setup: every face and therefore every edge must be gone");
+    assert(z.vertices.length == nVertsZ,
+        "setup: keepOrphans must hold the vertex count, or the CSR's "
+        ~ "`vertices.length` guard rebuilds and this cell is vacuous");
+    assert(z.structVersion != structZ0,
+        "the clear-to-empty must bump `structVersion`: it is a write to "
+        ~ "`edges`, and `edges` is what the CSR memo is a function of");
+    const(size_t)[] offZ2;
+    const(uint)[]    nbZ2;
+    z.vertexAdjacencyCSR(offZ2, nbZ2);
+    assert(nbZ2.length == 0,
+        "task 1906 stage 2d: deleting every face with keepOrphans empties "
+        ~ "`edges` while the vertex count holds — neither the counter nor "
+        ~ "the length guard fires unless `rebuildEdges` bumps on a clear "
+        ~ "that inserts nothing back. Got " ~ nbZ2.length.to!string
+        ~ " neighbour entries over a mesh with no edges at all");
+    import std.stdio : writeln;
+    writeln("MeshSnapshotFixtures: adjacency restore and keep-selection cells passed");
+}
+
+// --- was in the body of `struct Mesh`: the loops / edge-map derived-state stamps (reads `loopsState_`, `edgeMapState_`)
+}
+unittest {
+    // A preview-style wipe (subpatch_osd's contract): markDerivedEmpty()
+    // reads DeliberatelyEmpty, not Valid and not (bare) Stale.
+    auto m = makeCube();
+    m.markDerivedEmpty();
+    assert(!m.loopsValid(),    "trace: markDerivedEmpty must read loops NOT valid");
+    assert(!m.edgeMapUsable(), "trace: markDerivedEmpty must read edgeMap NOT usable");
+    assert(m.loopsState_   == Mesh.DerivedState.DeliberatelyEmpty);
+    assert(m.edgeMapState_ == Mesh.DerivedState.DeliberatelyEmpty);
+}
+
+// --- was in the body of `struct Mesh`: the loops stamp (reads `loopsStamp`)
+unittest {
+    // A never-built mesh (fresh Mesh.init) must NOT read as valid by the
+    // `structVersion == loopsStamp == 0` coincidence — the enum state
+    // starts Stale precisely to guard this off-by-one.
+    Mesh m;
+    assert(m.structVersion == 0 && m.loopsStamp == 0,
+        "trace: fresh Mesh.init sanity — both stamps start at 0");
+    assert(!m.loopsValid(),    "trace: fresh Mesh.init must NOT read loopsValid");
+    assert(!m.edgeMapUsable(), "trace: fresh Mesh.init must NOT read edgeMapUsable");
+}
+
+// --- was in the body of `struct Mesh`: dissolveVerticesByMask, both keepOrphans arms (reads the `kLoose*` fixture)
+unittest { // dissolveVerticesByMask, BOTH keepOrphans arms
+    foreach (keepOrphans; [false, true]) {
+        Mesh m = makeGridWithLooseGeometry(2);
+        auto vmask = new bool[](m.vertices.length);
+        vmask[4] = true;                     // the grid's centre vertex
+        assert(m.dissolveVerticesByMask(vmask, keepOrphans) == 1, "setup");
+
+        assert(m.faces.length == 4, "the four quads reshaped to triangles");
+        assert(looseTestVertAt(m, kLoosePoint) >= 0,
+            "a pre-existing loose point is not this call's collateral, at either keepOrphans");
+        assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
+            "FAILS ON THE OLD BEHAVIOUR (both arms): keepOrphans only ever protected "
+          ~ "floating VERTICES; the rebuildEdges above it wiped floating EDGES regardless");
+    }
+}
+
+// --- was in the body of `struct Mesh`: dissolveVerticesByMask, the orphan sweep (reads `looseTestVertAt`)
+unittest { // keepOrphans:false still sweeps the orphans THIS call created
+    // The preservation is scoped to what was face-less BEFORE the call — it is
+    // not a blanket "never compact". Without this pin, a fix that simply
+    // pinned every vertex would pass every block above.
+    Mesh m;
+    foreach (p; [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0)]) m.addVertex(p);
+    m.addFace([0u, 1u, 2u]);
+    m.addVertex(kLoosePoint);
+    m.buildLoops();
+    m.syncSelection();
+
+    auto vmask = new bool[](m.vertices.length);
+    vmask[0] = true;                         // the triangle degenerates away
+    assert(m.dissolveVerticesByMask(vmask, /*keepOrphans*/false) == 1);
+    assert(m.faces.length == 0, "setup: the only face dropped below 3 corners");
+    assert(looseTestVertAt(m, Vec3(1, 0, 0)) < 0 && looseTestVertAt(m, Vec3(0, 1, 0)) < 0,
+        "verts THIS call orphaned still go — that is what keepOrphans:false means");
+    assert(looseTestVertAt(m, kLoosePoint) >= 0,
+        "…but the point that was already loose before the call is not its collateral");
+}
+
+// --- was in the body of `struct Mesh`: a wire the edit ITSELF consumed stays gone (reads `looseTest*`)
+unittest { // a wire the edit ITSELF consumed stays gone — no resurrection
+    // A wire hanging off the grid's centre vertex, which the dissolve then
+    // removes. Preservation restores UNRELATED geometry; it must not put back
+    // an edge whose endpoint the caller deliberately deleted.
+    Mesh m = makeGridPlane(2);
+    immutable uint tip = m.addVertex(Vec3(0, 5, 0));
+    m.addEdge(4, tip);                        // wire off the centre vertex
+    m.buildLoops();
+    m.syncSelection();
+    assert(looseTestHasWire(m, m.vertices[4], Vec3(0, 5, 0)), "fixture");
+    immutable Vec3 centre = m.vertices[4];
+
+    auto vmask = new bool[](m.vertices.length);
+    vmask[4] = true;
+    assert(m.dissolveVerticesByMask(vmask, /*keepOrphans*/true) == 1);
+
+    assert(looseTestVertAt(m, centre) < 0, "the masked vertex is gone");
+    assert(looseTestVertAt(m, Vec3(0, 5, 0)) >= 0,
+        "its far tip was already face-less, so it stays as a loose point");
+    assert(!looseTestHasWire(m, centre, Vec3(0, 5, 0)),
+        "but the wire itself cannot come back — one of its endpoints was deleted");
+}
+
+// --- was in the body of `struct Mesh`: removeEdgesByMask, loose geometry untouched (reads the `kLoose*` fixture)
+unittest { // removeEdgesByMask: one interior dissolve, loose geometry untouched
+    Mesh m = makeGridWithLooseGeometry(2);   // 3x3 verts / 4 quads + 3 loose verts
+    immutable size_t vBefore = m.vertices.length;
+
+    auto mask = new bool[](m.edges.length);
+    mask[m.edgeIndex(1, 4)] = true;          // an INTERIOR grid edge, nowhere near
+    assert(m.removeEdgesByMask(mask) == 1, "setup: the interior edge must dissolve");
+
+    assert(m.faces.length == 3, "the two quads either side merged into one");
+    assert(looseTestVertAt(m, kLoosePoint) >= 0,
+        "FAILS ON THE OLD BEHAVIOUR: the tail compactUnreferenced dropped every "
+      ~ "face-less vertex in the mesh, including this one 10 units away");
+    assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
+        "FAILS ON THE OLD BEHAVIOUR: the tail rebuildEdges re-derived edges[] from "
+      ~ "faces[] alone, so a bare wire edge anywhere in the mesh vanished");
+    assert(m.vertices.length == vBefore,
+        "the dissolve consumed no vertex, so none may go — not the grid's, not the loose ones");
+}
+
+// --- was in the body of `struct Mesh`: ...and the same through the edge-remove COMMAND's kernel pair
+unittest { // …and the same through the EDGE-REMOVE COMMAND's exact kernel pair
+    // `MeshRemove`/`MeshDelete` in Edges mode run removeEdgesByMask and then
+    // dissolveDegree2Verts over the touched region (commands/mesh/{remove,delete}.d).
+    // The second call is its own dissolve with its own mesh-wide tail, so the
+    // pair has to be pinned together — fixing only the first one leaves the
+    // shipped commands still wiping the wire.
+    Mesh m = makeGridWithLooseGeometry(2);
+
+    auto mask = new bool[](m.edges.length);
+    mask[m.edgeIndex(1, 4)] = true;
+    immutable size_t n = m.removeEdgesByMask(mask);
+    assert(n == 1, "setup");
+    m.dissolveDegree2Verts(m.edgeDeleteRegion(), /*keepOrphans*/true);
+
+    assert(looseTestVertAt(m, kLoosePoint) >= 0,
+        "the loose point must survive the command's SECOND dissolve too");
+    assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
+        "FAILS ON THE OLD BEHAVIOUR at dissolveVerticesByMask's own rebuildEdges: "
+      ~ "the wire survives the edge dissolve only to be wiped by the 2-valent cleanup");
+}
+
+
+// --- was in the body of `struct Mesh`: 1333 -- rebuildEdges commits ONCE while something is hidden (reads `anyHideBitSet`)
+unittest { // task 1333 — rebuildEdges commits ONCE, WHILE something is hidden
+    import std.conv : to;
+
+    // 1330 made bulk commands linear only in the state where NOTHING is
+    // hidden — there the derive provably writes no bit, so skipping it is
+    // invisible. With a Hide bit anywhere, deferral is cancelled and every
+    // commit derives the whole mesh again; `rebuildEdges`' one-commit-per-
+    // corner loop was the bulk of those commits.
+    //
+    // 1333 REMOVES those commits instead of deferring them, which is why
+    // it holds in the hidden state. The COUNT is what pins it: without the
+    // collapse the planes are still perfectly correct and the entire
+    // change is silently a no-op, so a result-only assertion is vacuous.
+    // NOT a cube: every cube edge is shared by two faces, so dropping a
+    // face shrinks nothing and the shrink half of this test would be
+    // vacuous. A 2-quad strip has three edges private to the second quad.
+    //   0---1---2      f0 = [0,1,4,3]   f1 = [1,2,5,4]
+    //   |f0 |f1 |      7 edges; dropping f1 leaves 4.
+    //   3---4---5
+    Mesh m;
+    m.addVertex(Vec3(0, 0, 0)); m.addVertex(Vec3(1, 0, 0)); m.addVertex(Vec3(2, 0, 0));
+    m.addVertex(Vec3(0, 0, 1)); m.addVertex(Vec3(1, 0, 1)); m.addVertex(Vec3(2, 0, 1));
+    m.addFace([0u, 1u, 4u, 3u]);
+    m.addFace([1u, 2u, 5u, 4u]);
+    m.buildLoops();
+    m.syncSelection();
+
+    // Hide f0 ⇒ v0 and v3 (whose only incident face it is) derive hidden,
+    // and the three edges through them with them. This is REGIME 2 of the
+    // test above — the one where 1330 deliberately does not defer.
+    m.setFaceHidden(0, true);
+    assert(m.isVertexHidden(0), "fixture: v0 must derive hidden first");
+    assert(m.anyHideBitSet(),
+           "fixture: with nothing hidden 1330's deferral would already "
+           ~ "cover this and the measurement would mean nothing");
+
+    // A selection made while the edge is still visible. Its ONLY role is
+    // to give the convergence compare at the bottom a non-zero
+    // `edgeSelectionOrder` stamp to disagree about: the derive is the only
+    // writer of that stamp, so with nothing selected the order arrays are
+    // all zeros and comparing them would prove nothing.
+    m.selectEdge(m.edgeIndex(2, 5));
+    assert(m.isEdgeSelected(m.edgeIndex(2, 5)), "fixture: the select must land");
+    const size_t edgesBefore = m.edges.length;
+
+    // Drop a face so the re-derive SHRINKS the edge array. Be precise
+    // about what that buys HERE: this test asserts the derive COUNT and
+    // the CONVERGENCE of the planes, NOT the renumbering CONSEQUENCE.
+    // Dropping the LAST face leaves every surviving edge on exactly the
+    // index it already held (the re-derive walks the same faces in the
+    // same order), so no stale SET Hide bit can land on a visible edge in
+    // this shape. The consequence — a stale SET bit that makes `selectEdge`
+    // refuse silently and permanently, which is 1330 BLOCKER 2 — needs a
+    // face array whose REMOVAL sits before the hidden face, and it has its
+    // own fixture: see the "renumbering CONSEQUENCE" test immediately
+    // below.
+    m.faces.length = m.faces.length - 1;
+
+    g_hideDeriveRuns = 0;
+    m.rebuildEdges();
+    assert(g_hideDeriveRuns == 1,
+           "rebuildEdges derived " ~ g_hideDeriveRuns.to!string ~ " times: "
+           ~ "it must commit ONCE for the whole re-derive, not once per "
+           ~ "corner (task 1333)");
+    assert(m.edges.length < edgesBefore,
+           "fixture: dropping a face must actually shrink the edge array");
+
+    // Convergence — the claim the collapse rests on: what the single
+    // closing derive left behind is exactly what a fresh full derive
+    // computes, planes AND selection-order stamps.
+    //
+    // This block is a SECOND, INDEPENDENT discriminator for the same
+    // mutation, not decoration. Dropping f1 leaves v1 and v4 with only the
+    // HIDDEN f0 incident, so both of them — and edge (1,4) through them —
+    // must flip to hidden right here. Put the per-corner commits back (or
+    // take the single one away) and they do not flip, so the mutation
+    // reddens this compare as well as the count above: the collapse is
+    // held by two assertions, not one.
+    auto vAfter  = m.vertexMarks.dup;
+    auto eAfter  = m.edgeMarks.dup;
+    auto vOrder  = m.vertexSelectionOrder.dup;
+    auto eOrder  = m.edgeSelectionOrder.dup;
+    m.refreshHiddenDerived();
+    assert(m.vertexMarks == vAfter, "vertex hide plane was stale after rebuildEdges");
+    assert(m.edgeMarks   == eAfter, "edge hide plane was stale after rebuildEdges");
+    assert(m.vertexSelectionOrder == vOrder && m.edgeSelectionOrder == eOrder,
+           "a selection-order stamp was left behind by the collapsed commit");
+}
+
+// --- was in the body of `struct Mesh`: 1333 -- a FLUSH must not disarm deferral (reads `flushHideDerivePending`)
+unittest { // task 1333 — a FLUSH must not disarm deferral behind the batch's back
+    // `flushHideDerivePending` used to clear `g_hideDeriveDeferSafe`
+    // unconditionally. Today every flush fires at depth 0, where the flag
+    // is dead anyway, so the line was inert — which is exactly why it
+    // needed a test rather than a reading: the first mid-batch flush
+    // anyone adds would silently hand back 1330's clean case for the rest
+    // of that batch, with no symptom. The flag has one owner
+    // (`refreshHiddenDerived`, which disarms it only when its scan finds a
+    // Hide bit, i.e. only when the derive is about to WRITE).
+    auto m = makeCube();
+    m.syncSelection();
+
+    // Stash-then-assert, for the reason spelled out in the test above: a
+    // mid-batch assert skips `endHideDeriveBatch` and strands a `Mesh*`
+    // into this unwound frame inside `g_hideDerivePendingMeshes`.
+    m.beginHideDeriveBatch();
+    const bool armedAtOpen = g_hideDeriveDeferSafe;
+
+    flushHideDerivePending();          // the mid-batch flush of the future
+    const bool armedAfterFlush = g_hideDeriveDeferSafe;
+
+    // ...and the batch must demonstrably still defer afterwards.
+    g_hideDeriveRuns = 0;
+    const uint base = cast(uint)m.vertices.length;
+    m.vertices ~= Vec3(2, 0, 0);
+    m.vertices ~= Vec3(2, 1, 0);
+    m.syncSelection();
+    m.addFace([0, base, base + 1]);
+    const size_t duringBatch = g_hideDeriveRuns;
+    m.endHideDeriveBatch();
+
+    assert(armedAtOpen,
+           "fixture: nothing is hidden, so deferral must be armed");
+    assert(armedAfterFlush,
+           "the flush disarmed deferral while the batch is still open — "
+           ~ "every remaining commit in it derives the whole mesh again");
+    assert(duringBatch == 0,
+           "a commit after the flush derived eagerly — the deferral is gone");
+    assert(g_hideDeriveRuns == 1, "the batch close must still derive once");
+}
+
+// --- was in the body of `struct Mesh`: 1361 -- addFace derives ONCE per face (reads `anyHideBitSet`)
+unittest { // task 1361 — addFace derives ONCE per face, WHILE something is hidden
+    import std.conv : to;
+
+    // 1333 collapsed `rebuildEdges`' per-corner commits; this is the same
+    // move inside `addFace`, and it is what the bevel / inset / thicken
+    // family pays, because those append geometry through `addFace` rather
+    // than through `rebuildEdges` (thicken calls `rebuildEdges` zero
+    // times, which is why 1333 bought it exactly nothing).
+    //
+    // The COUNT is the whole test. There is no result-only assertion that
+    // can see this change: the per-corner derives and the tail derive
+    // compute the SAME planes (that is the premise), so with the collapse
+    // reverted every byte of mesh state is identical and only the number
+    // of full-mesh scans differs. The frozen HTTP oracle
+    // (tests/test_hide_bevel_selection_product.d) is inert here for a
+    // second, independent reason 1333 already measured: with geometry
+    // hidden `deferSafe` is false, so a later commit derives eagerly and
+    // covers for a missing one. Hence: a counter, not an oracle.
+    //
+    //   6---0---1---2      f0 = [0,1,4,3]  HIDDEN
+    //   |NEW|f0 |f1 |      f1 = [1,2,5,4]
+    //   7---3---4---5      NEW = [6,0,3,7], appended by addFace below
+    //
+    // NOT a cube and not a lone quad: the appended face must INSERT edges
+    // (a face whose edges all pre-exist never reached `addEdge`'s commit
+    // in the first place, so it would measure 1 either way and the test
+    // would be vacuous). [6,0,3,7] shares (0,3) with f0 and inserts the
+    // other three.
+    Mesh m;
+    m.addVertex(Vec3( 0, 0, 0));   // 0
+    m.addVertex(Vec3( 1, 0, 0));   // 1
+    m.addVertex(Vec3( 2, 0, 0));   // 2
+    m.addVertex(Vec3( 0, 0, 1));   // 3
+    m.addVertex(Vec3( 1, 0, 1));   // 4
+    m.addVertex(Vec3( 2, 0, 1));   // 5
+    m.addFace([0u, 1u, 4u, 3u]);   // f0
+    m.addFace([1u, 2u, 5u, 4u]);   // f1
+    m.buildLoops();
+    m.syncSelection();
+
+    m.setFaceHidden(0, true);
+    assert(m.isVertexHidden(0) && m.isVertexHidden(3),
+           "fixture: v0/v3 are private to f0 and must derive hidden");
+    assert(m.anyHideBitSet(),
+           "fixture: with nothing hidden 1330's deferral would already cover "
+           ~ "this and the measurement would mean nothing");
+
+    m.addVertex(Vec3(-1, 0, 0));   // 6
+    m.addVertex(Vec3(-1, 0, 1));   // 7
+    m.syncSelection();             // vertexMarks must cover 6/7 before the derive
+
+    const size_t edgesBefore = m.edges.length;
+    g_hideDeriveRuns = 0;
+    m.addFace([6u, 0u, 3u, 7u]);
+    const size_t runs = g_hideDeriveRuns;
+
+    assert(m.edges.length == edgesBefore + 3,
+           "fixture is not exercising the corner commits: the appended face "
+           ~ "inserted " ~ (m.edges.length - edgesBefore).to!string
+           ~ " edges, not 3 — with zero inserts `addEdge` never committed "
+           ~ "either and the count below would pass vacuously");
+    assert(runs == 1,
+           "addFace derived " ~ runs.to!string ~ " times: it must commit ONCE "
+           ~ "for the face plus all its corners, not once per corner (task "
+           ~ "1361). Restore the `addEdge` loop and this reads 4.");
+
+    // Second discriminator, for the OTHER direction — a future edit that
+    // removes the TAIL commit instead of the corner ones. The appended
+    // face is visible and incident on v0/v3, so both must flip back OUT of
+    // hidden right here; without any commit at all they stay stale and
+    // this compare reddens while the count above stays happily at 0.
+    assert(!m.isVertexHidden(0) && !m.isVertexHidden(3),
+           "v0/v3 were left hidden after a VISIBLE face was appended to "
+           ~ "them — addFace's tail commit did not derive");
+    auto vAfter = m.vertexMarks.dup;
+    auto eAfter = m.edgeMarks.dup;
+    auto vOrder = m.vertexSelectionOrder.dup;
+    auto eOrder = m.edgeSelectionOrder.dup;
+    m.refreshHiddenDerived();
+    assert(m.vertexMarks == vAfter, "vertex hide plane was stale after addFace");
+    assert(m.edgeMarks   == eAfter, "edge hide plane was stale after addFace");
+    assert(m.vertexSelectionOrder == vOrder && m.edgeSelectionOrder == eOrder,
+           "a selection-order stamp was left behind by the collapsed commit");
+}
+
+// --- was in the body of `struct Mesh`: T-S1 -- Hide rides topology edits: family header, the private `t_s1_*` fixtures, six cells
+// === T-S1 — Hide rides topology edits (doc/hide_geometry_plan.md §6 S1,
+// §7) ======================================================================
+//
+// Fixture: a 2×2 grid of 4 coplanar quads at four distinct centroids —
+//
+//   v6--v7--v8        f2 = [3,4,7,6]  centroid (0.5, 1.5, 0)
+//   |f2 |f3 |          f3 = [4,5,8,7]  centroid (1.5, 1.5, 0)
+//   v3--v4--v5        f0 = [0,1,4,3]  centroid (0.5, 0.5, 0)
+//   |f0 |f1 |          f1 = [1,2,5,4]  centroid (1.5, 0.5, 0)
+//   v0--v1--v2
+//
+// Every row: hide f3 (its own vertices/edges are never touched by the op
+// under test — verified per-op below — so its centroid stays exactly
+// (1.5,1.5,0) after the op), run a topology op that removes/reshapes
+// something else, then find the survivor BY CENTROID (not by index) and
+// assert IT — and only it — is hidden. A missing carry-through either
+// drops the bit (reads not-hidden at the right centroid) or plants it on
+// a neighbour (a DIFFERENT face reads hidden) — both are caught, because
+// the assertion checks both "the right face is hidden" AND "no other
+// face is."
+//
+// Every row targets something OTHER than the highest index (mask.d/
+// op-specific — see each case) — the HARD REQUIREMENT this task was
+// briefed with: "a highest-index delete cannot tell truncation from
+// compaction" (a last-element removal needs no shift, so truncating the
+// marks array from the tail would coincidentally read correct).
+version (unittest) {
+private static Vec3 t_s1_centroid(ref Mesh m, size_t fi) {
+    Vec3 c = Vec3(0, 0, 0);
+    auto f = m.faces[fi];
+    foreach (vi; f) c = c + m.vertices[vi];
+    return Vec3(c.x / f.length, c.y / f.length, c.z / f.length);
+}
+private static size_t t_s1_findByCentroid(ref Mesh m, Vec3 target) {
+    foreach (fi; 0 .. m.faces.length)
+        if ((t_s1_centroid(m, fi) - target).length < 1e-4) return fi;
+    assert(false, "T-S1 fixture broke: no face survived at the expected centroid");
+}
+private static void t_s1_assertOnlyThatSurvivorHidden(ref Mesh m, Vec3 targetCentroid,
+                                                       string label) {
+    immutable size_t survivor = t_s1_findByCentroid(m, targetCentroid);
+    assert(m.isFaceHidden(survivor),
+        label ~ ": the face at f3's original centroid must still be hidden");
+    foreach (fi; 0 .. m.faces.length)
+        if (fi != survivor)
+            assert(!m.isFaceHidden(fi),
+                label ~ ": no OTHER face may have picked up the bit");
+}
+private static Mesh t_s1_grid() {
+    Vec3[] verts = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 0, 0),
+        Vec3(0, 1, 0), Vec3(1, 1, 0), Vec3(2, 1, 0),
+        Vec3(0, 2, 0), Vec3(1, 2, 0), Vec3(2, 2, 0),
+    ];
+    uint[][] faceList = [
+        [0, 1, 4, 3],   // f0, centroid (0.5, 0.5, 0)
+        [1, 2, 5, 4],   // f1, centroid (1.5, 0.5, 0)
+        [3, 4, 7, 6],   // f2, centroid (0.5, 1.5, 0)
+        [4, 5, 8, 7],   // f3, centroid (1.5, 1.5, 0) — the one we hide
+    ];
+    return buildRawMesh(verts, faceList);
+}
+private enum Vec3 t_s1_f3Centroid = Vec3(1.5f, 1.5f, 0);
+}
+
+unittest { // T-S1 (delete) — deleteFacesByMask, mesh.d's own compaction.
+    // Deletes f0 (index 0 — NOT the highest). Survivors [f1,f2,f3] shift
+    // down one slot each; f3 lands at NEW index 2, not its original 3.
+    auto m = t_s1_grid();
+    m.setFaceHidden(3, true);
+    m.selectFace(1);   // survivor, distinct from the hidden f3. NOTE
+                        // (code review NIT): this pins deleteFacesByMask's
+                        // OBSERVABLE contract ("Select does not survive a
+                        // delete"), but is NOT the discriminator for a
+                        // keepMask regression at its own
+                        // `setFaceMarksFrom(keptWord, ~Marks.Select)` call
+                        // — the very next line in deleteFacesByMask is an
+                        // unconditional clearFaceSelectionResize(), which
+                        // would mask a slip to an all-ones keepMask here
+                        // too (verified: break-testing that call site's
+                        // mask alone left this assertion green). The
+                        // actual discriminator for that mask argument is
+                        // setFaceMarksFrom's OWN direct unittest, next to
+                        // its definition above.
+    assert(m.isFaceSelected(1));
+    assert(m.faces.length == 4);
+    bool[] mask = new bool[](4);
+    mask[0] = true;
+    immutable size_t removed = m.deleteFacesByMask(mask);
+    assert(removed == 1);
+    assert(m.faces.length == 3, "T-S1 delete: one face removed");
+    immutable size_t f1New = t_s1_findByCentroid(m, Vec3(1.5f, 0.5f, 0));
+    assert(!m.isFaceSelected(f1New),
+        "T-S1 delete: Select must NOT survive the compaction");
+    t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 delete");
+}
+
+unittest { // T-S1 (dissolve) — dissolveVerticesByMask. Dissolving v0 AND
+    // v1 collapses f0=[0,1,4,3] below 3 corners (DROPPED); f1 reshapes to
+    // a triangle but survives. f3 never references v0/v1 — untouched.
+    auto m = t_s1_grid();
+    m.setFaceHidden(3, true);
+    bool[] mask = new bool[](m.vertices.length);
+    mask[0] = true;
+    mask[1] = true;
+    immutable size_t dissolved = m.dissolveVerticesByMask(mask);
+    assert(dissolved == 2);
+    assert(m.faces.length == 3, "T-S1 dissolve: f0 degenerated and was dropped");
+    t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 dissolve");
+}
+
+
+unittest { // T-S1 (removeEdges) — removeEdgesByMask, the MERGED-POLYGON
+    // path (§4.2's newPolyWord — a distinct code shape from the plain
+    // keptWord compaction the other rows exercise). Dissolving the
+    // f0/f1 shared edge (1,4) merges them into one hexagon, appended at
+    // the TAIL; f2, f3 are kept faces, shifting down two slots. f3 never
+    // references vertex 1 or the (1,4) edge — untouched.
+    auto m = t_s1_grid();
+    m.setFaceHidden(3, true);
+    const uint e14 = m.edgeIndex(1, 4);
+    bool[] emask = new bool[](m.edges.length);
+    emask[e14] = true;
+    immutable size_t n = m.removeEdgesByMask(emask);
+    assert(n == 1);
+    assert(m.faces.length == 3, "T-S1 removeEdges: f0+f1 merged into one polygon");
+    t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 removeEdges");
+}
+
+unittest { // T-S1 (weld) — weldVertexPairs -> applyVertexRemapAndRebuild.
+    // Welding v0 into v1 AND v3 into v4 (both adjacent-corner pairs of
+    // f0=[0,1,4,3]) collapses f0 to 2 distinct corners — DROPPED. f2
+    // references v3, so it reshapes to a triangle but survives. f3
+    // references v4 (kept, stays in place) but not v3 or v0 — untouched.
+    auto m = t_s1_grid();
+    m.setFaceHidden(3, true);
+    immutable size_t welded = m.weldVertexPairs([[1u, 0u], [4u, 3u]]);
+    assert(welded == 2);
+    assert(m.faces.length == 3, "T-S1 weld: f0 collapsed below 3 corners and was dropped");
+    t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 weld");
+}
+
+unittest { // P1.0b.3c whole-field deep detachment and refusal seams.
+    Mesh live;
+    live.addVertex(Vec3(1, 2, 3));
+    live.addVertex(Vec3(4, 5, 6));
+    live.faces._store = [[0u, 1u, 0u]];
+    live.vertexMarks = [1u, 2u];
+    live.edgeIndexMap[7UL] = 3;
+    live.wireEdgeKeys[edgeKey(0, 1)] = true;
+    MeshMap map; map.name = "m"; map.data = [1.0f, 2.0f];
+    live.meshMaps = [map];
+    auto copy = detachedPreparedMesh(live);
+    static foreach (i; 0 .. Mesh.tupleof.length) {{
+        alias F = typeof(live.tupleof[i]);
+        static if (isDynamicArray!F) {
+            if (live.tupleof[i].length)
+                assert(live.tupleof[i].ptr !is copy.tupleof[i].ptr,
+                       "every direct Mesh slice must detach");
+        }
+    }}
+    assert(live.faces[0].ptr !is copy.faces[0].ptr);
+    assert(live.meshMaps[0].data.ptr !is copy.meshMaps[0].data.ptr);
+    copy.vertices.ptr[0] = Vec3(9, 9, 9);
+    copy.faces[0][0] = 1;
+    copy.meshMaps[0].data[0] = 9;
+    copy.edgeIndexMap[7UL] = 9;
+    copy.wireEdgeKeys.remove(edgeKey(0, 1));
+    assert(live.vertices.ptr[0] == Vec3(1, 2, 3));
+    assert(live.faces[0][0] == 0 && live.meshMaps[0].data[0] == 1);
+    assert(live.edgeIndexMap[7UL] == 3);
+    assert((edgeKey(0, 1) in live.wireEdgeKeys) !is null,
+           "authored-wire AA must detach with the prepared mesh");
+
+    Mesh unsafe;
+    unsafe.noteChange(MeshEditScope.Position);
+    assert(!canBeginPreparedMesh(unsafe));
+    unsafe.undeliveredChanges_ = 0;
+    unsafe.undeliveredSelDomains_ = 0;
+    unsafe.cornerRewriteArmed_ = true;
+    assert(!canBeginPreparedMesh(unsafe));
+    unsafe.cornerRewriteArmed_ = false;
+    unsafe.pendingCornerProvenance_ = CornerProvenance.unchanged();
+    assert(!canBeginPreparedMesh(unsafe));
+
+    Mesh queued;
+    g_deliveryPendingMeshes ~= &queued;
+    assert(!canBeginPreparedMesh(queued));
+    g_deliveryPendingMeshes = null;
+    g_hideDerivePendingMeshes ~= &queued;
+    assert(!canBeginPreparedMesh(queued));
+    g_hideDerivePendingMeshes = null;
+}
+
+unittest { // Private frame bookkeeping across a rejected nested invocation.
+    Mesh m = makeCube();
+    m.syncSelection();
+    MeshEditTracker tracker;
+    m.beginEditBatch(&tracker, MeshEditScope.Position);
+    scope(exit) if (currentBatchFrame(&m) !is null) m.endEditBatch();
+    m.addVertex(Vec3(3, 4, 5));
+    auto saved = *currentBatchFrame(&m);
+    const leaks = changeBus.batchLeaks;
+    {
+        auto invocation = MeshInvocation(m);
+        bool refused;
+        try { m.endEditBatch(); } catch (Exception e) { refused = true; }
+        // On a guard mutation, disarm before asserting so an expired frame
+        // cannot replace this named RED with a destructor Error/crash.
+        if (!refused) invocation.subject_ = null;
+        assert(refused, "invocation must refuse closing its caller-owned frame");
+        invocation.release();
+    }
+    try {
+        auto invocation = MeshInvocation(m);
+        m.beginEditBatch(null, MeshEditScope.Geometry); // rejected legacy nested frame
+        auto inner = MeshEditBatch.unrecorded(m, MeshEditScope.Geometry | MeshEditScope.Marks);
+        m.faceMarks[0] |= Mesh.Marks.Hide;
+        m.refreshHiddenDerived();
+        m.addVertex(Vec3(6, 7, 8));
+        throw new Exception("rejected nested invocation");
+    } catch (Exception e) {}
+    auto frame = currentBatchFrame(&m);
+    assert(frame !is null && frame.m is &m && frame.rec is &tracker,
+        "invocation rollback must preserve original frame owner");
+    assert(frame.depth == saved.depth && frame.invocationFloor == saved.invocationFloor,
+        "invocation rollback must restore caller depth and lifetime protection");
+    assert(frame.accum == saved.accum, "invocation rollback must restore frame flags");
+    assert(frame.errored == saved.errored, "invocation rollback must restore frame error latch");
+    assert(frame.deferSafe == saved.deferSafe, "invocation rollback must restore frame derive latch");
+    assert(changeBus.batchLeaks > leaks, "rollback must preserve truthful diagnostic leak counter");
+    auto delta = m.endEditBatch();
+    assert(delta.log.length == 1 && delta.log[0].pos == [Vec3(3, 4, 5)],
+        "nested exception must preserve accepted recorder prefix");
+}

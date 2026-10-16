@@ -1,11 +1,11 @@
 module commands.mesh.copy_;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import geometry_clipboard : geometryClipboard, GeometryClip;
+import vibe3d.mesh.ops.geometry_clipboard : geometryClipboard, GeometryClip;
 
 /// Snapshot the current selection into the global geometry clipboard: the
 /// selected FACES in Polygons mode, the selected VERTICES in Vertices mode.
@@ -50,7 +50,7 @@ class MeshCopy : Command, Operator {
     override CmdFlags cmdFlags() const { return CmdFlags.None; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         // Empty selection => the whole visible mesh, in POLYGONS mode

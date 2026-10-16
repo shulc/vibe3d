@@ -45,9 +45,9 @@ import std.algorithm : sort;
 import std.conv      : to;
 import std.format    : format;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
-import mesh_ops.cleanup;
+import vibe3d.mesh.ops.mesh_ops.cleanup;
 
 // TASK 1903 Stage E1 — `unifyFaces` is a free function over
 // `ref MeshEditBatch` now, so it cannot be called on a bare `Mesh`. UNRECORDED

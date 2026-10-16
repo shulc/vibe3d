@@ -2,7 +2,7 @@ module prepared_smooth_shift_activation_source_cells;
 
 import prepared_smooth_shift_activation;
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.deform.smooth_shift_tool : SmoothShiftTool,
     PreparedSmoothShiftActivationImage;
 
@@ -10,7 +10,7 @@ unittest {
     import command_history : CommandHistory;
     import vibe3d.editing.contracts.editmode : EditMode;
     import math : Vec3, cross;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
     import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind;

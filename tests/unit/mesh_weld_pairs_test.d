@@ -28,7 +28,7 @@
 // isolation.
 module tests.unit.mesh_weld_pairs_test;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
 import tests.unit.mesh_by_value_gate;
 

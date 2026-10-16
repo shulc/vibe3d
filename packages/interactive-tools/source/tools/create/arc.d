@@ -1,11 +1,11 @@
 module tools.create.arc;
 import display_state : DrawPlan;
 
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import bindbc.sdl;
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
@@ -13,13 +13,13 @@ import vibe3d.editing.params.params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.create.create_common : primitivePlacementFrame, WorkplaneFrame, transformPoint;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 
 import std.math : sin, cos, PI;
 

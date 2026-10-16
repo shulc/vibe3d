@@ -23,10 +23,10 @@ import std.format : format;
 import std.json   : parseJSON, JSONValue;
 import std.math   : fabs;
 
-import mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
-import view       : View;
+import vibe3d.mesh.core.mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
+import vibe3d.viewport.camera.view       : View;
 import vibe3d.editing.contracts.editmode   : EditMode;
-import snapshot   : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot   : MeshSnapshot;
 import commands.mesh.uv_map_util;
 import std.net.curl : post, get;
 

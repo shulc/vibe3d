@@ -63,11 +63,11 @@ module tests.unit.selection_order_scan_test;
 
 import std.format : format;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math     : Vec3;
-import view;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
+import vibe3d.mesh.ops.mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
 import command         : Command;
 import command_history : CommandHistory;
 

@@ -89,10 +89,10 @@ import command_history : RecordMode;
 // below); the rest are the free functions and __gshared state the moved
 // bodies call by their own names.
 import input_frame_state    : InputFrameState, DragMode;
-import eventlog             : EventLogger, setOverrideMouse, noteEventStamp;
-import toolpipe.packets     : SubjectPacket, GesturePacket, GestureTrack;
-import operator             : VectorStack;
-import shortcuts            : canonFromEvent, resolveBinding, BindingKind;
+import vibe3d.platform.input.eventlog             : EventLogger, setOverrideMouse, noteEventStamp;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets     : SubjectPacket, GesturePacket, GestureTrack;
+import vibe3d.editing.pipeline.contracts.operator             : VectorStack;
+import vibe3d.platform.input.shortcuts            : canonFromEvent, resolveBinding, BindingKind;
 import vibe3d.editing.contracts.seltype              : SelType, currentSelType, selTypeToken,
                               viewportPickType;
 import vibe3d.editing.contracts.editmode             : EditMode;
@@ -117,9 +117,9 @@ import vibe3d.util.log.log                  : logInfo;
 // geometry half; the three `ai.*` modules are the press handler's
 // interaction-log capture. None of them imports this module back.
 import ImGui = d_imgui;
-import view                 : View;
-import snapshot             : SelectionSnapshot;
-import document             : primaryModelSpace;
+import vibe3d.viewport.camera.view                 : View;
+import vibe3d.mesh.snapshot.snapshot             : SelectionSnapshot;
+import vibe3d.documents.model.document             : primaryModelSpace;
 import symmetry_pick        : symmetricSelectVertex, symmetricSelectEdge,
                               symmetricSelectFace;
 import commands.mesh.selection_edit : MeshSelectionEdit;
@@ -145,7 +145,7 @@ import imgui_event_gate     : feedImGui, keyBelongsToEditor,
 import item_pick            : ItemHit;
 import mesh_visibility      : VisibilityProbe, regionVisibilityProbe;
 import buttonset            : Action;
-import held_gesture_buttons : g_heldGestureButtons;
+import vibe3d.platform.input.held_gesture_buttons : g_heldGestureButtons;
 import snap_render : clearLastSnap;
 
 /// The input-router cluster (task 0781). Constructed once in main() after
@@ -393,7 +393,7 @@ struct InputRouter {
     bool              pendingSelOpen = false;
 
     float recordingLens() {
-        import view : View, ProjKind;
+        import vibe3d.viewport.camera.view : View, ProjKind;
         auto cam = app.vpm.views[app.vpm.overlayOwnerId()].camera;
         return cam.projKind == ProjKind.Ortho ? View.defaultFovY : cam.fovY;
     }
@@ -405,7 +405,7 @@ struct InputRouter {
     // camera_intrinsics reaches SIZE_CHANGED metadata without claiming a
     // physical window resize; SDL-free dimensions have window_metrics tests.
     void handleWindowEvent(ref SDL_WindowEvent we) {
-        import eventlog : setReplayCurrentViewport;
+        import vibe3d.platform.input.eventlog : setReplayCurrentViewport;
         import handles.gl_util : initThickLineProgram;
 
         // A release the window never sees must not lock the keyboard.
@@ -504,7 +504,7 @@ struct InputRouter {
     // zone / mode / armed-tool slots accept the current context, and a row with
     // no slots filled — every legacy row — matches everywhere.
     private int keyBinding(ref const SDL_KeyboardEvent kev) {
-        import input_context : currentInputContext;
+        import vibe3d.platform.input.input_context : currentInputContext;
         string canon = canonFromEvent(kev.keysym.sym, cast(SDL_Keymod)kev.keysym.mod);
         if (canon.length == 0) return -1;
         auto ictx = currentInputContext(
@@ -648,7 +648,7 @@ struct InputRouter {
             // commandIdByCanon, editModeByCanon — none of them re-check it
             // either).
             {
-                import view : NumpadViewKey, nextViewForKey;
+                import vibe3d.viewport.camera.view : NumpadViewKey, nextViewForKey;
                 import viewport : applyCellViewPreset;
                 bool handled = true;
                 NumpadViewKey nvKey;
@@ -720,7 +720,7 @@ struct InputRouter {
     }
 
     void escapeLadder() {
-        import input_context : EscapeRung, escapeRungFor;
+        import vibe3d.platform.input.input_context : EscapeRung, escapeRungFor;
 
         app.mesh.syncSelection();
         const cur = currentSelType(app.selTypeOrder);
@@ -984,7 +984,7 @@ struct InputRouter {
         // handle grab isn't treated as a deselect. Skip alt/ctrl chords (camera).
         if (app.activeTool is null && btn.button == SDL_BUTTON_LEFT
             && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL))) {
-            import toolpipe.packets : FalloffPacket;
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
             SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, btn.x, btn.y, true, gest);
             FalloffPacket fp;
             if (auto p = vts.get!FalloffPacket()) fp = *p;
@@ -2132,7 +2132,7 @@ void applyWindowMetrics(ref Layout layout, ViewportManager vpm, int w, int h) {
 private void closeSelectionUnderMirror(M)(M* m, Viewport vp, EditMode k) {
     import symmetry : mirrorElement;
     import symmetry_pick : captureLiveSymmetry;
-    import toolpipe.packets : SymmetryPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
     import toolpipe.stages.symmetry : SymmetryStage;
     // The same packet source as the click helpers (`symmetry_pick`).
     SymmetryPacket pkt;

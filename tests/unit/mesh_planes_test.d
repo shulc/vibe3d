@@ -24,8 +24,8 @@
 // new per-face field to be classified one way or the other).
 module tests.unit.mesh_planes_test;
 
-import mesh;
-import mesh_planes;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.core.mesh_planes;
 import math : Vec3;
 import std.format : format;
 

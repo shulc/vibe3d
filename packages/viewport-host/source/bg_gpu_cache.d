@@ -1,7 +1,7 @@
 module bg_gpu_cache;
 
-import document   : Document, Layer, kindInfo;
-import mesh       : Mesh;
+import vibe3d.documents.model.document   : Document, Layer, kindInfo;
+import vibe3d.mesh.core.mesh       : Mesh;
 import vibe3d.mesh.change.mesh_dirty : MeshDirtyKey, g_bgGpuUploads, g_displayEpochs;
 import mesh_gpu   : GpuMesh;
 

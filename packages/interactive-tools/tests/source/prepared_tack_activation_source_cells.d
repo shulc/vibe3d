@@ -2,12 +2,12 @@ module prepared_tack_activation_source_cells;
 
 import prepared_tack_activation;
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.edit.tack : TackTool, PreparedTackActivationImage;
 
 unittest {
     import vibe3d.editing.contracts.editmode : EditMode;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuCreateOwner;
     import prepared_record_context : PreparedRecordContext;

@@ -22,7 +22,7 @@ module tools.transform.item_xform_kernels;
 
 import math : Vec3, matMul4, matrixFromEulerZYX, eulerZYXFromMatrix,
               applyAffine, scaleAlongBasis, identityMatrix;
-import document : Layer, ItemXform;
+import vibe3d.documents.model.document : Layer, ItemXform;
 
 /// Degenerate-scale floor + ceiling (two-layer guard, R7 — this module is the
 /// KERNEL half; the authored-Param half is `layer_params.d`). A hard cap so a
@@ -34,7 +34,7 @@ import document : Layer, ItemXform;
 /// re-exported here so the two enforcement layers cannot drift apart; see the
 /// rationale on the declaration. The re-export keeps every existing reader of
 /// `tools.transform.item_xform_kernels.MIN_ITEM_SCALE_MAG` resolving.
-public import document : MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
+public import vibe3d.documents.model.document : MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
 
 /// `base * factor`, guarded: a non-finite FACTOR is rejected outright (the
 /// baseline component is returned untouched — never propagate a NaN/Inf

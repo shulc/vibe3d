@@ -8,7 +8,7 @@ import std.random : uniform;
 
 import io.native : readV3d, writeV3d;
 import math : Vec3;
-import mesh : MapDomain, Mesh;
+import vibe3d.mesh.core.mesh : MapDomain, Mesh;
 
 private bool hasWire(in Mesh m, uint a, uint b) {
     foreach (ref e; m.edges)
@@ -181,7 +181,7 @@ unittest { // byte stability: wireEdges order is a pure sorted vertex-pair order
 }
 
 unittest { // size floor: an ordinary face-built cube emits no sparse wire key
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     auto path = tempV3d("no_wire_key");
     scope(exit) if (exists(path)) remove(path);
     Mesh cube = makeCube(); // not a pen mesh: every edge comes only from faces

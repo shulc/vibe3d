@@ -7,10 +7,10 @@ import std.path : extension;
 import std.uni  : toLower;
 import nfde;
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import io.scene_ir : flattenDocument;
 import io.lwo_export : exportLwoDocument;
 import io.scene_export : exportViaAssimp, exportDocumentViaAssimp;
@@ -59,7 +59,7 @@ unittest {
     import io.doc_state : clearCurrentDoc;
     import io.file_dialog : PickOutcome, pickSavePath, selectBrowserBackendForTest,
                             setDeliverSavedFileForTest;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     const root = browserSaveRoot("r10b");
     const priorTestMode = g_testMode;
@@ -112,7 +112,7 @@ unittest {
     import io.doc_state : clearCurrentDoc;
     import io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
     import io.browser_pick_resume : setWorkRootForTest;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     const root = browserSaveRoot("r10c");
     const blocked = buildPath(root, "blocked");
@@ -148,7 +148,7 @@ unittest {
     import std.path : buildPath;
     import io.doc_state : clearCurrentDoc, docDirty, syncDocRevision;
     import io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     const root = browserSaveRoot("r9");
     scope (exit) {
@@ -210,7 +210,7 @@ unittest {
     import std.path : buildPath, extension;
     import io.doc_state : clearCurrentDoc;
     import io.file_dialog : setDeliverSavedFileForTest;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
 
     const root = browserSaveRoot("r9b");
     scope (exit) {
@@ -266,9 +266,9 @@ unittest {
     import std.path   : buildPath;
     import std.format : format;
     import std.random : uniform;
-    import mesh        : makeCube;
-    import document     : Layer, ItemKind;
-    import view         : View;
+    import vibe3d.mesh.core.mesh        : makeCube;
+    import vibe3d.documents.model.document     : Layer, ItemKind;
+    import vibe3d.viewport.camera.view         : View;
     import io.doc_state : syncDocRevision, docDirty, clearCurrentDoc,
                           requestDocRebaseline;
 

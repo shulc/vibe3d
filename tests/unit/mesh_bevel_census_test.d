@@ -67,8 +67,8 @@ module tests.unit.mesh_bevel_census_test;
 //     and the specific corner-hub-plus-free-end shape that crashed.
 
 import subpatch_factories : subdivideCube;
-import mesh;
-import mesh_ops.edge_bevel;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.edge_bevel;
 import math : Vec3;
 
 version (unittest):

@@ -6,8 +6,8 @@ module commands.ui.copilot_panel;
 version (WithAI):
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
 

@@ -24,7 +24,7 @@ import tests.unit.census_symbols : blankNonCode;
 import tool_activation_ownership : PipeArmScope;
 import toolpipe.attr_cache : NodeAttrs, PipelineAttrCache, captureDroppedNodes,
     captureNodeAttrs, kToolNode, recallNodeAttrs;
-import toolpipe.packets : FalloffShape, FalloffType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffShape, FalloffType;
 import toolpipe.pipeline : Pipeline;
 import toolpipe.stage : Stage;
 import toolpipe.stages.actcenter : ActionCenterStage;

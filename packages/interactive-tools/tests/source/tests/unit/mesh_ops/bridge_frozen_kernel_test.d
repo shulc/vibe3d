@@ -1,5 +1,5 @@
 module tests.unit.mesh_ops.bridge_frozen_kernel_test;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import tools.edit.bridge_tool : BridgeParams, BridgeMode, applyBridgeOp, resolveBridgeSelection;
 import vibe3d.editing.contracts.editmode : EditMode;

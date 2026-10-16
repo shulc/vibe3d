@@ -26,14 +26,14 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT — when scoring a
 // mutation that should redden two cells for two reasons, stub the earlier one.
 module tests.unit.flip_and_spin_delta_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.conv   : to;
 import std.format : format;
 
-import mesh;
-import mesh_edit_delta;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.edit_log.mesh_edit_delta;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import command;
 import command_history : CommandHistory;

@@ -1,8 +1,8 @@
 module registry;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import view;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import shader;
 import tool;
@@ -661,7 +661,7 @@ unittest {
 // derived from it.
 // ---------------------------------------------------------------------------
 version (unittest) {
-    import operator : Operator, VectorStack, Task, PacketKind;
+    import vibe3d.editing.pipeline.contracts.operator : Operator, VectorStack, Task, PacketKind;
 
     /// A mesh operator — the shape `Command.needsEditTarget()` answers TRUE
     /// for by default, with no override of its own anywhere.

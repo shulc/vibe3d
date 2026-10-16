@@ -21,7 +21,7 @@ import std.math : atan2, acos, PI, floor;
 
 import math : Vec3;
 import display_state : ReflectionKind, ReflectionSource;
-import io.image_decode : decodePng16;
+import vibe3d.documents.image_codec.io.image_decode : decodePng16;
 
 /// The one linear scale of every shading image: stored = value / 16
 /// (`tools/convert_shading_images.py`, `MANIFEST.tsv` column `linear_scale`).

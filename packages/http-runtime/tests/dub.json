@@ -154,8 +154,8 @@
     "vibe3d:edit-contracts": {
       "path": "../../.."
     },
-    "vibe3d-input-events": {
-      "path": "../../input-events"
+    "vibe3d:input-events": {
+      "path": "../../.."
     },
     "vibe3d-interaction-query": {
       "path": "../../interaction-query"
@@ -163,8 +163,8 @@
     "vibe3d:log": {
       "path": "../../.."
     },
-    "vibe3d-mesh": {
-      "path": "../../mesh"
+    "vibe3d:mesh": {
+      "path": "../../.."
     },
     "vibe3d:mesh-change": {
       "path": "../../.."
@@ -186,10 +186,10 @@
       "subConfigurations": {
         "vibe3d-application-core": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests",
-        "vibe3d-input-events": "isolated-tests",
+        "vibe3d:input-events": "isolated-tests",
         "vibe3d-interaction-query": "isolated-tests",
         "vibe3d:log": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
         "vibe3d:mesh-change": "isolated-tests",
         "vibe3d:param-schema": "isolated-tests",
         "vibe3d-pipe-evaluation": "isolated-tests",

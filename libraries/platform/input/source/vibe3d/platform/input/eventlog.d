@@ -1,0 +1,1148 @@
+module vibe3d.platform.input.eventlog;
+
+import bindbc.sdl;
+import std.exception : assumeUnique;
+import std.json;
+import std.stdio : File;
+
+// ---------------------------------------------------------------------------
+// SDL call wrappers — replaced by mocks in unittest builds
+// ---------------------------------------------------------------------------
+version(unittest) {
+    private __gshared uint function(int*, int*)  _mock_GetMouseState;
+    private __gshared ulong function()           _mock_PerfCounter;
+    private __gshared ulong function()           _mock_PerfFreq;
+    private __gshared void function(SDL_Keymod)  _mock_SetModState;
+    private __gshared SDL_Keymod function()      _mock_GetModState;
+    private __gshared int function(SDL_Event*)   _mock_PushEvent;
+    private __gshared ulong                      _externalCounterForTest;
+    private __gshared ulong                      _externalFreqForTest;
+    private __gshared SDL_Keymod                 _externalModForTest;
+}
+
+private uint _getMouseState(int* x, int* y) {
+    version(unittest) if (_mock_GetMouseState) return _mock_GetMouseState(x, y);
+    return SDL_GetMouseState(x, y);
+}
+private ulong _perfCounter() {
+    version(unittest) if (_mock_PerfCounter) return _mock_PerfCounter();
+    return SDL_GetPerformanceCounter();
+}
+private ulong _perfFreq() {
+    version(unittest) if (_mock_PerfFreq) return _mock_PerfFreq();
+    return SDL_GetPerformanceFrequency();
+}
+private void _setModState(SDL_Keymod mod) {
+    version(unittest) if (_mock_SetModState) { _mock_SetModState(mod); return; }
+    SDL_SetModState(mod);
+}
+private SDL_Keymod _getModState() {
+    version(unittest) if (_mock_GetModState) return _mock_GetModState();
+    return SDL_GetModState();
+}
+
+version(unittest) {
+    /// Cross-module clock/modifier controls for the real HttpServer unit rig.
+    void setEventPlayerClockForTest(ulong counter, ulong frequency) {
+        assert(frequency > 0);
+        _externalCounterForTest = counter;
+        _externalFreqForTest = frequency;
+        _mock_PerfCounter = () => _externalCounterForTest;
+        _mock_PerfFreq = () => _externalFreqForTest;
+    }
+
+    void setEventPlayerCounterForTest(ulong counter) {
+        assert(_mock_PerfCounter !is null && _mock_PerfFreq !is null);
+        _externalCounterForTest = counter;
+    }
+
+    void setEventPlayerModifierForTest(SDL_Keymod mod) {
+        _externalModForTest = mod;
+        _mock_GetModState = () => _externalModForTest;
+        _mock_SetModState = (SDL_Keymod next) { _externalModForTest = next; };
+    }
+
+    SDL_Keymod eventPlayerModifierForTest() {
+        assert(_mock_GetModState !is null);
+        return _externalModForTest;
+    }
+
+    void clearEventPlayerControlsForTest() {
+        _mock_PerfCounter = null;
+        _mock_PerfFreq = null;
+        _mock_GetModState = null;
+        _mock_SetModState = null;
+    }
+}
+private int _pushEvent(SDL_Event* e) {
+    version(unittest) if (_mock_PushEvent) return _mock_PushEvent(e);
+    return SDL_PushEvent(e);
+}
+
+// Immediate event sink — bypasses SDL_PushEvent during replay.
+//
+// SDL's X11 backend coalesces consecutive SDL_MOUSEMOTION events that
+// land in the same SDL_PollEvent batch (summing their xrel/yrel into
+// one merged event). For event playback this means most motion events
+// never reach the application's onMouseMotion handler; only the last
+// one in a batch survives. The cross-engine drag test relies on per-
+// motion granularity, so each EventPlayer may receive an explicit sink
+// that tick calls in lieu of SDL_PushEvent.
+//
+// When set, EventPlayer.tick passes each due event to its sink
+// instead of pushing to SDL's queue. The delegate should perform the
+// equivalent of one SDL_PollEvent iteration (ImGui filter + switch
+// case + handler dispatch).
+alias ImmediateEventSink = void delegate(SDL_Event*, bool windowFocused);
+
+// Mouse position source — overridden during event playback so that
+// SDL_GetMouseState()-based picking uses replayed coordinates.
+private int  g_mouseX, g_mouseY;
+private bool g_mouseOverride;
+
+void mouseOverride() {
+    g_mouseOverride = true;
+}
+
+/// Update the override-mouse position. The EventPlayer calls this as it
+/// dispatches motion events. handleMouseMotion in app.d also calls it so
+/// queryMouse() reports the position of the CURRENTLY-being-processed
+/// motion event (not the latest dispatched one) — needed for picking
+/// during select-drag, where intermediate cursor positions matter.
+void setOverrideMouse(int x, int y) {
+    g_mouseX        = x;
+    g_mouseY        = y;
+    g_mouseOverride = true;
+}
+
+/// Park the overridden pointer back at the position these globals hold at
+/// process start — (0, 0), which lies outside every viewport cell — WITHOUT
+/// touching the override flag.
+///
+/// Nothing ever cleared the replayed pointer, and that is deliberate WITHIN a
+/// test: parking it on a handle and leaving it there is how a test gets a
+/// hover cue into the frames it probes afterwards (see `hoverAt` in
+/// tests/test_gizmo_hover_highlight.d, whose comment states the property).
+/// The position outlives the test as well, though, and `run_test.d` reuses ONE
+/// `vibe3d --test` across a worker's whole slice — so the pointer the previous
+/// test walked away from keeps getting re-picked, every frame, against the next
+/// test's freshly reset scene. The next test's "pristine" baseline then quietly
+/// carries a hovered vertex (one extra GL_POINTS submission in the vertex-dot
+/// pass) or a hovered gizmo part (the handle repainted in the hover colour) —
+/// a whole hover the test never asked for and cannot see.
+///
+/// So the automation reset parks it (app.d's POST /api/reset handler). Not the
+/// UI's own file.new / scene.reset: for a human the pointer really is where it
+/// is, and highlighting what it lands on after a reset is correct.
+///
+/// The override FLAG is left alone on purpose. It says where the position
+/// comes from, not what it is; `--test` raises it once at startup and
+/// handleMouseMotion re-raises it on every real motion event.
+void parkOverrideMouse() {
+    g_mouseX = 0;
+    g_mouseY = 0;
+}
+
+void queryMouse(out int mx, out int my) {
+    if (g_mouseOverride) { mx = g_mouseX; my = g_mouseY; }
+    else _getMouseState(&mx, &my);
+}
+
+private __gshared uint g_eventStamp;
+
+void noteEventStamp(uint stamp) {
+    g_eventStamp = stamp;
+}
+
+uint queryEventStamp() {
+    return g_eventStamp;
+}
+
+// ---------------------------------------------------------------------------
+// Viewport metadata for layout-/aspect-independent event playback.
+//
+// At record time the logger emits a single VIEWPORT line up front; at replay
+// time the player remaps mouse coordinates from the recorded viewport into
+// the current one. The existing remap assumes identical fovY,
+// only ndc-x changes when aspect changes, and pixel→ndc→pixel round-trips
+// stay accurate.
+// ---------------------------------------------------------------------------
+
+struct ViewportMeta {
+    int   vpX, vpY, vpW, vpH;
+    float fovY;
+    bool  valid;
+}
+
+/// One parsed, replayable event. Kept outside EventPlayer so parsing can build
+/// an owned log without borrowing or mutating a player.
+struct EventLogEntry {
+    double timeMs;
+    SDL_Event event;
+    SDL_Keymod mod;
+    // Explicit replay metadata, not an SDL padding field. Old logs default to
+    // focused so adding the field preserves their release meaning (task 6208).
+    bool windowFocused = true;
+}
+
+/// Validated JSON-lines input. The entry backing store is immutable after the
+/// parser transfers its only mutable reference into this value.
+struct ParsedEventLog {
+    immutable(EventLogEntry)[] entries;
+    ViewportMeta viewport;
+    size_t skipped;
+    /// A `{"type":"PACE","mode":"frames"}` line: deliver one timestamp group
+    /// per frame instead of gating on wall-clock time (see EventPlayer.tick).
+    bool framePaced;
+}
+
+/// A rejected parse still carries its locally parsed metadata for diagnostics,
+/// but callers must not apply any of it unless accepted is true.
+struct EventLogParseResult {
+    ParsedEventLog log;
+    string error;
+
+    bool accepted() const pure nothrow @safe @nogc {
+        return error.length == 0;
+    }
+}
+
+private __gshared ViewportMeta g_replayCurrentViewport;
+
+/// Tell the EventPlayer what the runtime viewport looks like right now.
+/// Call from app.d whenever Layout.resize() runs (record-time observers
+/// don't need this — the recorded log carries its own viewport).
+// Refresh only the lens before consumption; rectangle/remap ownership stays
+// at the existing layout door. Unequal-lens remapping is a separate contract.
+void setReplayCurrentLens(float fovY) { g_replayCurrentViewport.fovY = fovY; }
+
+void setReplayCurrentViewport(int vpX, int vpY, int vpW, int vpH, float fovY) {
+    g_replayCurrentViewport = ViewportMeta(vpX, vpY, vpW, vpH, fovY, true);
+}
+
+/// Reset the current viewport (mainly for tests).
+void clearReplayCurrentViewport() {
+    g_replayCurrentViewport = ViewportMeta.init;
+}
+
+// ---------------------------------------------------------------------------
+// JSON helper — safe integer read from a JSONValue object
+// ---------------------------------------------------------------------------
+private long _jsonGet(JSONValue obj, string key, long def = 0) nothrow {
+    try { return obj[key].integer; } catch (Exception) { return def; }
+}
+
+// ---------------------------------------------------------------------------
+// EventLogger — serialises SDL events to a JSON Lines file (one object/line)
+// ---------------------------------------------------------------------------
+
+struct EventLogger {
+    File  file;
+    ulong startCounter;
+    ulong freq;
+    bool  active;
+
+    void open(string path) {
+        file         = File(path, "w");
+        startCounter = _perfCounter();
+        freq         = _perfFreq();
+        active       = true;
+        file.flush();
+    }
+
+    /// Write the viewport metadata line. Call once after open(), as soon as
+    /// the layout is known. Makes the log layout-/aspect-independent on replay.
+    void writeViewportMeta(int vpX, int vpY, int vpW, int vpH, float fovY) {
+        if (!active) return;
+        file.writefln(
+            `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":%.9g}`,
+            vpX, vpY, vpW, vpH, fovY);
+        file.flush();
+    }
+
+    void close() {
+        if (!active) return;
+        file.close();
+        active = false;
+    }
+
+    void log(ref const SDL_Event e, bool windowFocused = true) {
+        if (!active) return;
+        double t = cast(double)(_perfCounter() - startCounter)
+                 / cast(double)freq * 1000.0;
+        switch (e.type) {
+            case SDL_QUIT:
+                file.writefln(`{"t":%.3f,"type":"SDL_QUIT"}`, t);
+                break;
+            case SDL_KEYDOWN:
+                file.writefln(`{"t":%.3f,"type":"SDL_KEYDOWN","sym":%d,"scan":%d,"mod":%u,"repeat":%d,"ts":%u}`,
+                    t,
+                    e.key.keysym.sym,
+                    cast(int)e.key.keysym.scancode,
+                    cast(uint)e.key.keysym.mod,
+                    cast(int)e.key.repeat,
+                    e.key.timestamp);
+                break;
+            case SDL_KEYUP:
+                file.writefln(`{"t":%.3f,"type":"SDL_KEYUP","sym":%d,"scan":%d,"mod":%u,"repeat":%d,"ts":%u,"focus":%d}`,
+                    t,
+                    e.key.keysym.sym,
+                    cast(int)e.key.keysym.scancode,
+                    cast(uint)e.key.keysym.mod,
+                    cast(int)e.key.repeat,
+                    e.key.timestamp,
+                    windowFocused ? 1 : 0);
+                break;
+            case SDL_MOUSEBUTTONDOWN:
+            case SDL_MOUSEBUTTONUP:
+                file.writefln(`{"t":%.3f,"type":"%s","btn":%d,"x":%d,"y":%d,"clicks":%d,"mod":%u}`,
+                    t,
+                    e.type == SDL_MOUSEBUTTONDOWN ? "SDL_MOUSEBUTTONDOWN" : "SDL_MOUSEBUTTONUP",
+                    e.button.button, e.button.x, e.button.y,
+                    cast(int)e.button.clicks, cast(uint)SDL_GetModState());
+                break;
+            case SDL_MOUSEMOTION:
+                file.writefln(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":%u,"mod":%u}`,
+                    t, e.motion.x, e.motion.y,
+                    e.motion.xrel, e.motion.yrel, e.motion.state,
+                    cast(uint)SDL_GetModState());
+                break;
+            case SDL_MOUSEWHEEL:
+                file.writefln(`{"t":%.3f,"type":"SDL_MOUSEWHEEL","x":%d,"y":%d}`,
+                    t, e.wheel.x, e.wheel.y);
+                break;
+            case SDL_WINDOWEVENT:
+                if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
+                    file.writefln(`{"t":%.3f,"type":"SDL_WINDOWEVENT","sub":%d,"w":%d,"h":%d}`,
+                        t, cast(int)e.window.event,
+                        e.window.data1, e.window.data2);
+                else
+                    file.writefln(`{"t":%.3f,"type":"SDL_WINDOWEVENT","sub":%d}`,
+                        t, cast(int)e.window.event);
+                break;
+            case SDL_TEXTINPUT:
+                file.writefln(`{"t":%.3f,"type":"SDL_TEXTINPUT"}`, t);
+                break;
+            default:
+                file.writefln(`{"t":%.3f,"type":"SDL_EVENT","sdl_type":%u}`, t, e.type);
+                break;
+        }
+        file.flush();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EventPlayer — replays a recorded JSON Lines event log file
+// ---------------------------------------------------------------------------
+
+/// Parse a JSON Lines log without touching EventPlayer or SDL state. Invalid
+/// lines remain skippable, but a body with no playable events is rejected.
+EventLogParseResult parseEventLog(string data) {
+    import std.string : splitLines;
+
+    EventLogEntry[] entries;
+    ViewportMeta viewport;
+    size_t skipped;
+    bool framePaced;
+
+    foreach (raw; data.splitLines()) {
+        string line = cast(string)raw.idup;
+        while (line.length && (line[$-1] == '\r' || line[$-1] == '\n' || line[$-1] == ' '))
+            line = line[0..$-1];
+        if (line.length == 0) continue;
+
+        JSONValue obj;
+        try { obj = parseJSON(line); }
+        catch (JSONException) { ++skipped; continue; }
+
+        double t;
+        try {
+            if (obj["t"].type == JSONType.integer)       t = cast(double)obj["t"].integer;
+            else if (obj["t"].type == JSONType.uinteger) t = cast(double)obj["t"].uinteger;
+            else                                         t = obj["t"].floating;
+        } catch (Exception) { ++skipped; continue; }
+
+        string typeName;
+        try { typeName = obj["type"].str; }
+        catch (Exception) { ++skipped; continue; }
+
+        SDL_Event e;
+        immutable bool windowFocused = _jsonGet(obj, "focus", 1) != 0;
+        // OPTIONAL `ts` — the SDL timestamp the replayed event carries.
+        //
+        // It exists because `t` is a SCHEDULE and a timestamp is a
+        // MEASUREMENT, and one handler needs the second: the trackball's
+        // release momentum is the last step's arc divided by the interval
+        // between the last two motion events. `t` cannot answer that —
+        // playback dispatches every DUE event in one frame, so the interval
+        // a handler could measure for itself is a frame boundary, i.e. a
+        // property of how loaded the machine is. With `ts` absent all
+        // replayed events share the stamp 0, and the momentum rule's own
+        // guard ("two events sharing a timestamp leave no spin") applies —
+        // a replay of a log that never recorded when things happened
+        // reports, correctly, that it does not know.
+        //
+        // EventLogger writes it for keys so pie release timing replays from
+        // event time; older logs and other event kinds retain the zero default.
+        e.common.timestamp = cast(uint)_jsonGet(obj, "ts", 0);
+        switch (typeName) {
+            case "VIEWPORT":
+                viewport.vpX  = cast(int)_jsonGet(obj, "vpX");
+                viewport.vpY  = cast(int)_jsonGet(obj, "vpY");
+                viewport.vpW  = cast(int)_jsonGet(obj, "vpW");
+                viewport.vpH  = cast(int)_jsonGet(obj, "vpH");
+                try {
+                    const n=obj["fovY"];
+                    switch(n.type) {
+                        case JSONType.integer:viewport.fovY=cast(float)n.integer;break;
+                        case JSONType.uinteger:viewport.fovY=cast(float)n.uinteger;break;
+                        default:viewport.fovY=cast(float)n.floating;break;
+                    }
+                }
+                catch (Exception) { viewport.fovY = 0.7853982f; }
+                viewport.valid = true;
+                continue;
+            case "PACE":
+                try framePaced = obj["mode"].str == "frames";
+                catch (Exception) { ++skipped; }
+                continue;
+            case "SDL_QUIT":
+                e.type = SDL_QUIT;
+                break;
+            case "SDL_KEYDOWN", "SDL_KEYUP":
+                e.type = typeName == "SDL_KEYDOWN" ? SDL_KEYDOWN : SDL_KEYUP;
+                e.key.keysym.sym      = cast(SDL_Keycode)(_jsonGet(obj, "sym"));
+                e.key.keysym.scancode = cast(SDL_Scancode)(_jsonGet(obj, "scan"));
+                e.key.keysym.mod      = cast(SDL_Keymod)(_jsonGet(obj, "mod"));
+                e.key.repeat          = cast(ubyte)(_jsonGet(obj, "repeat"));
+                break;
+            case "SDL_MOUSEBUTTONDOWN", "SDL_MOUSEBUTTONUP":
+                e.type          = typeName == "SDL_MOUSEBUTTONDOWN"
+                                ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+                e.button.button = cast(ubyte)(_jsonGet(obj, "btn",    1));
+                e.button.x      = cast(int)  (_jsonGet(obj, "x"));
+                e.button.y      = cast(int)  (_jsonGet(obj, "y"));
+                e.button.clicks = cast(ubyte)(_jsonGet(obj, "clicks", 1));
+                e.button.state  = e.type == SDL_MOUSEBUTTONDOWN
+                                ? SDL_PRESSED : SDL_RELEASED;
+                entries ~= EventLogEntry(t, e,
+                    cast(SDL_Keymod)(_jsonGet(obj, "mod")), windowFocused);
+                continue;
+            case "SDL_MOUSEMOTION":
+                e.type         = SDL_MOUSEMOTION;
+                e.motion.x     = cast(int)(_jsonGet(obj, "x"));
+                e.motion.y     = cast(int)(_jsonGet(obj, "y"));
+                e.motion.xrel  = cast(int)(_jsonGet(obj, "xrel"));
+                e.motion.yrel  = cast(int)(_jsonGet(obj, "yrel"));
+                e.motion.state = cast(uint)(_jsonGet(obj, "state"));
+                entries ~= EventLogEntry(t, e,
+                    cast(SDL_Keymod)(_jsonGet(obj, "mod")), windowFocused);
+                continue;
+            case "SDL_MOUSEWHEEL":
+                e.type    = SDL_MOUSEWHEEL;
+                e.wheel.x = cast(int)(_jsonGet(obj, "x"));
+                e.wheel.y = cast(int)(_jsonGet(obj, "y"));
+                break;
+            case "SDL_WINDOWEVENT":
+                e.type         = SDL_WINDOWEVENT;
+                e.window.event = cast(ubyte)(_jsonGet(obj, "sub"));
+                e.window.data1 = cast(int)  (_jsonGet(obj, "w"));
+                e.window.data2 = cast(int)  (_jsonGet(obj, "h"));
+                break;
+            case "SDL_TEXTINPUT":
+                e.type = SDL_TEXTINPUT;
+                break;
+            default:
+                if (typeName == "SDL_EVENT")
+                    e.type = cast(uint)(_jsonGet(obj, "sdl_type"));
+                else {
+                    ++skipped;
+                    continue;
+                }
+                break;
+        }
+
+        entries ~= EventLogEntry(t, e, cast(SDL_Keymod)0, windowFocused);
+    }
+
+    EventLogParseResult result;
+    result.log = ParsedEventLog(entries.assumeUnique, viewport, skipped,
+                                framePaced);
+    if (result.log.entries.length == 0)
+        result.error = "event log contains no playable events";
+    return result;
+}
+
+struct EventPlayer {
+    alias Entry = EventLogEntry;
+    immutable(Entry)[] entries;
+    size_t  idx;
+    ulong   startCounter;
+    ulong   freq;
+    bool    active;
+    int     mouseX, mouseY;   // current replayed cursor position
+    bool    mouseDown;        // left button state (for visual feedback)
+
+    // Delivery is a capability of this player, never process state. A caller
+    // that owns the editor-input consumer installs it explicitly; callers
+    // without one retain the SDL_PushEvent fallback below. `immediateMotions_`
+    // counts completed sink calls for the current log, so the HTTP witness can
+    // distinguish direct per-motion delivery from a queue fallback whose
+    // final state happens to settle to the same value.
+    private ImmediateEventSink immediateSink_;
+    private size_t immediateMotions_;
+
+    // Frame pacing, set per log by its PACE line.
+    // A log's `t` is a SCHEDULE, and for a synthetic test log its gaps only
+    // ever meant "let a frame pass between these": paced, each distinct `t`
+    // is delivered on its own frame, in order, with no wall-clock wait. That
+    // is also the stronger guarantee, since under load wall-clock gating can
+    // fold two due events into one frame. SDL timestamps come from `ts`, not
+    // from `t`, so a handler that measures intervals is unaffected.
+    private bool framePaced_;
+
+    void setImmediateSink(ImmediateEventSink sink) {
+        immediateSink_ = sink;
+    }
+
+    size_t immediateMotionDeliveries() const {
+        return immediateMotions_;
+    }
+
+    // Fast-forward replay (set by app.d's --perf mode). When true, tick()
+    // ignores the recorded wall-clock timestamps and drains EVERY pending
+    // event each call — the perf harness measures CPU work inside the tool
+    // loop via PerfProbe, which is independent of feed rate, so firing the
+    // whole drag as fast as possible keeps the matrix run to seconds while
+    // leaving per-stage timings correct. The normal (timestamp-gated) path
+    // is untouched when this is false.
+    bool    fastForward;
+
+    // Recorded viewport from the log's VIEWPORT meta line, if present.
+    // Used together with the module-level g_replayCurrentViewport to remap
+    // pixel coordinates of mouse events on replay.
+    ViewportMeta recordedViewport;
+
+    // The modifier state as it was BEFORE this playback started, and whether
+    // it has been captured yet.
+    //
+    // Every replayed mouse event drives `SDL_SetModState(entry.mod)` so the app
+    // reads the recorded modifiers while handling the pushed event (see the
+    // comment at the call site). Nothing ever put it back. SDL's modifier state
+    // is process-global and has NO other writer in `--test` — there is no real
+    // keyboard behind a hidden window — so the last mouse event of a log left
+    // its Ctrl/Alt/Shift latched for the REST OF THE PROCESS.
+    //
+    // That outlives the log, and `run_test.d` reuses ONE `vibe3d --test` across
+    // a worker's whole slice, so it outlives the test too: every later test in
+    // that worker draws its frames with a modifier the user never pressed. The
+    // symptom is silent and looks nothing like its cause — a side-panel button
+    // that swaps to its `ctrl:` variant is simply a DIFFERENT button, with a
+    // different label and a different action, and a reader is told only that
+    // the one they wanted "was not drawn". Which test it lands on depends on
+    // the slice packing, so it moves with the worker count: this cost a CI
+    // lane a day, red at -j 4 and green at -j 8 on the same commit.
+    //
+    // Same argument as `parkOverrideMouse` for the pointer, but closed HERE
+    // rather than in the automation reset, because it is not test-only: a real
+    // `--playback` session leaves the modifiers latched for the human too, and
+    // "the app thinks Ctrl is down" is not a state a user can see or clear.
+    SDL_Keymod modBeforePlayback;
+    bool       modCaptured;
+
+    /// Take the loan: remember the live modifiers the first time this playback
+    /// is about to overwrite them.
+    ///
+    /// Here rather than in `load()` on purpose, and not only for tidiness — a
+    /// log with no mouse events in it must not read or write the modifier state
+    /// at all, and reading it from `load()` made every caller of `load()` touch
+    /// SDL whether or not it ever replayed anything that cared.
+    private void borrowModifiers() {
+        if (modCaptured) return;
+        modBeforePlayback = _getModState();
+        modCaptured       = true;
+    }
+
+    // Load and parse a JSON Lines log file written by EventLogger.
+    // Returns true on success.
+    bool open(string path) {
+        import std.file;
+        try {
+            auto parsed = parseEventLog(readText(path));
+            if (!parsed.accepted) {
+                import std.stdio : stderr;
+                stderr.writeln(parsed.error);
+                return true;
+            }
+            begin(parsed.log);
+            return true;
+        }
+        catch (Exception) {
+            import vibe3d.util.log.log : logWarn;
+            import std.format : format;
+            logWarn("eventlog", format("EventPlayer: cannot open '%s'", path));
+            return false;
+        }
+
+    }
+
+    bool load(string data) {
+        auto parsed = parseEventLog(data);
+        if (!parsed.accepted) return false;
+        begin(parsed.log);
+        return true;
+    }
+
+    /// Install one already-validated log. A log with no VIEWPORT row keeps the
+    /// previous remap, preserving the legacy inheritance contract.
+    void begin(ParsedEventLog log)
+    in (log.entries.length > 0)
+    {
+        entries = log.entries;
+        if (log.viewport.valid)
+            recordedViewport = log.viewport;
+        startCounter = _perfCounter();
+        freq         = _perfFreq();
+        active       = entries.length > 0;
+        idx          = 0;
+        immediateMotions_ = 0;
+        framePaced_  = log.framePaced;
+        {
+            import vibe3d.util.log.log : logInfo;
+            import std.format : format;
+            logInfo("eventlog", format("EventPlayer: loaded %d events", entries.length));
+        }
+    }
+    // Remap (x, y) from the recorded viewport into the current one.
+    // No-op if either viewport is unknown (legacy logs without meta).
+    private void remapPixel(ref int x, ref int y) const {
+        const rec = recordedViewport;
+        const cur = g_replayCurrentViewport;
+        if (!rec.valid || !cur.valid) return;
+        if (rec.vpW <= 0 || rec.vpH <= 0 || cur.vpW <= 0 || cur.vpH <= 0) return;
+
+        // ndc-y factor: invariant of fovY (assuming fixed fovY across versions)
+        double ndcYFactor = (cast(double)y - rec.vpY) / (rec.vpH / 2.0);
+        // ndc-x factor in [-1..1]
+        double ndcX = (cast(double)x - rec.vpX) / (rec.vpW / 2.0) - 1.0;
+        // aspect change (fovY constant): ndcX scales by recAspect/curAspect
+        double recAspect = cast(double)rec.vpW / cast(double)rec.vpH;
+        double curAspect = cast(double)cur.vpW / cast(double)cur.vpH;
+        ndcX *= recAspect / curAspect;
+
+        x = cast(int)(cur.vpX + (ndcX + 1.0) * (cur.vpW / 2.0) + 0.5);
+        y = cast(int)(cur.vpY + ndcYFactor * (cur.vpH / 2.0) + 0.5);
+    }
+
+    // Remap a pixel delta (xrel/yrel). With fovY constant, both axes scale by
+    // cur_vpH / rec_vpH (the x aspect-correction and the vpW/vpW factors cancel).
+    private void remapDelta(ref int dx, ref int dy) const {
+        const rec = recordedViewport;
+        const cur = g_replayCurrentViewport;
+        if (!rec.valid || !cur.valid) return;
+        if (rec.vpH <= 0) return;
+        double s = cast(double)cur.vpH / cast(double)rec.vpH;
+        dx = cast(int)(dx * s + (dx >= 0 ? 0.5 : -0.5));
+        dy = cast(int)(dy * s + (dy >= 0 ? 0.5 : -0.5));
+    }
+
+    // Call once per frame. Pushes all events whose timestamp has elapsed.
+    // Returns false when playback is finished.
+    //
+    // If this player has an immediate sink, each due event is delivered
+    // DIRECTLY via that delegate (bypassing SDL's
+    // event queue, which coalesces consecutive SDL_MOUSEMOTION events).
+    // Otherwise, events go through SDL_PushEvent (legacy path; the X11
+    // backend may merge motions on PollEvent — space them ≥16 ms apart
+    // in the log).
+    bool tick() {
+        if (!active) return false;
+        // In fast-forward mode every remaining event is treated as due —
+        // skip the wall-clock read entirely. Otherwise gate on elapsed
+        // time as recorded in the log.
+        double nowMs = fastForward
+            ? double.infinity
+            : cast(double)(_perfCounter() - startCounter)
+              / cast(double)freq * 1000.0;
+        // Paced: exactly the group sharing the next entry's `t` is due.
+        immutable bool paced = framePaced_ && !fastForward;
+        immutable double groupMs = paced ? entries[idx].timeMs : 0.0;
+        while (idx < entries.length
+               && (paced ? entries[idx].timeMs == groupMs
+                         : entries[idx].timeMs <= nowMs)) {
+            auto  entry = entries[idx];
+            SDL_Event e = entry.event;
+            // Remap mouse pixels from the recorded viewport into the current one.
+            if (e.type == SDL_MOUSEMOTION) {
+                int x = e.motion.x, y = e.motion.y;
+                remapPixel(x, y);
+                e.motion.x = x; e.motion.y = y;
+                int dx = e.motion.xrel, dy = e.motion.yrel;
+                remapDelta(dx, dy);
+                e.motion.xrel = dx; e.motion.yrel = dy;
+            } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                int x = e.button.x, y = e.button.y;
+                remapPixel(x, y);
+                e.button.x = x; e.button.y = y;
+            }
+            // Restore modifier key state for mouse events so that
+            // SDL_GetModState() returns the correct value when the app
+            // processes the pushed event (SDL_PushEvent does not update
+            // SDL's internal modifier state on macOS).
+            // Also update the global mouse-position override so that
+            // queryMouse() returns the replayed position for picking code.
+            // (Mouse coords here are post-remap so g_mouseX/Y stay consistent.)
+            if (e.type == SDL_MOUSEMOTION) {
+                borrowModifiers();
+                _setModState(entry.mod);
+                mouseX = e.motion.x;
+                mouseY = e.motion.y;
+                g_mouseX = mouseX; g_mouseY = mouseY; g_mouseOverride = true;
+            } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                borrowModifiers();
+                _setModState(entry.mod);
+                mouseX = e.button.x;
+                mouseY = e.button.y;
+                g_mouseX = mouseX; g_mouseY = mouseY; g_mouseOverride = true;
+                if (e.button.button == SDL_BUTTON_LEFT)
+                    mouseDown = (e.type == SDL_MOUSEBUTTONDOWN);
+            }
+            if (immediateSink_ !is null) {
+                immutable bool isMotion = e.type == SDL_MOUSEMOTION;
+                immediateSink_(&e, entry.windowFocused);
+                if (isMotion) ++immediateMotions_;
+            } else {
+                _pushEvent(&e);
+            }
+            ++idx;
+        }
+        if (idx >= entries.length) {
+            active = false;
+            // Hand the modifiers back. The log's `mod` values were on loan for
+            // the duration of the replay; from here on the only truthful answer
+            // is whatever was held before it started (KMOD_NONE under `--test`,
+            // where no keyboard reaches the hidden window). Cleared rather than
+            // merely restored-once so a later log banks its own baseline.
+            if (modCaptured) {
+                _setModState(modBeforePlayback);
+                modCaptured = false;
+            }
+            {
+                import vibe3d.util.log.log : logInfo;
+                logInfo("eventlog", "EventPlayer: playback finished");
+            }
+            return false;
+        }
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+version(unittest) private __gshared int g_testPushCount;
+
+unittest { // mouseOverride: queryMouse returns overridden coords without SDL
+    g_mouseX        = 42;
+    g_mouseY        = 99;
+    g_mouseOverride = false;
+    mouseOverride();
+    assert(g_mouseOverride == true);
+    int mx, my;
+    queryMouse(mx, my);
+    assert(mx == 42 && my == 99);
+}
+
+unittest { // parkOverrideMouse: position goes home, the override flag does not
+    // The flag half is the load-bearing half. Parking must not silently hand
+    // picking back to SDL_GetMouseState in a `--test` process that has no real
+    // cursor — the pointer must read (0,0), not "whatever the window manager
+    // thinks", so the parked baseline is the same one the FIRST test of a
+    // slice gets.
+    setOverrideMouse(311, 207);
+    assert(g_mouseOverride == true);
+    parkOverrideMouse();
+    assert(g_mouseOverride == true, "parking must not clear the override flag");
+    int mx, my;
+    queryMouse(mx, my);
+    assert(mx == 0 && my == 0, "parked pointer must read the boot origin");
+}
+
+unittest { // queryMouse without override uses SDL_GetMouseState mock
+    _mock_GetMouseState = function(int* x, int* y) { *x = 7; *y = 13; return 0u; };
+    scope(exit) _mock_GetMouseState = null;
+    g_mouseOverride = false;
+    int mx, my;
+    queryMouse(mx, my);
+    assert(mx == 7 && my == 13);
+}
+
+
+unittest { // EventLogger: open sets up state, close marks inactive
+    import std.file : remove, exists, tempDir;
+    import std.path : buildPath;
+
+    _mock_PerfCounter = function() { return 500UL; };
+    _mock_PerfFreq    = function() { return 1000UL; };
+    scope(exit) { _mock_PerfCounter = null; _mock_PerfFreq = null; }
+
+    string path = buildPath(tempDir(), "el_open_test.txt");
+    scope(exit) if (exists(path)) remove(path);
+
+    EventLogger logger;
+    logger.open(path);
+    assert(logger.active);
+    assert(logger.startCounter == 500);
+    assert(logger.freq == 1000);
+
+    logger.close();
+    assert(!logger.active);
+    assert(exists(path));
+}
+
+unittest { // EventLogger.log: SDL_QUIT writes JSON line with timestamp
+    import std.file   : remove, exists, readText, tempDir;
+    import std.path   : buildPath;
+    import std.string : stripRight;
+
+    _mock_PerfCounter = function() { return 1100UL; };
+    scope(exit) _mock_PerfCounter = null;
+
+    string path = buildPath(tempDir(), "el_log_quit.txt");
+    scope(exit) if (exists(path)) remove(path);
+
+    EventLogger logger;
+    logger.file         = File(path, "w");
+    logger.startCounter = 1000;  // t = (1100-1000)/1000*1000 = 100ms
+    logger.freq         = 1000;
+    logger.active       = true;
+
+    SDL_Event e;
+    e.type = SDL_QUIT;
+    logger.log(e);
+    logger.close();
+
+    assert(readText(path).stripRight() == `{"t":100.000,"type":"SDL_QUIT"}`);
+}
+
+unittest { // EventLogger.log: SDL_KEYDOWN writes JSON with sym/scan/mod/repeat
+    import std.file      : remove, exists, readText, tempDir;
+    import std.path      : buildPath;
+    import std.string    : stripRight;
+    import std.algorithm : canFind;
+
+    _mock_PerfCounter = function() { return 2000UL; };
+    scope(exit) _mock_PerfCounter = null;
+
+    string path = buildPath(tempDir(), "el_log_key.txt");
+    scope(exit) if (exists(path)) remove(path);
+
+    EventLogger logger;
+    logger.file         = File(path, "w");
+    logger.startCounter = 1000;  // t = 1000ms
+    logger.freq         = 1000;
+    logger.active       = true;
+
+    SDL_Event e;
+    e.type                = SDL_KEYDOWN;
+    e.key.keysym.sym      = cast(SDL_Keycode)97;
+    e.key.keysym.scancode = cast(SDL_Scancode)4;
+    e.key.keysym.mod      = cast(SDL_Keymod)0;
+    e.key.repeat          = 0;
+    logger.log(e);
+    logger.close();
+
+    string line = readText(path).stripRight();
+    assert(line.canFind("SDL_KEYDOWN"),  line);
+    assert(line.canFind(`"sym":97`),     line);
+    assert(line.canFind(`"scan":4`),     line);
+}
+
+
+
+unittest { // EventPlayer.open: parse multiple event types from JSON Lines file
+    import std.file : write, remove, tempDir;
+    import std.path : buildPath;
+
+    _mock_PerfCounter = function() { return 0UL; };
+    _mock_PerfFreq    = function() { return 1000UL; };
+    scope(exit) { _mock_PerfCounter = null; _mock_PerfFreq = null; }
+
+    string path = buildPath(tempDir(), "ep_parse_test.txt");
+    scope(exit) remove(path);
+
+    write(path,
+        `{"t":0.000,"type":"SDL_QUIT"}` ~ "\n" ~
+        `{"t":1.000,"type":"SDL_KEYDOWN","sym":97,"scan":4,"mod":0,"repeat":0}` ~ "\n" ~
+        `{"t":2.000,"type":"SDL_KEYUP","sym":65,"scan":4,"mod":0,"repeat":0}` ~ "\n" ~
+        `{"t":3.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":100,"y":200,"clicks":1,"mod":0}` ~ "\n" ~
+        `{"t":4.000,"type":"SDL_MOUSEMOTION","x":110,"y":210,"xrel":10,"yrel":10,"state":0,"mod":0}` ~ "\n" ~
+        `{"t":5.000,"type":"SDL_MOUSEWHEEL","x":0,"y":-1}` ~ "\n" ~
+        `{"t":6.000,"type":"SDL_WINDOWEVENT","sub":5,"w":1280,"h":720}` ~ "\n"
+    );
+
+    EventPlayer p;
+    assert(p.open(path));
+    assert(p.entries.length == 7);
+    assert(p.entries[0].event.type == SDL_QUIT);
+    assert(p.entries[1].event.type == SDL_KEYDOWN);
+    assert(p.entries[1].event.key.keysym.sym == 97);
+    assert(p.entries[2].event.type == SDL_KEYUP);
+    assert(p.entries[2].event.key.keysym.sym == 65);
+    assert(p.entries[3].event.type == SDL_MOUSEBUTTONDOWN);
+    assert(p.entries[3].event.button.x == 100 && p.entries[3].event.button.y == 200);
+    assert(p.entries[4].event.type == SDL_MOUSEMOTION);
+    assert(p.entries[4].event.motion.x == 110 && p.entries[4].event.motion.xrel == 10);
+    assert(p.entries[5].event.type == SDL_MOUSEWHEEL);
+    assert(p.entries[5].event.wheel.y == -1);
+    assert(p.entries[6].event.type == SDL_WINDOWEVENT);
+    assert(p.entries[6].event.window.data1 == 1280);
+    assert(p.active);
+    assert(p.freq == 1000);
+}
+
+unittest { // EventPlayer.tick: fires only elapsed events, stays active while more remain
+    _mock_PerfCounter = function() { return 2000UL; };
+    _mock_PerfFreq    = function() { return 1000UL; };
+    _mock_SetModState = function(SDL_Keymod m) {};
+    _mock_PushEvent   = function(SDL_Event* e) { g_testPushCount++; return 1; };
+    scope(exit) {
+        _mock_PerfCounter = null; _mock_PerfFreq  = null;
+        _mock_SetModState = null; _mock_PushEvent = null;
+    }
+
+    EventPlayer p;
+    p.active       = true;
+    p.startCounter = 0;
+    p.freq         = 1000;
+    p.idx          = 0;
+
+    SDL_Event e;
+    e.type = SDL_QUIT;
+    p.entries = [
+        EventPlayer.Entry(0.5,    e, cast(SDL_Keymod)0),  // nowMs=2000 → fires
+        EventPlayer.Entry(1.5,    e, cast(SDL_Keymod)0),  // fires
+        EventPlayer.Entry(5000.0, e, cast(SDL_Keymod)0),  // not yet due
+    ];
+
+    g_testPushCount = 0;
+    assert(p.tick() == true);
+    assert(g_testPushCount == 2);
+    assert(p.idx == 2);
+}
+
+unittest { // EventPlayer.tick: its sink receives every due motion with current state
+    _mock_PerfCounter = function() { return 10_000UL; };
+    _mock_PerfFreq    = function() { return 1000UL; };
+    _mock_GetModState = function() { return g_testModState; };
+    _mock_SetModState = function(SDL_Keymod m) { g_testModState = m; };
+    _mock_PushEvent   = function(SDL_Event* e) { ++g_testPushCount; return 1; };
+    scope(exit) {
+        _mock_PerfCounter = null; _mock_PerfFreq   = null;
+        _mock_GetModState = null; _mock_SetModState = null;
+        _mock_PushEvent   = null;
+    }
+
+    EventPlayer p;
+    p.active       = true;
+    p.startCounter = 0;
+    p.freq         = 1000;
+    p.idx          = 0;
+
+    EventPlayer.Entry[] entries;
+    foreach (i; 0 .. 3) {
+        SDL_Event e;
+        e.type = SDL_MOUSEMOTION;
+        e.motion.x = 100 + cast(int)i;
+        e.motion.y = 200 + cast(int)i;
+        entries ~= EventPlayer.Entry(1.0, e,
+            cast(SDL_Keymod)(i == 0 ? KMOD_SHIFT
+                                    : (i == 1 ? KMOD_CTRL : KMOD_ALT)));
+    }
+    p.entries = entries.assumeUnique;
+
+    int sinkCalls;
+    int[] seenX;
+    SDL_Keymod[] seenMods;
+    p.setImmediateSink((SDL_Event* delivered, bool windowFocused) {
+        int mx, my;
+        queryMouse(mx, my);
+        assert(mx == delivered.motion.x && my == delivered.motion.y,
+            "5170 replay sink observed stale mouse state");
+        assert(windowFocused,
+            "5170 legacy replay entry did not default to focused");
+        ++sinkCalls;
+        seenX ~= delivered.motion.x;
+        seenMods ~= _getModState();
+    });
+
+    g_testModState = KMOD_NONE;
+    g_testPushCount = 0;
+    assert(!p.tick(), "all due events should drain in one tick");
+    assert(sinkCalls == 3,
+        "5170 immediate replay sink did not receive every due motion event");
+    assert(seenX == [100, 101, 102],
+        "5170 immediate replay sink changed due-motion order");
+    assert(seenMods == [KMOD_SHIFT, KMOD_CTRL, KMOD_ALT],
+        "5170 replay sink observed stale modifier state");
+    assert(p.immediateMotionDeliveries() == 3,
+        "5170 immediate-motion delivery witness did not count each sink call");
+    assert(g_testPushCount == 0,
+        "5170 configured replay sink also used the SDL queue fallback");
+    assert(g_testModState == KMOD_NONE,
+        "5170 replay did not return the borrowed modifier state");
+}
+
+unittest { // EventPlayer.tick: deactivates when all events are consumed
+    _mock_PerfCounter = function() { return 9000UL; };
+    _mock_PerfFreq    = function() { return 1000UL; };
+    _mock_SetModState = function(SDL_Keymod m) {};
+    _mock_PushEvent   = function(SDL_Event* e) { g_testPushCount++; return 1; };
+    scope(exit) {
+        _mock_PerfCounter = null; _mock_PerfFreq  = null;
+        _mock_SetModState = null; _mock_PushEvent = null;
+    }
+
+    EventPlayer p;
+    p.active       = true;
+    p.startCounter = 0;
+    p.freq         = 1000;
+    p.idx          = 0;
+
+    SDL_Event e;
+    e.type = SDL_QUIT;
+    p.entries = [EventPlayer.Entry(1.0, e, cast(SDL_Keymod)0)];
+
+    g_testPushCount = 0;
+    assert(p.tick() == false);
+    assert(!p.active);
+    assert(g_testPushCount == 1);
+}
+
+version(unittest) private __gshared SDL_Keymod g_testModState;
+
+unittest { // EventPlayer: a log's modifiers are ON LOAN and go back when it ends
+    // The whole point is the LAST line: the log latches Ctrl into a global with
+    // no other writer, and before this it stayed latched for the life of the
+    // process. Every later frame — and, on a shared `--test` instance, every
+    // later TEST — then drew as if the user were holding Ctrl.
+    //
+    // Asserted as a value at three moments, not as "restore was called": the
+    // mid-playback reading is what separates the fix from an implementation
+    // that simply stopped applying the recorded modifiers at all, which would
+    // break the recorded gesture instead of the leak.
+    _mock_PerfCounter = function() { return 9000UL; };
+    _mock_PerfFreq    = function() { return 1000UL; };
+    _mock_GetModState = function() { return g_testModState; };
+    _mock_SetModState = function(SDL_Keymod m) { g_testModState = m; };
+    _mock_PushEvent   = function(SDL_Event* e) { g_testPushCount++; return 1; };
+    scope(exit) {
+        _mock_PerfCounter = null; _mock_PerfFreq   = null;
+        _mock_SetModState = null; _mock_PushEvent  = null;
+        _mock_GetModState = null;
+    }
+
+    // A real keyboard holding SHIFT while a log is replayed: that is the state
+    // playback borrows from and must give back. KMOD_NONE would let a "reset to
+    // zero" implementation pass, which is wrong for `--playback` on a live
+    // keyboard.
+    g_testModState = KMOD_SHIFT;
+
+    EventPlayer p;
+    // Timestamps 1000 ms apart so the clock below can be parked BETWEEN them —
+    // the mid-playback reading needs a moment at which exactly one event has
+    // been dispatched and the log is not finished.
+    assert(p.load(`{"t":1000.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":10,"y":20,"clicks":1,"mod":64}` ~ "\n"
+                ~ `{"t":2000.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":10,"y":20,"clicks":1,"mod":64}` ~ "\n"));
+    p.startCounter = 0;
+    p.freq         = 1000;
+
+    // 1. Loading must not touch the live state — nothing has been replayed yet.
+    assert(g_testModState == KMOD_SHIFT,
+        "load() changed the modifier state before a single event was replayed");
+    assert(!p.modCaptured, "nothing has been overwritten, so nothing is on loan");
+
+    // 2. Mid-playback the app must see the RECORDED modifiers. Drain only the
+    //    first event by parking the clock between the two timestamps.
+    _mock_PerfCounter = function() { return 1500UL; };
+    g_testPushCount = 0;
+    assert(p.tick() == true, "one event is still pending, so playback continues");
+    assert(g_testModState == cast(SDL_Keymod)64,
+        "the replayed event must be handled with the modifiers the log recorded");
+    assert(p.modCaptured && p.modBeforePlayback == KMOD_SHIFT,
+        "the first overwrite must bank what it overwrote");
+
+    // 3. When the log runs out the loan ends: back to the real keyboard's
+    //    SHIFT, not to the log's Ctrl and not to nothing.
+    _mock_PerfCounter = function() { return 9000UL; };
+    assert(p.tick() == false);
+    assert(!p.active);
+    assert(g_testModState == KMOD_SHIFT,
+        "the log's modifiers outlived the log — every later frame, and on a "
+        ~ "shared --test instance every later TEST, draws as if the user were "
+        ~ "holding them");
+    assert(!p.modCaptured, "the bank must reopen so the NEXT log snapshots afresh");
+}
+
+unittest { // EventPlayer.tick: fastForward drains ALL events regardless of nowMs
+    // Perf-counter stays at 0 (nowMs would be 0), so without fastForward
+    // none of these far-future events would fire. fastForward must drain
+    // the whole queue in one tick and deactivate.
+    _mock_PerfCounter = function() { return 0UL; };
+    _mock_PerfFreq    = function() { return 1000UL; };
+    _mock_SetModState = function(SDL_Keymod m) {};
+    _mock_PushEvent   = function(SDL_Event* e) { g_testPushCount++; return 1; };
+    scope(exit) {
+        _mock_PerfCounter = null; _mock_PerfFreq  = null;
+        _mock_SetModState = null; _mock_PushEvent = null;
+    }
+
+    EventPlayer p;
+    p.active       = true;
+    p.startCounter = 0;
+    p.freq         = 1000;
+    p.idx          = 0;
+    p.fastForward  = true;
+
+    SDL_Event e;
+    e.type = SDL_QUIT;
+    p.entries = [
+        EventPlayer.Entry(1000.0,   e, cast(SDL_Keymod)0),
+        EventPlayer.Entry(5000.0,   e, cast(SDL_Keymod)0),
+        EventPlayer.Entry(999999.0, e, cast(SDL_Keymod)0),
+    ];
+
+    g_testPushCount = 0;
+    // All three are far in the future by wall-clock, but fastForward fires
+    // them all and exhausts the queue → returns false, deactivates.
+    assert(p.tick() == false);
+    assert(g_testPushCount == 3);
+    assert(p.idx == 3);
+    assert(!p.active);
+}
+
+unittest { // private g_replayCurrentViewport lens-only refresh
+    import std.file : tempDir,readText,remove;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    import std.conv : to;
+    const oldCounter=_mock_PerfCounter,oldFreq=_mock_PerfFreq;
+    scope(exit){_mock_PerfCounter=oldCounter;_mock_PerfFreq=oldFreq;}
+    _mock_PerfCounter=function(){return 1UL;};_mock_PerfFreq=function(){return 1000UL;};
+    const path=buildPath(tempDir(),"camera_lens_metadata_"~thisProcessID().to!string~".jsonl");
+    scope(exit)remove(path);
+    foreach(lens;[.7853982f,.902658403f,1.0f,2.0f,1e-28f]) {
+        EventLogger logger;logger.open(path);logger.writeViewportMeta(150,28,1152,974,lens);logger.close();
+        const decoded=parseEventLog(readText(path)~`{"t":1,"type":"SDL_QUIT"}`~"\n");
+        assert(decoded.accepted&&decoded.log.viewport.fovY==lens,"REPLAY_METADATA_LENS_BIT_EXACT");
+    }
+    const old=g_replayCurrentViewport;scope(exit)g_replayCurrentViewport=old;
+    setReplayCurrentViewport(150,28,1152,974,.7853982f);
+    setReplayCurrentLens(.902658403f);
+    assert(g_replayCurrentViewport.fovY==.902658403f,"REPLAY_CURRENT_LENS_REFRESH");
+    assert(g_replayCurrentViewport.vpX==150 && g_replayCurrentViewport.vpY==28 &&
+           g_replayCurrentViewport.vpW==1152 && g_replayCurrentViewport.vpH==974 &&
+           g_replayCurrentViewport.valid,"REPLAY_CURRENT_RECTANGLE_RETAINED");
+
+}

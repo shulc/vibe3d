@@ -164,8 +164,8 @@
     "vibe3d-interchange": {
       "path": "../../interchange"
     },
-    "vibe3d-mesh": {
-      "path": "../../mesh"
+    "vibe3d:mesh": {
+      "path": "../../.."
     },
     "nfde": {
       "path": "../../../third_party/nfde"
@@ -181,7 +181,7 @@
         "vibe3d-document-io": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d-interchange": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests"
+        "vibe3d:mesh": "isolated-tests"
       }
     }
   ]

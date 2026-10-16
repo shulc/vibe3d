@@ -100,7 +100,7 @@ module ui.image_rows;
 // through `imageRemoveConfirm`.
 // ---------------------------------------------------------------------------
 
-import document        : Document, Layer, ImageData;
+import vibe3d.documents.model.document        : Document, Layer, ImageData;
 import io.image_path   : storePathFor;
 import ui.retained_item : ConstItem;
 
@@ -806,14 +806,14 @@ version (unittest) {
     import std.path : buildPath;
     import std.json : parseJSON;
 
-    import document                : ItemKind, Document, Layer;
+    import vibe3d.documents.model.document                : ItemKind, Document, Layer;
     import io.image_path           : writeTestBmp, imageTestDir,
                                      refreshImageMeta;
     import commands.image.commands : ImageLoad, ImageReplace, ImageReload;
     import commands.layer.commands : LayerAdd;
     import vibe3d.editing.params.params                  : injectParamsInto;
-    import mesh                    : makeCube;
-    import view                    : View;
+    import vibe3d.mesh.core.mesh                    : makeCube;
+    import vibe3d.viewport.camera.view                    : View;
     import vibe3d.editing.contracts.editmode                : EditMode;
     import vibe3d.editing.contracts.seltype                 : SelMode;
 

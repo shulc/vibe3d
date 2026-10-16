@@ -3,7 +3,7 @@ module bvh_pick;
 import bvh.c;
 import math : Vec3, cross;
 import vibe3d.util.spatial.spatial : Viewport, screenRay, screenPointToRay, ModelSpace;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_gpu : GpuMesh;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc;
 // Task 1906 stage 2b — the SURFACE tree's freshness key. See `pickSurfaceRay`.
@@ -195,7 +195,7 @@ private:
         // byte-identical geometry.
         const(Vec3)[] bvhSrc;
         {
-            import morph_preview : displayVertices;
+            import vibe3d.mesh.preview.morph_preview : displayVertices;
             auto dv = displayVertices(&sourceMesh);
             bvhSrc = (dv.length == sourceMesh.vertices.length)
                    ? dv : sourceMesh.vertices;

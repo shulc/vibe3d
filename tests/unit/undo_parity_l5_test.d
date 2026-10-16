@@ -82,8 +82,8 @@ import std.format : format;
 import std.json   : JSONValue, parseJSON;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math      : Vec3;
 import http_json : meshPlanesJson, PlaneDumpMeta;
@@ -198,7 +198,7 @@ unittest // the stand can exhibit everything the roster claims to measure
     // ---- 4. a vertex IN A NAMED SET that the sweep welds away, and an
     // edge-set entry whose ENDPOINT disappears. Without both, stage L5-b's
     // whole subject is unreachable and its cells are vacuous.
-    import mesh_selsets : selSetMembersVertex, selSetMembersEdge;
+    import vibe3d.mesh.core.mesh_selsets : selSetMembersVertex, selSetMembersEdge;
     auto vm = selSetMembersVertex(*n, "V");
     bool sawWeldedMember = false;
     foreach (vi; vm) if (vi == 16u) sawWeldedMember = true;

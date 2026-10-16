@@ -221,7 +221,7 @@ mixin template XfrmItemImpl() {
     /// The space `mesh.vertices` lives in, relative to the world the pipe
     /// publishes in. Same source as the two stages use.
     ModelSpace applyItemSpace() {
-        import document : primaryModelSpace;
+        import vibe3d.documents.model.document : primaryModelSpace;
         return primaryModelSpace();
     }
 

@@ -16,12 +16,12 @@
 // are public factories. That is why the whole test region could move; a block
 // that needed a private member would have had to stay behind.
 module tests.unit.mesh_ops.edge_bevel_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import subpatch_factories : subdivideCube;
-import mesh;
-import mesh_ops.edge_bevel;
-import mesh_ops.bevel_vertex;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.edge_bevel;
+import vibe3d.mesh.ops.mesh_ops.bevel_vertex;
 import math;
 import vibe3d.util.spatial.spatial : Pin;
 import tests.unit.fixtures;
@@ -40,7 +40,7 @@ import tests.unit.fixtures;
 // ===========================================================================
 version (unittest) {
     import std.math : sqrt;
-    import mesh_edit_delta : MeshEditTracker, MeshEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker, MeshEditScope;
 }
 
 // TASK 1903 Stage G: `bevelEdgesByMask` is a module-level free function over
@@ -3704,7 +3704,7 @@ unittest { // centerNormalProject: planarity invariant (task 0453),
     // Task 0717 moved this out of struct Mesh into mesh_ops.bevel_curves; it
     // was a `static` member with exactly one caller (junctionRingN) and this
     // one test, and it is pure math with no mesh in it.
-    import mesh_ops.bevel_curves : centerNormalProject;
+    import vibe3d.mesh.ops.mesh_ops.bevel_curves : centerNormalProject;
     centerNormalProject(N, hub, ring);
 
     foreach (i, p; ring) {
@@ -6449,7 +6449,7 @@ unittest {
 
 import std.format : format;
 import std.conv   : to;
-import mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
 
 private string kindsOf(ref MeshEditDelta d) {
     string s = "[";
@@ -6783,7 +6783,7 @@ unittest { // task 20261290: independently frozen positive offset geometry
         mask[source.edgeIndexMap[key]] = true;
     }
     foreach (positive; [false, true]) {
-        import snapshot : MeshSnapshot;
+        import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
         Mesh m; auto image = MeshSnapshot.capture(source); image.restore(m);
         auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
         assert(ed.bevelEdgesByMask(mask, .06f, 0, false, positive ? .03f : 0) == 3,

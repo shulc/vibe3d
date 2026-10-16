@@ -2,15 +2,15 @@ module snap_render_source_helpers;
 
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, ModelSpace;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import snap : SnapResult;
-import toolpipe.packets : SnapType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
 import d_imgui.imgui_h : ImVec2;
 import snap_render : snapHighlightPixels;
 
 version (unittest) {
     import math     : lookAt, perspectiveMatrix, transformPoint;
-    import document : ItemXform, primaryModelSpaceResolver;
+    import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
     import std.format : format;
 
     // Deliberately not axis-aligned and not symmetric about any plane.

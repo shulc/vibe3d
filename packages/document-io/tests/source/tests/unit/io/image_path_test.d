@@ -6,8 +6,8 @@ module tests.unit.io.image_path_test;
 import std.file : read, exists, getSize;
 import std.path : isAbsolute, absolutePath, buildNormalizedPath, dirName,
                   relativePath, isDirSeparator;
-import document       : ImageData;
-import io.image_decode : ImageInfo, imageInfo, MAX_IMAGE_BYTES;
+import vibe3d.documents.model.document       : ImageData;
+import vibe3d.documents.image_codec.io.image_decode : ImageInfo, imageInfo, MAX_IMAGE_BYTES;
 import vibe3d.util.log.log            : logWarn;
 import std.file : write, remove, tempDir, mkdirRecurse, rmdirRecurse;
 import std.path : buildPath;

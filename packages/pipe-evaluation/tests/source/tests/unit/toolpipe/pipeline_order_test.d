@@ -25,11 +25,11 @@
 module tests.unit.toolpipe.pipeline_order_test;
 
 import math   : Vec3;
-import mesh   : Mesh;
+import vibe3d.mesh.core.mesh   : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import path      : PathSource;
-import operator  : VectorStack;
-import toolpipe.packets  : SubjectPacket, FalloffPacket, FalloffType, PathPacket;
+import vibe3d.editing.pipeline.contracts.operator  : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SubjectPacket, FalloffPacket, FalloffType, PathPacket;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.stages.path    : PathStage;
 

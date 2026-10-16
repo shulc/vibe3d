@@ -7,8 +7,8 @@ import std.math : sqrt, round, floor, isNaN;
 import core.sync.mutex : Mutex;
 import math : Vec3, rayPlaneIntersect, pointInPolygon2D, closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot, closestPointOnLineToRay, perpendicularFrame, rayTriangleIntersect, closestPointOnTriangle2D, triangulatePolygonEarClip;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectionSpace, projectToWindowFull, screenRay, screenPointToRay, isOrtho, viewPixelScale;
-import mesh : Mesh;
-import toolpipe.packets : SnapPacket, SnapType, SnapMode;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import constraint : BackgroundSource;
@@ -1917,7 +1917,7 @@ unittest {
 unittest {
     import math : lookAt, perspectiveMatrix, translationMatrix;
 import vibe3d.util.spatial.spatial : ModelSpace;
-    import toolpipe.packets : SnapPacket, SnapType, SnapMode;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType, SnapMode;
     import std.math         : PI, round, sqrt;
 
     invalidateSnapGrids();

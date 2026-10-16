@@ -11,11 +11,11 @@ import guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import commands.macros.record : MacroRecord;
 import macro_recorder : MacroRecorder;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import registry : Registry;
 import tool : Tool;
 import tool;
-import snapshot;
+import vibe3d.mesh.snapshot.snapshot;
 import tool_activation_ownership : ToolTransition;
 import ui.history_panel;
 import ui.panels : drawCommandHistoryPanel, historyMacroStripSnapshot,
@@ -23,7 +23,7 @@ import ui.panels : drawCommandHistoryPanel, historyMacroStripSnapshot,
 import imgui_event_gate : imguiPopupOpen;
 import d_imgui.imgui_h : ImVec2;
 import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 private string repositoryRoot() {
     import std.path : dirName;
@@ -80,13 +80,13 @@ private final class HistoryPanelModelTool : Tool, tool.TopologyStepClient {
         return policy;
     }
     override Mesh* topologyStepMesh() { return mesh; }
-    override snapshot.MeshSnapshot topologyStepBasis() { return snapshot.MeshSnapshot.capture(*mesh); }
+    override vibe3d.mesh.snapshot.snapshot.MeshSnapshot topologyStepBasis() { return vibe3d.mesh.snapshot.snapshot.MeshSnapshot.capture(*mesh); }
     override Command topologyStepCarrier() { return null; }
     override bool recordTopologyStep(Command) { return false; }
     override string topologyStepLabel() { return "Model"; }
     override void setTopologyDormant(bool) {}
-    override void rebaseTopologyStep(snapshot.MeshSnapshot) { ++rebases; }
-    override void restoreTopologyStep(in tool.AttrImage, snapshot.MeshSnapshot) { assert(false); }
+    override void rebaseTopologyStep(vibe3d.mesh.snapshot.snapshot.MeshSnapshot) { ++rebases; }
+    override void restoreTopologyStep(in tool.AttrImage, vibe3d.mesh.snapshot.snapshot.MeshSnapshot) { assert(false); }
 }
 
 private final class HistoryPanelActionHarness {

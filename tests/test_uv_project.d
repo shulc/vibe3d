@@ -26,12 +26,12 @@ import std.format : format;
 import std.json   : parseJSON, JSONType, JSONValue;
 import std.conv   : to;
 
-import mesh     : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
+import vibe3d.mesh.core.mesh     : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
 import math     : Vec3;
-import view     : View;
+import vibe3d.viewport.camera.view     : View;
 import vibe3d.editing.contracts.editmode : EditMode;
 import commands.mesh.uv_project : UvProject;
-import uv_project : UvProjMode, UvProjAxis, projectUv, dominantAxis;
+import vibe3d.mesh.ops.uv_project : UvProjMode, UvProjAxis, projectUv, dominantAxis;
 import std.net.curl : post, get;
 
 void main() {}

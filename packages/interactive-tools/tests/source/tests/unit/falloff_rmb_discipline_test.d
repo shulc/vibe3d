@@ -1,7 +1,7 @@
 module falloff_rmb_discipline_test;
 
 import falloff_handles : FalloffRMBDiscipline, falloffRMBDiscipline;
-import toolpipe.packets : FalloffType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType;
 
 unittest {
     const kinds = [

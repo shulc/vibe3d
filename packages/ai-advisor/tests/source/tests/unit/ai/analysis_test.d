@@ -8,14 +8,14 @@ import std.array     : appender;
 import std.conv      : to;
 import std.json      : JSONValue;
 import std.math      : isFinite;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import ai.support_loop_candidates : SupportLoopCandidate,
     generateSupportLoopCandidates;
-import mesh_analysis : AnalyzeContext, buildAnalyzeContext,
+import vibe3d.mesh.ops.mesh_analysis : AnalyzeContext, buildAnalyzeContext,
     coincidentVertexClusters, degenerateFaceIndices, duplicateFaceIndices,
     orphanVertexIndices, inconsistentWindingFaces, nonManifoldEdgeIndices,
     nakedBoundaryLoopEdges, retopoHotspotClusters;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import math : Vec3;
 import ai.analysis;
 
@@ -46,7 +46,7 @@ unittest {
     // naked-boundary finding, since `makeGridPlane` is an OPEN rim — that is
     // a correct finding, not a false positive, so this only asserts on the
     // category this test actually cares about.
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     auto m = makeGridPlane(4);
     auto findings = analyzeMesh(m);
     foreach (ref f; findings)

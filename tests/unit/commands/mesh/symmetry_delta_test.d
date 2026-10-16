@@ -32,19 +32,19 @@
 // exactly one vertex on the +X side and asserts, FIRST, that its partner is
 // unselected and that the forward moved it anyway.
 module tests.unit.commands.mesh.symmetry_delta_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.format : format;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode : EditMode;
 import math      : Vec3;
 import vibe3d.editing.params.params    : Param;
 import http_json : meshPlanesJson;
-import mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
-import operator  : VectorStack;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
+import vibe3d.editing.pipeline.contracts.operator  : VectorStack;
 import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
 import toolpipe.stages.symmetry : SymmetryStage;
 
@@ -494,7 +494,7 @@ unittest {
 // input to `indexSpaceStable` than a one-entry one.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : g_hideDeriveRuns, g_rebuildEdgesRuns, g_buildLoopsRuns;
+    import vibe3d.mesh.core.mesh : g_hideDeriveRuns, g_rebuildEdgesRuns, g_buildLoopsRuns;
 
 
     foreach (name; ["mesh.transform", "mesh.symmetrize"]) {

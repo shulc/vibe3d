@@ -3,7 +3,7 @@ module tests.unit.io.native_refusal_chain_test;
 import std.file : exists, write, tempDir, mkdirRecurse, rmdirRecurse;
 import std.path : buildPath;
 import std.format : format;
-import document : Document;
+import vibe3d.documents.model.document : Document;
 import io.native : kV3dFormatVersion;
 
 // The desktop FileLoad refusal chain retains its original codec fixture.
@@ -15,10 +15,10 @@ private string v3dTestDir(string tag) {
 }
 
 unittest {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import std.algorithm : canFind;
     import commands.file.load : FileLoad;
-    import view     : View;
+    import vibe3d.viewport.camera.view     : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
     auto root = v3dTestDir("refusal_chain");

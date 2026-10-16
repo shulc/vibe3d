@@ -1,15 +1,15 @@
 module tests.unit.commands.mesh.remove_source_public_test;
 
 import commands.mesh.remove_;
-import mesh_edit_replay : captureSelectedEdgeEnds, restoreSelectedEdgeEnds, apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : captureSelectedEdgeEnds, restoreSelectedEdgeEnds, apply, revert;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : SelectionSnapshot;
-import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope, acceptRecordedEdit;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope, acceptRecordedEdit;
 
 // ---------------------------------------------------------------------------
 // Task 0502 — the SHIPPED COMMANDS, not just the kernel under them.
@@ -53,7 +53,7 @@ version (unittest) {
     /// wire edge. Distance is the point: nothing here is adjacent to the
     /// edited edge, so surviving cannot be an accident of locality.
     private Mesh makeRemoveTestGrid() {
-        import mesh : makeGridPlane;
+        import vibe3d.mesh.core.mesh : makeGridPlane;
         Mesh m = makeGridPlane(2);
         m.addVertex(kRemoveTestPoint);
         immutable uint w0 = m.addVertex(kRemoveTestWireA);
@@ -69,7 +69,7 @@ version (unittest) {
 }
 
 unittest { // edge removal leaves unrelated loose geometry alone
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
 
     foreach (isDelete; [false, true]) {
         Mesh m = makeRemoveTestGrid();

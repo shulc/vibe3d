@@ -6,7 +6,7 @@ import std.math      : sqrt;
 
 import math : Vec3, dot, cross, pointInPolygon2D, closestOnSegment2DSquared;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, AimViewport, aimSpace, ModelSpace;
-import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
                           ElementConnect;
 
 // ---------------------------------------------------------------------------

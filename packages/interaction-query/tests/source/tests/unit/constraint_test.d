@@ -6,8 +6,8 @@ module tests.unit.constraint_test;
 import std.math : sqrt;
 import math : Vec3, dot, cross, normalize, closestOnSegment2D;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
-import mesh : Mesh, edgeKey;
-import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
+import vibe3d.mesh.core.mesh : Mesh, edgeKey;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           HoverTarget, HoverTargetKind, SnapPacket;
 import math : lookAt, perspectiveMatrix;
 import std.math : PI;
@@ -52,7 +52,7 @@ unittest { // closestPointOnTriangle — edge region
 }
 
 unittest { // closestPointOnMeshes — vert projects onto unit quad at y=0
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     // Build a two-triangle quad in XZ at Y=0: verts (0,0,0) (1,0,0)
     // (1,0,1) (0,0,1), faces [(0,1,2), (0,2,3)].
     auto m = new Mesh();
@@ -75,7 +75,7 @@ unittest { // closestPointOnMeshes — P2 (doc/topopen_p2_plan.md): srcIndex/fac
            // identify the WINNING source/face, feeding the CONS stage's
            // Point-mode branch the same face the Screen-mode branch already
            // gets from BvhPick's SurfaceHit.face.
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     // Same quad as above: faces[0]=(0,1,2) covers the XZ half where x>=z,
     // faces[1]=(0,2,3) covers the half where z>=x.
     auto m = new Mesh();
@@ -141,7 +141,7 @@ unittest { // closestPointOnMeshes / nearestFaceVertex / nearestFaceEdge —
            // (identity) frame — for this fixture's translation that is a
            // WRONG vertex index, not merely a wrong position, which is
            // what the assertions below pin.
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import math : translationMatrix;
     import std.math : fabs;
 
@@ -196,7 +196,7 @@ unittest { // closestPointOnMeshes / nearestFaceVertex / nearestFaceEdge —
     // edge, so it is the one a broken (un-transformed) search systematically
     // avoids in favour of edge (1,2) (LOCAL-x=1), independent of where the
     // query world point actually is.
-    import mesh : edgeKey;
+    import vibe3d.mesh.core.mesh : edgeKey;
     Vec3 nearEdge30 = Vec3(-0.05f, 0.05f, 0.5f) + T;
     int gotEdge = nearestFaceEdge(*m, ms, 0, nearEdge30);
     auto expEdgePtr = edgeKey(3, 0) in m.edgeIndexMap;
@@ -208,7 +208,7 @@ unittest { // closestPointOnMeshes / nearestFaceVertex / nearestFaceEdge —
 }
 
 unittest { // constrainPoint — point mode projects onto plane
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     auto m = new Mesh();
     m.vertices = [Vec3(-5,0,-5), Vec3(5,0,-5), Vec3(5,0,5), Vec3(-5,0,5)];
     m.faces    = [[0u,1u,2u], [0u,2u,3u]];
@@ -227,7 +227,7 @@ unittest { // constrainPoint — point mode projects onto plane
 }
 
 unittest { // constrainPoint — disabled → identity
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,0,1)];
     m.faces    = [[0u,1u,2u]];
@@ -243,7 +243,7 @@ unittest { // constrainPoint — disabled → identity
 }
 
 unittest { // constrainPoint — off mode → identity even when enabled
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,0,1)];
     m.faces    = [[0u,1u,2u]];
@@ -274,7 +274,7 @@ unittest { // constrainPoint — empty sources → identity
 }
 
 unittest { // constrainPoint — vector mode: downward delta hits +Y plane at Y=0
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import std.math : fabs;
     // Build a Y=0 quad wound for +Y normal: face [0,2,1] and [0,3,2].
     // v0=(0,0,0) v1=(1,0,0) v2=(1,0,1) v3=(0,0,1)
@@ -298,7 +298,7 @@ unittest { // constrainPoint — vector mode: downward delta hits +Y plane at Y=
 }
 
 unittest { // constrainPoint — vector mode: upward delta misses +Y plane → identity
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import std.math : fabs;
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
@@ -317,7 +317,7 @@ unittest { // constrainPoint — vector mode: upward delta misses +Y plane → i
 }
 
 unittest { // constrainPoint — vector mode: zero delta → identity
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import std.math : fabs;
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,0,1)];
@@ -333,7 +333,7 @@ unittest { // constrainPoint — vector mode: zero delta → identity
 }
 
 unittest { // constrainPoint — screen mode: top-down view hits +Y plane at Y=0
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import std.math : fabs;
     // Same +Y quad as the vector test.
     auto m = new Mesh();
@@ -365,7 +365,7 @@ unittest { // constrainPoint — screen mode: top-down view hits +Y plane at Y=0
 }
 
 unittest { // constrainPoint — screen mode: zero-width viewport → identity
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import std.math : fabs;
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,0,1)];
@@ -381,7 +381,7 @@ unittest { // constrainPoint — screen mode: zero-width viewport → identity
 }
 
 unittest { // nearestFaceVertex — 4 corners of a unit quad each resolve exactly
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap
@@ -396,7 +396,7 @@ unittest { // nearestFaceVertex — 4 corners of a unit quad each resolve exactl
 }
 
 unittest { // nearestFaceVertex — out-of-range face -> -1 (best-effort, never throws)
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap
@@ -408,7 +408,7 @@ unittest { // nearestFaceVertex — out-of-range face -> -1 (best-effort, never 
 unittest { // nearestFaceEdge — 4 edge midpoints of a unit quad each resolve to
            // the CORRECT mesh.edges index, looked up via edgeKey (not a
            // hardcoded assumption about buildLoops' edge ordering).
-    import mesh : Mesh, edgeKey;
+    import vibe3d.mesh.core.mesh : Mesh, edgeKey;
     import std.conv : to;
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
@@ -434,7 +434,7 @@ unittest { // nearestFaceEdge — 4 edge midpoints of a unit quad each resolve t
 
 unittest { // nearestFaceEdge — miss cases: out-of-range face, and a mesh whose
            // edgeIndexMap was never built (best-effort -1, no crash).
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap
@@ -451,7 +451,7 @@ unittest { // nearestFaceEdge — miss cases: out-of-range face, and a mesh whos
 unittest { // nearestFaceEdge — grazing case: a point at a shared CORNER is
            // equidistant-ish from its two incident edges; the argmin must
            // still resolve to SOME valid edge (no crash, no spurious -1).
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap

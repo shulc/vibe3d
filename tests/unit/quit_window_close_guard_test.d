@@ -56,8 +56,8 @@
 // is not reachable from here by construction.
 module tests.unit.quit_window_close_guard_test;
 
-import mesh     : Mesh, makeCube;
-import view     : View;
+import vibe3d.mesh.core.mesh     : Mesh, makeCube;
+import vibe3d.viewport.camera.view     : View;
 import vibe3d.editing.contracts.editmode : EditMode;
 import commands.file.quit : FileQuit;
 static import command;

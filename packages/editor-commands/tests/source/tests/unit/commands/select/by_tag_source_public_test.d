@@ -3,11 +3,11 @@ module tests.unit.commands.select.by_tag_source_public_test;
 import commands.select.by_tag;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params   : Param;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 
 // ---------------------------------------------------------------------------
 // Unit tests (task 1051). The region-parity numbers are frozen in

@@ -70,8 +70,8 @@ import std.format    : format;
 import std.json      : JSONType, JSONValue, parseJSON;
 import std.path      : buildPath, dirName;
 
-import mesh : MapDomain, MapKind, Mesh, kindInfo, makeCube;
-import mesh_topo : edgeKey;
+import vibe3d.mesh.core.mesh : MapDomain, MapKind, Mesh, kindInfo, makeCube;
+import vibe3d.mesh.topology.mesh_topo : edgeKey;
 
 private enum string kFixturePath =
     buildPath(dirName(dirName(__FILE_FULL_PATH__)), "fixtures",

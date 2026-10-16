@@ -3,7 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.tools.alignment.align_kernels_test;
 
-import mesh     : Mesh;
+import vibe3d.mesh.core.mesh     : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import math     : Vec3, dot, cross;
 import std.math : sqrt, cos, sin, PI, abs;
@@ -273,7 +273,7 @@ unittest { // control that must flip: without the outside neighbours the circle
 unittest { // the search's records: each chain vertex's edge-neighbours OUTSIDE
            // the operand set — on a cube with the bottom face's corners
            // selected, exactly the one top corner above each (task 9490)
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     Mesh m = makeCube();
     m.syncSelection();
     uint[] chain;

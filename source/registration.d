@@ -38,19 +38,19 @@ import d_imgui.imgui_h;
 import imgui_impl_sdl2;
 import imgui_impl_opengl3;
 import math;
-import mesh;
-import eventlog;
+import vibe3d.mesh.core.mesh;
+import vibe3d.platform.input.eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
 import tool;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype;
 import toolpipe;
-import operator         : VectorStack;
-import toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.contracts.operator         : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
-import view;
+import vibe3d.viewport.camera.view;
 import shader;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
@@ -93,11 +93,11 @@ version (web) {
 import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.ui.layout_reset : UiLayoutResetCommand;
 import scene_reset_effects : SceneResetEffects;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 import commands.layer.commands : LayerAttr;
 import command;
 import registry;
-import shortcuts;
+import vibe3d.platform.input.shortcuts;
 import buttonset;
 import vibe3d.editing.interaction.data.ai.debug_trace : latestHandleDebugTraceJson;
 import ai.element_candidates : publishElementCandidates,
@@ -128,7 +128,7 @@ import remesh.remesh_job : RemeshJob, RemeshParams,
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider;
-import document       : Layer;
+import vibe3d.documents.model.document       : Layer;
 import snap           : ItemSnapFrame;
 import viewport : LayoutPreset;
 import ai_command_registration : registerAiToggleCommands;
@@ -137,7 +137,7 @@ import view_settings_registration : registerViewSettingsCommands;
 version (WithAI) import copilot_command_registration : registerCopilotCommands;
 
 // Locally-scoped in app.d's main() (not top-level there).
-import document       : Document;
+import vibe3d.documents.model.document       : Document;
 import viewport        : ViewportManager;
 
 // These imports were already unused before this slice; follow-up card 6460

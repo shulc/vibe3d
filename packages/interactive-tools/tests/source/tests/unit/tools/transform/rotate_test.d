@@ -4,17 +4,17 @@
 module tests.unit.tools.transform.rotate_test;
 
 import bindbc.opengl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import bindbc.sdl;
 import tools.transform.transform;
 import handler;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.contracts.seltype : SelType;
 import math;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
 import shader;
-import toolpipe.packets : FalloffPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
 import std.math;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -23,7 +23,7 @@ import tools.transform.arcball : ARCBALL_RADIUS_PX, arcballRotation,
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
-import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import vibe3d.editing.params.params : Param;
 import falloff_handles : screenFalloffActive, screenFalloffSetCenter, screenFalloffLMBBegin;
 import tools.transform.rotate;
@@ -31,7 +31,7 @@ import tools.transform.rotate;
 
 unittest { // a re-chained principal ring re-derives its grab reference in the PUSHED arc plane
     import mesh_gpu : GpuMesh;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     static class VpRotate : RotateTool {
         this(Mesh* delegate() m, GpuMesh* g, EditMode* e) { super(m, g, e); }
         void rig(Viewport vp, int axis, int mx, int my) { cachedVp = vp; dragAxis = axis; lastMX = mx; lastMY = my; }

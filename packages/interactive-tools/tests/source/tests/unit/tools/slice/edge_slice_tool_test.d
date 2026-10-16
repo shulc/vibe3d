@@ -8,7 +8,7 @@ import std.json : JSONValue;
 import std.math : round;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;   // ImDrawList / ImVec2 / IM_COL32 for the `t = %` HUD
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import tool;
 
 // Slice M3: Edge Slice's gesture steps are its SESSION's (`sessionSteps`), not
@@ -17,7 +17,7 @@ unittest {
     assert((new EdgeSliceTool(null, null, null, null)).sessionPolicy().sessionSteps,
         "Edge Slice's policy lost the session-owned steps (slice M3)");
 }
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.params.params : Param, IntEnumEntry, wireTagForValue;
@@ -25,17 +25,17 @@ import hover_state : g_hoveredEdge, g_hoverIndexSpaceStale;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment;
 import viewport_scheme : schemeColor, SchemeColor;
-import document : primaryModelSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
 import overlay_space : OverlaySpace;
 import tools.slice.edge_slice_tool;
 import command : Command, CmdFlags;
-import view : View;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.viewport.camera.view : View;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
 unittest {
     assert(edgeSliceHudLabel(0.25f) == "25.00 %");

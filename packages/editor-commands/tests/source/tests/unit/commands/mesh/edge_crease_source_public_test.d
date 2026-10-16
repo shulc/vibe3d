@@ -1,14 +1,14 @@
 module tests.unit.commands.mesh.edge_crease_source_public_test;
 
 import commands.mesh.edge_crease;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope;
 
 version (unittest) {
     private View freshView() { return new View(0, 0, 1, 1); }

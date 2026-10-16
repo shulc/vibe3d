@@ -2,9 +2,9 @@ module commands.viewport.display;
 
 import command;
 import commands.viewport.command_base : ViewportCommand;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.contracts.editmode;
-import view;
+import vibe3d.viewport.camera.view;
 import viewport      : ViewportManager, Viewport3D;
 import display_state : BackdropStyle, CavityMode, DisplayStyle, MAX_CAVITY_SAMPLES,
     ViewportDisplay, WireOverlay;

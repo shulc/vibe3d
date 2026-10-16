@@ -59,7 +59,7 @@ module tests.unit.mesh_dirty_cliff_series_test;
 import vibe3d.mesh.change.mesh_dirty : g_geomEpochs, noteMeshBirth, noteMeshChange,
                      meshDirtySlotCeiling, meshBirthSlotCeiling,
                      meshBirthsRecorded, resetMeshDirtyStateForTest;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import std.format : format;
 
 // An address range far from every other cell's constants in this module

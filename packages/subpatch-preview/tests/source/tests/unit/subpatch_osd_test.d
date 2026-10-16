@@ -7,7 +7,7 @@ import std.conv : to;
 import std.algorithm : canFind;
 import std.math : fabs, sqrt;
 import math : Vec3;
-import mesh : Mesh, SubpatchTrace, edgeKey, makeCube, MapKind;
+import vibe3d.mesh.core.mesh : Mesh, SubpatchTrace, edgeKey, makeCube, MapKind;
 import osd.c;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc, DrawPass;
 import subpatch_osd;
@@ -877,7 +877,7 @@ unittest {
 // activated, or a `noteMeshChange` nobody wired up.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh       : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh       : Mesh, makeCube;
     import subpatch_preview : SubpatchPreview;
     import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
     import vibe3d.mesh.change.change_bus : MeshEditScope, changeBus;

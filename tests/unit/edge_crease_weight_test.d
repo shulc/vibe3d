@@ -20,7 +20,7 @@ import std.algorithm : sort, map;
 import std.array     : array;
 
 import math  : Vec3;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import osd.c;
 import subpatch_osd;
 
@@ -482,7 +482,7 @@ private void feedBus(ref Mesh cage) {
 /// `feedBus`. Spelled out at each site rather than hidden in a helper struct
 /// so the `scope(exit)` is visible beside the mesh whose accumulator it keeps.
 private enum string kHoldDelivery = q{
-    import mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
+    import vibe3d.mesh.core.mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
     beginDeliveryBatchGlobal();
     scope(exit) endDeliveryBatchGlobal();
 };

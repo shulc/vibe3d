@@ -1,10 +1,10 @@
 module commands.select.element;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 import vibe3d.editing.params.params : Param, wireArgs;
 
 // One invocation owns one ordered selection image without changing active type.

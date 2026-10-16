@@ -6,9 +6,9 @@ module tests.unit.ai.support_loop_candidates_test;
 import std.algorithm : max;
 import std.conv : to;
 import std.math : isFinite;
-import mesh : Mesh, EdgeSharpness;
+import vibe3d.mesh.core.mesh : Mesh, EdgeSharpness;
 import math : Vec3;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import ai.support_loop_candidates;
 
 unittest {

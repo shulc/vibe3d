@@ -1,14 +1,14 @@
 module commands.mesh.vertex_bevel;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
-import mesh_edit_delta : MeshEditScope, MeshEditDelta, acceptRecordedEdit;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope, MeshEditDelta, acceptRecordedEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Vertex Bevel (one-shot, undoable): for each selected interior-manifold
@@ -97,7 +97,7 @@ class MeshVertexBevel : Command, Operator {
     void setAmount(float v) { amount_ = v; }
 
     bool evaluate(ref VectorStack vts) {
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         if (editMode != EditMode.Vertices) return false;

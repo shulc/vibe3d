@@ -78,8 +78,8 @@
 // cell with its own message, and reverting restores green.
 module tests.unit.tools.edit.edge_extend_extrude_p0a_reachability_test;
 
-import mesh;
-import mesh_ops.extrude;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.extrude;
 import math : Vec3;
 import std.conv : to;
 

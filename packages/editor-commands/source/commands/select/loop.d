@@ -1,12 +1,12 @@
 module commands.select.loop;
 
 import command;
-import mesh;
-import mesh_ops.select_loop : selectLoopEdges, selectLoopVertices,
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.select_loop : selectLoopEdges, selectLoopVertices,
                               selectLoopFaces;
-import view;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 
 class SelectLoop : Command {
     private SelectionSnapshot snap;

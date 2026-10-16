@@ -13,7 +13,7 @@ module tests.unit.make_polygon_edge_chain_test;
 
 import std.format : format;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
 import commands.mesh.make_polygon : edgeChainWalk;
 

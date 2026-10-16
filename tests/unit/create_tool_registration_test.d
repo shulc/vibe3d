@@ -3,7 +3,7 @@ module tests.unit.create_tool_registration_test;
 import command : Command;
 import commands.mesh.session_edit : MeshSessionEdit;
 import commands.tool.headless : ToolHeadlessCommand;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.params.params : Param;
 import registration : registerTools;
 import registry : ToolFactory;

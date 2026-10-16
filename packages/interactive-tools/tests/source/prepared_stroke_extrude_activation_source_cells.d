@@ -2,13 +2,13 @@ module prepared_stroke_extrude_activation_source_cells;
 
 import prepared_stroke_extrude_activation;
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.deform.stroke_extrude_tool : StrokeExtrudeTool,
     PreparedStrokeExtrudeActivationImage;
 
 unittest {
     import command_history : CommandHistory;
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
     import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind;

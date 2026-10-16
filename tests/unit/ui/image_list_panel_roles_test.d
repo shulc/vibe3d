@@ -20,12 +20,12 @@ import command_history : CommandHistory, RecordMode;
 import commands.image.commands : ImageLoad, ImageRemove, ImageRemoveWarning;
 import commands.layer.commands : LayerDelete, LayerRename, LayerReorder,
     LayerSelect;
-import document : Document, ImageData, ItemKind, Layer;
+import vibe3d.documents.model.document : Document, ImageData, ItemKind, Layer;
 import edit_session : EditSession;
 import forms_render : FormsPanel;
 import guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import registry : Registry;
 import session_owner : Session;
 import tests.unit.ui.headless_panel : HeadlessPanel, KEY_LEFT_CTRL, MOD_CTRL,
@@ -42,7 +42,7 @@ import ui.layer_list_panel : LayerListDrawnRow, LayerListPanelRoles,
     bindLayerListPanel, drawLayerListPanel, layerListDrawSnapshot,
     resetLayerListDrawSnapshot;
 import ui.retained_item : RetainedItem;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
 

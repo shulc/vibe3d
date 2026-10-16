@@ -4,7 +4,7 @@
 // `package` here means the PEN's package and nothing wider -- see
 // `package.d` for why that distinction is the point.
 module tools.edit.topology_pen.tool;
-import mesh_edge_slice : splitFaceByVertices;
+import vibe3d.mesh.ops.mesh_edge_slice : splitFaceByVertices;
 
 import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
 import hover_state;
@@ -17,11 +17,11 @@ import tool;
 import display_state : DrawPlan;
 // `render.d`'s mixin body resolves in THIS scope, so this direct import also
 // covers its two `selectLoopEdges` call sites.
-import mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;
-import mesh_ops.extrude : extendEdgesByMask, kExtrudeEditScope;
-import mesh_ops.loop_slice : insertEdgeLoops, collectEdgeRing,
+import vibe3d.mesh.ops.mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;
+import vibe3d.mesh.ops.mesh_ops.extrude : extendEdgesByMask, kExtrudeEditScope;
+import vibe3d.mesh.ops.mesh_ops.loop_slice : insertEdgeLoops, collectEdgeRing,
                              loopSliceRingEdges, kLoopSliceEditScope;
-import mesh                : Mesh, MeshCacheKey, MeshEditBatch;
+import vibe3d.mesh.core.mesh                : Mesh, MeshCacheKey, MeshEditBatch;
                              // task 3240 (plan 2910 step 3) — the edge-slice
                              // family is free functions now, same reason
                              // again: `splitFaceByVertices` is reached
@@ -33,10 +33,10 @@ import mesh                : Mesh, MeshCacheKey, MeshEditBatch;
 import mesh_gpu            : GpuMesh;
 import math : Vec3, closestOnSegment2D, closestPointOnSegmentToRay, dot, cross, pointInPolygon2D, rayPlaneIntersect;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, screenPointToRay, AimViewport, aimSpace, ModelSpace, screenPointToLocalRay;
-import document             : Layer, primaryModelSpace;
+import vibe3d.documents.model.document             : Layer, primaryModelSpace;
 import shader              : Shader;
-import operator            : VectorStack, viewportOf, pickOcclusionOf;
-import toolpipe.packets    : ConstrainHitPacket, ConstrainPacket, ConstrainGeom, HoverTarget, HoverTargetKind,
+import vibe3d.editing.pipeline.contracts.operator            : VectorStack, viewportOf, pickOcclusionOf;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets    : ConstrainHitPacket, ConstrainPacket, ConstrainGeom, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType, SymmetryPacket;
 import toolpipe.stages.constrain : liveConstrainStage, backgroundHit;
 import toolpipe.stages.snap : liveSnapGuides, SnapStage, liveSnapStage;
@@ -55,16 +55,16 @@ import command_history      : CommandHistory, PreparedHistoryKind;
 import commands.mesh.vertex_new : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
 import command               : Command;
-import snapshot              : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot              : MeshSnapshot;
 import display_sync         : refreshDisplay;
 import vibe3d.mesh.change.change_bus            : MeshEditScope;
 import vibe3d.editing.params.params                : Param, IntEnumEntry, wireTagForValue;
-import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
+import vibe3d.platform.input.tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
                                 InputMod, ResetScope, InputBinding,
                                 resolveToolAction, toButton, toMods;
 import drag                  : planeDragDelta, HandleDrag, DragFrame, DragKind;
-import eventlog               : queryMouse;
-import held_gesture_buttons   : g_heldGestureButtons;
+import vibe3d.platform.input.eventlog               : queryMouse;
+import vibe3d.platform.input.held_gesture_buttons   : g_heldGestureButtons;
 import vibe3d.editing.contracts.prepared_tool_effect   : PreparedSessionActivateEffect,
                                  PreparedActivateKind,
                                  PreparedTopologyPenUpdateEffect,
@@ -4666,7 +4666,7 @@ public:
         // above), so it resolves the live primary ModelSpace through the
         // same cross-module accessor http_providers.d uses — this module
         // has no `Document` of its own.
-        import document : primaryModelSpace;
+        import vibe3d.documents.model.document : primaryModelSpace;
         return removePick_.pickFace(mx, my, vp, *m, *gpu_, primaryModelSpace());
     }
 
@@ -7658,7 +7658,7 @@ public:
     // polygon must not additionally eat its vertices or its edge — those are
     // corners and sides of the face we just built.
     package static void consumeDegenerateOnRing(Mesh* m, const(uint)[] ring) {
-        import mesh_topo : edgeKey;
+        import vibe3d.mesh.topology.mesh_topo : edgeKey;
         if (m is null || ring.length < 3) return;
         bool[] mask;
         bool any = false;

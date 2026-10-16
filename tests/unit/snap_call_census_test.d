@@ -313,11 +313,11 @@ unittest // one vertex finder for the topology tools (tasks 9407, 9437); the pen
 
 unittest // the signatures the clients rely on (compiler pins)
 {
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
     import snap : snapPacketOf;
-    import toolpipe.packets : SnapPacket, SnapType;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType;
     import toolpipe.guide : SnapGuide, SnapQueryPolicy;
     import toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
     static assert(is(typeof(&snapPacketOf) == SnapPacket function(ref VectorStack)));
@@ -337,12 +337,12 @@ unittest // a guide registered on the live stage reaches a create tool's query
 {
     import math : Vec3, lookAt, perspectiveMatrix, identityMatrix;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
-    import mesh             : Mesh;
+    import vibe3d.mesh.core.mesh             : Mesh;
     import vibe3d.editing.contracts.editmode         : EditMode;
     import snap             : invalidateSnapGrids;
     import std.math         : PI, round;
     import toolpipe.guide   : SnapGuide, GuideDrawState, SnapQueryPolicy, SnapPurpose, SnapGuideScope;
-    import toolpipe.packets : SnapType;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
     import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
     import toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
     import tools.create.create_common : snapLocalHit, WorkplaneFrame;

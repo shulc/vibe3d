@@ -8,8 +8,8 @@ import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
 import toolpipe.stage    : Stage, TaskCode, ordWork;
 // pipeline imports moved to packet-only — Phase 6 cleanup
-import toolpipe.packets  : WorkplanePacket;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : WorkplanePacket;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 import vibe3d.util.spatial.workplane_basis : pickMostFacingPlane;
 import toolpipe.state_paths        : setStatePath;
 
@@ -50,7 +50,7 @@ class WorkplaneStage : Stage, Operator {
 
     bool evaluate(ref VectorStack vts) {
         if (!pipeEnabled) return false;
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         if (isAuto) {
             // WORK is the first slot — `subject.viewport` carries the
             // active camera frame. Older Phase-0 SubjectPackets that

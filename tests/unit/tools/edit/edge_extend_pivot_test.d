@@ -36,8 +36,8 @@
 // fixture through the armed tool.
 module tests.unit.tools.edit.edge_extend_pivot_test;
 
-import mesh;
-import mesh_ops.extrude;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.extrude;
 import math : Vec3;
 
 import std.json  : JSONValue, parseJSON;

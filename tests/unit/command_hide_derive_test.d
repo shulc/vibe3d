@@ -46,9 +46,9 @@ import std.conv    : to;
 import std.format  : format;
 
 import command;
-import operator : Operator;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 
 import commands.mesh.radial_array_     : MeshRadialArray;
@@ -63,7 +63,7 @@ import commands.mesh.detriangulate     : MeshDetriangulate;
 import commands.mesh.spin_edge         : MeshSpinEdge;
 import commands.mesh.paste_           : MeshPaste;
 
-import geometry_clipboard : geometryClipboard, GeometryClip;
+import vibe3d.mesh.ops.geometry_clipboard : geometryClipboard, GeometryClip;
 
 // The operand. Several of these commands refuse an empty selection outright
 // (measured 2026-08-19: mesh.duplicate and mesh.vertexSplit are two), so the

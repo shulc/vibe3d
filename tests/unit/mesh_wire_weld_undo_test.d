@@ -1,10 +1,10 @@
 module tests.unit.mesh_wire_weld_undo_test;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import math : Vec3;
-import mesh : CleanupResult, Mesh, MeshEditBatch;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope;
-import mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
+import vibe3d.mesh.core.mesh : CleanupResult, Mesh, MeshEditBatch;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope;
+import vibe3d.mesh.ops.mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
 
 private bool hasWire(in Mesh m, uint a, uint b) {
     foreach (ref e; m.edges)

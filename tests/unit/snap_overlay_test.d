@@ -20,14 +20,14 @@ import std.string    : indexOf;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImVec2;
 
-import held_gesture_buttons : g_heldGestureButtons;
+import vibe3d.platform.input.held_gesture_buttons : g_heldGestureButtons;
 import math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
-import mesh        : Mesh;
+import vibe3d.mesh.core.mesh        : Mesh;
 import snap        : SnapResult;
 import snap_render : SnapMark, drawSnapOverlay;
-import toolpipe.packets : SnapType;
-import view        : View;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
+import vibe3d.viewport.camera.view        : View;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent;
 import tests.unit.ui.headless_panel : openPanel;
 

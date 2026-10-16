@@ -6,14 +6,14 @@ import bindbc.opengl;
 import bindbc.sdl;
 import display_state : DrawPlan;
 import vibe3d.editing.contracts.editmode : EditMode;
-import eventlog : parkOverrideMouse, setOverrideMouse;
+import vibe3d.platform.input.eventlog : parkOverrideMouse, setOverrideMouse;
 import handler : CubicArrow, gizmoPixelSize, gizmoBoxHalfPx, GIZMO_ALPHA_ARM,
     GIZMO_STROKE_SCALE_SHAFT_PX, HandleState, getGizmoPixels, setGizmoPixels;
 import math : Vec3, lookAt, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Viewport, isOrtho, projectToWindowFull;
-import mesh : Mesh, edgeKey;
+import vibe3d.mesh.core.mesh : Mesh, edgeKey;
 import mesh_gpu : GpuMesh;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import overlay_space : OverlaySpace;
 import vibe3d.util.profiling.perf_probe : g_fc, DrawPass;
 import shader : LitShader, Shader;
@@ -29,7 +29,7 @@ import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode, countOccurrences,
     enclosingSymbols, lineOf, symbolAt, symbolTokenHits;
 import tool : Tool;
-import toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 import tools.edit.edge_bevel : EdgeBevelTool, EdgeBevelState, EdgeBevelProfile;
 import ui.viewport_render : ToolOverlayInputs, ViewportSceneRenderer;
 import viewport_overlay_mode : OverlayMode;

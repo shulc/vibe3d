@@ -3,7 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.mesh_test;
 import mesh_visibility : visibleVertices;
-import mesh_edge_slice : addEdgePoint, splitFaceByVertices;
+import vibe3d.mesh.ops.mesh_edge_slice : addEdgePoint, splitFaceByVertices;
 
 import subpatch_factories : subdivideCube;
 import std.math : sqrt, abs;
@@ -12,9 +12,9 @@ import std.range : iota;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.editing.contracts.editmode : EditMode;
-import mesh_edit_delta : MeshEditTracker, MeshEditScope;
-import mesh_ops.bridge : kBridgeEditScope;
-import mesh_ops.thicken : thickenSurface;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker, MeshEditScope;
+import vibe3d.mesh.ops.mesh_ops.bridge : kBridgeEditScope;
+import vibe3d.mesh.ops.mesh_ops.thicken : thickenSurface;
 import vibe3d.mesh.change.change_bus : SelDomain;
 // (`import mesh_ops.bridge : MeshBridgeOps;` was here until task 1903 Stage D3
 // turned that family into free functions — the template name no longer exists.
@@ -62,12 +62,12 @@ import std.math : cos, sin, PI;
 import std.format : format;
 import tests.unit.census_symbols : blankNonCode;
 import tests.unit.fixtures : makeTaggedGrid, findEdge;
-import tests.unit.mesh_ops.seam_differential : meshPlaneDiffs;
+import vibe3d.mesh.ops.tests.unit.mesh_ops.seam_differential : meshPlaneDiffs;
 import vibe3d.util.parallel.tsan_annotate : forceSerialLoopRunnerForTest, parallelRunnerCalls,
                        resetLoopRunnerProbe, serialRunnerCalls;
-import mesh;
-import mesh_ops.cut;
-import mesh_ops.poly_bevel;
+import vibe3d.mesh.core.mesh;
+import vibe3d.mesh.ops.mesh_ops.cut;
+import vibe3d.mesh.ops.mesh_ops.poly_bevel;
 
 unittest // buildLoops: native parallel and browser serial runners are byte-identical
 {
@@ -1548,7 +1548,7 @@ unittest { // ring verts → cage-edge-index mask (the edge-loop HOVER mask path
 unittest { // flipFacesByMask: winding reversed, normal negated, edge set invariant, self-inverse
     import std.algorithm : sort;
     import std.conv : to;
-    import mesh_edit_delta : MeshEditScope;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 
     Mesh m = makeCube();
     Mesh ref_ = makeCube(); // pristine reference for other-face comparison

@@ -1,6 +1,6 @@
 module model_preview;
 
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import mesh_gpu : GpuMesh;
 import tool : Tool;
 

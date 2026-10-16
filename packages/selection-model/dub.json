@@ -7,14 +7,14 @@
     "source"
   ],
   "dependencies": {
-    "vibe3d-document-model": {
-      "path": "../document-model"
+    "vibe3d:document-model": {
+      "path": "../.."
     },
     "vibe3d:edit-contracts": {
       "path": "../.."
     },
-    "vibe3d-mesh": {
-      "path": "../mesh"
+    "vibe3d:mesh": {
+      "path": "../.."
     }
   },
   "toolchainRequirements": {
@@ -160,18 +160,18 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "modeling",
+        "vibe3d:document-model": "modeling",
         "vibe3d:edit-contracts": "modeling",
-        "vibe3d-mesh": "modeling"
+        "vibe3d:mesh": "modeling"
       }
     },
     {
       "name": "modeling-noai",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-document-model": "modeling-noai",
+        "vibe3d:document-model": "modeling-noai",
         "vibe3d:edit-contracts": "modeling-noai",
-        "vibe3d-mesh": "modeling-noai"
+        "vibe3d:mesh": "modeling-noai"
       }
     },
     {
@@ -181,9 +181,9 @@
         "WithAI"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "with-render",
+        "vibe3d:document-model": "with-render",
         "vibe3d:edit-contracts": "with-render",
-        "vibe3d-mesh": "with-render"
+        "vibe3d:mesh": "with-render"
       }
     },
     {
@@ -192,9 +192,9 @@
         "web"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "web",
+        "vibe3d:document-model": "web",
         "vibe3d:edit-contracts": "web",
-        "vibe3d-mesh": "web"
+        "vibe3d:mesh": "web"
       }
     },
     {
@@ -204,9 +204,9 @@
         "MeshSnapshotFixtures"
       ],
       "subConfigurations": {
-        "vibe3d-document-model": "root-tests",
+        "vibe3d:document-model": "root-tests",
         "vibe3d:edit-contracts": "root-tests",
-        "vibe3d-mesh": "root-tests"
+        "vibe3d:mesh": "root-tests"
       },
       "targetType": "sourceLibrary"
     },
@@ -214,9 +214,9 @@
       "name": "isolated-tests",
       "versions": [],
       "subConfigurations": {
-        "vibe3d-document-model": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests"
+        "vibe3d:mesh": "isolated-tests"
       },
       "targetType": "sourceLibrary"
     }

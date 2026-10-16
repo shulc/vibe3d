@@ -17,12 +17,12 @@ import mesh_visibility : visibleVertices;
 
 import std.math : sqrt;
 import math : Vec3;
-import mesh : Mesh, SubpatchTrace, edgeKey, makeCube, Surface;
+import vibe3d.mesh.core.mesh : Mesh, SubpatchTrace, edgeKey, makeCube, Surface;
 import vibe3d.mesh.change.mesh_dirty : foldSubpatchKeyMember;
 import mesh_gpu : kFaceStride;
 import vertex_normals : FaceAdjacency, SmoothPolicy, adjacencyEntries, buildFaceAdjacency,
     buildSmoothPolicy;
-import mesh : kSurfaceSlots;
+import vibe3d.mesh.core.mesh : kSurfaceSlots;
 import osd.c;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc, DrawPass;
 

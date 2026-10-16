@@ -62,7 +62,7 @@ module tests.unit.l1_declined_census_test;
 
 import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 
 import tests.unit.census_symbols : exists = wave15Exists;
@@ -383,8 +383,8 @@ unittest // GATE S1/S2 instrument — the scanners can actually find something
 // ===========================================================================
 unittest
 {
-    import mesh            : Mesh, makeCube;
-    import mesh_edit_delta : MeshEditTracker, MeshOpEntry;
+    import vibe3d.mesh.core.mesh            : Mesh, makeCube;
+    import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker, MeshOpEntry;
 
     auto m = new Mesh;
     *m = makeCube();

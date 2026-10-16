@@ -27,7 +27,7 @@
 module tests.unit.mark_view_test;
 
 import std.format : format;
-import mesh;
+import vibe3d.mesh.core.mesh;
 
 // ---------------------------------------------------------------------------
 // Per-domain equivalence: view[i] == old[i] for every i, plus the length and

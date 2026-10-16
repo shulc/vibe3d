@@ -8,12 +8,12 @@ import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner
 import command_history : PreparedHistoryKind;
 
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import mesh_ops.revolve;
+import vibe3d.mesh.ops.mesh_ops.revolve;
 import math;
 import vibe3d.util.spatial.spatial : Viewport, screenPointToLocalRay;
 import vibe3d.editing.contracts.editmode : EditMode;
@@ -21,9 +21,9 @@ import vibe3d.editing.params.params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import document : Layer, primaryModelSpace;
+import vibe3d.documents.model.document : Layer, primaryModelSpace;
 
 struct PreparedStrokeExtrudeActivationImage {
     MeshSnapshot before;

@@ -6,7 +6,7 @@ import vibe3d.mesh.change.change_bus : ChangeBus, PreparedDeliveryJournal, Prepa
                     PreparedMeshSubjectOwner;
 import command_history : CommandHistory, HistoryEntry, HistoryFlags,
                         PreparedHistoryImage;
-import document : PreparedLayerReadScope;
+import vibe3d.documents.model.document : PreparedLayerReadScope;
 import record_observer_hub : PreparedRecordObserverImage;
 import tool : Tool, ToolSessionPolicy;
 import registry : PreparedPipeAttrs, ToolFactory;
@@ -17,25 +17,25 @@ import std.algorithm : canFind, endsWith, startsWith;
 import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import commands.tool.lifecycle : ToolActivationCommand;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
-import mesh : makeCube;
+import vibe3d.mesh.core.mesh : makeCube;
 import mesh_gpu : GpuMesh;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import pipe_gizmo_host : PipeGizmoHost;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import record_observer_hub : RecordObserverHub;
 import vibe3d.editing.contracts.seltype : SelType;
 import std.json : JSONValue;
-import toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 import toolpipe.pipeline : g_pipeCtx, Pipeline;
 import toolpipe.stages.actcenter : ActionCenterStage;
 import toolpipe.stages.axis : AxisStage;
 import toolpipe.stages.constrain : ConstrainStage;
 import toolpipe.stages.falloff : FalloffStage;
 import tools.transform.xfrm_transform : XfrmTransformTool;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 
 // ---------------------------------------------------------------------------
 // The prepared-effect FIELD SHAPE census (task 4052)
@@ -259,7 +259,7 @@ unittest {
 // refuses a drift in either direction. Neither half is sufficient alone.
 private enum string[] kTokenModules = [
     "command_history",
-    "document",
+    "vibe3d.documents.model.document",
     "handles.shapes",
     "mesh_gpu",
     "prepared_bridge_activation",
@@ -862,7 +862,7 @@ unittest { // review of M4: the redo of a sessionSteps row survives its undo onl
 }
 
 unittest { // Vertex door: a switch away enlists only the snap clear, an arm nothing
-    import mesh : Mesh;
+    import vibe3d.mesh.core.mesh : Mesh;
     import snap : SnapResult;
     import snap_render : publishLastSnap, clearLastSnap, g_lastSnap;
     import tools.create.vertex_place : VertexTool;

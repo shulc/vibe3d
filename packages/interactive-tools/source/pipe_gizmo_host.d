@@ -5,9 +5,9 @@ import bindbc.sdl;
 import vibe3d.util.spatial.spatial : Viewport;
 import shader  : Shader;
 import handler : ToolHandles;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import falloff_handles : FalloffGizmo;
-import toolpipe.packets : FalloffPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
 
 // ---------------------------------------------------------------------------
 // PipeGizmoHost — the single, app-level owner of the toolpipe falloff

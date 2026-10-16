@@ -2,7 +2,7 @@ module ui.image_list_panel;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
-import document : Document, Layer;
+import vibe3d.documents.model.document : Document, Layer;
 import imgui_flag_boundary : inputTextSubmitOnEnter;
 import session_owner : Session;
 import ui.image_rows : ImageRemoveConfirm, ImageRow, elidedPathText,

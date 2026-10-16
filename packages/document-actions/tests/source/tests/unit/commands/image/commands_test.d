@@ -6,11 +6,11 @@ module tests.unit.commands.image.commands_test;
 import std.path : baseName, stripExtension;
 import nfde;
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params    : Param;
-import document  : Document, Layer, ItemKind, ImageData;
+import vibe3d.documents.model.document  : Document, Layer, ItemKind, ImageData;
 import vibe3d.editing.contracts.seltype   : SelMode;
 import io.formats     : FilterSpec;
 import io.image_path  : refreshImageMeta;
@@ -20,8 +20,8 @@ import commands.layer.commands : LayerDelete;
 import std.file : write, remove, exists;
 import std.path : buildPath;
 import io.image_path : writeTestBmp, imageTestDir;
-import mesh   : makeCube;
-import view   : View;
+import vibe3d.mesh.core.mesh   : makeCube;
+import vibe3d.viewport.camera.view   : View;
 import commands.image.commands;
 
 // ---------------------------------------------------------------------------

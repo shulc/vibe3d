@@ -39,7 +39,7 @@ version (Posix) {
     import core.sys.posix.unistd : fork, _exit;
 }
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
+import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName;
 import io.scene_ir  : ImportedScene, ImportedPart, flattenToMesh;
 import io.lwo_export : exportLwo;
 import io.lwo_import : sceneFromLwo;

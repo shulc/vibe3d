@@ -179,10 +179,10 @@ private bool findPress(Handler a, Handler b, const ref Viewport vp, out int px, 
 
 unittest {
     import std.math : sqrt;
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     import math : cross, dot;
 import vibe3d.util.spatial.spatial : Orientation;
     import handler : ToolHandles, HitRule;

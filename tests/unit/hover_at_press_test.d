@@ -8,9 +8,9 @@ import vibe3d.editing.contracts.editmode : EditMode;
 import hover_state;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 private SDL_MouseButtonEvent leftPress(int x = 0, int y = 0) {
     loadSDL();
@@ -74,7 +74,7 @@ unittest { // magnet: a stale held vertex starts no drag
 }
 
 unittest { // element pick: a stale held vertex pins nothing
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
     import toolpipe.stages.actcenter : ActionCenterStage;
     import tools.transform.xfrm_transform : XfrmTransformTool;

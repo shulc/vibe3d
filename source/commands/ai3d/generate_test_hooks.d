@@ -18,8 +18,8 @@ module commands.ai3d.generate_test_hooks;
 // ---------------------------------------------------------------------------
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params : Param;
 import ai3d.job_controller : Ai3dJobController;

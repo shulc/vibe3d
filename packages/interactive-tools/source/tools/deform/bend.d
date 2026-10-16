@@ -1,11 +1,11 @@
 module tools.deform.bend;
 import display_state : DrawPlan;
 
-import document : primaryModelSpace;
-import operator : VectorStack;
+import vibe3d.documents.model.document : primaryModelSpace;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tools.transform.transform;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
 import vibe3d.editing.contracts.editmode;
 import math : Vec3, Vec4, dot, cross, pivotRotationMatrix, mulMV;
@@ -14,7 +14,7 @@ import shader;
 
 import vibe3d.editing.params.params : Param;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedTransformActivationEffect,
     PreparedTransformActivationKind;
 import prepared_transform_activation : PreparedTransformActivationOwner;
@@ -98,7 +98,7 @@ public:
     /// scaled by signed distance along spine.
     override bool applyHeadless() {
         if (headlessAngleDeg == 0.0f) return true;
-        import toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
         SubjectPacket subj;
         VectorStack vts;
         beginHeadlessDeform(subj, vts);

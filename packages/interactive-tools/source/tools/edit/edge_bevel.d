@@ -4,14 +4,14 @@ import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
 
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
 import tools.topology_step;
 import command : Command;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
+import vibe3d.mesh.ops.mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
 import math;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.editing.contracts.editmode : EditMode;
@@ -22,10 +22,10 @@ import handler : CubicArrow, ToolHandles, HandleState, HandlePart, firstHitPart,
 import viewport_scheme : axisColor;
 import drag : screenAxisDelta;
 import overlay_space : OverlaySpace;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
     PreviewRebuildCounts;
@@ -42,7 +42,7 @@ import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedEdgeBevelParamEffect,
     PreparedEdgeBevelParamKind;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import mesh_gpu : GpuUploadOwner;
 import core.stdc.string : memcmp;
 

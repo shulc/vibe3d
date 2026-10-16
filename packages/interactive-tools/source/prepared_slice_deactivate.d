@@ -1,8 +1,8 @@
 module prepared_slice_deactivate;
 
 import core.atomic : atomicOp;
-import document : Layer;
-import mesh : Mesh;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.slice.slice_tool : SliceTool, PreparedSliceDeactivateImage;
 
 struct PreparedSliceDeactivateToken { @disable this(this); private: ulong owner, generation; }

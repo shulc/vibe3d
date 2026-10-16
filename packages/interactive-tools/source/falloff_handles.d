@@ -8,7 +8,7 @@ import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
 import viewport_scheme : axisColor, schemeColor, SchemeColor;
 import shader : Shader;
 import drag   : screenAxisDelta, haulWorldPerPixel, HandleDrag, DragFrame, DragKind;
-import toolpipe.packets  : FalloffPacket, FalloffType;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : FalloffPacket, FalloffType;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage;

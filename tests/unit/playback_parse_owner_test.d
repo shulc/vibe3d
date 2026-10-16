@@ -3,7 +3,7 @@ module tests.unit.playback_parse_owner_test;
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
-import eventlog : clearEventPlayerControlsForTest,
+import vibe3d.platform.input.eventlog : clearEventPlayerControlsForTest,
     setEventPlayerClockForTest;
 import http_server : HttpResponse, HttpServer, InProcessHttpTransport;
 import playback_controller : PlaybackAcceptOutcome, PlaybackController;

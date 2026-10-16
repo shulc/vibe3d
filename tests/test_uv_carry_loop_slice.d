@@ -28,7 +28,7 @@ import std.json;
 import std.math : fabs;
 import std.conv : to;
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName, MeshEditBatch;
+import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName, MeshEditBatch;
 // Named from `mesh_ops.loop_slice` DIRECTLY, and the reason is a choice, not a
 // compiler constraint — the earlier note here ("a `public import` in mesh.d is
 // INVISIBLE through a SELECTIVE `import mesh : …`") was measurably WRONG and
@@ -47,7 +47,7 @@ import mesh : Mesh, MeshMap, MapDomain, kUvMapName, MeshEditBatch;
 // instead because the DECLARING module is the honest source for a free
 // function, and it keeps the import from going stale if mesh.d ever stops
 // being the door for the ops namespace (audit 0678 M9). (task 1903 Stage F1)
-import mesh_ops.loop_slice : insertEdgeLoops, insertEdgeLoopsMulti,
+import vibe3d.mesh.ops.mesh_ops.loop_slice : insertEdgeLoops, insertEdgeLoopsMulti,
                              kLoopSliceEditScope;
 import math : Vec3;
 
@@ -392,7 +392,7 @@ unittest { // the per-CORNER entry (task 0697) IS the per-face one, generalised
     // The rewrite below is a hand-built one-edge split of two quads sharing an
     // edge, with the two faces disagreeing at the shared vertices (a seam) — so
     // the comparison covers a copy, a blend, and a corner with no source at all.
-    import mesh : PolyVertexBlend;
+    import vibe3d.mesh.core.mesh : PolyVertexBlend;
 
     Mesh build() {
         Mesh m;
@@ -442,7 +442,7 @@ unittest { // the per-CORNER entry (task 0697) IS the per-face one, generalised
 }
 
 unittest { // a mesh with NO per-corner map must be unaffected (and not crash)
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     Mesh m = makeCube();
     m.buildLoops();
     assert(m.meshMap(kUvMapName) is null, "makeCube should register no UV map");

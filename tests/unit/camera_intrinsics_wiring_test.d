@@ -34,8 +34,8 @@ unittest {
 // the private replay-copy assertions (task 10790).
 unittest {
     import viewport : ViewportManager, LayoutPreset;
-    import view : ProjKind;
-    import eventlog : EventLogger, parseEventLog;
+    import vibe3d.viewport.camera.view : ProjKind;
+    import vibe3d.platform.input.eventlog : EventLogger, parseEventLog;
     import std.file : tempDir, remove;
     import std.process : thisProcessID;
     import std.conv : to;

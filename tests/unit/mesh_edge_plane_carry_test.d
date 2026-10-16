@@ -39,9 +39,9 @@
 // its "still selected" assertion, naming the two indices.
 module tests.unit.mesh_edge_plane_carry_test;
 
-import mesh        : Mesh, makeCube, makeGridPlane;
-import mesh_planes : EdgePlaneCarry;
-import mesh_topo   : edgeKey;
+import vibe3d.mesh.core.mesh        : Mesh, makeCube, makeGridPlane;
+import vibe3d.mesh.core.mesh_planes : EdgePlaneCarry;
+import vibe3d.mesh.topology.mesh_topo   : edgeKey;
 import std.format  : format;
 
 // ---------------------------------------------------------------------------

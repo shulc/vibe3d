@@ -178,7 +178,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
 unittest {
     import hover_state : ToolPressSource, toolPressAt, toolPressEdgeAdmitted,
         toolPressVertexAdmitted, toolPressFaceAdmitted;
-    import mesh : Mesh, makeGridPlane;
+    import vibe3d.mesh.core.mesh : Mesh, makeGridPlane;
     import math : Vec3, lookAt, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
     import std.math : round;
@@ -253,7 +253,7 @@ import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
 
 unittest {
     import hover_state : ToolPressSource, toolPressAt, toolPressSupport;
-    import mesh : makeGridPlane;
+    import vibe3d.mesh.core.mesh : makeGridPlane;
     import math : Vec3, lookAt, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
     import std.algorithm : reverse;

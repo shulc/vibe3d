@@ -2,12 +2,12 @@ module tools.edit.edge_extend;
 import display_state : DrawPlan;
 
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import mesh_ops.extrude;
+import vibe3d.mesh.ops.mesh_ops.extrude;
 import math;
 import vibe3d.util.spatial.spatial : ModelSpace, Viewport, screenPointToRay;
 import vibe3d.editing.contracts.editmode : EditMode;
@@ -15,7 +15,7 @@ import vibe3d.editing.params.params : Param;
 import shader : Shader, LitShader;
 import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
     PreviewRebuildCounts, PreparedPreviewRebuildImage;
@@ -38,12 +38,12 @@ import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOw
 import prepared_param_update : PreparedParamUpdateOwner, PreparedParamUpdateProducer;
 import prepared_edge_extend_deactivate : PreparedEdgeExtendDeactivateOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import mesh_gpu : GpuUploadOwner;
 
 import std.json : JSONValue;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;
-import toolpipe.packets : SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
 
 struct PreparedEdgeExtendToolActivationImage {
     bool valid;

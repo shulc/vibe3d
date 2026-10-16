@@ -69,9 +69,9 @@ import std.json;
 import std.format : format;
 import std.conv   : to;
 
-import mesh     : makeCube;
+import vibe3d.mesh.core.mesh     : makeCube;
 import vibe3d.editing.contracts.seltype  : SelMode;
-import document : Document, Layer, ItemKind, LayerRole;
+import vibe3d.documents.model.document : Document, Layer, ItemKind, LayerRole;
 import ui.item_rows : ItemRow, RowRole, RowLook, itemRowsInto, lookOf;
 
 void main() {}

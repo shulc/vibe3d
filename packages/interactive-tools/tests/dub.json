@@ -395,8 +395,8 @@
     "vibe3d-application-core": {
       "path": "../../application-core"
     },
-    "vibe3d-camera-model": {
-      "path": "../../camera-model"
+    "vibe3d:camera-model": {
+      "path": "../../.."
     },
     "vibe3d-command-runtime": {
       "path": "../../command-runtime"
@@ -407,8 +407,8 @@
     "vibe3d-display-policy": {
       "path": "../../display-policy"
     },
-    "vibe3d-document-model": {
-      "path": "../../document-model"
+    "vibe3d:document-model": {
+      "path": "../../.."
     },
     "vibe3d:edit-contracts": {
       "path": "../../.."
@@ -416,8 +416,8 @@
     "vibe3d-editor-commands": {
       "path": "../../editor-commands"
     },
-    "vibe3d-input-events": {
-      "path": "../../input-events"
+    "vibe3d:input-events": {
+      "path": "../../.."
     },
     "vibe3d:interaction-data": {
       "path": "../../.."
@@ -431,32 +431,32 @@
     "vibe3d:math": {
       "path": "../../.."
     },
-    "vibe3d-mesh": {
-      "path": "../../mesh"
+    "vibe3d:mesh": {
+      "path": "../../.."
     },
     "vibe3d:mesh-change": {
       "path": "../../.."
     },
-    "vibe3d-mesh-edit-log": {
-      "path": "../../mesh-edit-log"
+    "vibe3d:mesh-edit-log": {
+      "path": "../../.."
     },
-    "vibe3d-mesh-edit-replay": {
-      "path": "../../mesh-edit-replay"
+    "vibe3d:mesh-edit-replay": {
+      "path": "../../.."
     },
-    "vibe3d-mesh-ops": {
-      "path": "../../mesh-ops"
+    "vibe3d:mesh-ops": {
+      "path": "../../.."
     },
-    "vibe3d-mesh-snapshot": {
-      "path": "../../mesh-snapshot"
+    "vibe3d:mesh-snapshot": {
+      "path": "../../.."
     },
-    "vibe3d-mesh-topology": {
-      "path": "../../mesh-topology"
+    "vibe3d:mesh-topology": {
+      "path": "../../.."
     },
     "vibe3d:param-schema": {
       "path": "../../.."
     },
-    "vibe3d-pipe-contracts": {
-      "path": "../../pipe-contracts"
+    "vibe3d:pipe-contracts": {
+      "path": "../../.."
     },
     "vibe3d-pipe-evaluation": {
       "path": "../../pipe-evaluation"
@@ -508,27 +508,27 @@
       "subConfigurations": {
         "vibe3d-alignment-ops": "isolated-tests",
         "vibe3d-application-core": "isolated-tests",
-        "vibe3d-camera-model": "isolated-tests",
+        "vibe3d:camera-model": "isolated-tests",
         "vibe3d-command-runtime": "isolated-tests",
         "vibe3d-creation-ops": "isolated-tests",
         "vibe3d-display-policy": "isolated-tests",
-        "vibe3d-document-model": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests",
         "vibe3d-editor-commands": "isolated-tests",
-        "vibe3d-input-events": "isolated-tests",
+        "vibe3d:input-events": "isolated-tests",
         "vibe3d:interaction-data": "isolated-tests",
         "vibe3d-interaction-query": "isolated-tests",
         "vibe3d:log": "isolated-tests",
         "vibe3d:math": "isolated-tests",
-        "vibe3d-mesh": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
         "vibe3d:mesh-change": "isolated-tests",
-        "vibe3d-mesh-edit-log": "isolated-tests",
-        "vibe3d-mesh-edit-replay": "isolated-tests",
-        "vibe3d-mesh-ops": "isolated-tests",
-        "vibe3d-mesh-snapshot": "isolated-tests",
-        "vibe3d-mesh-topology": "isolated-tests",
+        "vibe3d:mesh-edit-log": "isolated-tests",
+        "vibe3d:mesh-edit-replay": "isolated-tests",
+        "vibe3d:mesh-ops": "isolated-tests",
+        "vibe3d:mesh-snapshot": "isolated-tests",
+        "vibe3d:mesh-topology": "isolated-tests",
         "vibe3d:param-schema": "isolated-tests",
-        "vibe3d-pipe-contracts": "isolated-tests",
+        "vibe3d:pipe-contracts": "isolated-tests",
         "vibe3d-pipe-evaluation": "isolated-tests",
         "vibe3d-pipe-runtime": "isolated-tests",
         "vibe3d:profiling": "isolated-tests",

@@ -39,14 +39,14 @@ import tool            : Tool, CommandClose, AttrImage, PressKind, OpensAt,
 import command         : Command, CmdFlags;
 import std.json        : JSONValue;
 import command_history : CommandHistory, UndoState, HistoryFlags;
-import held_gesture_buttons : g_heldGestureButtons;
+import vibe3d.platform.input.held_gesture_buttons : g_heldGestureButtons;
 import std.typecons    : Rebindable;
 import vibe3d.editing.params.params          : ParamProvider;
 import toolpipe.stage  : Stage;
 import tool_activation_ownership : CloseReason, CommandDoor, CloseOutcome, DropContext;
 import tools.common.session_mesh_key : SessionMeshKey;
-import snapshot : MeshSnapshot;
-import mesh : Mesh;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.core.mesh : Mesh;
 import math : Vec3;
 import vibe3d.editing.contracts.editmode : EditMode;
 import tool : HeadlessSourcePolicy;

@@ -1,11 +1,11 @@
 module commands.select.by_stat;
 
 import command;
-import mesh;
-import view;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.editing.params.params   : Param;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 import std.algorithm : canFind;
 import std.conv       : to;
 
@@ -149,9 +149,9 @@ import std.conv       : to;
 /// (`source/mesh_stats.d`, task 1100) and is re-exported here so that every
 /// caller of `Compare` / `VertexStat` / `EdgeStat` / `PolygonStat` through
 /// this module keeps compiling — the `GpuMesh` extract precedent (task 0425).
-public import mesh_stats : Compare, VertexStat, EdgeStat, PolygonStat;
+public import vibe3d.mesh.ops.mesh_stats : Compare, VertexStat, EdgeStat, PolygonStat;
 
-import mesh_stats : StatContext, StatNeed, buildStatContext, vertexStatMask,
+import vibe3d.mesh.ops.mesh_stats : StatContext, StatNeed, buildStatContext, vertexStatMask,
                     edgeStatMask, polygonStatMask;
 
 /// Shared `mode` vocabulary. No `set` — see the header note.

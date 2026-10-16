@@ -13,8 +13,8 @@ import tool : Tool, ToolSessionPolicy;
 import tool_presets : loadToolPresets;
 import tool_activation_ownership : ToolTransition;
 import tool_activation_ownership : postmodeArmedOnArm;
-import view : View;
-import mesh : Mesh;
+import vibe3d.viewport.camera.view : View;
+import vibe3d.mesh.core.mesh : Mesh;
 import math : Vec3;
 
 import tests.unit.census_symbols : readText = wave15ReadText;
@@ -800,7 +800,7 @@ unittest { // History clear can leave a pending producer without an activation r
     session.noteArm("empty-pending",694);
     assert(producer.hasUncommittedEdit() && history.undoEntries().length == 0 &&
         history.redoEntries().length == 0,"EMPTY_PENDING_CONTROL: pending owner with zero history entries");
-    import held_gesture_buttons : g_heldGestureButtons;
+    import vibe3d.platform.input.held_gesture_buttons : g_heldGestureButtons;
     g_heldGestureButtons.press(1);
     scope(exit) g_heldGestureButtons.clear();
     assert(!session.navigate(true) && producer.cancels == 0 && producer.pending && active is producer,
@@ -848,7 +848,7 @@ private void pendingFamily(Tool producer, string id, CommandHistory history,
 }
 
 unittest {
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
     import math : Vec3;
     import commands.mesh.vertex_edit : MeshVertexEdit;
@@ -892,7 +892,7 @@ unittest {
 unittest {
     import tools.alignment.linear_align_tool : LinearAlignTool;
     import tools.alignment.radial_align_tool : RadialAlignTool;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     foreach (radial; [false,true]) foreach (foreign; [false,true]) {
         auto source=makeCube(); auto original=source.vertices.dup;

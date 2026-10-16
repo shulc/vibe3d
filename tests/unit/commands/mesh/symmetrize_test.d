@@ -4,18 +4,18 @@
 module tests.unit.commands.mesh.symmetrize_test;
 
 import command;
-import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
-import mesh;
-import view;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import math   : Vec3;
 import vibe3d.editing.params.params : Param;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
-import toolpipe.packets : SymmetryPacket, SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket, SubjectPacket;
 import symmetry : rebuildPairing, rebuildPairingTopological, applySymmetryMirror;
 import math : Vec3;
-import mesh : Mesh;
-import toolpipe.packets : SymmetryPacket;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
 import commands.mesh.symmetrize;
 
 unittest {

@@ -17,7 +17,7 @@ unittest {
     import prepared_record_context : PreparedRecordContext;
     import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind;
     import record_observer_hub : RecordObserverHub;
-    import toolpipe.packets : ConstrainGeom;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainGeom;
 
     auto savedPipe = g_pipeCtx; scope(exit) g_pipeCtx = savedPipe;
     auto pipe = new ToolPipeContext();

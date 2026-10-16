@@ -1,7 +1,7 @@
 module prepared_loop_slice_activation;
 
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.slice.loop_slice_tool : LoopSliceTool, PreparedLoopSliceActivationImage;
 
 struct PreparedLoopSliceActivationToken {

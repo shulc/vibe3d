@@ -1,8 +1,8 @@
 module tests.unit.command_source_public_test;
 
 import command : Command;
-import mesh : Mesh;
-import view : View;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.viewport.camera.view : View;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.util.spatial.spatial : Viewport;
 
@@ -31,9 +31,9 @@ import vibe3d.util.spatial.spatial : Viewport;
 
 
 version (unittest) {
-    import operator         : Operator, VectorStack, OperatorActrCommon,
+    import vibe3d.editing.pipeline.contracts.operator         : Operator, VectorStack, OperatorActrCommon,
                               Task, PacketKind;
-    import toolpipe.packets : SubjectPacket;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     /// A terminal Operator that mutates nothing and reports the packet the
     /// base `applyImpl()` handed it.
@@ -58,7 +58,7 @@ version (unittest) {
 }
 
 unittest {
-    import view       : View;
+    import vibe3d.viewport.camera.view       : View;
     import math       : Vec3, lookAt, perspectiveMatrix;
     import std.math   : PI, isNaN;
     import std.format : format;

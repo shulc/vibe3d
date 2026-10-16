@@ -5,16 +5,16 @@ import std.math   : abs, sqrt, isFinite;
 
 import math : Vec3, cross, dot, normalize, frameMatrix, frameMatrixInverse, applyAffine;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
-import mesh    : Mesh;
+import vibe3d.mesh.core.mesh    : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAxis, ToolSwitchTransient,
                            PresetClaimable;
 // pipeline imports moved to packet-only — Phase 6 cleanup
-import toolpipe.packets  : AxisPacket, ActionCenterPacket;
-import operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : AxisPacket, ActionCenterPacket;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.state_paths       : setStatePath, installPreparedStatePath;
-import document          : Layer;
+import vibe3d.documents.model.document          : Layer;
 import vibe3d.editing.params.params            : IntEnumEntry, wireTagForValue, valueForWireTag,
                            tableCoversEnumOf;
 
@@ -56,7 +56,7 @@ class AxisStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
 
     bool evaluate(ref VectorStack vts) {
         if (!pipeEnabled) return false;
-        import toolpipe.packets : SubjectPacket, WorkplanePacket,
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, WorkplanePacket,
                                   ActionCenterPacket;
         // Cache upstream state — both the viewport (subject) and the
         // workplane (its packet) are needed by computeBasis().
@@ -89,7 +89,7 @@ class AxisStage : Stage, Operator, ToolSwitchTransient, PresetClaimable {
         computeBasis(r, u, f, subjType);
         Vec3[] localRight, localUp, localFwd;
         bool symmetryEnabled = false;
-        import toolpipe.packets : SymmetryPacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
         if (auto sym = vts.get!SymmetryPacket()) symmetryEnabled = sym.enabled;
         bool localFrames = mode == Mode.Local
             && resolveLocalFrames(vts.get!ActionCenterPacket(), subjType,
@@ -293,7 +293,7 @@ private:
     /// those publish an ITEM's own orientation, and the item in question is
     /// the item-transform target, which is a different question.
     ModelSpace itemSpace() const {
-        import document : primaryModelSpace;
+        import vibe3d.documents.model.document : primaryModelSpace;
         return primaryModelSpace();
     }
 
@@ -1244,8 +1244,8 @@ private:
 version (unittest) {
     import std.math : isClose, sin, cos, PI;
     import math : matMul4, applyAffine, identityMatrix;
-    import operator : VectorStack;
-    import toolpipe.packets : SubjectPacket, AxisPacket;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, AxisPacket;
 }
 
 

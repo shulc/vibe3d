@@ -1,6 +1,6 @@
 module tests.unit.camera_intrinsics_test;
 
-import view : View, ProjKind, ViewPreset;
+import vibe3d.viewport.camera.view : View, ProjKind, ViewPreset;
 import viewport : ViewportManager, LayoutPreset, applyCellViewPreset;
 import math : Vec3, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Orientation, projectToWindowFull;

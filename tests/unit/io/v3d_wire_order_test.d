@@ -8,7 +8,7 @@ import std.random : uniform;
 
 import io.native : readV3d, writeV3d;
 import math : Vec3;
-import mesh : MapDomain, Mesh;
+import vibe3d.mesh.core.mesh : MapDomain, Mesh;
 
 private float edgeValueAtPair(in Mesh m, string name, uint a, uint b) {
     const ei = m.edgeIndex(a, b);

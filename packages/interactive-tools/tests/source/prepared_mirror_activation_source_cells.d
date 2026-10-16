@@ -2,22 +2,22 @@ module prepared_mirror_activation_source_cells;
 
 import prepared_mirror_activation;
 import core.atomic : atomicOp;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import tools.alignment.mirror : MirrorTool, PreparedMirrorActivationImage,
     PreparedMirrorDeactivateImage;
 
 unittest {
     import command_history : CommandHistory;
-    import document : Layer;
+    import vibe3d.documents.model.document : Layer;
     import math : Vec3;
 import vibe3d.util.spatial.spatial : ModelSpace;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import mesh_gpu : GpuMesh;
     import prepared_record_context : PreparedRecordContext;
     import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind, PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
-    import snapshot : MeshSnapshot;
+    import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
     import tools.alignment.mirror : MirrorParams, mirrorInPlace;
 
     PreparedRecordContext freshContext(CommandHistory h = null) {
@@ -143,7 +143,7 @@ import vibe3d.util.spatial.spatial : ModelSpace;
 
     import commands.mesh.session_edit : MeshSessionEdit;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     auto historyLayer = new Layer;
     MeshSnapshot.capture(commitSource).restore(historyLayer.meshRef());
     GpuMesh historyGpu;

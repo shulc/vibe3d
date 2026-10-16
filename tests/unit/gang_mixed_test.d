@@ -45,7 +45,7 @@ import d_imgui.imgui_h : ImVec2;
 import std.format : format;
 import std.json   : parseJSON;
 
-import document     : Layer, ItemKind;
+import vibe3d.documents.model.document     : Layer, ItemKind;
 import forms        : Form, Row;
 import forms_render : FormsPanel, textInputPresentation;
 import layer_params : LayerPropsProvider;

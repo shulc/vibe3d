@@ -20,7 +20,7 @@
 // isolation.
 module tests.unit.mesh_face_marks_setter_test;
 
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math : Vec3;
 import tests.unit.mesh_by_value_gate;
 

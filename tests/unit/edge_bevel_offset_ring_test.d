@@ -1,7 +1,7 @@
 module edge_bevel_offset_ring_test;
 
-import mesh : Mesh, edgeKey, MeshEditBatch;
-import mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
+import vibe3d.mesh.core.mesh : Mesh, edgeKey, MeshEditBatch;
+import vibe3d.mesh.ops.mesh_ops.edge_bevel : bevelEdgesByMask, kEdgeBevelEditScope;
 import math : Vec3;
 import std.json : parseJSON, JSONValue, JSONType;
 import std.file : readText;
@@ -126,7 +126,7 @@ unittest {
 }
 
 unittest { // Distinct graph layouts; invariants rather than uncaptured parity.
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     foreach(layout;0..4) {
         foreach(offset;[0f,.03f,.222f]) {
             auto m=layout==0 ? makeCube() : sourceMesh(parseJSON(readText("tests/fixtures/edge_bevel/offset_ring.json"))["source"]);
@@ -198,7 +198,7 @@ unittest {
 }
 
 private Mesh corpusMesh(int layout) {
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     auto m = makeCube();
     if (layout >= 6) {
         m.faces.length = m.faces.length - 1;
@@ -330,7 +330,7 @@ private float affineMapValue(Vec3 p, uint face) {
 }
 
 private void offsetCornerMaps(bool constant) {
-    import mesh : MapDomain, kUvMapName;
+    import vibe3d.mesh.core.mesh : MapDomain, kUvMapName;
     import std.math : abs;
     import std.stdio : writeln;
     auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/zero_width_ring.json"));
@@ -408,7 +408,7 @@ unittest { offsetCornerMaps(true); }
 unittest { offsetCornerMaps(false); }
 
 unittest {
-    import mesh : MapDomain, kUvMapName;
+    import vibe3d.mesh.core.mesh : MapDomain, kUvMapName;
     import std.math : abs;
     import std.stdio : writeln;
     auto fixture = parseJSON(readText("tests/fixtures/edge_bevel/zero_width_ring.json"));

@@ -4,20 +4,20 @@
 module tests.unit.tools.create.box_test;
 
 import bindbc.opengl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import bindbc.sdl;
 import tool;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import math;
 import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize, ToolHandles;
 import viewport_scheme : axisColor, schemeColor, SchemeColor;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import drag;
 import shader : Shader, LitShader, drawLitPreview;
 import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import tools.create.create_common : BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
                               primitivePlacementFrame, mostFacingAxis,
@@ -28,7 +28,7 @@ import vibe3d.editing.contracts.editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import vibe3d.editing.params.params : Param;
-import view : View;
+import vibe3d.viewport.camera.view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import std.math : abs, sqrt, sin, cos, PI;

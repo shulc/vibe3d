@@ -54,14 +54,14 @@ import imgui_flag_boundary : beginItemContextMenu, beginPanelContextMenu,
     inputTextSubmitOnEnter;
 import imgui_impl_sdl2;
 import imgui_impl_opengl3;
-import eventlog;
+import vibe3d.platform.input.eventlog;
 import pipe_gizmo_host : PipeGizmoHost;
 import tool;
 import vibe3d.editing.contracts.seltype;
-import toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
-import view;
+import vibe3d.viewport.camera.view;
 import shader;
 // Task 0669 — "would this action refuse if pressed", and the per-frame record
 // of what the bars actually drew. See source/ui/availability.d.
@@ -222,7 +222,7 @@ import commands.history.save_as_script : HistorySaveAsScript;
 import commands.macros.record : MacroRecord;
 import commands.macros.save_recorded : MacroSaveRecorded;
 import macro_recorder : MacroRecorder;
-import snapshot : SelectionSnapshot;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
 import commands.tool.host     : ToolHost;
 import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
@@ -244,7 +244,7 @@ import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
 
 import command;
 import registry;
-import shortcuts;
+import vibe3d.platform.input.shortcuts;
 import buttonset;
 import ui.panel_chrome : pushPanelChromeStyle, popPanelChromeStyle, publishPanelZone;
 import ui.button_face : kButtonBarPadding, styledButtonPalette,
@@ -1437,7 +1437,7 @@ void drawSidePanel(SidePanelRole app, ActionMenuRoles menu) {
 // The value a DragFloat row of the Surfaces section is being dragged to,
 // per (slot, row) (panel-local: the command is dispatched once, on release —
 // one command, one undo entry per edit).
-private import mesh : kSurfaceSlotsUi = kSurfaceSlots;
+private import vibe3d.mesh.core.mesh : kSurfaceSlotsUi = kSurfaceSlots;
 private import commands.mesh.surface_attr : kSurfaceAttrsUi = kSurfaceAttrs;
 private float[kSurfaceSlotsUi * kSurfaceAttrsUi.length] g_surfDragEdit;
 private int g_surfDragActive = -1;
@@ -1453,7 +1453,7 @@ private void drawSurfacesSection(ref const Mesh mesh, ActionMenuActions actions)
 
     import commands.mesh.surface_attr : surfaceSlotCount, surfaceAttrValue,
         SurfaceAttrWidget, surfaceAttrWidget;
-    import mesh : surfaceOfSlot;
+    import vibe3d.mesh.core.mesh : surfaceOfSlot;
     void send(size_t slot, string attr, string value) {
         Action a;
         a.kind = ActionKind.script;
@@ -2755,8 +2755,8 @@ void drawCommandHistoryPanel(HistoryPanelState state,
 
 import ui.stat_rows : StatCell, StatAvail, StatTone, StatExpand, StatAction,
                       StatSection, statSectionsInto, statNeedOf;
-import document : Document;
-import mesh : Mesh;
+import vibe3d.documents.model.document : Document;
+import vibe3d.mesh.core.mesh : Mesh;
 
 /// The two placeholder glyphs, which answer DIFFERENT questions and must never
 /// be merged into one constant.
@@ -2829,7 +2829,7 @@ void drawStatisticsBody(const(Document)* doc, SelType current,
                             endStatFrame;
     import ui.item_glyphs : drawDisclosure, kGlyphCellRatio,
                             kGlyphRadiusRatio, kIndentRatio;
-    import mesh_stats : StatContext, buildStatContext;
+    import vibe3d.mesh.ops.mesh_stats : StatContext, buildStatContext;
 
     // ---- The mesh, obtained EXACTLY ONCE, guarding `primary` --------------
     // `Document.primary` is nullable and the null state is live and asserted.

@@ -2377,7 +2377,7 @@ unittest { // (6) id -> rollovers, over every registered id
 unittest { // (6b) the two element nodes carry the vertex flag (M0e: either alone)
     import toolpipe.stages.falloff : FalloffStage;
     import toolpipe.stages.actcenter : ActionCenterStage;
-    import toolpipe.packets : FalloffType;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType;
     import std.traits : EnumMembers;
     auto fs = new FalloffStage();
     size_t flagged;

@@ -23,8 +23,8 @@ import std.json;
 import app_version : appVersion, appBuildConfig, appPlatform, appBuildDate,
     appAboutLines;
 import vibe3d.util.json_number.json_num : jsonNum;
-import mesh : Mesh, Surface, MeshMap, MapDomain, MapKind;
-import mesh_selsets : selSetNamesVertex, selSetNamesEdge, selSetNamesPolygon,
+import vibe3d.mesh.core.mesh : Mesh, Surface, MeshMap, MapDomain, MapKind;
+import vibe3d.mesh.core.mesh_selsets : selSetNamesVertex, selSetNamesEdge, selSetNamesPolygon,
     selSetMembersVertex, selSetMembersEdge, selSetMembersPolygon;
 
 // ---------------------------------------------------------------------------

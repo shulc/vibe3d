@@ -52,9 +52,9 @@ module io.scene_export;
 
 version (web)
 {
-    import document : Document, Layer;
+    import vibe3d.documents.model.document : Document, Layer;
     import vibe3d.util.log.log : logWarn;
-    import mesh : Mesh, detachedPreparedMesh;
+    import vibe3d.mesh.core.mesh : Mesh, detachedPreparedMesh;
     import io.assimp_wire : encodeAssimpWire;
     import std.string : toStringz;
 
@@ -100,10 +100,10 @@ import std.format : format;
 import bindbc.assimp;
 import vibe3d.util.log.log : logWarn;
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
-import mesh_selsets : selSetsAnyLive;
+import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName;
+import vibe3d.mesh.core.mesh_selsets : selSetsAnyLive;
 import math : Vec3;
-import document : Document, Layer;
+import vibe3d.documents.model.document : Document, Layer;
 import io.assimp_runtime : isAssimpAvailable;
 
 /// Column-major float[16] (the project's matrix convention, e.g.

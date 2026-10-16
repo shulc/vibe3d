@@ -1,10 +1,10 @@
 module tests.unit.commands.layer.xform_edit_source_public_test;
 
 import commands.layer.xform_edit;
-import mesh : Mesh;
-import view : View;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.viewport.camera.view : View;
 import vibe3d.editing.contracts.editmode : EditMode;
-import document : Layer, ItemXform;
+import vibe3d.documents.model.document : Layer, ItemXform;
 
 version (unittest) {
     import math : Vec3;

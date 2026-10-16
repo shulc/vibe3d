@@ -1,5 +1,5 @@
 module unit.prepared_param_update_test;
-import mesh_ops.triangulate : triangulateFacesByMask;
+import vibe3d.mesh.ops.mesh_ops.triangulate : triangulateFacesByMask;
 
 // Tasks 9426/9427: ONE `PreparedParamUpdateOwner` and ONE record-context slot
 // serve sixteen tools' parameter writes at arm time. Each row is a tool as DATA
@@ -12,10 +12,10 @@ import mesh_ops.triangulate : triangulateFacesByMask;
 
 import std.meta : AliasSeq;
 import command_history : CommandHistory;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
 import math : Vec3;
-import mesh : Mesh, makeCube;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import mesh_gpu : GpuMesh, GpuUploadOwner;
 import prepared_param_update : PreparedParamUpdateOwner;
 import prepared_record_context : PreparedRecordContext;

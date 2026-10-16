@@ -18,8 +18,8 @@ import tools.alignment.array_tool : ArrayTool;
 import tools.alignment.clone_tool : CloneTool;
 import tools.deform.magnet : MagnetTool;
 import tools.edit.reduce : ReductionTool;
-import snapshot : MeshSnapshot;
-import mesh : Mesh;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.core.mesh : Mesh;
 
 enum PreparedPrivateStateKind : ubyte {
     Box, BoxDeactivate, Pen, PenDeactivate, PenParam, Primitive, PrimitiveDeactivate,
@@ -340,7 +340,7 @@ public:
 }
 
 version(unittest) unittest {
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
     import mesh_gpu : GpuCreateOwner;
     import prepared_record_context : PreparedRecordContext;

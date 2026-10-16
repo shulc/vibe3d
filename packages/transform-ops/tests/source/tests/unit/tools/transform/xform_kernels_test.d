@@ -7,10 +7,10 @@ import math : Vec3, dot, cross, rotateAboutPivot;
 import vibe3d.util.spatial.spatial : Viewport, AimViewport;
 import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
                  matMul4, identityMatrix;
-import mesh    : Mesh;
+import vibe3d.mesh.core.mesh    : Mesh;
 import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror;
-import toolpipe.packets : FalloffPacket, SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform.cluster_values : ClusterPivots, ClusterAxes;
 import vibe3d.util.profiling.perf_probe : g_perf, Cat;
 import tools.transform.xform_kernels;
@@ -278,7 +278,7 @@ import vibe3d.util.spatial.spatial : aimSpace, ModelSpace;
 // them up by vertex index, so a block can name the weight it wants instead of
 // arranging a camera and a distance field to produce it.
 private FalloffPacket weightsFalloff(float[] w) {
-    import toolpipe.packets : FalloffType;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType;
     FalloffPacket f;
     f.enabled = true;
     f.type    = FalloffType.Selection;

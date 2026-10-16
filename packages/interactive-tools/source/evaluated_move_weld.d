@@ -1,12 +1,12 @@
 module evaluated_move_weld;
 
-import mesh : Mesh, MeshEditBatch;
-import snapshot : MeshSnapshot;
-import mesh_edit_delta : MeshOpEntry;
+import vibe3d.mesh.core.mesh : Mesh, MeshEditBatch;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshOpEntry;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
 import math : Vec3, dot, cross;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
-import toolpipe.packets : SnapType, SymmetryPacket;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType, SymmetryPacket;
 import symmetry : symmetricWeldPairs, writeMovePositions, mirrorPosition, moveMirrorCenter;
 
 // 9504: a frame searches the live welded subject, then evaluates against its

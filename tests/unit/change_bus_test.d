@@ -3,7 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.change_bus_test;
 
-public import mesh_edit_delta : MeshEditScope;
+public import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import vibe3d.editing.contracts.seltype : SelType;
 import vibe3d.mesh.change.change_bus;
 
@@ -458,7 +458,7 @@ unittest {
 
 // (a) ONE delivery per commitChange, outside any batch.
 unittest {
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
 
     Mesh m = makeCube();
     m.syncSelection();
@@ -482,7 +482,7 @@ unittest {
 
 // (b) N commits inside ONE delivery batch = ONE delivery, at the close.
 unittest {
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
 
     Mesh m = makeCube();
     m.syncSelection();
@@ -506,7 +506,7 @@ unittest {
 //     delivering publisher. This is the accumulate-only contract that keeps
 //     the ~30 in-loop note sites (and the version-silent mid-drag path) free.
 unittest {
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
 
     Mesh m = makeCube();
     m.syncSelection();
@@ -530,7 +530,7 @@ unittest {
 //      version-silent delivering publisher the interactive transform path needs:
 //      counters own STRUCTURE, the bus's Position class owns POSITION.
 unittest {
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
 
     Mesh m = makeCube();
     m.syncSelection();
@@ -553,7 +553,7 @@ unittest {
 //      guard would.
 unittest {
     import core.exception : AssertError;
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
 
     Mesh m = makeCube();
     m.syncSelection();
@@ -603,7 +603,7 @@ unittest {
 //      ran second.
 unittest {
     import core.exception : AssertError;
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
 
     Mesh m = makeCube();
     m.syncSelection();
@@ -687,7 +687,7 @@ unittest {
 // (f) A mesh no `Layer` owns delivers NOTHING when the filter rejects it, and
 //     delivers normally when no filter is installed.
 unittest {
-    import mesh : Mesh, makeCube, g_isDocumentMesh;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube, g_isDocumentMesh;
 
     Mesh scratch = makeCube();
     scratch.syncSelection();
@@ -742,7 +742,7 @@ unittest {
 //     delivery reading flags=0x0 and a garbage selDomains). The filter runs
 //     ABOVE the depth check in `deliverPending` for exactly this reason.
 unittest {
-    import mesh : Mesh, makeCube, g_isDocumentMesh, deliveryPendingSetLength;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube, g_isDocumentMesh, deliveryPendingSetLength;
 
     Mesh scratch = makeCube();
     scratch.syncSelection();
@@ -770,7 +770,7 @@ unittest {
 //     for (g). Without it, (g) is green on a `deliverPending` that lost the
 //     ability to defer at all.
 unittest {
-    import mesh : Mesh, makeCube, g_isDocumentMesh, deliveryPendingSetLength;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube, g_isDocumentMesh, deliveryPendingSetLength;
 
     Mesh subject = makeCube();
     subject.syncSelection();
@@ -818,7 +818,7 @@ unittest {
 //     block reddens on its last assert. (The B1 blocks (f)/(g) stay green: they
 //     measure that the rejected mesh does not DELIVER, not what it retains.)
 unittest {
-    import mesh : Mesh, makeCube, g_isDocumentMesh;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube, g_isDocumentMesh;
 
     // `docMesh` stands in for a `Layer`'s `mesh_` field; `scratch` for the
     // stack-local a kernel builds beside it. The filter separates them by
@@ -894,7 +894,7 @@ unittest {
 // this sentence used to point at them, which was the wrong witness.
 // ===========================================================================
 unittest {
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
 
     Mesh m = makeCube();
     m.syncSelection();

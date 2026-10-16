@@ -72,7 +72,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
     import registry : Registry, typedToolFactory;
     import tool_presets : ToolPreset, registerToolPresets;
     import tools.transform.xfrm_transform : XfrmTransformTool;
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
     import vibe3d.editing.contracts.editmode : EditMode;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
@@ -114,10 +114,10 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 
 unittest {
     import tools.transform.scale : ScaleTool;
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import operator : VectorStack;
+    import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     import bindbc.sdl : SDL_MouseButtonEvent, SDL_BUTTON_LEFT;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto bank = new ScaleTool(() => &mesh, &gpu, &mode);

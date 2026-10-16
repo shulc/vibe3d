@@ -12,7 +12,7 @@ import bindbc.opengl;
 import core.atomic : atomicOp;
 import math;    // Vec3
 import shader;  // LitShader
-import mesh;    // Mesh, FaceList
+import vibe3d.mesh.core.mesh;    // Mesh, FaceList
 import vibe3d.mesh.change.change_bus : MeshEditScope;  // Position class for the preview-refresh publish
 import vibe3d.util.profiling.perf_probe : g_fc, DrawPass, g_perf, Cat;  // always-on per-frame work counters; upload-path timers (task 9140)
 import viewport_scheme : schemeColor, SchemeColor, pointSizePx, kBasePointSize,
@@ -723,7 +723,7 @@ struct GpuMesh {
         // surface with no symptom other than "the morph does not show".
         const(Vec3)[] vpos;
         {
-            import morph_preview : displayVertices;
+            import vibe3d.mesh.preview.morph_preview : displayVertices;
             auto dv = displayVertices(&mesh);
             vpos = (dv.length == mesh.vertices.length) ? dv : mesh.vertices;
         }
@@ -1222,7 +1222,7 @@ struct GpuMesh {
         // full upload just morphed.
         const(Vec3)[] vpos;
         {
-            import morph_preview : displayVertices;
+            import vibe3d.mesh.preview.morph_preview : displayVertices;
             auto dv = displayVertices(&mesh);
             vpos = (dv.length == mesh.vertices.length) ? dv : mesh.vertices;
         }
@@ -1322,7 +1322,7 @@ struct GpuMesh {
         // Task 1069 — the DRAWN positions (see `upload` above).
         const(Vec3)[] vpos;
         {
-            import morph_preview : displayVertices;
+            import vibe3d.mesh.preview.morph_preview : displayVertices;
             auto dv = displayVertices(&mesh);
             vpos = (dv.length == mesh.vertices.length) ? dv : mesh.vertices;
         }
@@ -1425,7 +1425,7 @@ struct GpuMesh {
         // Task 1069 — the DRAWN positions (see `upload` above).
         const(Vec3)[] vpos;
         {
-            import morph_preview : displayVertices;
+            import vibe3d.mesh.preview.morph_preview : displayVertices;
             auto dv = displayVertices(&mesh);
             vpos = (dv.length == mesh.vertices.length) ? dv : mesh.vertices;
         }
@@ -2818,7 +2818,7 @@ public:
         if (pending || target is null ||
             (target.suppressCageUpload && edgeOrigin.length == 0 &&
              vertOrigin.length == 0)) return false;
-        import morph_preview : displayVertices;
+        import vibe3d.mesh.preview.morph_preview : displayVertices;
         auto dv = displayVertices(&mesh);
         const(Vec3)[] vpos = (dv.length == mesh.vertices.length)
                           ? dv : mesh.vertices;
@@ -3009,7 +3009,7 @@ public:
         } else createNames();
         auto next = cloneUploadState(*target);
         setNames(next, created);
-        import morph_preview : displayVertices;
+        import vibe3d.mesh.preview.morph_preview : displayVertices;
         auto dv = displayVertices(&mesh);
         const(Vec3)[] vpos = dv.length == mesh.vertices.length ? dv : mesh.vertices;
         next.uploadVersion = baseUploadVersion + 1;

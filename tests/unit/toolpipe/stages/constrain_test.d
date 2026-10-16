@@ -4,9 +4,9 @@
 module tests.unit.toolpipe.stages.constrain_test;
 
 import toolpipe.stage   : Stage, TaskCode, ordCons;
-import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           SubjectPacket;
-import operator         : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.contracts.operator         : Operator, Task, VectorStack, PacketKind;
 import popup_state      : setStatePath;
 import vibe3d.editing.params.params           : Param, IntEnumEntry, wireTagForValue;
 import bvh_pick         : BvhPick, SurfaceHit;

@@ -1,5 +1,5 @@
 module commands.mesh.uv_pack;
-import mesh_edit_replay : apply, revert;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 /// `uv.fit` — translate+scale all affected UV corners so their combined
 /// bounding box exactly fills [0,1]² (both bbox edges touch 0 and 1).
@@ -28,15 +28,15 @@ import mesh_edit_replay : apply, revert;
 /// UV edit can fire even when the user is in vertex or edge mode.
 
 import command;
-import mesh            : Mesh, MeshMap, MapDomain, MeshEditBatch, kUvMapName;
-import view            : View;
+import vibe3d.mesh.core.mesh            : Mesh, MeshMap, MapDomain, MeshEditBatch, kUvMapName;
+import vibe3d.viewport.camera.view            : View;
 import vibe3d.editing.contracts.editmode        : EditMode;
-import mesh_edit_delta : MeshEditScope;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import vibe3d.editing.params.params          : Param;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit;
-import uv_transform    : applyUvAffine, collectAffectedUvLoops;
-import uv_island       : UvBBox, loopsBBox, computeUvIslands,
+import vibe3d.mesh.ops.uv_transform    : applyUvAffine, collectAffectedUvLoops;
+import vibe3d.mesh.ops.uv_island       : UvBBox, loopsBBox, computeUvIslands,
                          computeFitAffine, computeShelfPack;
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ import command_history : CommandHistory, RunCloseMode;
 import commands.layer.xform_edit : LayerXformEdit;
 import commands.mesh.morph_edit : MeshMorphEdit;
 import commands.mesh.vertex_edit : MeshVertexEdit;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import handler : HitRule;
 import live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import mesh_gpu : GpuMesh;

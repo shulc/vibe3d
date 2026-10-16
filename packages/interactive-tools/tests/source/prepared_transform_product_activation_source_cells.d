@@ -8,7 +8,7 @@ import tools.transform.rotate : RotateTool, PreparedRotateActivationImage;
 import tools.transform.scale : ScaleTool, PreparedScaleActivationImage;
 
 unittest {
-    import mesh : Mesh, makeCube;
+    import vibe3d.mesh.core.mesh : Mesh, makeCube;
     import mesh_gpu : GpuMesh;
     import vibe3d.editing.contracts.editmode : EditMode;
     import math : Vec3;

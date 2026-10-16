@@ -2,9 +2,9 @@ module commands.viewport.master;
 
 import command;
 import commands.viewport.command_base : ViewportCommand;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import vibe3d.editing.contracts.editmode;
-import view;
+import vibe3d.viewport.camera.view;
 import viewport : ViewportManager;
 import vibe3d.editing.params.params : Param, wireArgs;
 

@@ -112,8 +112,8 @@ module input_frame_state;
 // already is.
 
 import editor_app         : EditorApp;
-import toolpipe.packets   : SubjectPacket, GesturePacket;
-import operator           : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets   : SubjectPacket, GesturePacket;
+import vibe3d.editing.pipeline.contracts.operator           : VectorStack;
 import toolpipe.subject   : SubjectSource, evaluateSubject;
 import vibe3d.editing.contracts.seltype             : SelType, currentSelType, viewportPickType,
                              geometrySelType;
@@ -130,8 +130,8 @@ import item_pick          : ItemRayPicker, ItemHit;
 import symmetry_pick      : symmetricSelectVertex, symmetricSelectEdge,
                             symmetricSelectFace;
 import vibe3d.util.spatial.spatial : Viewport;
-import eventlog           : queryMouse;
-import document           : primaryModelSpace;
+import vibe3d.platform.input.eventlog           : queryMouse;
+import vibe3d.documents.model.document           : primaryModelSpace;
 
 /// Relocated verbatim from app.d (task 1040) -- see this module's doc
 /// comment for why it moved instead of being imported back the other way.
@@ -639,7 +639,7 @@ final class InputFrameState {
     // remember to pass the pair. `vp` is the active cell's snapshot at both,
     // so `activeCamera()` is the camera it was taken from.
     ItemHit pickItemUnderCursor(int mx, int my, ref Viewport vp) {
-        import view : ProjKind;
+        import vibe3d.viewport.camera.view : ProjKind;
         return itemPicker.pickItemAt(app.document, mx, my, vp,
                                      app.vpm.activeCamera().viewPreset,
                                      app.vpm.activeCamera().projKind == ProjKind.Ortho);

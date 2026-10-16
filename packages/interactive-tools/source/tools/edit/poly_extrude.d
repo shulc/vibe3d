@@ -4,14 +4,14 @@ import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
 
 import bindbc.sdl;
-import operator : VectorStack;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 import tool;
 import tools.topology_step;
 import command : Command;
-import mesh;
+import vibe3d.mesh.core.mesh;
 import mesh_gpu : GpuMesh;
-import mesh_ops.extrude;
+import vibe3d.mesh.ops.mesh_ops.extrude;
 import math;
 import vibe3d.util.spatial.spatial : ModelSpace, Viewport;
 import vibe3d.editing.contracts.editmode : EditMode;
@@ -21,11 +21,11 @@ import viewport_scheme : schemeColor, SchemeColor;
 import drag : PreparedPlaneDrag, automaticPlanePressHit, preparePlaneDrag,
     screenAxisDelta, gesturePrevPixel;
 import overlay_space : OverlaySpace;
-import eventlog : queryMouse;
+import vibe3d.platform.input.eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
     PreviewRebuildCounts;
@@ -42,7 +42,7 @@ import prepared_param_update : PreparedParamUpdateOwner,
     PreparedParamUpdateProducer, PreparedStateParamImage;
 import vibe3d.editing.contracts.prepared_tool_effect : PreparedPolyExtrudeParamEffect,
     PreparedPolyExtrudeParamKind;
-import document : Layer;
+import vibe3d.documents.model.document : Layer;
 import mesh_gpu : GpuUploadOwner;
 import core.stdc.string : memcmp;
 import tools.create.create_common : primitivePlacementFrame, transformDir;
@@ -422,7 +422,7 @@ public:
         // published and as the other half of the debug agreement check. The
         // PART_FREE branch above measures from the PRESS pixel, not the
         // previous one, and is deliberately left alone.
-        import toolpipe.packets : GesturePacket;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : GesturePacket;
         int prevMX, prevMY;
         gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
                          dragLastMX, dragLastMY, prevMX, prevMY);
@@ -725,7 +725,7 @@ public:
 }
 
 unittest { // P1.0b.3d identity preview must not prepare history.
-    import view : View; import mesh_gpu : GpuMesh;
+    import vibe3d.viewport.camera.view : View; import mesh_gpu : GpuMesh;
     import record_observer_hub : RecordObserverHub;
     Mesh m; GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto view = new View(0, 0, 1, 1);
@@ -749,7 +749,7 @@ unittest { // P1.0b.3d identity preview must not prepare history.
 }
 
 unittest { // free drag press prepares Jacobian from captured upstream-snapped B0
-    import document : primaryModelSpaceResolver;
+    import vibe3d.documents.model.document : primaryModelSpaceResolver;
     import display_sync : activeMeshResolver;
     import std.format : format;
     import std.math : atan;

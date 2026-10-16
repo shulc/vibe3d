@@ -1,7 +1,7 @@
 module tools.edit.preview_rebuild;
 
-import mesh : Mesh;
-import snapshot : MeshSnapshot;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 
 // ---------------------------------------------------------------------------
 // PreviewRebuild — the shared seam for "restore the clean cage and re-run the

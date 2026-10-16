@@ -1,7 +1,7 @@
 module prepared_radial_sweep_transition_source_cells;
 
 import prepared_radial_sweep_transition;
-import mesh : Mesh;
+import vibe3d.mesh.core.mesh : Mesh;
 import prepared_selection_profile : PreparedSelectionProfileOwner;
 import prepared_selection_profile_image : RadialSweepProfileImage;
 import tools.alignment.radial_sweep_tool : RadialSweepTool,
@@ -9,7 +9,7 @@ import tools.alignment.radial_sweep_tool : RadialSweepTool,
 
 unittest {
     import math : Vec3;
-    import mesh : makeCube;
+    import vibe3d.mesh.core.mesh : makeCube;
     import vibe3d.editing.contracts.editmode : EditMode;
     import shader : LitShader;
     import prepared_record_context : PreparedRecordContext;
@@ -72,7 +72,7 @@ unittest {
     // context installs. Activation remains deferred: a separately prepared
     // upload borrows the pre-create empty GL header and therefore cannot
     // honestly follow a prepared create without a combined create+upload owner.
-    import document : Layer;
+    import vibe3d.documents.model.document : Layer;
     import mesh_gpu : GpuMesh;
     auto layer = new Layer; layer.meshRef() = makeCube(); layer.meshRef().syncSelection();
     layer.meshRef().selectFace(0);
@@ -256,7 +256,7 @@ unittest {
     uploadRetry.discard();
 
     import commands.mesh.session_edit : MeshSessionEdit;
-    import view : View;
+    import vibe3d.viewport.camera.view : View;
     auto deactHistory = new CommandHistory();
     auto deactView = new View(0,0,1,1);
     producerTool.setGestureBindings(deactHistory, () => new MeshSessionEdit(
