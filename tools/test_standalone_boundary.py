@@ -1201,19 +1201,19 @@ class BoundaryControls(unittest.TestCase):
 
         positive_order()
         population = 'support editor-ui production compiler population'
-        refused_order(unrelated + order_log([path for path in positive if path != anchor]), population,
-                      'editor-ui production population zero')
         refused_order(order_log(positive) + order_log(positive), population,
                       'editor-ui production population two')
+        refused_order(unrelated + order_log([path for path in positive if path != anchor]), population,
+                      'editor-ui production population zero')
         positive_order()
         other_d = next(path for path in positive if path.endswith('.d') and path != anchor)
         identity = 'support editor-ui production compiler source identity'
         for sources, label in (
+                (positive + [str(actual / 'extra.d')], 'extra'),
                 ([path for path in positive if path != native], 'native absent'),
                 (positive + [native], 'native duplicate'),
                 (positive + [anchor], 'anchor duplicate'),
                 ([path for path in positive if path != other_d], 'D absent'),
-                (positive + [str(actual / 'extra.d')], 'extra'),
                 (positive + [other_d], 'D duplicate')):
             refused_order(order_log(sources), identity, 'editor-ui production identity ' + label)
         reversed_order = positive.copy()
