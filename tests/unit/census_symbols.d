@@ -4886,7 +4886,7 @@ public string wave15ReadText(string path) {
         import std.digest : toHexString;
         import std.string : toLower;
         const destination = buildPath(nativeRoot, wave19OwnerMoved(nativeRoot, "editor-ui")
-            ? "libraries/ui/editor/source/imgui_flag_abi.c"
+            ? "libraries/ui/editor/source/vibe3d/ui/editor/imgui_flag_abi.c"
             : "packages/editor-ui/source/imgui_flag_abi.c");
         const oldPresent = exists(normal), newPresent = exists(destination);
         const text = readText(oldPresent ? normal : destination);
@@ -5126,7 +5126,7 @@ unittest { // approved stat header: whole physical input and whole original body
     assert(wave15RestoreSource(origin, physical, root) == original && wave15InputsIntact(first),
         "stat header restored whole-unit control");
 
-    const native = readText(buildPath(wave19OwnerRoot(root, "editor-ui"), "source/imgui_flag_abi.c"));
+    const native = readText(buildPath(wave19OwnerRoot(root, "editor-ui"), wave19OwnerMoved(root, "editor-ui") ? "source/vibe3d/ui/editor/imgui_flag_abi.c" : "source/imgui_flag_abi.c"));
     first = wave15InputStart();
     assert(wave15ReadText(buildPath(root, "source/imgui_flag_abi.c")) == native
             && wave15InputsIntact(first),

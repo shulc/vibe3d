@@ -3304,15 +3304,15 @@ SPECS.update({'render-model': {'name': 'vibe3d:render-model',
                  'ordinaryConfig': 'modeling-noai', 'targetName': 'vibe3d-forms-model', 'testName': 'vibe3d-forms-model-tests'},
  'editor-ui': {'name': 'vibe3d:editor-ui',
                'root': 'libraries/ui/editor',
-               'ordinaryDigest': '7de015aa2d9b6997204de44e901c3f1cc9c00bd7474585f28c73fbd3c7ed9f4e',
-               'testDigest': 'bc57b72d9b7d11b61c3bbd0bb55f71f5d02a90bde81d9cdccd8a1058e66d9d6f',
+               'ordinaryDigest': 'be5015aca579d9f074f3ece5e7c4b7076addb5feb1b158ef69e43f2753e0aae2',
+               'testDigest': 'a5e9d40524bada824cbbc98b63b26c218abc8219e753bc5179127d8d52e64131',
                'sources': ['source/vibe3d/ui/editor/args_dialog.d',
  'source/vibe3d/ui/editor/buttonset.d',
  'source/vibe3d/ui/editor/copilot_overlay.d',
  'source/vibe3d/ui/editor/copilot_panel.d',
  'source/vibe3d/ui/editor/forms_render.d',
  'source/vibe3d/ui/editor/imgui_event_gate.d',
- 'source/imgui_flag_abi.c',
+ 'source/vibe3d/ui/editor/imgui_flag_abi.c',
  'source/vibe3d/ui/editor/imgui_flag_boundary.d',
  'source/vibe3d/ui/editor/imgui_style.d',
  'source/vibe3d/ui/editor/pie_geometry.d',
@@ -3353,7 +3353,7 @@ SPECS.update({'render-model': {'name': 'vibe3d:render-model',
  '../source/vibe3d/ui/editor/copilot_panel.d',
  '../source/vibe3d/ui/editor/forms_render.d',
  '../source/vibe3d/ui/editor/imgui_event_gate.d',
- '../source/imgui_flag_abi.c',
+ '../source/vibe3d/ui/editor/imgui_flag_abi.c',
  '../source/vibe3d/ui/editor/imgui_flag_boundary.d',
  '../source/vibe3d/ui/editor/imgui_style.d',
  '../source/vibe3d/ui/editor/pie_geometry.d',
@@ -5212,6 +5212,20 @@ def execute(project,owner,compiler,env,evidence):
             legacy_validate_staged_fixture(legacy_fixture_receipt(archive,selected,frozen),
                 legacy_fixture_receipt(project,selected,frozen),selected,archive,frozen)
     built=run(['dub','build']+ordinary_arguments(archive,owner)+['--config='+ordinary_config,'--compiler='+compiler,'--force','--verbose'],archive,env,evidence,'production-build')
+    if owner=='editor-ui':
+        production_responses={}
+        production_commands=compiler_commands(built.stdout+built.stderr, archive, production_responses)
+        production_anchor=str((root/'source/vibe3d/ui/editor/args_dialog.d').resolve())
+        production_native=str((root/'source/vibe3d/ui/editor/imgui_flag_abi.c').resolve())
+        production_compiles=[c for c in production_commands if production_anchor in c['sourceInputs']]
+        require(len(production_compiles)==1, 'support editor-ui production compiler population')
+        production_sources=production_compiles[0]['sourceInputs']
+        require(sorted(production_sources)==[str(p) for p in production_files(archive,owner)],
+                'support editor-ui production compiler source identity')
+        require(production_sources.index(production_anchor)<production_sources.index(production_native),
+                'support editor-ui ImportC D-before-C order')
+        (evidence/'production-editor-ui-actual-compiler-argv.json').write_text(json.dumps(production_commands,indent=2))
+        (evidence/'production-editor-ui-actual-response-inputs.json').write_text(json.dumps(production_responses,indent=2))
     require((root/archive_name(owner)).is_file(),'NO-VERDICT: ordinary static archive missing')
     harness=root/'tests/boundary_roster.d'
     receipt_source='module boundary_roster; import std.stdio : writeln; import std.file : getcwd,read; import std.digest.sha : sha256Of; import std.digest : toHexString; import std.string : toLower; shared static this() { writeln("PKG-CWD path=",getcwd()); foreach(info; ModuleInfo) if(info !is null) writeln("PKG-MODULE name=",info.name," unittest=",info.unitTest !is null ? 1:0);'

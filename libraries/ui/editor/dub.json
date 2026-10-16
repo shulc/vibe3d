@@ -255,7 +255,7 @@
     "-P-I$D_IMGUI_PACKAGE_DIR/extern/cimgui"
   ],
   "sourceFiles": [
-    "source/imgui_flag_abi.c"
+    "source/vibe3d/ui/editor/imgui_flag_abi.c"
   ],
   "configurations": [
     {

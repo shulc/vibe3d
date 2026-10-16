@@ -306,7 +306,7 @@
     "../source/vibe3d/ui/editor/copilot_panel.d",
     "../source/vibe3d/ui/editor/forms_render.d",
     "../source/vibe3d/ui/editor/imgui_event_gate.d",
-    "../source/imgui_flag_abi.c",
+    "../source/vibe3d/ui/editor/imgui_flag_abi.c",
     "../source/vibe3d/ui/editor/imgui_flag_boundary.d",
     "../source/vibe3d/ui/editor/imgui_style.d",
     "../source/vibe3d/ui/editor/pie_geometry.d",

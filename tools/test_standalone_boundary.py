@@ -1120,6 +1120,111 @@ class BoundaryControls(unittest.TestCase):
             with self.subTest(owner=owner):
                 support.check_raw_tree(actual, owner)
 
+        order_blocks = [node for node in execute.body if isinstance(node, ast.If)
+                        and any(isinstance(item, ast.Constant) and item.value ==
+                                'support editor-ui ImportC D-before-C order'
+                                for item in ast.walk(node))]
+        self.assertEqual(len(order_blocks), 1, 'editor-ui production order block')
+        order_block = order_blocks[0]
+        self.assertEqual(ast.dump(order_block.test), ast.dump(ast.parse("owner=='editor-ui'", mode='eval').body),
+                         'editor-ui production order owner')
+        order_index = execute.body.index(order_block)
+        before, after = execute.body[order_index - 1], execute.body[order_index + 1]
+        self.assertTrue(isinstance(before, ast.Assign) and len(before.targets) == 1
+                        and isinstance(before.targets[0], ast.Name) and before.targets[0].id == 'built'
+                        and isinstance(before.value, ast.Call) and isinstance(before.value.func, ast.Name)
+                        and before.value.func.id == 'run' and before.value.args
+                        and isinstance(before.value.args[-1], ast.Constant)
+                        and before.value.args[-1].value == 'production-build'
+                        and isinstance(after, ast.Expr) and isinstance(after.value, ast.Call)
+                        and isinstance(after.value.func, ast.Name) and after.value.func.id == 'require'
+                        and len(after.value.args) == 2 and isinstance(after.value.args[1], ast.Constant)
+                        and after.value.args[1].value == 'NO-VERDICT: ordinary static archive missing',
+                        'editor-ui production order moment')
+        order_check = compile(ast.Module(body=[order_block], type_ignores=[]), support.__file__, 'exec')
+        editor_root = (actual / support.SPECS['editor-ui']['root']).resolve()
+        anchor = str((editor_root / 'source/vibe3d/ui/editor/args_dialog.d').resolve())
+        native = str((editor_root / 'source/vibe3d/ui/editor/imgui_flag_abi.c').resolve())
+        expected = [str(path) for path in support.production_files(actual, 'editor-ui')]
+        self.assertEqual(len(expected), 41, 'editor-ui production fixture population')
+        self.assertEqual(len(set(expected)), 41, 'editor-ui production fixture unique')
+        self.assertEqual(expected.count(anchor), 1, 'editor-ui production fixture anchor')
+        self.assertEqual(expected.count(native), 1, 'editor-ui production fixture native')
+        self.assertEqual(sum(path.endswith('.d') for path in expected), 40,
+                         'editor-ui production fixture D population')
+        positive = expected.copy()
+        d_positions = [index for index, path in enumerate(positive) if path.endswith('.d')]
+        left, right = d_positions[-2:]
+        positive[left], positive[right] = positive[right], positive[left]
+        self.assertNotEqual(positive, sorted(positive), 'editor-ui production fixture nonlexical')
+        self.assertLess(positive.index(anchor), positive.index(native))
+        positive_argv = ['dmd', '-lib'] + positive + ['-of=boundary-editor.a']
+        unrelated = '[cwd=' + str(actual) + '] ' + shlex.join(['dmd', '-c', str(actual / 'unrelated.d')]) + '\n'
+        receipt_names = ('production-editor-ui-actual-compiler-argv.json',
+                         'production-editor-ui-actual-response-inputs.json')
+
+        def order_log(sources):
+            return '[cwd=' + str(actual) + '] ' + shlex.join(
+                ['dmd', '-lib'] + sources + ['-of=boundary-editor.a']) + '\n'
+
+        def run_order(log, evidence, owner='editor-ui'):
+            namespace = dict(support.__dict__, owner=owner, archive=actual, root=editor_root,
+                             built=subprocess.CompletedProcess([], 0, log, ''), evidence=evidence)
+            exec(order_check, namespace)
+
+        def positive_order():
+            with tempfile.TemporaryDirectory(prefix='boundary-editor-order-positive-') as directory:
+                evidence = Path(directory)
+                run_order(order_log(positive) + unrelated, evidence)
+                self.assertTrue(all((evidence / name).is_file() for name in receipt_names),
+                                'editor-ui production receipt files')
+                commands = json.loads((evidence / receipt_names[0]).read_text())
+                selected = [command for command in commands if anchor in command['sourceInputs']]
+                self.assertEqual(len(selected), 1, 'editor-ui selected command positive')
+                self.assertEqual(selected[0]['sourceInputs'], positive, 'editor-ui production raw receipt')
+                self.assertEqual(selected[0]['argv'], positive_argv, 'editor-ui production raw receipt')
+                self.assertEqual(json.loads((evidence / receipt_names[1]).read_text()), {},
+                                 'editor-ui production response receipt')
+
+        def refused_order(log, message, label):
+            with tempfile.TemporaryDirectory(prefix='boundary-editor-order-negative-') as directory:
+                evidence = Path(directory)
+                with self.assertRaises(support.BoundaryError, msg=label) as refusal:
+                    run_order(log, evidence)
+                self.assertEqual(str(refusal.exception), message, label)
+                self.assertFalse(any((evidence / name).exists() for name in receipt_names),
+                                 'editor-ui negative has no success receipts')
+
+        positive_order()
+        population = 'support editor-ui production compiler population'
+        refused_order(unrelated + order_log([path for path in positive if path != anchor]), population,
+                      'editor-ui production population zero')
+        refused_order(order_log(positive) + order_log(positive), population,
+                      'editor-ui production population two')
+        positive_order()
+        other_d = next(path for path in positive if path.endswith('.d') and path != anchor)
+        identity = 'support editor-ui production compiler source identity'
+        for sources, label in (
+                ([path for path in positive if path != native], 'native absent'),
+                (positive + [native], 'native duplicate'),
+                (positive + [anchor], 'anchor duplicate'),
+                ([path for path in positive if path != other_d], 'D absent'),
+                (positive + [str(actual / 'extra.d')], 'extra'),
+                (positive + [other_d], 'D duplicate')):
+            refused_order(order_log(sources), identity, 'editor-ui production identity ' + label)
+        reversed_order = positive.copy()
+        anchor_index, native_index = reversed_order.index(anchor), reversed_order.index(native)
+        reversed_order[anchor_index], reversed_order[native_index] = reversed_order[native_index], reversed_order[anchor_index]
+        self.assertEqual(sorted(reversed_order), expected, 'editor-ui reversal full membership')
+        refused_order(order_log(reversed_order), 'support editor-ui ImportC D-before-C order',
+                      'editor-ui raw-order reversal')
+        positive_order()
+        with tempfile.TemporaryDirectory(prefix='boundary-editor-order-bypass-') as directory:
+            evidence = Path(directory)
+            run_order('unparseable compiler log', evidence, owner='render-model')
+            self.assertFalse(any((evidence / name).exists() for name in receipt_names),
+                             'editor-ui noneditor skip receipts')
+
     def test_current_app_renderer_description(self):
         actual = Path(__file__).resolve().parents[1]
         result = subprocess.run(['dub', 'describe', '--root=' + str(actual),
