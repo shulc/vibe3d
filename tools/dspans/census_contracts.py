@@ -552,13 +552,16 @@ _WAVE19_COORDINATES = (('ai-advisor',
   ((7, 'vibe3d.runtime.ai3d.ai3d.stage_artifact', 'ai3d.stage_artifact'),
    (1595, 'vibe3d.runtime.ai3d.', ''))),
  ('ai3d-runtime',
-  'packages/ai3d-runtime/source/ai3d/worker_manager.d',
-  'libraries/runtime/ai3d/source/vibe3d/runtime/ai3d/ai3d/worker_manager.d',
-  ((7, 'vibe3d.runtime.ai3d.ai3d.worker_manager', 'ai3d.worker_manager'),
-   (2937, 'vibe3d.util.log.', ''),
-   (2975, 'vibe3d.runtime.ai3d.', ''),
-   (30261, 'dirName(dirName(dirName(dirName(', ''),
-   (30316, '))))', ''))),
+ 'packages/ai3d-runtime/source/ai3d/worker_manager.d',
+ 'libraries/runtime/ai3d/source/vibe3d/runtime/ai3d/ai3d/worker_manager.d',
+ ((7, 'vibe3d.runtime.ai3d.ai3d.worker_manager', 'ai3d.worker_manager'),
+  (2937, 'vibe3d.util.log.', ''),
+  (2975, 'vibe3d.runtime.ai3d.', ''),
+  (30197,
+   '        import std.path : buildNormalizedPath;\n'
+   '        enum repoRoot = '
+   'dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))));',
+   '        enum repoRoot = dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))));'))),
  ('ai3d-runtime',
   'packages/ai3d-runtime/tests/source/tests/unit/ai3d/event_queue_source_public_test.d',
   'libraries/runtime/ai3d/tests/source/vibe3d/runtime/ai3d/tests/unit/ai3d/event_queue_source_public_test.d',
@@ -615,17 +618,22 @@ _WAVE19_COORDINATES = (('ai-advisor',
    (818, 'vibe3d.runtime.ai3d.', ''),
    (962, 'vibe3d.runtime.ai3d.', ''))),
  ('alignment-ops',
-  'packages/alignment-ops/source/tools/alignment/align_kernels.d',
-  'libraries/editing/tools/alignment/source/vibe3d/editing/tools/alignment/tools/alignment/align_kernels.d',
-  ((7, 'vibe3d.editing.tools.alignment.tools.alignment.align_kernels', 'tools.alignment.align_kernels'),
-   (2745, 'vibe3d.mesh.core.', ''),
-   (2795, 'vibe3d.editing.contracts.', ''),
-   (2848, 'vibe3d.util.math.', ''),
-   (15198, 'vibe3d.editing.selection.query.', ''),
-   (19868, 'vibe3d.editing.selection.query.', ''),
-   (21179, 'vibe3d.editing.selection.query.', ''),
-   (25816, 'buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(', ''),
-   (25944, ')))))))), "packages", "alignment-ops")', ''))),
+ 'packages/alignment-ops/source/tools/alignment/align_kernels.d',
+ 'libraries/editing/tools/alignment/source/vibe3d/editing/tools/alignment/tools/alignment/align_kernels.d',
+ ((7, 'vibe3d.editing.tools.alignment.tools.alignment.align_kernels', 'tools.alignment.align_kernels'),
+  (2745, 'vibe3d.mesh.core.', ''),
+  (2795, 'vibe3d.editing.contracts.', ''),
+  (2848, 'vibe3d.util.math.', ''),
+  (15198, 'vibe3d.editing.selection.query.', ''),
+  (19868, 'vibe3d.editing.selection.query.', ''),
+  (21179, 'vibe3d.editing.selection.query.', ''),
+  (25758,
+   '    import std.path : buildNormalizedPath, buildPath, dirName;\n'
+   '    enum root = '
+   'buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))))))), '
+   '"packages", "alignment-ops");',
+   '    import std.path : buildPath, dirName;\n'
+   '    enum root = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));'))),
  ('alignment-ops',
   'packages/alignment-ops/tests/source/tests/unit/alignment_ops_population_test.d',
   'libraries/editing/tools/alignment/tests/source/vibe3d/editing/tools/alignment/tests/unit/alignment_ops_population_test.d',
@@ -24693,11 +24701,14 @@ _WAVE19_LOCATORS = (('L03-retopology-root-fixture',
   '"libraries/viewport/display-policy/source/vibe3d/viewport/display_policy",\n'
   '            "display_state.d")'),
  ('L01-align-owner-fixture',
-  'packages/alignment-ops/source/tools/alignment/align_kernels.d',
-  'alignment-ops',
-  'dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))',
-  'buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))))))))))), '
-  '"packages", "alignment-ops")'),
+ 'packages/alignment-ops/source/tools/alignment/align_kernels.d',
+ 'alignment-ops',
+ '    import std.path : buildPath, dirName;\n'
+ '    enum root = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));',
+ '    import std.path : buildNormalizedPath, buildPath, dirName;\n'
+ '    enum root = '
+ 'buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))))))), '
+ '"packages", "alignment-ops");'),
  ('L02-pen-owner-fixture',
   'packages/creation-ops/tests/source/tests/unit/tools/create/pen_geometry_test.d',
   'creation-ops',
@@ -24705,10 +24716,12 @@ _WAVE19_LOCATORS = (('L03-retopology-root-fixture',
   'buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))))))))), '
   '"packages", "creation-ops", "tests")'),
  ('L06-ai3d-dev-script',
-  'packages/ai3d-runtime/source/ai3d/worker_manager.d',
-  'ai3d-runtime',
-  'dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))))',
-  'dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))))))))'),
+ 'packages/ai3d-runtime/source/ai3d/worker_manager.d',
+ 'ai3d-runtime',
+ '        enum repoRoot = dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))));',
+ '        import std.path : buildNormalizedPath;\n'
+ '        enum repoRoot = '
+ 'dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))));'),
  ('L07-ai3d-worker-module',
   'packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d',
   'ai3d-runtime',
@@ -24727,7 +24740,7 @@ def _wave19_locator_intact(path, text, root):
         return
     import hashlib, json
     valid = (len(_WAVE19_LOCATORS) == 7 and len({row[0] for row in _WAVE19_LOCATORS}) == 7
-             and hashlib.sha256(json.dumps(_WAVE19_LOCATORS, separators=(',', ':')).encode()).hexdigest() == '38cdfaa3fdea5291140e2824edcb5bae26a1ffe7da4a23fb29e1f2fda2c98af5')
+             and hashlib.sha256(json.dumps(_WAVE19_LOCATORS, separators=(',', ':')).encode()).hexdigest() == 'df323824947d4c943c575d43b3a89ac0a13123cfab777b861f18fd9ceb02fded')
     _source_validity.append(valid)
     if not valid:
         raise ValueError('Wave19 frozen seven locator population')

@@ -1063,6 +1063,43 @@ class BoundaryControls(unittest.TestCase):
     def test_current_support_raw_tree(self):
         actual = Path(__file__).resolve().parents[1]
         self.assertEqual(len(support.SPECS), 55)
+        # Execute the existing archive-input and staged-validator statements,
+        # including lower algorithm owners, without constructing a new runner.
+        execute = next(node for node in ast.parse(Path(support.__file__).read_text()).body
+                       if isinstance(node, ast.FunctionDef) and node.name == 'execute')
+        member = next(node for node in execute.body if isinstance(node, ast.AugAssign)
+                      and isinstance(node.target, ast.Name) and node.target.id == 'members'
+                      and 'PACKAGE_FIXTURES' in ast.unparse(node))
+        validation = next(node for node in execute.body if isinstance(node, ast.For)
+                          and isinstance(node.target, ast.Name) and node.target.id == 'selected')
+        expected_owners = {
+            'alignment-ops': {'alignment-ops'}, 'creation-ops': {'creation-ops'},
+            'viewport-gpu': {'viewport-gpu'}, 'selection-model': {'viewport-gpu'},
+            'editor-ui': {'alignment-ops', 'creation-ops', 'viewport-gpu', 'interactive-tools', 'ai3d-runtime'},
+        }
+        for owner, selected in expected_owners.items():
+            with self.subTest(archive_resources=owner), tempfile.TemporaryDirectory() as directory:
+                staged = Path(directory)
+                namespace = dict(support.__dict__, owner=owner, members=[], archive=staged, project=actual)
+                exec(compile(ast.Module(body=[member], type_ignores=[]), support.__file__, 'exec'), namespace)
+                expected = [path for selected_owner in sorted(selected)
+                            for path, _ in support.PACKAGE_FIXTURES[selected_owner]]
+                self.assertEqual(namespace['members'], expected, 'algorithm closure archive resource membership')
+                for path in expected:
+                    target = staged / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(actual / path, target)
+                validator = compile(ast.Module(body=[validation], type_ignores=[]), support.__file__, 'exec')
+                exec(validator, namespace)
+                missing = staged / expected[0]
+                saved = missing.read_bytes()
+                missing.unlink()
+                with self.assertRaises(support.BoundaryError, msg='algorithm closure missing staged resource refusal'):
+                    exec(validator, namespace)
+                missing.write_bytes(saved)
+                missing.write_bytes(saved + b'bad')
+                with self.assertRaises(support.BoundaryError, msg='algorithm closure staged resource hash refusal'):
+                    exec(validator, namespace)
         for owner in support.SPECS:
             with self.subTest(owner=owner):
                 support.check_raw_tree(actual, owner)

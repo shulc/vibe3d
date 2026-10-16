@@ -661,7 +661,8 @@ final class Ai3dWorkerManager {
             if (exists(exeRel)) return exeRel;
         } catch (Exception) {}
 
-        enum repoRoot = dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))))))));
+        import std.path : buildNormalizedPath;
+        enum repoRoot = dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))));
         auto devPath = buildPath(repoRoot, "tools", "ai3d_worker", name);
         if (exists(devPath)) return devPath;
 

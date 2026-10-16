@@ -4490,9 +4490,9 @@ private struct Wave19Locator { string id, path, owner, oldText, newText; }
 private immutable Wave19Locator[] wave19Locators = [
     Wave19Locator("L03-retopology-root-fixture", "packages/display-policy/tests/source/tests/unit/retopology_display_model_test.d", "display-policy", "buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))), \"tests\", \"fixtures\",\n              \"retopology_display.json\")", "buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))))), \"tests\", \"fixtures\",\n              \"retopology_display.json\")"),
     Wave19Locator("L04-retopology-production-census", "packages/display-policy/tests/source/tests/unit/retopology_display_model_test.d", "display-policy", "buildPath(\n            dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))), \"packages/display-policy/source\",\n            \"display_state.d\")", "buildPath(\n            dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))))), \"libraries/viewport/display-policy/source/vibe3d/viewport/display_policy\",\n            \"display_state.d\")"),
-    Wave19Locator("L01-align-owner-fixture", "packages/alignment-ops/source/tools/alignment/align_kernels.d", "alignment-ops", "dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))", "buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))))))))))), \"packages\", \"alignment-ops\")"),
+    Wave19Locator("L01-align-owner-fixture", "packages/alignment-ops/source/tools/alignment/align_kernels.d", "alignment-ops", "    import std.path : buildPath, dirName;\n    enum root = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));", "    import std.path : buildNormalizedPath, buildPath, dirName;\n    enum root = buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))))))), \"packages\", \"alignment-ops\");"),
     Wave19Locator("L02-pen-owner-fixture", "packages/creation-ops/tests/source/tests/unit/tools/create/pen_geometry_test.d", "creation-ops", "dirName(dirName(dirName(dirName(dirName(dirName(__FILE__))))))", "buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))))))))), \"packages\", \"creation-ops\", \"tests\")"),
-    Wave19Locator("L06-ai3d-dev-script", "packages/ai3d-runtime/source/ai3d/worker_manager.d", "ai3d-runtime", "dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))))", "dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))))))))"),
+    Wave19Locator("L06-ai3d-dev-script", "packages/ai3d-runtime/source/ai3d/worker_manager.d", "ai3d-runtime", "        enum repoRoot = dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))));", "        import std.path : buildNormalizedPath;\n        enum repoRoot = dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))));"),
     Wave19Locator("L07-ai3d-worker-module", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d", "ai3d-runtime", "dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))", "dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))))))"),
     Wave19Locator("L05-oblique-root-fixture", "packages/interactive-tools/tests/source/tests/unit/drag_gain_oblique_test.d", "interactive-tools", "buildPath(dirName(__FILE_FULL_PATH__),\n                                   \"../../../../../../tests/fixtures\", kFixtureName)", "buildPath(dirName(__FILE_FULL_PATH__),\n                                   \"../../../../../../../../../../../../tests/fixtures\", kFixtureName)"),
 ];
@@ -5662,7 +5662,8 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
             assert(callerControls == 1, "Wave19 read-current raw caller control population");
             size_t locatorControls;
             foreach (locator; wave19Locators) {
-                if (locator.id != "L05-oblique-root-fixture") continue;
+                if (locator.id != "L05-oblique-root-fixture"
+                    && locator.id != "L01-align-owner-fixture" && locator.id != "L06-ai3d-dev-script") continue;
                 ++locatorControls;
                 const path = buildPath(scratch, locator.path);
                 const physical = wave19PhysicalPath(path, scratch);
@@ -5680,21 +5681,69 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
                     assert(refusal.canFind(reason),
                         "Wave19 locator caller guard precedes syntax/identity inverse: " ~ reason ~ " " ~ refusal);
                 }
-                rejectedLocator(raw.replace(locator.newText, "0"), "Wave19 raw whole locator: L05");
-                rejectedLocator(raw.replace(locator.newText, locator.newText.replace("kFixtureName", "wrongFixture")),
-                    "Wave19 raw whole locator: L05");
-                rejectedLocator(raw ~ "\n" ~ locator.newText ~ "\n", "Wave19 raw whole locator: L05");
+                rejectedLocator(raw.replace(locator.newText, "0"), "Wave19 raw whole locator: " ~ locator.id);
+                if (locator.id == "L05-oblique-root-fixture")
+                    rejectedLocator(raw.replace(locator.newText, locator.newText.replace("kFixtureName", "wrongFixture")),
+                        "Wave19 raw whole locator: " ~ locator.id);
+                else {
+                    rejectedLocator(raw.replace(locator.newText, locator.newText.replace("buildNormalizedPath, ", "").replace(
+                        "        import std.path : buildNormalizedPath;\n", "")), "Wave19 raw whole locator: " ~ locator.id);
+                    rejectedLocator(raw.replace("buildNormalizedPath(__FILE_FULL_PATH__)", "__FILE_FULL_PATH__"),
+                        "Wave19 raw whole locator: " ~ locator.id);
+                    rejectedLocator(raw.replace("buildNormalizedPath(__FILE_FULL_PATH__)",
+                        "dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__)))"), "Wave19 raw whole locator: " ~ locator.id);
+                }
+                rejectedLocator(raw ~ "\n" ~ locator.newText ~ "\n", "Wave19 raw whole locator: " ~ locator.id);
                 rejectedLocator(raw.replace(locator.newText, "/*" ~ locator.newText ~ "*/"),
-                    "Wave19 raw locator lexical kind: L05");
+                    "Wave19 raw locator lexical kind: " ~ locator.id);
                 rejectedLocator(raw.replace(locator.newText, "`" ~ locator.newText ~ "`"),
-                    "Wave19 raw locator lexical kind: L05");
-                rejectedLocator(raw.replace(locator.newText, locator.oldText), "Wave19 raw whole locator: L05");
+                    "Wave19 raw locator lexical kind: " ~ locator.id);
+                rejectedLocator(raw.replace(locator.newText, locator.oldText), "Wave19 raw whole locator: " ~ locator.id);
                 write(physical, raw);
             }
-            assert(locatorControls == 1, "Wave19 bounded actual locator caller control population");
+            assert(locatorControls == 3, "Wave19 bounded actual locator caller control population");
+            // The literal production blocks bind arithmetic to raw custody;
+            // cancellation happens before the unchanged ancestor chain.
+            {
+                enum block = q"BLOCK
+    import std.path : buildNormalizedPath, buildPath, dirName;
+    enum root = buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))))))), "packages", "alignment-ops");
+BLOCK"[0 .. $ - 1];
+                size_t bound;
+                foreach (locator; wave19Locators) if (locator.id == "L01-align-owner-fixture") {
+                    ++bound;
+                    assert(locator.newText == block, "Wave19 arithmetic exact raw block: l01");
+                }
+                assert(bound == 1, "Wave19 arithmetic raw block population: l01");
+                static foreach (spelling; ["/wave19/libraries/editing/tools/alignment/source/vibe3d/editing/tools/alignment/tools/alignment/align_kernels.d",
+                    "/wave19/libraries/editing/tools/alignment/tests/../source/vibe3d/editing/tools/alignment/tools/alignment/align_kernels.d",
+                    "/wave19/./libraries/editing/tools/alignment/tests/../source/vibe3d/editing/tools/alignment/tools/alignment/align_kernels.d"]) {{
+                    mixin(block.replace("__FILE_FULL_PATH__", "\"" ~ spelling ~ "\""));
+                    assert(root == "/wave19/packages/alignment-ops", "Wave19 normalized source arithmetic: l01");
+                }}
+            }
+            {
+                enum block = q"BLOCK
+        import std.path : buildNormalizedPath;
+        enum repoRoot = dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))));
+BLOCK"[0 .. $ - 1];
+                size_t bound;
+                foreach (locator; wave19Locators) if (locator.id == "L06-ai3d-dev-script") {
+                    ++bound;
+                    assert(locator.newText == block, "Wave19 arithmetic exact raw block: l06");
+                }
+                assert(bound == 1, "Wave19 arithmetic raw block population: l06");
+                static foreach (spelling; ["/wave19/libraries/runtime/ai3d/source/vibe3d/runtime/ai3d/ai3d/worker_manager.d",
+                    "/wave19/libraries/runtime/ai3d/tests/../source/vibe3d/runtime/ai3d/ai3d/worker_manager.d",
+                    "/wave19/./libraries/runtime/ai3d/tests/../source/vibe3d/runtime/ai3d/ai3d/worker_manager.d"]) {{
+                    mixin(block.replace("__FILE_FULL_PATH__", "\"" ~ spelling ~ "\""));
+                    assert(repoRoot == "/wave19", "Wave19 normalized source arithmetic: l06");
+                }}
+            }
             size_t oldLocatorControls;
             foreach (locator; wave19Locators) {
-                if (locator.id != "L02-pen-owner-fixture") continue;
+                if (locator.id != "L02-pen-owner-fixture"
+                    && locator.id != "L01-align-owner-fixture" && locator.id != "L06-ai3d-dev-script") continue;
                 ++oldLocatorControls;
                 // Reconstruct the legitimate original body through the actual
                 // historical read seam, then select the complete old owner.
@@ -5718,13 +5767,13 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
                     string refusal;
                     try { wave19ReadCurrent(path, scratch); }
                     catch (AssertError error) { refusal = error.msg; }
-                    assert(refusal.canFind(commented ? "Wave19 raw locator lexical kind: L02"
-                                                   : "Wave19 raw whole locator: L02"),
+                    assert(refusal.canFind(commented ? "Wave19 raw locator lexical kind: " ~ locator.id
+                                                   : "Wave19 raw whole locator: " ~ locator.id),
                         "Wave19 old __FILE__ locator caller refuses comment/wrong-current state: " ~ refusal);
                 }
                 write(path, oldSource);
             }
-            assert(oldLocatorControls == 1, "Wave19 bounded old __FILE__ locator caller population");
+            assert(oldLocatorControls == 3, "Wave19 bounded old __FILE__ locator caller population");
 
 
         }

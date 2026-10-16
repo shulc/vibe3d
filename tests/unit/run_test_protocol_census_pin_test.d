@@ -259,6 +259,72 @@ with tempfile.TemporaryDirectory(prefix="protocol-owners-") as scratch:
         link = partial / path.relative_to(root)
         link.parent.mkdir(parents=True, exist_ok=True)
         link.symlink_to(path)
+    # Exercise both actual raw-reader bridges in the ordinary existing context.
+    locator_controls = 0
+    for ident, logical, owner, original_block, current_block in census_contracts._WAVE19_LOCATORS:
+        if ident not in ("L01-align-owner-fixture", "L06-ai3d-dev-script"):
+            continue
+        locator_controls += 1
+        coordinate = next(row for row in census_contracts._WAVE19_COORDINATES if row[1] == logical)
+        physical = partial / coordinate[2]
+        link_target = physical.readlink()
+        raw = physical.read_text()
+        historical = census_contracts._wave19_original(raw, coordinate[3])
+        if read_source_text(partial / logical, root=partial) != historical:
+            raise SystemExit("prepared-protocol locator complete inverse: " + ident)
+        if original_block not in historical or current_block in historical:
+            raise SystemExit("prepared-protocol locator companion import inverse: " + ident)
+        physical.unlink()
+        def refuse_locator(changed, reason):
+            physical.write_text(changed)
+            try:
+                read_source_text(partial / logical, root=partial)
+            except ValueError as error:
+                if reason not in str(error):
+                    raise SystemExit("prepared-protocol locator wrong refusal: " + ident + ": " + str(error))
+            else:
+                raise SystemExit("prepared-protocol locator missing refusal: " + ident + ": " + reason)
+        refuse_locator(raw.replace(current_block, original_block), "Wave19 raw whole locator: " + ident)
+        refuse_locator(raw.replace("buildNormalizedPath, ", "").replace(
+            "        import std.path : buildNormalizedPath;\n", ""), "Wave19 raw whole locator: " + ident)
+        refuse_locator(raw + "\n" + current_block, "Wave19 raw whole locator: " + ident)
+        refuse_locator(raw.replace(current_block, "/*" + current_block + "*/"), "Wave19 raw whole locator: " + ident)
+        physical.write_text(raw)
+        # A stale finite coordinate must be refused by the actual inverse after the raw guard.
+        saved_coordinates = census_contracts._WAVE19_COORDINATES
+        at, current, old = coordinate[3][-1]
+        stale = (*coordinate[:3], (*coordinate[3][:-1], (at + 1, current, old)))
+        census_contracts._WAVE19_COORDINATES = tuple(stale if row == coordinate else row for row in saved_coordinates)
+        refuse_locator(raw, "Wave19 declaration/import coordinate")
+        census_contracts._WAVE19_COORDINATES = saved_coordinates
+        physical.unlink()
+        physical.symlink_to(link_target)
+        # Select the original owner using the same finite recipe/source roles.
+        _, old_root, new_root = next(row for row in census_contracts._WAVE19_OWNERS if row[0] == owner)
+        recipe = partial / new_root / "dub.json"
+        recipe_target = recipe.readlink()
+        recipe.unlink()
+        old_recipe = partial / old_root / "dub.json"
+        old_recipe.parent.mkdir(parents=True, exist_ok=True)
+        old_recipe.write_text(json.dumps({"name": "vibe3d-" + owner}))
+        old_path = partial / logical
+        old_path.parent.mkdir(parents=True, exist_ok=True)
+        old_path.write_text(historical)
+        if read_source_text(old_path, root=partial) != historical:
+            raise SystemExit("prepared-protocol locator old selected complete source: " + ident)
+        old_path.write_text(historical.replace(original_block, current_block))
+        try:
+            read_source_text(old_path, root=partial)
+        except ValueError as error:
+            if "Wave19 raw whole locator: " + ident not in str(error):
+                raise
+        else:
+            raise SystemExit("prepared-protocol locator old state accepts current block: " + ident)
+        old_path.unlink()
+        old_recipe.unlink()
+        recipe.symlink_to(recipe_target)
+    if locator_controls != 2:
+        raise SystemExit("prepared-protocol bounded locator caller population")
     got = census_contracts.production_lexer_census(partial)
     if got:
         raise SystemExit(f"prepared-protocol synthetic complete baseline: {got!r}")
