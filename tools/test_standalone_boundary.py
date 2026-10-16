@@ -573,6 +573,7 @@ class BoundaryControls(unittest.TestCase):
                      '--start-group',str(root/'native.a'),'--end-group','-Lsearch','',
                      '-L'+str(root/'lib')],
                  'libs':['boundary_absent_a','boundary_pkg_b','boundary_absent_c','boundary_prefix_d']}
+            (root/'dub.json').write_text(json.dumps(raw))
             source=ast.parse(Path(support.__file__).read_text())
             function=next(n for n in source.body if isinstance(n,ast.FunctionDef)
                           and n.name=='renderer_compile_target')
