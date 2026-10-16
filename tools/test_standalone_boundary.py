@@ -519,6 +519,27 @@ class BoundaryControls(unittest.TestCase):
             cwd=actual, text=True, capture_output=True, check=True)
         description = json.loads(result.stdout)
         support.renderer_description(description, actual, 'app', 'with-render')
+        result = subprocess.run(['dub', 'describe', '--root=' + str(actual / 'libraries/render/model'),
+            '--config=with-render', '--compiler=dmd', '--nodeps', '--skip-registry=all', '--quiet'],
+            cwd=actual, text=True, capture_output=True, check=True)
+        direct = json.loads(result.stdout)
+        self.assertEqual(direct['rootPackage'], 'render-model')
+        self.assertEqual(support.SPECS['render-model']['name'], 'vibe3d:render-model')
+        support.renderer_description(direct, actual, 'render-model', 'with-render')
+        changed = copy.deepcopy(direct)
+        changed['rootPackage'] = 'vibe3d:render-model'
+        with self.assertRaisesRegex(support.BoundaryError, 'renderer resolved root identity'):
+            support.renderer_description(changed, actual, 'render-model', 'with-render')
+        changed = copy.deepcopy(description)
+        changed['rootPackage'] = 'render-model'
+        with self.assertRaisesRegex(support.BoundaryError, 'renderer resolved root identity'):
+            support.renderer_description(changed, actual, 'app', 'with-render')
+        self.assertFalse(support.is_internal('render-model'))
+        with self.assertRaisesRegex(support.BoundaryError, 'unknown internal identity: render-model'):
+            support.internal_owner('render-model')
+        self.assertFalse(support.is_internal('render-model', 'camera-model'))
+        with self.assertRaisesRegex(support.BoundaryError, 'unknown internal identity: render-model'):
+            support.internal_owner('render-model', 'camera-model')
         changed = copy.deepcopy(description)
         app = next(p for p in changed['packages'] if p['name'] == 'vibe3d')
         app['files'].append({'path': 'source/unauthorized.d', 'role': 'source'})

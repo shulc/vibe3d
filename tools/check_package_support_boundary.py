@@ -3673,15 +3673,18 @@ def canonical_digest(raw):
               ('description','license','authors','copyright') and not k.startswith('_comment')}
     return hashlib.sha256(json.dumps(grants,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
-def internal_owner(name):
+def internal_owner(name, direct_owner=None):
+    if direct_owner is not None and name==SPECS[direct_owner]['name'].split(':')[-1]:
+        return direct_owner
     for owner, spec in SPECS.items():
         if name in (spec['name'], test_name(owner)):
             return owner
     raise BoundaryError('support unknown internal identity: '+name)
 
 
-def is_internal(name):
-    return any(name in (spec['name'], test_name(owner)) for owner, spec in SPECS.items())
+def is_internal(name, direct_owner=None):
+    return ((direct_owner is not None and name==SPECS[direct_owner]['name'].split(':')[-1])
+            or any(name in (spec['name'], test_name(owner)) for owner, spec in SPECS.items()))
 
 
 def test_name(owner):
@@ -4594,7 +4597,7 @@ def describe(project,owner,config,compiler,env,evidence,tests=False,recipe=None,
     (evidence/(name+'.json')).write_text(json.dumps(description,indent=2))
     return description
 
-def renderer_native_receipt(project, compiler, evidence, active):
+def renderer_native_receipt(project, compiler, evidence, active, direct_owner=None):
     import platform
     path=evidence/'native-input-receipt.json'
     require(path.is_file(), 'PREPARATION-REFUSED: renderer native-input-receipt.json missing')
@@ -4623,7 +4626,7 @@ def renderer_native_receipt(project, compiler, evidence, active):
                 'PREPARATION-REFUSED: renderer D compiler configuration identity')
     for path in receipt['abi']['dCompilerConfigAbsent']:
         require(not Path(path).exists(), 'PREPARATION-REFUSED: renderer D compiler configuration absence')
-    external={name:p for name,p in active.items() if not is_internal(name) and name!='vibe3d'}
+    external={name:p for name,p in active.items() if not is_internal(name,direct_owner) and name!='vibe3d'}
     require(set(receipt['packages'])==set(external), 'PREPARATION-REFUSED: renderer native dependency receipt population')
     for name, package in external.items():
         record=receipt['packages'][name];root=Path(package['path']).resolve()
@@ -4769,16 +4772,17 @@ def renderer_description(description, project, owner, config, tests=False, harne
     active_list=[p for p in description['packages'] if p.get('active')]
     active={p['name']:p for p in active_list}
     require(len(active)==len(active_list), 'support renderer active package identity')
-    root_name='vibe3d' if owner=='app' else (test_name(owner) if tests else SPECS[owner]['name'])
+    direct_owner=owner if owner!='app' and not tests else None
+    root_name='vibe3d' if owner=='app' else (test_name(owner) if tests else SPECS[owner]['name'].split(':')[-1])
     require(description['rootPackage']==root_name, 'support renderer resolved root identity')
     for name, package in active.items():
         path=Path(package['path']).resolve()
-        require(path.is_relative_to(project) or not is_internal(name), 'support renderer internal owner path')
-        if is_internal(name) or name==root_name:
+        require(path.is_relative_to(project) or not is_internal(name,direct_owner), 'support renderer internal owner path')
+        if is_internal(name,direct_owner) or name==root_name:
             if owner=='app' and name==root_name:
                 expected=[(project/p).resolve() for p in APP_SOURCES]
             else:
-                selected=internal_owner(name)
+                selected=internal_owner(name,direct_owner)
                 spec=SPECS[selected]
                 own=spec['testSources'] if name.endswith('-tests') else spec['sources']+spec.get('transitionalSources', [])
                 expected=[(path/p).resolve() for p in own]
@@ -4799,7 +4803,7 @@ def renderer_description(description, project, owner, config, tests=False, harne
     required={'render-model':['source/vibe3d/render/model/render/backend.d','source/vibe3d/render/model/render/scene.d'],
               'render-backends':['source/render/backend_bridge.d','source/render/cycles_backend.d','source/render/render_diff.d','source/render/rpr_backend.d']}
     for selected in ('render-model','render-backends') if owner in ('render-backends','app') else ('render-model',):
-        package=active[SPECS[selected]['name']] if not (selected==owner and tests) else active[root_name]
+        package=active[root_name] if selected==owner else active[SPECS[selected]['name']]
         require('WithRender' in package.get('versions',[]), 'support renderer active WithRender: '+selected)
         actual=[(Path(package['path'])/f['path']).resolve() for f in package['files'] if f['role']=='source']
         for relative in required[selected]:
@@ -4950,7 +4954,9 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
     links=compiler_commands('[cwd='+str(root)+'] '+shlex.join([compiler]+links),root,response_inputs)[0]['argv'][1:]
     (evidence/(label+'-response-inputs.json')).write_text(json.dumps(response_inputs,indent=2))
     require(flags and settings.get('importPaths'), 'support renderer required flag vectors: '+label)
-    if target['rootPackage'] in (SPECS['render-model']['name'],'vibe3d-render-backends','vibe3d-render-model-tests','vibe3d-render-backends-tests','vibe3d'):
+    if target['rootPackage'] in (SPECS['render-model']['name'],SPECS['render-model']['name'].split(':')[-1],
+                                 SPECS['render-backends']['name'],SPECS['render-backends']['name'].split(':')[-1],
+                                 test_name('render-model'),test_name('render-backends'),'vibe3d'):
         require('WithRender' in settings.get('versions',[]), 'support renderer required active WithRender: '+label)
     require(not any(a in ('-i','-c','-lib','-run','-o-') or a.startswith(('-of','-od','-op','--output','--include-imports','-i=','-I=')) for a in flags),
             'support renderer ambient action/output/include-import flags: '+label)
@@ -4988,7 +4994,7 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
     inputs={p:{'size':Path(p).stat().st_size,'mtime_ns':Path(p).stat().st_mtime_ns,'sha256':legacy_digest(Path(p))} for p in sorted(input_paths)}
     (evidence/(label+'-precompile-inputs.json')).write_text(json.dumps(inputs,indent=2))
     raw=json.loads((root/'dub.json').read_text())
-    binary=(root/(ARCHIVES[target['rootPackage']] if target['rootPackage'] in ARCHIVES else 'lib'+target['rootPackage']+'.a')) if package['targetType'] in ('staticLibrary','library') else root/raw.get('targetPath','.')/raw.get('targetName',raw['name'])
+    binary=(root/(ARCHIVES[target['rootPackage']] if target['rootPackage'] in ARCHIVES else 'lib'+raw.get('targetName',raw['name'])+'.a')) if package['targetType'] in ('staticLibrary','library') else root/raw.get('targetPath','.')/raw.get('targetName',raw['name'])
     binary=binary.resolve()
     binary.parent.mkdir(parents=True,exist_ok=True)
     if package['targetType'] in ('staticLibrary','library'):
@@ -5018,9 +5024,10 @@ def execute_renderer(project,owner,compiler,env,evidence):
     if owner!='app':descriptions.append(renderer_describe(project,owner,'algorithm',compiler,env,evidence,True))
     active={p['name']:p for d in descriptions for p in d['packages'] if p.get('active')}
     receipt={}
+    direct_owner=owner if owner!='app' else None
     if owner=='render-model':
-        require(not any(not is_internal(n) for n in active), 'PREPARATION-REFUSED: render-model unexpected native/external dependency')
-    else:receipt=renderer_native_receipt(project,compiler,evidence,active)
+        require(not any(not is_internal(n,direct_owner) for n in active), 'PREPARATION-REFUSED: render-model unexpected native/external dependency')
+    else:receipt=renderer_native_receipt(project,compiler,evidence,active,direct_owner)
     archive=evidence/'archive';require(not archive.exists(),'PREPARATION-REFUSED: renderer archive exists');archive.mkdir()
     import tarfile
     members=[] if owner=='app' else [SPECS[n]['root'] for n in closure(owner)|closure(owner,True)|{owner}]
@@ -5028,7 +5035,7 @@ def execute_renderer(project,owner,compiler,env,evidence):
     with tar.open('wb') as stream:subprocess.run(['git','archive',sha]+(['--']+members if members else []),cwd=project,stdout=stream,check=True)
     with tarfile.open(tar) as stream:stream.extractall(archive,filter='data')
     if owner!='app':require(not (archive/'source').exists(), 'support renderer isolated archive contains desktop')
-    dependencies=stage_dependencies({n:p for n,p in active.items() if not is_internal(n) and n!='vibe3d'},archive,evidence,env,renderer=True)
+    dependencies=stage_dependencies({n:p for n,p in active.items() if not is_internal(n,direct_owner) and n!='vibe3d'},archive,evidence,env,renderer=True)
     shared=[];plugins=[]
     for name,record in dependencies.items():
         for relative,item in record['nativeArtifacts'].items():
